@@ -1,0 +1,343 @@
+use std::fmt;
+
+use crate::document::Document;
+use crate::error::CoreError;
+use crate::layer::{LayerId, Transform};
+
+/// Un paso de edición reversible (patrón Command).
+///
+/// Los gestos continuos (arrastrar una capa, mover un slider) NO generan un
+/// comando por frame: la UI muta el documento directamente durante el gesto y,
+/// al soltarlo, empuja UN comando con el estado inicial y final mediante
+/// [`History::push_applied`]. Así arrastrar una capa 200 píxeles es un único
+/// paso de deshacer.
+pub trait Command: fmt::Debug + Send {
+    fn label(&self) -> &str;
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError>;
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError>;
+}
+
+/// Cambia posición/tamaño/rotación de una capa (mover, redimensionar, alinear).
+#[derive(Debug)]
+pub struct SetTransform {
+    pub layer: LayerId,
+    pub before: Transform,
+    pub after: Transform,
+}
+
+impl Command for SetTransform {
+    fn label(&self) -> &str {
+        "Transformar capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.transform = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.transform = self.before;
+        Ok(())
+    }
+}
+
+/// Cambia el radio de desenfoque (no destructivo) de una capa.
+#[derive(Debug)]
+pub struct SetBlur {
+    pub layer: LayerId,
+    pub before: f32,
+    pub after: f32,
+}
+
+impl Command for SetBlur {
+    fn label(&self) -> &str {
+        "Desenfoque"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects.blur_radius = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects.blur_radius = self.before;
+        Ok(())
+    }
+}
+
+/// Historial de deshacer/rehacer basado en comandos, con marca de guardado
+/// para derivar el estado sucio (dirty) sin un flag manual.
+pub struct History {
+    undo: Vec<Box<dyn Command>>,
+    redo: Vec<Box<dyn Command>>,
+    /// Longitud de la pila de undo en el último guardado. `None` si el estado
+    /// guardado ya no es alcanzable deshaciendo/rehaciendo.
+    saved_depth: Option<usize>,
+    limit: usize,
+}
+
+impl Default for History {
+    fn default() -> Self {
+        Self::with_limit(200)
+    }
+}
+
+impl History {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            saved_depth: Some(0),
+            limit: limit.max(1),
+        }
+    }
+
+    /// Aplica el comando al documento y lo apila.
+    pub fn apply(
+        &mut self,
+        doc: &mut Document,
+        mut cmd: Box<dyn Command>,
+    ) -> Result<(), CoreError> {
+        cmd.apply(doc)?;
+        self.push_applied(cmd);
+        Ok(())
+    }
+
+    /// Apila un comando cuyo efecto YA está reflejado en el documento (final
+    /// de un gesto continuo).
+    pub fn push_applied(&mut self, cmd: Box<dyn Command>) {
+        // Si el punto de guardado quedaba por delante (en la pila de redo que
+        // vamos a vaciar), deja de ser alcanzable.
+        if self.saved_depth.is_some_and(|d| d > self.undo.len()) {
+            self.saved_depth = None;
+        }
+        self.redo.clear();
+        self.undo.push(cmd);
+        if self.undo.len() > self.limit {
+            self.undo.remove(0);
+            self.saved_depth = match self.saved_depth {
+                Some(0) | None => None,
+                Some(d) => Some(d - 1),
+            };
+        }
+    }
+
+    /// Deshace el último comando. Devuelve `false` si no había nada que
+    /// deshacer.
+    pub fn undo(&mut self, doc: &mut Document) -> Result<bool, CoreError> {
+        let Some(cmd) = self.undo.last_mut() else {
+            return Ok(false);
+        };
+        cmd.revert(doc)?;
+        let cmd = self.undo.pop().unwrap_or_else(|| unreachable!());
+        self.redo.push(cmd);
+        Ok(true)
+    }
+
+    /// Rehace el último comando deshecho. Devuelve `false` si no había nada.
+    pub fn redo(&mut self, doc: &mut Document) -> Result<bool, CoreError> {
+        let Some(cmd) = self.redo.last_mut() else {
+            return Ok(false);
+        };
+        cmd.apply(doc)?;
+        let cmd = self.redo.pop().unwrap_or_else(|| unreachable!());
+        self.undo.push(cmd);
+        Ok(true)
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Marca el estado actual como guardado en disco.
+    pub fn mark_saved(&mut self) {
+        self.saved_depth = Some(self.undo.len());
+    }
+
+    /// ¿Hay cambios sin guardar respecto al último `mark_saved`?
+    pub fn is_dirty(&self) -> bool {
+        self.saved_depth != Some(self.undo.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layer::{ImageContent, LayerContent};
+
+    fn doc_with_layer() -> (Document, LayerId) {
+        let mut doc = Document::new(800.0, 600.0);
+        let id = doc
+            .add_layer(
+                "img",
+                Transform::new(10.0, 20.0, 100.0, 50.0),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: 100,
+                    natural_height: 50,
+                }),
+            )
+            .expect("documento recién creado tiene página");
+        (doc, id)
+    }
+
+    fn move_cmd(layer: LayerId, before: Transform, x: f64, y: f64) -> Box<dyn Command> {
+        Box::new(SetTransform {
+            layer,
+            before,
+            after: Transform { x, y, ..before },
+        })
+    }
+
+    #[test]
+    fn apply_undo_redo_roundtrip() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+            .unwrap();
+        assert_eq!(doc.layer(id).unwrap().transform.x, 200.0);
+
+        assert!(history.undo(&mut doc).unwrap());
+        assert_eq!(doc.layer(id).unwrap().transform, before);
+
+        assert!(history.redo(&mut doc).unwrap());
+        assert_eq!(doc.layer(id).unwrap().transform.x, 200.0);
+        assert_eq!(doc.layer(id).unwrap().transform.y, 300.0);
+    }
+
+    #[test]
+    fn undo_on_empty_history_is_noop() {
+        let (mut doc, _) = doc_with_layer();
+        let mut history = History::default();
+        assert!(!history.undo(&mut doc).unwrap());
+        assert!(!history.redo(&mut doc).unwrap());
+    }
+
+    #[test]
+    fn new_command_clears_redo() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+            .unwrap();
+        history.undo(&mut doc).unwrap();
+        assert!(history.can_redo());
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 50.0, 60.0))
+            .unwrap();
+        assert!(!history.can_redo());
+        assert_eq!(doc.layer(id).unwrap().transform.x, 50.0);
+    }
+
+    #[test]
+    fn drag_coalesces_into_single_undo_step() {
+        let (mut doc, id) = doc_with_layer();
+        let start = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        // Simula un arrastre de 200 frames: mutación directa, sin comandos.
+        for i in 1..=200 {
+            doc.layer_mut(id).unwrap().transform.x = start.x + f64::from(i);
+        }
+        let end = doc.layer(id).unwrap().transform;
+        history.push_applied(Box::new(SetTransform {
+            layer: id,
+            before: start,
+            after: end,
+        }));
+
+        // UN solo paso de deshacer devuelve al estado inicial.
+        assert!(history.undo(&mut doc).unwrap());
+        assert_eq!(doc.layer(id).unwrap().transform, start);
+        assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn dirty_tracks_saved_position() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+        assert!(
+            !history.is_dirty(),
+            "documento recién abierto no está sucio"
+        );
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 1.0, 1.0))
+            .unwrap();
+        assert!(history.is_dirty());
+
+        history.undo(&mut doc).unwrap();
+        assert!(
+            !history.is_dirty(),
+            "deshacer hasta el estado guardado limpia el sucio"
+        );
+
+        history.redo(&mut doc).unwrap();
+        assert!(history.is_dirty());
+
+        history.mark_saved();
+        assert!(!history.is_dirty());
+
+        history.undo(&mut doc).unwrap();
+        assert!(
+            history.is_dirty(),
+            "deshacer por detrás del guardado ensucia"
+        );
+    }
+
+    #[test]
+    fn saved_state_unreachable_after_diverging() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 1.0, 1.0))
+            .unwrap();
+        history.mark_saved();
+        history.undo(&mut doc).unwrap();
+        // Nueva rama: el estado guardado ya no es alcanzable.
+        history
+            .apply(&mut doc, move_cmd(id, before, 2.0, 2.0))
+            .unwrap();
+        assert!(history.is_dirty());
+        history.undo(&mut doc).unwrap();
+        assert!(
+            history.is_dirty(),
+            "ni siquiera igualando la longitud de pila"
+        );
+    }
+
+    #[test]
+    fn history_limit_drops_oldest() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::with_limit(5);
+
+        for i in 0..8 {
+            history
+                .apply(&mut doc, move_cmd(id, before, f64::from(i), 0.0))
+                .unwrap();
+        }
+        let mut undone = 0;
+        while history.undo(&mut doc).unwrap() {
+            undone += 1;
+        }
+        assert_eq!(undone, 5);
+        assert!(
+            history.is_dirty(),
+            "el estado inicial se perdió del historial"
+        );
+    }
+}

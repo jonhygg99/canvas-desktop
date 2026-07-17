@@ -1,0 +1,24 @@
+[package]
+name = "canvas-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "canvas-desktop"
+path = "src/main.rs"
+
+[dependencies]
+canvas-core = { workspace = true }
+canvas-render = { workspace = true }
+canvas-io = { workspace = true }
+canvas-shell = { workspace = true }
+eframe = { workspace = true }
+vello = { workspace = true }
+rfd = { workspace = true }
+rayon = { workspace = true }
+directories = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

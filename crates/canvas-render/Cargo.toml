@@ -1,0 +1,18 @@
+[package]
+name = "canvas-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+canvas-core = { workspace = true }
+vello = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Solo para los ejemplos headless de verificación sin ventana.
+canvas-io = { workspace = true }
+pollster = "0.4"
+image = { workspace = true }
+anyhow = { workspace = true }

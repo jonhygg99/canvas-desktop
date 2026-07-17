@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/canvas-core",
+    "crates/canvas-render",
+    "crates/canvas-io",
+    "crates/canvas-shell",
+    "crates/canvas-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+canvas-core = { path = "crates/canvas-core" }
+canvas-render = { path = "crates/canvas-render" }
+canvas-io = { path = "crates/canvas-io" }
+canvas-shell = { path = "crates/canvas-shell" }
+
+# UI + GPU: eframe 0.35 y vello 0.9 comparten wgpu 29 — no cambiar uno sin el otro.
+eframe = { version = "0.35", default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    "x11",
+    "wayland",
+] }
+vello = "0.9"
+
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+    "gif",
+    "bmp",
+] }
+kamadak-exif = "0.6"
+rfd = "0.15"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "6"
+tempfile = "3"
+windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
+
+[profile.dev]
+# vello/wgpu en debug puro son inusablemente lentos; optimiza las dependencias.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
