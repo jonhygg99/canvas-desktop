@@ -122,7 +122,7 @@ impl App {
             if self.gallery_origin.as_deref() != path.parent() {
                 self.gallery_origin = None;
             }
-            loader::spawn_load_image(path.clone(), self.tx.clone(), ctx.clone());
+            loader::spawn_load_image(path.clone(), true, self.tx.clone(), ctx.clone());
             self.view = View::Loading { path };
         } else {
             self.view = View::Welcome {
@@ -232,13 +232,54 @@ impl App {
                     if !expected {
                         continue;
                     }
-                    match result.and_then(|img| {
-                        editor::EditorState::from_image(path.clone(), img)
-                            .map_err(|e| e.to_string())
-                    }) {
-                        Ok(mut state) => {
-                            state.from_gallery = self.gallery_origin.clone();
-                            self.view = View::Editor(Box::new(state));
+                    match result {
+                        Ok(loader::LoadOutcome::Restored(restored)) => {
+                            // Si la imagen cambió por fuera desde el último
+                            // guardado con capas, avisa y deja elegir.
+                            let use_layers = restored.hash_matches
+                                || {
+                                    let choice = rfd::MessageDialog::new()
+                                    .set_level(rfd::MessageLevel::Warning)
+                                    .set_title("La imagen cambió fuera de Canvas Desktop")
+                                    .set_description(format!(
+                                        "«{}» fue modificada por otro programa después del último guardado con capas.\n¿Restaurar las capas editables de todos modos? («No» abre la imagen tal y como está ahora.)",
+                                        path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()
+                                    ))
+                                    .set_buttons(rfd::MessageButtons::YesNo)
+                                    .show();
+                                    matches!(choice, rfd::MessageDialogResult::Yes)
+                                };
+                            if use_layers {
+                                let mut state =
+                                    editor::EditorState::from_restored(path.clone(), restored);
+                                state.from_gallery = self.gallery_origin.clone();
+                                self.view = View::Editor(Box::new(state));
+                            } else {
+                                // Recarga plana, ignorando el sidecar.
+                                loader::spawn_load_image(
+                                    path.clone(),
+                                    false,
+                                    self.tx.clone(),
+                                    ctx.clone(),
+                                );
+                                self.view = View::Loading { path: path.clone() };
+                            }
+                        }
+                        Ok(loader::LoadOutcome::Flat(img)) => {
+                            match editor::EditorState::from_image(path.clone(), img) {
+                                Ok(mut state) => {
+                                    state.from_gallery = self.gallery_origin.clone();
+                                    self.view = View::Editor(Box::new(state));
+                                }
+                                Err(e) => {
+                                    self.view = View::Welcome {
+                                        error: Some(format!(
+                                            "No se pudo abrir «{}»: {e}",
+                                            path.display()
+                                        )),
+                                    };
+                                }
+                            }
                         }
                         Err(e) => {
                             self.view = View::Welcome {
@@ -390,12 +431,14 @@ fn start_save(
         Ok((rgba, width, height)) => {
             state.saving = true;
             state.save_error = None;
+            let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
             loader::spawn_save(
                 path,
                 rgba,
                 width,
                 height,
                 new_source,
+                sidecar,
                 tx.clone(),
                 ctx.clone(),
             );

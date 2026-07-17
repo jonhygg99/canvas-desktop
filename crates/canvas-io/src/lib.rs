@@ -3,10 +3,14 @@
 
 mod load;
 mod save;
+mod sidecar;
 mod thumbs;
 
 pub use load::{is_image_file, load_image, LoadedImage, IMAGE_EXTENSIONS};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
+pub use sidecar::{
+    delete_sidecar, read_sidecar, sidecar_path, write_sidecar, LayerPixels, RestoredDocument,
+};
 pub use thumbs::thumbnail;
 
 use std::path::PathBuf;

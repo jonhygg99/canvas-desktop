@@ -36,6 +36,12 @@ El canvas mínimo funcionando de punta a punta:
   ajusta la intensidad, y el fondo se recoloca solo al cambiar la resolución.
 - **Sombra** por capa: proyectada, difusa y configurable (desplazamiento X/Y,
   difusión y opacidad), activable con un checkbox en la sección de la capa.
+- **Sidecar editable**: al guardar se escribe `foto.png.canvas` junto a la
+  imagen con el documento completo (capas y píxeles embebidos); al reabrir el
+  PNG, las capas vuelven editables tal y como se guardaron — nada de imagen
+  aplanada con fondo transparente pegado. Si la imagen cambió por fuera, la
+  app avisa y deja elegir. Se puede desactivar con el checkbox «Sidecar
+  editable» para no dejar archivos extra.
 
 Pendiente (siguientes entregas): sidecar `.canvas` editable, integración
 «Abrir con» del sistema e instancia única, texto/formas/más filtros, panel de

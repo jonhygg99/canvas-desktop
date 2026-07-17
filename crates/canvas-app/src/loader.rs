@@ -4,15 +4,29 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use canvas_io::LoadedImage;
+use canvas_io::{LoadedImage, RestoredDocument};
 use eframe::egui;
+
+/// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
+/// restaurado desde su sidecar `.canvas`.
+pub enum LoadOutcome {
+    Flat(LoadedImage),
+    Restored(RestoredDocument),
+}
+
+/// Datos que el hilo de guardado necesita para escribir el sidecar.
+pub struct SidecarPayload {
+    pub document: canvas_core::Document,
+    pub images: Vec<canvas_io::LayerPixels>,
+    pub background_layer: Option<u64>,
+}
 
 pub enum AppMsg {
     FilePicked(Option<PathBuf>),
     FolderPicked(Option<PathBuf>),
     ImageLoaded {
         path: PathBuf,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadOutcome, String>,
     },
     /// Imagen cargada para AÑADIRSE como capa al documento abierto.
     ImageLoadedForLayer {
@@ -37,9 +51,24 @@ pub enum AppMsg {
     },
 }
 
-pub fn spawn_load_image(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+/// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
+/// editables desde su `.canvas`; un sidecar ilegible degrada a carga plana.
+pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = canvas_io::load_image(&path).map_err(|e| e.to_string());
+        let result = (|| {
+            if use_sidecar {
+                match canvas_io::read_sidecar(&path) {
+                    Ok(Some(restored)) => return Ok(LoadOutcome::Restored(restored)),
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada")
+                    }
+                }
+            }
+            canvas_io::load_image(&path)
+                .map(LoadOutcome::Flat)
+                .map_err(|e| e.to_string())
+        })();
         let _ = tx.send(AppMsg::ImageLoaded { path, result });
         ctx.request_repaint();
     });
@@ -78,17 +107,46 @@ pub fn spawn_pick_folder(tx: Sender<AppMsg>, ctx: egui::Context) {
 
 /// Codifica y escribe (atómico) en un hilo de trabajo; el RGBA ya viene
 /// horneado de la GPU.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_save(
     path: PathBuf,
     rgba: Vec<u8>,
     width: u32,
     height: u32,
     new_source: bool,
+    sidecar: Option<SidecarPayload>,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
         let result = canvas_io::save_rgba(&path, rgba, width, height).map_err(|e| e.to_string());
+        if result.is_ok() {
+            match sidecar {
+                Some(payload) => {
+                    // El hash del sidecar debe ser el del archivo tal y como
+                    // quedó en disco: se relee tras la escritura atómica.
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            if let Err(e) = canvas_io::write_sidecar(
+                                &path,
+                                &bytes,
+                                &payload.document,
+                                &payload.images,
+                                payload.background_layer,
+                            ) {
+                                tracing::warn!("no se pudo escribir el sidecar: {e}");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("no se pudo releer la imagen para el sidecar: {e}")
+                        }
+                    }
+                }
+                // Sidecar desactivado: retira el que hubiera para no dejar
+                // uno obsoleto que luego avise de hash cambiado.
+                None => canvas_io::delete_sidecar(&path),
+            }
+        }
         let _ = tx.send(AppMsg::Saved {
             path,
             result,

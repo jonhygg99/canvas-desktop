@@ -110,6 +110,8 @@ pub struct EditorState {
     pub save_clicked: bool,
     /// Botón «Guardar como…» del panel pulsado (equivale a Ctrl+Shift+S).
     pub save_as_clicked: bool,
+    /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
+    pub sidecar_enabled: bool,
 }
 
 impl EditorState {
@@ -153,6 +155,7 @@ impl EditorState {
             return_requested: false,
             save_clicked: false,
             save_as_clicked: false,
+            sidecar_enabled: true,
         })
     }
 
@@ -181,6 +184,67 @@ impl EditorState {
             return_requested: false,
             save_clicked: false,
             save_as_clicked: false,
+            sidecar_enabled: true,
+        }
+    }
+
+    /// Documento restaurado desde un sidecar `.canvas`: las capas siguen
+    /// siendo editables tal y como se guardaron (nada de fondo aplanado).
+    pub fn from_restored(path: PathBuf, restored: canvas_io::RestoredDocument) -> Self {
+        let mut doc = restored.document;
+        doc.source_path = Some(path);
+        let mut images = ImageMap::new();
+        for (raw, pixels) in restored.images {
+            images.insert(
+                LayerId::from_raw(raw),
+                image_data_from_rgba(pixels.rgba, pixels.width, pixels.height),
+            );
+        }
+        let background_layer = restored.background_layer.map(LayerId::from_raw);
+        // Selecciona la capa más alta que no sea el fondo desenfocado.
+        let selected = doc.page().ok().and_then(|p| {
+            p.layers
+                .iter()
+                .rev()
+                .find(|l| Some(l.id) != background_layer)
+                .or_else(|| p.layers.last())
+                .map(|l| l.id)
+        });
+        Self {
+            doc,
+            history: History::default(), // recién abierto = sin cambios
+            images,
+            selected,
+            viewport: Viewport::default(),
+            aspect_lock: true,
+            gesture: Gesture::None,
+            panel_edit: None,
+            page_edit: None,
+            background_layer,
+            blur_edit: None,
+            shadow_edit: None,
+            saving: false,
+            save_error: None,
+            from_gallery: None,
+            return_requested: false,
+            save_clicked: false,
+            save_as_clicked: false,
+            sidecar_enabled: true,
+        }
+    }
+
+    /// Datos para que el hilo de guardado escriba el sidecar: documento
+    /// clonado y píxeles RGBA de cada capa.
+    pub fn sidecar_payload(&self) -> crate::loader::SidecarPayload {
+        let images = self
+            .images
+            .iter()
+            .map(|(id, data)| (id.raw(), data.data.data().to_vec(), data.width, data.height))
+            .collect();
+        crate::loader::SidecarPayload {
+            document: self.doc.clone(),
+            images,
+            background_layer: self.background_layer.map(|id| id.raw()),
         }
     }
 
@@ -447,6 +511,12 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             state.save_as_clicked = true;
         }
     });
+    ui.checkbox(&mut state.sidecar_enabled, "Sidecar editable (.canvas)")
+        .on_hover_text(
+            "Guarda un archivo .canvas junto a la imagen para que al reabrirla \
+             las capas sigan siendo editables. Desactívalo si no quieres \
+             archivos extra en tus carpetas.",
+        );
     if state.saving {
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new());

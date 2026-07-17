@@ -11,6 +11,12 @@ impl LayerId {
         Self(raw)
     }
 
+    /// Reconstruye un id desde su valor crudo. Solo para deserialización
+    /// (sidecar): un id inventado puede colisionar con los del documento.
+    pub fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
     pub fn raw(self) -> u64 {
         self.0
     }
