@@ -99,6 +99,10 @@ pub struct EditorState {
     pub from_gallery: Option<PathBuf>,
     /// El usuario ha pulsado «Volver a la galería»; la app decide cómo.
     pub return_requested: bool,
+    /// Botón «Guardar» del panel pulsado (equivale a Ctrl+S).
+    pub save_clicked: bool,
+    /// Botón «Guardar como…» del panel pulsado (equivale a Ctrl+Shift+S).
+    pub save_as_clicked: bool,
 }
 
 impl EditorState {
@@ -137,6 +141,8 @@ impl EditorState {
             save_error: None,
             from_gallery: None,
             return_requested: false,
+            save_clicked: false,
+            save_as_clicked: false,
         })
     }
 
@@ -204,6 +210,24 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     }
 
     ui.separator();
+    ui.horizontal(|ui| {
+        let dirty_mark = if state.is_dirty() { " •" } else { "" };
+        if ui
+            .add_enabled(
+                !state.saving,
+                egui::Button::new(format!("💾 Guardar{dirty_mark}")),
+            )
+            .clicked()
+        {
+            state.save_clicked = true;
+        }
+        if ui
+            .add_enabled(!state.saving, egui::Button::new("Guardar como…"))
+            .clicked()
+        {
+            state.save_as_clicked = true;
+        }
+    });
     if state.saving {
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new());

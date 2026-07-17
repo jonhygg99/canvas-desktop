@@ -156,6 +156,7 @@ impl App {
                         state.saving = false;
                         match result {
                             Ok(()) => {
+                                tracing::info!("guardado OK: {}", path.display());
                                 state.history.mark_saved();
                                 if new_source {
                                     state.doc.source_path = Some(path);
@@ -273,7 +274,7 @@ impl App {
             .set_level(rfd::MessageLevel::Warning)
             .set_title("Cambios sin guardar")
             .set_description(format!(
-                "«{}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de cerrar?",
+                "«{}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de cerrar? («No» los descarta.)",
                 state.file_name()
             ))
             .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
@@ -282,10 +283,21 @@ impl App {
                 "Cancelar".to_owned(),
             ))
             .show();
+        // OJO: en Windows, sin la feature `common-controls-v6` de rfd los
+        // botones custom degradan a un MessageBox Sí/No/Cancelar que devuelve
+        // Yes/No/Cancel, nunca Custom. Hay que aceptar ambas familias.
         match choice {
+            rfd::MessageDialogResult::Yes => {
+                self.save_requested = true;
+                self.close_after_save = true;
+            }
             rfd::MessageDialogResult::Custom(c) if c == "Guardar" => {
                 self.save_requested = true;
                 self.close_after_save = true;
+            }
+            rfd::MessageDialogResult::No => {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             rfd::MessageDialogResult::Custom(c) if c == "Descartar" => {
                 self.allow_close = true;
@@ -353,6 +365,7 @@ fn start_save(
     if state.saving {
         return;
     }
+    tracing::info!("guardando en {}", path.display());
     match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, 1.0) {
         Ok((rgba, width, height)) => {
             state.saving = true;
@@ -368,6 +381,7 @@ fn start_save(
             );
         }
         Err(e) => {
+            tracing::error!("horneado falló: {e}");
             state.save_error = Some(format!("No se pudo preparar el guardado: {e}"));
         }
     }
@@ -432,7 +446,7 @@ impl eframe::App for App {
                                 .set_level(rfd::MessageLevel::Warning)
                                 .set_title("Cambios sin guardar")
                                 .set_description(format!(
-                                    "«{}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de volver a la galería?",
+                                    "«{}» tiene cambios sin guardar.\n¿Quieres guardarlos antes de volver a la galería? («No» los descarta.)",
                                     state.file_name()
                                 ))
                                 .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
@@ -441,10 +455,19 @@ impl eframe::App for App {
                                     "Cancelar".to_owned(),
                                 ))
                                 .show();
+                            // Igual que en confirm_close: en Windows el
+                            // resultado llega como Yes/No/Cancel, no Custom.
                             match choice {
+                                rfd::MessageDialogResult::Yes => {
+                                    self.save_requested = true;
+                                    self.return_to = Some(folder);
+                                }
                                 rfd::MessageDialogResult::Custom(c) if c == "Guardar" => {
                                     self.save_requested = true;
                                     self.return_to = Some(folder);
+                                }
+                                rfd::MessageDialogResult::No => {
+                                    open_next = Some(folder);
                                 }
                                 rfd::MessageDialogResult::Custom(c) if c == "Descartar" => {
                                     open_next = Some(folder);
@@ -455,14 +478,17 @@ impl eframe::App for App {
                     }
                 }
 
-                // Guardar / Guardar como (el orden importa: Ctrl+Shift+S primero).
-                let save_as = ctx.input_mut(|i| {
-                    i.consume_shortcut(&egui::KeyboardShortcut::new(
-                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                        egui::Key::S,
-                    ))
-                });
+                // Guardar / Guardar como: botones del panel o atajos de
+                // teclado (el orden importa: Ctrl+Shift+S primero).
+                let save_as = std::mem::take(&mut state.save_as_clicked)
+                    || ctx.input_mut(|i| {
+                        i.consume_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                            egui::Key::S,
+                        ))
+                    });
                 let mut save = self.save_requested
+                    || std::mem::take(&mut state.save_clicked)
                     || ctx.input_mut(|i| {
                         i.consume_shortcut(&egui::KeyboardShortcut::new(
                             egui::Modifiers::COMMAND,
