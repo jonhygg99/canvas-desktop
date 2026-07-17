@@ -14,6 +14,11 @@ pub enum AppMsg {
         path: PathBuf,
         result: Result<LoadedImage, String>,
     },
+    /// Imagen cargada para AÑADIRSE como capa al documento abierto.
+    ImageLoadedForLayer {
+        path: PathBuf,
+        result: Result<LoadedImage, String>,
+    },
     SaveAsPicked(Option<PathBuf>),
     Saved {
         path: PathBuf,
@@ -36,6 +41,16 @@ pub fn spawn_load_image(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
         let result = canvas_io::load_image(&path).map_err(|e| e.to_string());
         let _ = tx.send(AppMsg::ImageLoaded { path, result });
+        ctx.request_repaint();
+    });
+}
+
+/// Como `spawn_load_image`, pero el resultado se añade como capa nueva al
+/// documento abierto en vez de sustituirlo.
+pub fn spawn_load_image_as_layer(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let result = canvas_io::load_image(&path).map_err(|e| e.to_string());
+        let _ = tx.send(AppMsg::ImageLoadedForLayer { path, result });
         ctx.request_repaint();
     });
 }

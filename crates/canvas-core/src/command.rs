@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::document::Document;
 use crate::error::CoreError;
-use crate::layer::{LayerId, Transform};
+use crate::layer::{Layer, LayerId, Transform};
 
 /// Un paso de edición reversible (patrón Command).
 ///
@@ -61,6 +61,112 @@ impl Command for SetBlur {
 
     fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.layer_mut(self.layer)?.effects.blur_radius = self.before;
+        Ok(())
+    }
+}
+
+/// Cambia el tamaño (resolución) de la página activa.
+#[derive(Debug)]
+pub struct SetPageSize {
+    pub before: (f64, f64),
+    pub after: (f64, f64),
+}
+
+impl SetPageSize {
+    fn set(doc: &mut Document, (w, h): (f64, f64)) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        page.width = w.max(1.0);
+        page.height = h.max(1.0);
+        Ok(())
+    }
+}
+
+impl Command for SetPageSize {
+    fn label(&self) -> &str {
+        "Cambiar resolución"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        Self::set(doc, self.after)
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        Self::set(doc, self.before)
+    }
+}
+
+/// Inserta una capa ya construida en la posición dada de la pila (0 = fondo).
+#[derive(Debug)]
+pub struct InsertLayer {
+    pub index: usize,
+    pub layer: Layer,
+}
+
+impl Command for InsertLayer {
+    fn label(&self) -> &str {
+        "Añadir capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        let index = self.index.min(page.layers.len());
+        page.layers.insert(index, self.layer.clone());
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let id = self.layer.id;
+        let page = doc.page_mut()?;
+        let pos = page
+            .layers
+            .iter()
+            .position(|l| l.id == id)
+            .ok_or(CoreError::LayerNotFound(id))?;
+        page.layers.remove(pos);
+        Ok(())
+    }
+}
+
+/// Quita una capa de la página (recordando dónde estaba para poder rehacer).
+#[derive(Debug)]
+pub struct RemoveLayer {
+    pub layer: LayerId,
+    removed: Option<(usize, Layer)>,
+}
+
+impl RemoveLayer {
+    pub fn new(layer: LayerId) -> Self {
+        Self {
+            layer,
+            removed: None,
+        }
+    }
+}
+
+impl Command for RemoveLayer {
+    fn label(&self) -> &str {
+        "Quitar capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        let pos = page
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer)
+            .ok_or(CoreError::LayerNotFound(self.layer))?;
+        self.removed = Some((pos, page.layers.remove(pos)));
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let (index, layer) = self
+            .removed
+            .take()
+            .ok_or(CoreError::LayerNotFound(self.layer))?;
+        let page = doc.page_mut()?;
+        let index = index.min(page.layers.len());
+        page.layers.insert(index, layer);
         Ok(())
     }
 }
@@ -317,6 +423,68 @@ mod tests {
             history.is_dirty(),
             "ni siquiera igualando la longitud de pila"
         );
+    }
+
+    #[test]
+    fn set_page_size_roundtrips() {
+        let (mut doc, _) = doc_with_layer();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(SetPageSize {
+                    before: (800.0, 600.0),
+                    after: (1920.0, 1080.0),
+                }),
+            )
+            .unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!((page.width, page.height), (1920.0, 1080.0));
+
+        history.undo(&mut doc).unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!((page.width, page.height), (800.0, 600.0));
+    }
+
+    #[test]
+    fn insert_and_remove_layer_undo_redo() {
+        let (mut doc, existing) = doc_with_layer();
+        let mut history = History::default();
+
+        // Inserta una capa nueva en el fondo (índice 0).
+        let id = doc.allocate_layer_id();
+        let layer = crate::Layer::new(
+            id,
+            "fondo",
+            Transform::new(0.0, 0.0, 10.0, 10.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 10,
+                natural_height: 10,
+            }),
+        );
+        history
+            .apply(&mut doc, Box::new(InsertLayer { index: 0, layer }))
+            .unwrap();
+        assert_eq!(doc.page().unwrap().layers[0].id, id, "insertada al fondo");
+        assert_eq!(doc.page().unwrap().layers.len(), 2);
+
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.page().unwrap().layers.len(), 1);
+        assert_eq!(doc.page().unwrap().layers[0].id, existing);
+
+        history.redo(&mut doc).unwrap();
+        assert_eq!(doc.page().unwrap().layers[0].id, id);
+
+        // Y ahora quitarla, con deshacer que la devuelve a su sitio.
+        history
+            .apply(&mut doc, Box::new(RemoveLayer::new(id)))
+            .unwrap();
+        assert!(doc.layer(id).is_err());
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.page().unwrap().layers[0].id, id, "vuelve al índice 0");
+        history.redo(&mut doc).unwrap();
+        assert!(doc.layer(id).is_err());
     }
 
     #[test]

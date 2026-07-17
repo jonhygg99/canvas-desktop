@@ -73,6 +73,14 @@ impl Document {
         self.pages.first_mut().ok_or(CoreError::NoPages)
     }
 
+    /// Reserva un id de capa único (para construir capas que luego se
+    /// insertan mediante comandos deshacibles).
+    pub fn allocate_layer_id(&mut self) -> LayerId {
+        let id = LayerId::new(self.next_layer_id);
+        self.next_layer_id += 1;
+        id
+    }
+
     /// Añade una capa encima de las existentes en la página activa y devuelve
     /// su id.
     pub fn add_layer(
@@ -81,8 +89,7 @@ impl Document {
         transform: Transform,
         content: LayerContent,
     ) -> Result<LayerId, CoreError> {
-        let id = LayerId::new(self.next_layer_id);
-        self.next_layer_id += 1;
+        let id = self.allocate_layer_id();
         let layer = Layer::new(id, name, transform, content);
         self.page_mut()?.layers.push(layer);
         Ok(id)

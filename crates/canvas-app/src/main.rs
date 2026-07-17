@@ -176,6 +176,17 @@ impl App {
                         }
                     }
                 }
+                AppMsg::ImageLoadedForLayer { path, result } => {
+                    if let View::Editor(state) = &mut self.view {
+                        match result {
+                            Ok(img) => state.add_image_layer(path, img),
+                            Err(e) => {
+                                state.save_error =
+                                    Some(format!("No se pudo añadir «{}»: {e}", path.display()));
+                            }
+                        }
+                    }
+                }
                 AppMsg::GalleryScanned { folder, files } => {
                     if let View::Gallery(g) = &mut self.view {
                         if g.folder == folder {
@@ -253,7 +264,16 @@ impl App {
                 .collect()
         });
         if let Some(path) = dropped.into_iter().next() {
-            self.open_path(path, ctx);
+            // Con un documento abierto, soltar una imagen la AÑADE como capa;
+            // en cualquier otra vista (o si es carpeta), abre como siempre.
+            if matches!(self.view, View::Editor(_))
+                && path.is_file()
+                && canvas_io::is_image_file(&path)
+            {
+                loader::spawn_load_image_as_layer(path, self.tx.clone(), ctx.clone());
+            } else {
+                self.open_path(path, ctx);
+            }
         }
     }
 
@@ -401,6 +421,11 @@ impl eframe::App for App {
             View::Welcome { error } => {
                 let error = error.clone();
                 match welcome::show(ui, error.as_deref()) {
+                    Some(welcome::WelcomeAction::NewProject) => {
+                        self.gallery_origin = None;
+                        self.view =
+                            View::Editor(Box::new(editor::EditorState::new_blank(1920.0, 1080.0)));
+                    }
                     Some(welcome::WelcomeAction::OpenFile) => {
                         loader::spawn_pick_file(self.tx.clone(), ctx.clone());
                     }

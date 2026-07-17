@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use canvas_core::{
-    resize_from_corner, CoreError, Corner, Document, History, ImageContent, LayerContent, LayerId,
-    SetTransform, Transform,
+    cover_transform, resize_from_corner, CoreError, Corner, Document, History, ImageContent,
+    InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, ImageMap};
@@ -89,6 +89,11 @@ pub struct EditorState {
     /// Edición en curso desde el panel (campos numéricos): capa y transform
     /// original, para consolidar en un solo comando al terminar.
     panel_edit: Option<(LayerId, Transform)>,
+    /// Edición en curso del tamaño de página (campos An/Al de la sección
+    /// Página): dimensiones originales, para consolidar al terminar.
+    page_edit: Option<(f64, f64)>,
+    /// Capa de «fondo desenfocado» activa, si la hay.
+    background_layer: Option<LayerId>,
     /// Ajuste de desenfoque en curso (slider): capa y radio original.
     blur_edit: Option<(LayerId, f32)>,
     /// Hay un guardado en curso en un hilo de trabajo.
@@ -136,6 +141,8 @@ impl EditorState {
             aspect_lock: true,
             gesture: Gesture::None,
             panel_edit: None,
+            page_edit: None,
+            background_layer: None,
             blur_edit: None,
             saving: false,
             save_error: None,
@@ -144,6 +151,155 @@ impl EditorState {
             save_clicked: false,
             save_as_clicked: false,
         })
+    }
+
+    /// Proyecto nuevo en blanco (página blanca, sin capas).
+    pub fn new_blank(width: f64, height: f64) -> Self {
+        let mut doc = Document::new(width, height);
+        if let Ok(page) = doc.page_mut() {
+            page.background = Some([255, 255, 255, 255]);
+        }
+        Self {
+            doc,
+            history: History::default(),
+            images: ImageMap::new(),
+            selected: None,
+            viewport: Viewport::default(),
+            aspect_lock: true,
+            gesture: Gesture::None,
+            panel_edit: None,
+            page_edit: None,
+            background_layer: None,
+            blur_edit: None,
+            saving: false,
+            save_error: None,
+            from_gallery: None,
+            return_requested: false,
+            save_clicked: false,
+            save_as_clicked: false,
+        }
+    }
+
+    /// Añade una imagen como capa nueva encima de las existentes (deshacible),
+    /// encajada en la página si es mayor que ella, y la selecciona.
+    pub fn add_image_layer(&mut self, path: PathBuf, img: LoadedImage) {
+        let Ok(page) = self.doc.page() else { return };
+        let (pw, ph) = (page.width, page.height);
+        let index = page.layers.len();
+
+        let (nw, nh) = (f64::from(img.width), f64::from(img.height));
+        let scale = (pw / nw).min(ph / nh).min(1.0);
+        let (w, h) = (nw * scale, nh * scale);
+        let transform = Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h);
+
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Imagen".to_owned());
+        let id = self.doc.allocate_layer_id();
+        let layer = Layer::new(
+            id,
+            name,
+            transform,
+            LayerContent::Image(ImageContent {
+                source_path: Some(path),
+                natural_width: img.width,
+                natural_height: img.height,
+            }),
+        );
+        if let Err(e) = self
+            .history
+            .apply(&mut self.doc, Box::new(InsertLayer { index, layer }))
+        {
+            tracing::error!("añadir capa falló: {e}");
+            return;
+        }
+        self.images
+            .insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
+        self.selected = Some(id);
+    }
+
+    /// ¿Está activa (y viva, tras posibles deshacer) la capa de fondo?
+    fn background_active(&self) -> bool {
+        self.background_layer
+            .is_some_and(|id| self.doc.layer(id).is_ok())
+    }
+
+    /// Capa de imagen que serviría de fuente para el fondo desenfocado.
+    fn background_source(&self) -> Option<LayerId> {
+        let is_candidate = |l: &Layer| {
+            matches!(l.content, LayerContent::Image(_)) && Some(l.id) != self.background_layer
+        };
+        // La seleccionada si vale; si no, la capa de imagen más alta.
+        if let Some(sel) = self.selected {
+            if let Ok(l) = self.doc.layer(sel) {
+                if is_candidate(l) {
+                    return Some(sel);
+                }
+            }
+        }
+        self.doc
+            .page()
+            .ok()?
+            .layers
+            .iter()
+            .rev()
+            .find(|l| is_candidate(l))
+            .map(|l| l.id)
+    }
+
+    /// Activa/desactiva el fondo desenfocado (capa «cover» de la imagen
+    /// fuente con blur 50 por defecto, insertada en el fondo de la pila).
+    fn set_blurred_background(&mut self, on: bool) {
+        if !on {
+            if let Some(id) = self.background_layer.take() {
+                if let Err(e) = self
+                    .history
+                    .apply(&mut self.doc, Box::new(RemoveLayer::new(id)))
+                {
+                    tracing::error!("quitar fondo falló: {e}");
+                }
+                // El ImageData se queda en el mapa a propósito: deshacer el
+                // RemoveLayer recupera la capa y necesita sus píxeles.
+            }
+            return;
+        }
+
+        let Some(source_id) = self.background_source() else {
+            return;
+        };
+        let Ok(source) = self.doc.layer(source_id) else {
+            return;
+        };
+        let LayerContent::Image(content) = source.content.clone();
+        let Some(pixels) = self.images.get(&source_id).cloned() else {
+            return;
+        };
+        let Ok(page) = self.doc.page() else { return };
+        let transform = cover_transform(
+            f64::from(content.natural_width),
+            f64::from(content.natural_height),
+            page.width,
+            page.height,
+        );
+
+        let id = self.doc.allocate_layer_id();
+        let mut layer = Layer::new(
+            id,
+            "Fondo desenfocado",
+            transform,
+            LayerContent::Image(content),
+        );
+        layer.effects.blur_radius = 50.0;
+        if let Err(e) = self
+            .history
+            .apply(&mut self.doc, Box::new(InsertLayer { index: 0, layer }))
+        {
+            tracing::error!("añadir fondo falló: {e}");
+            return;
+        }
+        self.images.insert(id, pixels);
+        self.background_layer = Some(id);
     }
 
     /// Atajos de edición globales del editor (deshacer/rehacer).
@@ -200,6 +356,9 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ));
     ui.separator();
 
+    page_ui(state, ui);
+    ui.separator();
+
     if let Some(sel) = state.selected {
         if state.doc.layer(sel).is_ok() {
             layer_properties_ui(state, ui, sel, page_dims);
@@ -245,6 +404,116 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
     ui.weak("Rueda: zoom · Espacio/botón central: paneo · Ctrl+0: ajustar");
     ui.weak("Ctrl+S: guardar · Ctrl+Shift+S: guardar como");
+}
+
+/// Sección «Página»: resolución (campos + presets) y fondo desenfocado.
+fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    let Ok(page) = state.doc.page() else { return };
+    let original = (page.width, page.height);
+    let mut w = original.0;
+    let mut h = original.1;
+    let mut changed = false;
+    let mut commit = false;
+
+    ui.label("Página");
+    ui.horizontal(|ui| {
+        ui.label("An");
+        let rw = ui.add(
+            egui::DragValue::new(&mut w)
+                .speed(2.0)
+                .range(16.0..=16384.0)
+                .max_decimals(0),
+        );
+        ui.label("Al");
+        let rh = ui.add(
+            egui::DragValue::new(&mut h)
+                .speed(2.0)
+                .range(16.0..=16384.0)
+                .max_decimals(0),
+        );
+        changed |= rw.changed() || rh.changed();
+        commit |= rw.drag_stopped() || rw.lost_focus() || rh.drag_stopped() || rh.lost_focus();
+
+        // Presets rápidos de resolución.
+        let image_size = state.doc.page().ok().and_then(|p| {
+            p.layers.iter().rev().find_map(|l| match &l.content {
+                LayerContent::Image(img) if Some(l.id) != state.background_layer => {
+                    Some((f64::from(img.natural_width), f64::from(img.natural_height)))
+                }
+                _ => None,
+            })
+        });
+        egui::ComboBox::from_id_salt("page_presets")
+            .selected_text("Presets")
+            .width(72.0)
+            .show_ui(ui, |ui| {
+                let mut preset = |ui: &mut egui::Ui, label: String, pw: f64, ph: f64| {
+                    if ui.selectable_label(false, label).clicked() {
+                        w = pw;
+                        h = ph;
+                        changed = true;
+                        commit = true;
+                    }
+                };
+                preset(ui, "1920 × 1080".into(), 1920.0, 1080.0);
+                preset(ui, "1080 × 1920".into(), 1080.0, 1920.0);
+                preset(ui, "1080 × 1080".into(), 1080.0, 1080.0);
+                if let Some((iw, ih)) = image_size {
+                    preset(
+                        ui,
+                        format!("Imagen ({} × {})", iw as i64, ih as i64),
+                        iw,
+                        ih,
+                    );
+                }
+            });
+    });
+
+    if changed
+        && (w, h)
+            != (state
+                .doc
+                .page()
+                .map(|p| (p.width, p.height))
+                .unwrap_or(original))
+    {
+        if state.page_edit.is_none() {
+            state.page_edit = Some(original);
+        }
+        if let Ok(page) = state.doc.page_mut() {
+            page.width = w.max(16.0);
+            page.height = h.max(16.0);
+        }
+    }
+    if commit {
+        if let Some(before) = state.page_edit.take() {
+            let after = state
+                .doc
+                .page()
+                .map(|p| (p.width, p.height))
+                .unwrap_or(before);
+            if after != before {
+                state
+                    .history
+                    .push_applied(Box::new(SetPageSize { before, after }));
+            }
+        }
+    }
+
+    // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
+    let active = state.background_active();
+    let can_toggle = active || state.background_source().is_some();
+    let mut bg_on = active;
+    let response = ui.add_enabled(
+        can_toggle,
+        egui::Checkbox::new(&mut bg_on, "Fondo desenfocado"),
+    );
+    if response.changed() && bg_on != active {
+        state.set_blurred_background(bg_on);
+    }
+    if active {
+        ui.weak("Selecciónalo en el lienzo para ajustar su desenfoque.");
+    }
 }
 
 /// Campos de posición/tamaño/escala y botones de alineación de una capa.

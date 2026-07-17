@@ -38,6 +38,24 @@ pub fn align_vertical(t: &Transform, container_height: f64, align: VAlign) -> Tr
     Transform { y, ..*t }
 }
 
+/// Transform que hace que una imagen CUBRA la página entera conservando su
+/// proporción (estilo «cover»: escala al máximo necesario y centra; lo que
+/// sobresale se recorta al renderizar).
+pub fn cover_transform(natural_w: f64, natural_h: f64, page_w: f64, page_h: f64) -> Transform {
+    if natural_w <= 0.0 || natural_h <= 0.0 {
+        return Transform::new(0.0, 0.0, page_w.max(1.0), page_h.max(1.0));
+    }
+    let scale = (page_w / natural_w).max(page_h / natural_h);
+    let width = natural_w * scale;
+    let height = natural_h * scale;
+    Transform::new(
+        (page_w - width) / 2.0,
+        (page_h - height) / 2.0,
+        width,
+        height,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corner {
     TopLeft,
@@ -141,6 +159,21 @@ mod tests {
         assert_eq!(align_vertical(&layer, 600.0, VAlign::Middle).y, 250.0);
         assert_eq!(align_vertical(&layer, 600.0, VAlign::Bottom).y, 500.0);
         assert_eq!(align_vertical(&layer, 600.0, VAlign::Middle).x, 37.0);
+    }
+
+    #[test]
+    fn cover_scales_up_and_centers() {
+        // Imagen 4:3 sobre página 16:9: manda el ancho, sobra alto.
+        let c = cover_transform(800.0, 600.0, 1920.0, 1080.0);
+        assert_eq!((c.width, c.height), (1920.0, 1440.0));
+        assert_eq!(c.x, 0.0);
+        assert_eq!(c.y, (1080.0 - 1440.0) / 2.0);
+
+        // Imagen apaisada sobre página vertical: manda el alto.
+        let c = cover_transform(1920.0, 1080.0, 1080.0, 1920.0);
+        assert!((c.height - 1920.0).abs() < 1e-9);
+        assert!(c.width > 1080.0);
+        assert!((c.x - (1080.0 - c.width) / 2.0).abs() < 1e-9);
     }
 
     #[test]

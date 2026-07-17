@@ -9,8 +9,10 @@ mod document;
 mod error;
 mod layer;
 
-pub use align::{align_horizontal, align_vertical, resize_from_corner, Corner, HAlign, VAlign};
-pub use command::{Command, History, SetBlur, SetTransform};
+pub use align::{
+    align_horizontal, align_vertical, cover_transform, resize_from_corner, Corner, HAlign, VAlign,
+};
+pub use command::{Command, History, InsertLayer, RemoveLayer, SetBlur, SetPageSize, SetTransform};
 pub use document::{Document, Page};
 pub use error::CoreError;
 pub use layer::{Effects, ImageContent, Layer, LayerContent, LayerId, Transform};

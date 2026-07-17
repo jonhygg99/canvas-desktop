@@ -3,6 +3,7 @@
 use eframe::egui;
 
 pub enum WelcomeAction {
+    NewProject,
     OpenFile,
     OpenFolder,
 }
@@ -17,6 +18,16 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>) -> Option<WelcomeAction> {
             ui.label("Edita imágenes directamente sobre tus archivos.");
             ui.add_space(24.0);
 
+            if ui
+                .add(
+                    egui::Button::new("✨  Nuevo diseño (1920 × 1080)")
+                        .min_size(egui::vec2(220.0, 36.0)),
+                )
+                .clicked()
+            {
+                action = Some(WelcomeAction::NewProject);
+            }
+            ui.add_space(8.0);
             if ui
                 .add(egui::Button::new("📄  Abrir archivo…").min_size(egui::vec2(220.0, 36.0)))
                 .clicked()

@@ -92,7 +92,15 @@ pub fn build_scene(
         }
     }
 
-    // Capas, de abajo arriba.
+    // Capas, de abajo arriba, recortadas al rect de la página (lo que
+    // sobresale del lienzo no se ve ni se hornea).
+    scene.push_layer(
+        Fill::NonZero,
+        vello::peniko::Mix::Normal,
+        1.0,
+        view,
+        &page_rect,
+    );
     for layer in &page.layers {
         if !layer.visible {
             continue;
@@ -119,6 +127,8 @@ pub fn build_scene(
             }
         }
     }
+
+    scene.pop_layer();
 
     // Borde sutil de la página por encima de todo (solo en pantalla).
     if decorated {
