@@ -30,9 +30,12 @@ El canvas mínimo funcionando de punta a punta:
   arrastrar una imagen sobre un documento abierto la añade como capa nueva.
 - **Resolución de página** editable (campos An/Al y presets) en la sección
   «Página» del panel, con deshacer.
-- **Fondo desenfocado**: opción que pone detrás una copia de la imagen
-  cubriendo la página con desenfoque 50 por defecto; selecciónala en el
-  lienzo para ajustar su intensidad con el slider de Desenfoque.
+- **Fondo desenfocado**: duplica la imagen y la pone de fondo cubriendo toda
+  la página con desenfoque 50 por defecto (la imagen original se encaja
+  centrada automáticamente si tapaba la página). El slider junto al checkbox
+  ajusta la intensidad, y el fondo se recoloca solo al cambiar la resolución.
+- **Sombra** por capa: proyectada, difusa y configurable (desplazamiento X/Y,
+  difusión y opacidad), activable con un checkbox en la sección de la capa.
 
 Pendiente (siguientes entregas): sidecar `.canvas` editable, integración
 «Abrir con» del sistema e instancia única, texto/formas/más filtros, panel de
@@ -119,7 +122,11 @@ Decisiones fijadas:
 - El blur usa `Renderer::register_texture` de vello para componer la textura
   GPU desenfocada directamente en la escena, sin readback a CPU.
 - El «fondo desenfocado» es una capa normal (imagen en transform «cover» +
-  blur 50), así que hereda render, deshacer y controles sin código especial.
+  blur 50), así que hereda render, deshacer y controles sin código especial;
+  las operaciones compuestas (encajar + insertar fondo, cambiar resolución +
+  recolocar fondo) se agrupan con el comando `Composite` en UN paso de undo.
+- La sombra por capa usa `Scene::draw_blurred_rounded_rect` de vello
+  (rectangular y difusa, sin pases de GPU propios).
 - Las capas se recortan al rect de la página al renderizar y al hornear.
 - `kamadak-exif` se añadió al stack porque el crate `image` no aplica la
   orientación EXIF por sí solo.

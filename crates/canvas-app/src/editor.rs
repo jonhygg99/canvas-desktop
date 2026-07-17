@@ -96,6 +96,8 @@ pub struct EditorState {
     background_layer: Option<LayerId>,
     /// Ajuste de desenfoque en curso (slider): capa y radio original.
     blur_edit: Option<(LayerId, f32)>,
+    /// Ajuste de sombra en curso: capa y sombra original.
+    shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
     pub saving: bool,
     /// Último error de guardado, visible hasta descartarlo.
@@ -144,6 +146,7 @@ impl EditorState {
             page_edit: None,
             background_layer: None,
             blur_edit: None,
+            shadow_edit: None,
             saving: false,
             save_error: None,
             from_gallery: None,
@@ -171,6 +174,7 @@ impl EditorState {
             page_edit: None,
             background_layer: None,
             blur_edit: None,
+            shadow_edit: None,
             saving: false,
             save_error: None,
             from_gallery: None,
@@ -272,17 +276,46 @@ impl EditorState {
             return;
         };
         let LayerContent::Image(content) = source.content.clone();
+        let source_t = source.transform;
         let Some(pixels) = self.images.get(&source_id).cloned() else {
             return;
         };
         let Ok(page) = self.doc.page() else { return };
+        let (pw, ph) = (page.width, page.height);
+
+        let mut commands: Vec<Box<dyn canvas_core::Command>> = Vec::new();
+
+        // Si la imagen fuente tapa la página entera, el fondo no se vería:
+        // encájala centrada (estilo CapCut) como parte del mismo paso.
+        let covers_page = source_t.x <= 0.0
+            && source_t.y <= 0.0
+            && source_t.x + source_t.width >= pw
+            && source_t.y + source_t.height >= ph;
+        if covers_page {
+            let (nw, nh) = (
+                f64::from(content.natural_width),
+                f64::from(content.natural_height),
+            );
+            let mut scale = (pw / nw).min(ph / nh);
+            // Si el aspecto coincide con la página, «contain» seguiría
+            // tapándola entera y el fondo no se vería: deja un margen.
+            if nw * scale >= pw * 0.999 && nh * scale >= ph * 0.999 {
+                scale *= 0.85;
+            }
+            let (w, h) = (nw * scale, nh * scale);
+            commands.push(Box::new(SetTransform {
+                layer: source_id,
+                before: source_t,
+                after: Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h),
+            }));
+        }
+
         let transform = cover_transform(
             f64::from(content.natural_width),
             f64::from(content.natural_height),
-            page.width,
-            page.height,
+            pw,
+            ph,
         );
-
         let id = self.doc.allocate_layer_id();
         let mut layer = Layer::new(
             id,
@@ -291,15 +324,42 @@ impl EditorState {
             LayerContent::Image(content),
         );
         layer.effects.blur_radius = 50.0;
-        if let Err(e) = self
-            .history
-            .apply(&mut self.doc, Box::new(InsertLayer { index: 0, layer }))
-        {
+        commands.push(Box::new(InsertLayer { index: 0, layer }));
+
+        if let Err(e) = self.history.apply(
+            &mut self.doc,
+            Box::new(canvas_core::Composite::new("Fondo desenfocado", commands)),
+        ) {
             tracing::error!("añadir fondo falló: {e}");
             return;
         }
         self.images.insert(id, pixels);
         self.background_layer = Some(id);
+    }
+
+    /// Recoloca la capa de fondo para que cubra la página actual. Devuelve el
+    /// comando (ya aplicado al documento) para integrarlo en un `Composite`.
+    fn resync_background_cover(&mut self) -> Option<Box<dyn canvas_core::Command>> {
+        let id = self.background_layer.filter(|_| self.background_active())?;
+        let (pw, ph) = self.doc.page().map(|p| (p.width, p.height)).ok()?;
+        let layer = self.doc.layer(id).ok()?;
+        let LayerContent::Image(img) = &layer.content;
+        let before = layer.transform;
+        let after = cover_transform(
+            f64::from(img.natural_width),
+            f64::from(img.natural_height),
+            pw,
+            ph,
+        );
+        if after == before {
+            return None;
+        }
+        self.doc.layer_mut(id).ok()?.transform = after;
+        Some(Box::new(SetTransform {
+            layer: id,
+            before,
+            after,
+        }))
     }
 
     /// Atajos de edición globales del editor (deshacer/rehacer).
@@ -493,9 +553,19 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 .map(|p| (p.width, p.height))
                 .unwrap_or(before);
             if after != before {
+                // El fondo desenfocado (si lo hay) se recoloca para seguir
+                // cubriendo la página nueva, todo en UN paso de deshacer.
+                let mut commands: Vec<Box<dyn canvas_core::Command>> =
+                    vec![Box::new(SetPageSize { before, after })];
+                if let Some(cmd) = state.resync_background_cover() {
+                    commands.push(cmd);
+                }
                 state
                     .history
-                    .push_applied(Box::new(SetPageSize { before, after }));
+                    .push_applied(Box::new(canvas_core::Composite::new(
+                        "Cambiar resolución",
+                        commands,
+                    )));
             }
         }
     }
@@ -512,7 +582,163 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         state.set_blurred_background(bg_on);
     }
     if active {
-        ui.weak("Selecciónalo en el lienzo para ajustar su desenfoque.");
+        if let Some(id) = state.background_layer {
+            blur_control(state, ui, id);
+        }
+    }
+}
+
+/// Slider de desenfoque (no destructivo) de una capa, con consolidación en un
+/// solo paso de deshacer al soltar. Se usa tanto en la sección de la capa
+/// seleccionada como junto al checkbox del fondo desenfocado.
+fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
+    let current_blur = state
+        .doc
+        .layer(target)
+        .map(|l| l.effects.blur_radius)
+        .unwrap_or(0.0);
+    let mut blur = current_blur;
+    ui.horizontal(|ui| {
+        let r = ui.add(
+            egui::Slider::new(&mut blur, 0.0..=100.0)
+                .suffix(" px")
+                .fixed_decimals(0),
+        );
+        if r.changed() && blur != current_blur {
+            if state.blur_edit.is_none() {
+                state.blur_edit = Some((target, current_blur));
+            }
+            if let Ok(l) = state.doc.layer_mut(target) {
+                l.effects.blur_radius = blur;
+            }
+        }
+        if r.drag_stopped() || r.lost_focus() {
+            if let Some((id, before)) = state.blur_edit.take() {
+                let after = state
+                    .doc
+                    .layer(id)
+                    .map(|l| l.effects.blur_radius)
+                    .unwrap_or(before);
+                if (after - before).abs() > f32::EPSILON {
+                    state.history.push_applied(Box::new(canvas_core::SetBlur {
+                        layer: id,
+                        before,
+                        after,
+                    }));
+                }
+            }
+        }
+        if current_blur > 0.0 && ui.button("Quitar").clicked() {
+            if let Err(e) = state.history.apply(
+                &mut state.doc,
+                Box::new(canvas_core::SetBlur {
+                    layer: target,
+                    before: current_blur,
+                    after: 0.0,
+                }),
+            ) {
+                tracing::error!("quitar desenfoque falló: {e}");
+            }
+        }
+    });
+}
+
+/// Checkbox y controles de la sombra proyectada de una capa.
+fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
+    let current = state.doc.layer(sel).ok().and_then(|l| l.effects.shadow);
+
+    let mut enabled = current.is_some();
+    if ui.checkbox(&mut enabled, "Sombra").changed() {
+        let after = enabled.then(canvas_core::Shadow::default);
+        if let Err(e) = state.history.apply(
+            &mut state.doc,
+            Box::new(canvas_core::SetShadow {
+                layer: sel,
+                before: current,
+                after,
+            }),
+        ) {
+            tracing::error!("sombra falló: {e}");
+        }
+        return;
+    }
+
+    let Some(shadow) = current else { return };
+    let mut sh = shadow;
+    let mut changed = false;
+    let mut commit = false;
+    let mut track = |r: egui::Response| {
+        if r.changed() {
+            changed = true;
+        }
+        if r.drag_stopped() || r.lost_focus() {
+            commit = true;
+        }
+    };
+
+    ui.horizontal(|ui| {
+        ui.label("Desplaz.");
+        track(
+            ui.add(
+                egui::DragValue::new(&mut sh.offset_x)
+                    .speed(1.0)
+                    .range(-500.0..=500.0)
+                    .prefix("X ")
+                    .max_decimals(0),
+            ),
+        );
+        track(
+            ui.add(
+                egui::DragValue::new(&mut sh.offset_y)
+                    .speed(1.0)
+                    .range(-500.0..=500.0)
+                    .prefix("Y ")
+                    .max_decimals(0),
+            ),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Difusión");
+        track(
+            ui.add(
+                egui::Slider::new(&mut sh.blur, 0.0..=100.0)
+                    .suffix(" px")
+                    .fixed_decimals(0),
+            ),
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("Opacidad");
+        let mut pct = sh.opacity * 100.0;
+        track(
+            ui.add(
+                egui::Slider::new(&mut pct, 0.0..=100.0)
+                    .suffix(" %")
+                    .fixed_decimals(0),
+            ),
+        );
+        sh.opacity = pct / 100.0;
+    });
+
+    if changed && sh != shadow {
+        if state.shadow_edit.is_none() {
+            state.shadow_edit = Some((sel, current));
+        }
+        if let Ok(l) = state.doc.layer_mut(sel) {
+            l.effects.shadow = Some(sh);
+        }
+    }
+    if commit {
+        if let Some((id, before)) = state.shadow_edit.take() {
+            let after = state.doc.layer(id).ok().and_then(|l| l.effects.shadow);
+            if after != before {
+                state.history.push_applied(Box::new(canvas_core::SetShadow {
+                    layer: id,
+                    before,
+                    after,
+                }));
+            }
+        }
     }
 }
 
@@ -624,57 +850,12 @@ fn layer_properties_ui(
 
     // --- Desenfoque (no destructivo, vista previa en vivo) ---
     ui.label("Desenfoque");
-    {
-        let current_blur = state
-            .doc
-            .layer(sel)
-            .map(|l| l.effects.blur_radius)
-            .unwrap_or(0.0);
-        let mut blur = current_blur;
-        ui.horizontal(|ui| {
-            let r = ui.add(
-                egui::Slider::new(&mut blur, 0.0..=100.0)
-                    .suffix(" px")
-                    .fixed_decimals(0),
-            );
-            if r.changed() && blur != current_blur {
-                if state.blur_edit.is_none() {
-                    state.blur_edit = Some((sel, current_blur));
-                }
-                if let Ok(l) = state.doc.layer_mut(sel) {
-                    l.effects.blur_radius = blur;
-                }
-            }
-            if r.drag_stopped() || r.lost_focus() {
-                if let Some((id, before)) = state.blur_edit.take() {
-                    let after = state
-                        .doc
-                        .layer(id)
-                        .map(|l| l.effects.blur_radius)
-                        .unwrap_or(before);
-                    if (after - before).abs() > f32::EPSILON {
-                        state.history.push_applied(Box::new(canvas_core::SetBlur {
-                            layer: id,
-                            before,
-                            after,
-                        }));
-                    }
-                }
-            }
-            if current_blur > 0.0 && ui.button("Quitar").clicked() {
-                if let Err(e) = state.history.apply(
-                    &mut state.doc,
-                    Box::new(canvas_core::SetBlur {
-                        layer: sel,
-                        before: current_blur,
-                        after: 0.0,
-                    }),
-                ) {
-                    tracing::error!("quitar desenfoque falló: {e}");
-                }
-            }
-        });
-    }
+    blur_control(state, ui, sel);
+
+    ui.add_space(8.0);
+
+    // --- Sombra proyectada ---
+    shadow_ui(state, ui, sel);
 
     ui.add_space(8.0);
 

@@ -47,12 +47,38 @@ impl Transform {
     }
 }
 
+/// Sombra proyectada de una capa (rectangular, difusa).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Shadow {
+    /// Desplazamiento en píxeles de página.
+    pub offset_x: f64,
+    pub offset_y: f64,
+    /// Desviación estándar del desenfoque, en píxeles.
+    pub blur: f32,
+    /// Opacidad 0..=1.
+    pub opacity: f32,
+}
+
+impl Default for Shadow {
+    fn default() -> Self {
+        Self {
+            offset_x: 12.0,
+            offset_y: 12.0,
+            blur: 24.0,
+            opacity: 0.5,
+        }
+    }
+}
+
 /// Efectos no destructivos de la capa: parámetros que se ajustan o quitan en
 /// cualquier momento y solo se aplican de verdad al exportar/guardar.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Effects {
     /// Radio del desenfoque gaussiano en píxeles; 0 = sin desenfoque.
     pub blur_radius: f32,
+    /// Sombra proyectada, si está activa.
+    #[serde(default)]
+    pub shadow: Option<Shadow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

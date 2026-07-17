@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::document::Document;
 use crate::error::CoreError;
-use crate::layer::{Layer, LayerId, Transform};
+use crate::layer::{Layer, LayerId, Shadow, Transform};
 
 /// Un paso de edición reversible (patrón Command).
 ///
@@ -61,6 +61,67 @@ impl Command for SetBlur {
 
     fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.layer_mut(self.layer)?.effects.blur_radius = self.before;
+        Ok(())
+    }
+}
+
+/// Activa/desactiva/ajusta la sombra proyectada de una capa.
+#[derive(Debug)]
+pub struct SetShadow {
+    pub layer: LayerId,
+    pub before: Option<Shadow>,
+    pub after: Option<Shadow>,
+}
+
+impl Command for SetShadow {
+    fn label(&self) -> &str {
+        "Sombra"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects.shadow = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects.shadow = self.before;
+        Ok(())
+    }
+}
+
+/// Agrupa varios comandos en UN solo paso de deshacer: se aplican en orden y
+/// se revierten en orden inverso.
+#[derive(Debug)]
+pub struct Composite {
+    label: String,
+    commands: Vec<Box<dyn Command>>,
+}
+
+impl Composite {
+    pub fn new(label: impl Into<String>, commands: Vec<Box<dyn Command>>) -> Self {
+        Self {
+            label: label.into(),
+            commands,
+        }
+    }
+}
+
+impl Command for Composite {
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        for cmd in &mut self.commands {
+            cmd.apply(doc)?;
+        }
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        for cmd in self.commands.iter_mut().rev() {
+            cmd.revert(doc)?;
+        }
         Ok(())
     }
 }
@@ -423,6 +484,68 @@ mod tests {
             history.is_dirty(),
             "ni siquiera igualando la longitud de pila"
         );
+    }
+
+    #[test]
+    fn composite_applies_in_order_and_reverts_in_reverse() {
+        let (mut doc, id) = doc_with_layer();
+        let start = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        // Dos pasos encadenados: el segundo parte del resultado del primero.
+        let step1 = Transform { x: 100.0, ..start };
+        let step2 = Transform { y: 200.0, ..step1 };
+        history
+            .apply(
+                &mut doc,
+                Box::new(Composite::new(
+                    "mover dos veces",
+                    vec![
+                        Box::new(SetTransform {
+                            layer: id,
+                            before: start,
+                            after: step1,
+                        }),
+                        Box::new(SetTransform {
+                            layer: id,
+                            before: step1,
+                            after: step2,
+                        }),
+                    ],
+                )),
+            )
+            .unwrap();
+        assert_eq!(doc.layer(id).unwrap().transform, step2);
+
+        // UN solo deshacer revierte todo el grupo, en orden inverso.
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layer(id).unwrap().transform, start);
+        assert!(!history.can_undo());
+
+        history.redo(&mut doc).unwrap();
+        assert_eq!(doc.layer(id).unwrap().transform, step2);
+    }
+
+    #[test]
+    fn set_shadow_roundtrips() {
+        let (mut doc, id) = doc_with_layer();
+        let mut history = History::default();
+        let shadow = crate::Shadow::default();
+
+        history
+            .apply(
+                &mut doc,
+                Box::new(SetShadow {
+                    layer: id,
+                    before: None,
+                    after: Some(shadow),
+                }),
+            )
+            .unwrap();
+        assert_eq!(doc.layer(id).unwrap().effects.shadow, Some(shadow));
+
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layer(id).unwrap().effects.shadow, None);
     }
 
     #[test]

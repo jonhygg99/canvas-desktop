@@ -105,6 +105,23 @@ pub fn build_scene(
         if !layer.visible {
             continue;
         }
+        // Sombra proyectada (rectangular, difusa) por debajo de la capa.
+        if let Some(shadow) = layer.effects.shadow {
+            let t = layer.transform;
+            let rect = Rect::new(
+                t.x + shadow.offset_x,
+                t.y + shadow.offset_y,
+                t.x + t.width + shadow.offset_x,
+                t.y + t.height + shadow.offset_y,
+            );
+            scene.draw_blurred_rounded_rect(
+                view,
+                rect,
+                vello::peniko::Color::BLACK.with_alpha(shadow.opacity.clamp(0.0, 1.0)),
+                0.0,
+                f64::from(shadow.blur.max(0.0)),
+            );
+        }
         match &layer.content {
             LayerContent::Image(_) => {
                 let Some(image) = blurred.get(&layer.id).or_else(|| images.get(&layer.id)) else {
