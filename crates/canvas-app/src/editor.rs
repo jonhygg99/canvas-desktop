@@ -916,6 +916,13 @@ fn layer_properties_ui(
             canvas_core::VAlign::Middle,
         ));
     }
+    if ui
+        .button("⛶ Cubrir el lienzo")
+        .on_hover_text("La imagen llena toda la página manteniendo su proporción")
+        .clicked()
+    {
+        aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));
+    }
 
     // --- Aplicar cambios ---
     if let Some(after) = aligned {
