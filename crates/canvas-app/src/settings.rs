@@ -7,6 +7,34 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+/// Tema de la interfaz.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ThemeChoice {
+    /// Sigue el tema del sistema (por defecto).
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "System",
+            ThemeChoice::Light => "Light",
+            ThemeChoice::Dark => "Dark",
+        }
+    }
+
+    pub fn to_egui(self) -> egui::ThemePreference {
+        match self {
+            ThemeChoice::System => egui::ThemePreference::System,
+            ThemeChoice::Light => egui::ThemePreference::Light,
+            ThemeChoice::Dark => egui::ThemePreference::Dark,
+        }
+    }
+}
+
 /// Criterio de orden de la galería de carpetas.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GallerySort {
@@ -35,6 +63,10 @@ pub struct AppSettings {
     pub sidecar_default: bool,
     /// Orden de la galería de carpetas.
     pub gallery_sort: GallerySort,
+    /// Archivos y carpetas abiertos recientemente (el más nuevo primero).
+    pub recent_files: Vec<PathBuf>,
+    /// Tema de la interfaz.
+    pub theme: ThemeChoice,
 }
 
 impl Default for AppSettings {
@@ -44,6 +76,8 @@ impl Default for AppSettings {
             skip_overwrite_warning: false,
             sidecar_default: true,
             gallery_sort: GallerySort::default(),
+            recent_files: Vec::new(),
+            theme: ThemeChoice::default(),
         }
     }
 }
@@ -117,6 +151,14 @@ pub fn settings_window(
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
+            ui.label("Theme");
+            ui.horizontal(|ui| {
+                for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+                    ui.selectable_value(&mut settings.theme, choice, choice.label());
+                }
+            });
+            ui.add_space(10.0);
+
             ui.label("JPEG quality when saving");
             ui.add(egui::Slider::new(&mut settings.jpeg_quality, 1..=100).show_value(true));
             ui.weak("Overwriting a JPEG re-encodes it; higher quality = larger file.");

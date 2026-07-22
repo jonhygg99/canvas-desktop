@@ -93,8 +93,84 @@ impl ShellIntegration for WindowsShell {
         Ok(())
     }
 
-    fn update_jump_list(&self, _recents: &[PathBuf]) -> Result<(), ShellError> {
-        Err(ShellError::NotImplemented)
+    fn update_jump_list(&self, recents: &[PathBuf]) -> Result<(), ShellError> {
+        update_jump_list_impl(recents).map_err(|e| ShellError::Registry(format!("jump list: {e}")))
+    }
+}
+
+/// AppUserModelID propio: hace que la Jump List y la barra de tareas
+/// correspondan a esta app. Debe llamarse ANTES de crear la ventana.
+pub fn set_app_user_model_id() {
+    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+    unsafe {
+        if let Err(e) = SetCurrentProcessExplicitAppUserModelID(&HSTRING::from("CanvasDesktop.App"))
+        {
+            tracing::warn!("SetCurrentProcessExplicitAppUserModelID falló: {e}");
+        }
+    }
+}
+
+/// Publica los recientes como categoría de la Jump List de la barra de
+/// tareas. COM con apartment STA propio del hilo llamador.
+fn update_jump_list_impl(recents: &[PathBuf]) -> windows::core::Result<()> {
+    use windows::core::Interface;
+    use windows::Win32::Storage::EnhancedStorage::PKEY_Title;
+    use windows::Win32::System::Com::StructuredStorage::{
+        InitPropVariantFromStringAsVector, PropVariantClear,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::Common::{IObjectArray, IObjectCollection};
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::{
+        DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW, ShellLink,
+    };
+
+    let exe = std::env::current_exe().map_err(|e| {
+        windows::core::Error::new(windows::core::HRESULT(-1), format!("current_exe: {e}"))
+    })?;
+
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let result = (|| -> windows::core::Result<()> {
+            let list: ICustomDestinationList =
+                CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER)?;
+            let mut slots = 0u32;
+            let _removed: IObjectArray = list.BeginList(&mut slots)?;
+
+            let collection: IObjectCollection =
+                CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
+            for path in recents.iter().take(10) {
+                let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+                link.SetPath(&HSTRING::from(exe.as_os_str()))?;
+                link.SetArguments(&HSTRING::from(format!("\"{}\"", path.display())))?;
+                link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
+
+                // El texto visible del elemento es la propiedad Title.
+                let store: IPropertyStore = link.cast()?;
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                let mut title = InitPropVariantFromStringAsVector(&HSTRING::from(name))?;
+                store.SetValue(&PKEY_Title, &title)?;
+                store.Commit()?;
+                let _ = PropVariantClear(&mut title);
+
+                collection.AddObject(&link)?;
+            }
+
+            let array: IObjectArray = collection.cast()?;
+            list.AppendCategory(&HSTRING::from("Recent"), &array)?;
+            list.CommitList()?;
+            Ok(())
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        result
     }
 }
 

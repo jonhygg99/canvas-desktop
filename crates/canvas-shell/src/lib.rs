@@ -19,6 +19,14 @@ mod linux;
 pub use integration::{platform, ShellError, ShellIntegration};
 pub use single_instance::{acquire_instance, InstanceListener, InstanceRole};
 
+/// Identidad de la app ante la barra de tareas (AppUserModelID en Windows).
+/// Llamar lo antes posible en `main`, antes de crear la ventana. No-op fuera
+/// de Windows.
+pub fn set_app_identity() {
+    #[cfg(target_os = "windows")]
+    windows::set_app_user_model_id();
+}
+
 use std::path::PathBuf;
 
 /// Evento normalizado que el resto de la app consume sin saber de qué

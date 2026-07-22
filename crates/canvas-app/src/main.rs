@@ -3,6 +3,7 @@
 mod editor;
 mod gallery;
 mod loader;
+mod menus;
 mod settings;
 mod surface;
 mod watcher;
@@ -26,6 +27,9 @@ fn main() -> Result<()> {
                 .unwrap_or_else(|_| "info,wgpu_core=warn,wgpu_hal=warn".into()),
         )
         .init();
+
+    // Identidad ante la barra de tareas (Jump List); antes de crear la ventana.
+    canvas_shell::set_app_identity();
 
     let initial_paths = canvas_shell::open_paths_from_args(std::env::args());
 
@@ -64,6 +68,14 @@ enum View {
     Editor(Box<editor::EditorState>),
 }
 
+/// Navegación diferida: qué hacer cuando termine el guardado en curso o al
+/// final del frame (para no pelear con el préstamo de `self.view`).
+#[derive(Clone)]
+enum Nav {
+    Open(PathBuf),
+    NewDesign,
+}
+
 struct App {
     renderer: CanvasRenderer,
     surface: Option<CanvasSurface>,
@@ -83,8 +95,8 @@ struct App {
     thumb_cache: Option<PathBuf>,
     /// Carpeta de galería de la que procede lo que está abierto.
     gallery_origin: Option<PathBuf>,
-    /// Volver a esta galería en cuanto termine el guardado en curso.
-    return_to: Option<PathBuf>,
+    /// Navegación pendiente para cuando termine el guardado en curso.
+    after_save: Option<Nav>,
     /// Ajustes persistidos del usuario.
     settings: settings::AppSettings,
     /// El usuario ya confirmó la sobrescritura destructiva en esta sesión.
@@ -100,6 +112,14 @@ struct App {
     show_settings: bool,
     /// Resultado del último registro/desregistro del Explorador.
     shell_status: String,
+    /// Menús nativos (muda en Windows); `None` si no se pudieron instalar.
+    menus: Option<menus::AppMenus>,
+    /// Ventana «About» visible.
+    show_about: bool,
+    /// Último tema aplicado a egui (para no reaplicar cada frame).
+    applied_theme: Option<settings::ThemeChoice>,
+    /// Último estado «hay editor abierto» comunicado al menú.
+    menus_editor_open: bool,
     /// Watcher `notify` del archivo abierto en el editor, si lo hay.
     watcher: Option<watcher::DocWatcher>,
     /// Ventana de gracia tras un guardado propio: los eventos del watcher
@@ -136,6 +156,18 @@ impl App {
             });
         }
 
+        // Menú nativo (Windows): necesita el HWND de la ventana recién creada.
+        let mut native_menus = None;
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = cc.window_handle() {
+                if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                    native_menus = menus::AppMenus::install(h.hwnd.get());
+                }
+            }
+        }
+
         let mut app = Self {
             renderer,
             surface: None,
@@ -149,7 +181,7 @@ impl App {
             allow_close: false,
             thumb_cache: thumbnail_cache_dir(),
             gallery_origin: None,
-            return_to: None,
+            after_save: None,
             settings: settings::AppSettings::load(),
             overwrite_confirmed: false,
             overwrite_prompt: None,
@@ -157,9 +189,16 @@ impl App {
             overwrite_dont_ask: false,
             show_settings: false,
             shell_status: String::new(),
+            menus: native_menus,
+            show_about: false,
+            applied_theme: None,
+            menus_editor_open: false,
             watcher: None,
             ignore_fs_events_until: None,
         };
+        if let Some(m) = app.menus.as_mut() {
+            m.set_recents(&app.settings.recent_files);
+        }
         if let Some(path) = initial_path {
             app.open_path(path, &cc.egui_ctx);
         }
@@ -180,6 +219,7 @@ impl App {
                 self.tx.clone(),
                 ctx.clone(),
             );
+            self.push_recent(&path);
             self.view = View::Gallery(gallery::GalleryState::new(path, self.settings.gallery_sort));
         } else if canvas_io::is_image_file(&path) {
             // Abrir un archivo que no viene de la galería actual rompe el
@@ -188,6 +228,7 @@ impl App {
                 self.gallery_origin = None;
             }
             loader::spawn_load_image(path.clone(), true, self.tx.clone(), ctx.clone());
+            self.push_recent(&path);
             self.view = View::Loading { path };
         } else {
             self.view = View::Welcome {
@@ -200,9 +241,144 @@ impl App {
         self.sync_title(ctx);
     }
 
+    /// Apunta lo abierto en los recientes: ajustes, menú y Jump List del SO.
+    fn push_recent(&mut self, path: &std::path::Path) {
+        let path = path.to_owned();
+        self.settings.recent_files.retain(|p| p != &path);
+        self.settings.recent_files.insert(0, path);
+        self.settings.recent_files.truncate(10);
+        self.settings.save_in_background();
+        if let Some(m) = self.menus.as_mut() {
+            m.set_recents(&self.settings.recent_files);
+        }
+        // La Jump List usa COM: hilo aparte, mejor esfuerzo.
+        let recents = self.settings.recent_files.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = canvas_shell::platform().update_jump_list(&recents) {
+                tracing::debug!("jump list no actualizada: {e}");
+            }
+        });
+    }
+
+    /// Documento nuevo en blanco (desde la bienvenida o el menú File).
+    fn new_design(&mut self, ctx: &egui::Context) {
+        self.gallery_origin = None;
+        let mut state = editor::EditorState::new_blank(1920.0, 1080.0);
+        state.sidecar_enabled = self.settings.sidecar_default;
+        self.view = View::Editor(Box::new(state));
+        self.sync_title(ctx);
+    }
+
+    fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
+        match nav {
+            Nav::Open(path) => self.open_path(path, ctx),
+            Nav::NewDesign => self.new_design(ctx),
+        }
+    }
+
+    /// Navega, pero si hay un editor con cambios sin guardar delante pregunta
+    /// primero (Save / Discard / Cancel).
+    fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
+        let dirty_name = match &self.view {
+            View::Editor(state) if state.is_dirty() => Some(state.file_name()),
+            _ => None,
+        };
+        let Some(name) = dirty_name else {
+            self.navigate(nav, ctx);
+            return;
+        };
+        let target = match &nav {
+            Nav::Open(p) => format!(
+                "\"{}\"",
+                p.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string())
+            ),
+            Nav::NewDesign => "a new design".to_owned(),
+        };
+        let choice = rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Warning)
+            .set_title("Unsaved changes")
+            .set_description(format!(
+                "\"{name}\" has unsaved changes.\nSave them before opening {target}? (\"No\" discards them.)"
+            ))
+            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                "Save".to_owned(),
+                "Discard".to_owned(),
+                "Cancel".to_owned(),
+            ))
+            .show();
+        match choice {
+            rfd::MessageDialogResult::Yes => {
+                self.save_requested = true;
+                self.after_save = Some(nav);
+            }
+            rfd::MessageDialogResult::Custom(c) if c == "Save" => {
+                self.save_requested = true;
+                self.after_save = Some(nav);
+            }
+            rfd::MessageDialogResult::No => self.navigate(nav, ctx),
+            rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(nav, ctx),
+            _ => {}
+        }
+    }
+
+    /// Traduce un clic de menú a la acción correspondiente.
+    fn handle_menu_action(&mut self, action: menus::MenuAction, ctx: &egui::Context) {
+        use menus::MenuAction as A;
+        match action {
+            A::NewDesign => self.request_nav(Nav::NewDesign, ctx),
+            A::OpenFile => loader::spawn_pick_file(self.tx.clone(), ctx.clone()),
+            A::OpenFolder => loader::spawn_pick_folder(self.tx.clone(), ctx.clone()),
+            A::OpenRecent(path) => self.request_nav(Nav::Open(path), ctx),
+            A::Save => {
+                if let View::Editor(state) = &mut self.view {
+                    state.save_clicked = true;
+                }
+            }
+            A::SaveAs => {
+                if let View::Editor(state) = &mut self.view {
+                    state.save_as_clicked = true;
+                }
+            }
+            A::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            A::Undo => {
+                if let View::Editor(state) = &mut self.view {
+                    state.undo();
+                }
+            }
+            A::Redo => {
+                if let View::Editor(state) = &mut self.view {
+                    state.redo();
+                }
+            }
+            A::ZoomIn => {
+                if let View::Editor(state) = &mut self.view {
+                    state.pending_zoom_factor = Some(1.25);
+                }
+            }
+            A::ZoomOut => {
+                if let View::Editor(state) = &mut self.view {
+                    state.pending_zoom_factor = Some(0.8);
+                }
+            }
+            A::FitToWindow => {
+                if let View::Editor(state) = &mut self.view {
+                    state.viewport.request_fit();
+                }
+            }
+            A::FullScreen => {
+                let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+            }
+            A::Settings => self.show_settings = true,
+            A::About => self.show_about = true,
+        }
+    }
+
     fn handle_messages(&mut self, ctx: &egui::Context) {
         // Aperturas diferidas para no pelear con el préstamo de self.view.
-        let mut open_after: Option<PathBuf> = None;
+        let mut open_after: Option<Nav> = None;
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 AppMsg::FilePicked(Some(path)) | AppMsg::FolderPicked(Some(path)) => {
@@ -236,13 +412,13 @@ impl App {
                                 if self.close_after_save {
                                     self.allow_close = true;
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                } else if let Some(folder) = self.return_to.take() {
-                                    open_after = Some(folder);
+                                } else if let Some(nav) = self.after_save.take() {
+                                    open_after = Some(nav);
                                 }
                             }
                             Err(e) => {
                                 self.close_after_save = false;
-                                self.return_to = None;
+                                self.after_save = None;
                                 state.save_error = Some(e);
                             }
                         }
@@ -305,46 +481,8 @@ impl App {
                 }
                 AppMsg::OpenPathExternal(path) => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    // Con un editor sucio delante, pregunta antes de abrir.
-                    let dirty_name = match &self.view {
-                        View::Editor(state) if state.is_dirty() => Some(state.file_name()),
-                        _ => None,
-                    };
-                    match dirty_name {
-                        None => open_after = Some(path),
-                        Some(name) => {
-                            let choice = rfd::MessageDialog::new()
-                                .set_level(rfd::MessageLevel::Warning)
-                                .set_title("Unsaved changes")
-                                .set_description(format!(
-                                    "\"{name}\" has unsaved changes.\nSave them before opening \"{}\"? (\"No\" discards them.)",
-                                    path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()
-                                ))
-                                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                                    "Save".to_owned(),
-                                    "Discard".to_owned(),
-                                    "Cancel".to_owned(),
-                                ))
-                                .show();
-                            match choice {
-                                rfd::MessageDialogResult::Yes => {
-                                    self.save_requested = true;
-                                    self.return_to = Some(path);
-                                }
-                                rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                                    self.save_requested = true;
-                                    self.return_to = Some(path);
-                                }
-                                rfd::MessageDialogResult::No => {
-                                    open_after = Some(path);
-                                }
-                                rfd::MessageDialogResult::Custom(c) if c == "Discard" => {
-                                    open_after = Some(path);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    // Pregunta si hay un editor con cambios sin guardar.
+                    self.request_nav(Nav::Open(path), ctx);
                 }
                 AppMsg::SourceChangedOnDisk { path } => {
                     let own_save = self
@@ -432,8 +570,8 @@ impl App {
                 }
             }
         }
-        if let Some(path) = open_after {
-            self.open_path(path, ctx);
+        if let Some(nav) = open_after {
+            self.navigate(nav, ctx);
         }
     }
 
@@ -622,17 +760,48 @@ fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // Tema (System/Light/Dark) según los ajustes; solo al cambiar.
+        if self.applied_theme != Some(self.settings.theme) {
+            ctx.set_theme(self.settings.theme.to_egui());
+            self.applied_theme = Some(self.settings.theme);
+        }
+
+        // Menú nativo: sondear clics y sincronizar los ítems de editor.
+        while let Some(action) = self.menus.as_ref().and_then(|m| m.poll()) {
+            self.handle_menu_action(action, &ctx);
+        }
+        let editor_open = matches!(self.view, View::Editor(_));
+        if editor_open != self.menus_editor_open {
+            self.menus_editor_open = editor_open;
+            if let Some(m) = self.menus.as_mut() {
+                m.set_editor_enabled(editor_open);
+            }
+        }
+
+        // Fallback sin menú nativo (macOS/Linux): barra de menús egui.
+        #[cfg(not(windows))]
+        {
+            let recents = self.settings.recent_files.clone();
+            let action = egui::Panel::top("menu_bar")
+                .show(ui, |ui| menus::menu_bar_ui(ui, editor_open, &recents))
+                .inner;
+            if let Some(action) = action {
+                self.handle_menu_action(action, &ctx);
+            }
+        }
+
         self.handle_messages(&ctx);
         self.handle_dropped_files(&ctx);
         self.confirm_close(&ctx);
 
         // Navegación diferida (clic en galería, volver desde el editor).
-        let mut open_next: Option<PathBuf> = None;
+        let mut open_next: Option<Nav> = None;
 
         match &mut self.view {
             View::Welcome { error } => {
                 let error = error.clone();
-                match welcome::show(ui, error.as_deref()) {
+                match welcome::show(ui, error.as_deref(), &self.settings.recent_files) {
                     Some(welcome::WelcomeAction::NewProject) => {
                         self.gallery_origin = None;
                         let mut state = editor::EditorState::new_blank(1920.0, 1080.0);
@@ -647,6 +816,9 @@ impl eframe::App for App {
                     }
                     Some(welcome::WelcomeAction::OpenSettings) => {
                         self.show_settings = true;
+                    }
+                    Some(welcome::WelcomeAction::OpenRecent(path)) => {
+                        open_next = Some(Nav::Open(path));
                     }
                     None => {}
                 }
@@ -667,7 +839,7 @@ impl eframe::App for App {
             }
             View::Gallery(g) => match gallery::show(g, ui) {
                 Some(gallery::GalleryAction::Open(path)) => {
-                    open_next = Some(path);
+                    open_next = Some(Nav::Open(path));
                 }
                 Some(gallery::GalleryAction::SortChanged(sort)) => {
                     self.settings.gallery_sort = sort;
@@ -684,7 +856,7 @@ impl eframe::App for App {
                 // Recarga pedida desde el banner de «cambió en disco».
                 if std::mem::take(&mut state.reload_requested) {
                     match state.doc.source_path.clone() {
-                        Some(path) => open_next = Some(path),
+                        Some(path) => open_next = Some(Nav::Open(path)),
                         None => state.external_change = false,
                     }
                 }
@@ -694,7 +866,7 @@ impl eframe::App for App {
                     state.return_requested = false;
                     if let Some(folder) = state.from_gallery.clone() {
                         if !state.is_dirty() {
-                            open_next = Some(folder);
+                            open_next = Some(Nav::Open(folder));
                         } else {
                             let choice = rfd::MessageDialog::new()
                                 .set_level(rfd::MessageLevel::Warning)
@@ -714,17 +886,17 @@ impl eframe::App for App {
                             match choice {
                                 rfd::MessageDialogResult::Yes => {
                                     self.save_requested = true;
-                                    self.return_to = Some(folder);
+                                    self.after_save = Some(Nav::Open(folder));
                                 }
                                 rfd::MessageDialogResult::Custom(c) if c == "Save" => {
                                     self.save_requested = true;
-                                    self.return_to = Some(folder);
+                                    self.after_save = Some(Nav::Open(folder));
                                 }
                                 rfd::MessageDialogResult::No => {
-                                    open_next = Some(folder);
+                                    open_next = Some(Nav::Open(folder));
                                 }
                                 rfd::MessageDialogResult::Custom(c) if c == "Discard" => {
-                                    open_next = Some(folder);
+                                    open_next = Some(Nav::Open(folder));
                                 }
                                 _ => {}
                             }
@@ -768,8 +940,8 @@ impl eframe::App for App {
                         if self.close_after_save {
                             self.allow_close = true;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        } else if let Some(folder) = self.return_to.take() {
-                            open_next = Some(folder);
+                        } else if let Some(nav) = self.after_save.take() {
+                            open_next = Some(nav);
                         }
                     } else {
                         match state.doc.source_path.clone() {
@@ -904,7 +1076,7 @@ impl eframe::App for App {
                         Choice::Cancel => {
                             self.overwrite_prompt = None;
                             self.close_after_save = false;
-                            self.return_to = None;
+                            self.after_save = None;
                         }
                     }
                 }
@@ -964,7 +1136,7 @@ impl eframe::App for App {
                     } else if cancel {
                         self.readonly_prompt = None;
                         self.close_after_save = false;
-                        self.return_to = None;
+                        self.after_save = None;
                     }
                 }
 
@@ -1031,8 +1203,21 @@ impl eframe::App for App {
             }
         }
 
-        if let Some(path) = open_next {
-            self.open_path(path, &ctx);
+        if let Some(nav) = open_next {
+            self.navigate(nav, &ctx);
+        }
+
+        // Ventana «About» (menú Help).
+        if self.show_about {
+            egui::Window::new("About Canvas Desktop")
+                .open(&mut self.show_about)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(&ctx, |ui| {
+                    ui.label(format!("Canvas Desktop {}", env!("CARGO_PKG_VERSION")));
+                    ui.weak("A native canvas editor that saves straight to your image files.");
+                });
         }
 
         // Mantén el watcher `notify` apuntando al archivo abierto (si lo hay).

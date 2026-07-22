@@ -1,5 +1,7 @@
 //! Pantalla de bienvenida cuando no hay ningún archivo abierto.
 
+use std::path::{Path, PathBuf};
+
 use eframe::egui;
 
 pub enum WelcomeAction {
@@ -7,9 +9,10 @@ pub enum WelcomeAction {
     OpenFile,
     OpenFolder,
     OpenSettings,
+    OpenRecent(PathBuf),
 }
 
-pub fn show(ui: &mut egui::Ui, error: Option<&str>) -> Option<WelcomeAction> {
+pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Option<WelcomeAction> {
     let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
@@ -41,6 +44,29 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>) -> Option<WelcomeAction> {
                 .clicked()
             {
                 action = Some(WelcomeAction::OpenFolder);
+            }
+
+            if !recents.is_empty() {
+                ui.add_space(18.0);
+                ui.label("Recent");
+                for path in recents.iter().take(6) {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    let icon = if Path::new(path).is_dir() {
+                        "📁"
+                    } else {
+                        "🖼"
+                    };
+                    if ui
+                        .link(format!("{icon} {name}"))
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        action = Some(WelcomeAction::OpenRecent(path.clone()));
+                    }
+                }
             }
 
             ui.add_space(18.0);

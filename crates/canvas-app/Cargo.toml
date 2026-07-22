@@ -22,6 +22,12 @@ directories = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
+
+# Menús nativos solo en Windows (en Linux muda exige GTK: allí se usa una
+# barra de menús egui como fallback).
+[target.'cfg(windows)'.dependencies]
+muda = { workspace = true }
+raw-window-handle = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

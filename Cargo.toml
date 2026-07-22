@@ -21,11 +21,13 @@ canvas-io = { path = "crates/canvas-io" }
 canvas-shell = { path = "crates/canvas-shell" }
 
 # UI + GPU: eframe 0.35 y vello 0.9 comparten wgpu 29 — no cambiar uno sin el otro.
+# `persistence` restaura tamaño/posición de la ventana entre sesiones.
 eframe = { version = "0.35", default-features = false, features = [
     "wgpu",
     "default_fonts",
     "x11",
     "wayland",
+    "persistence",
 ] }
 vello = "0.9"
 
@@ -54,6 +56,9 @@ directories = "6"
 tempfile = "3"
 interprocess = "2"
 notify = "8"
+# Menús nativos (Windows: init_for_hwnd; en Linux exigiría GTK → fallback egui).
+muda = "0.17"
+raw-window-handle = "0.6"
 windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
 
 [profile.dev]

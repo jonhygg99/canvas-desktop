@@ -58,6 +58,11 @@ impl Viewport {
         self.pan = anchor - (anchor - self.pan) * applied as f32;
         self.zoom = new_zoom;
     }
+
+    /// Vuelve a ajustar la página a la ventana en el próximo frame.
+    pub fn request_fit(&mut self) {
+        self.needs_fit = true;
+    }
 }
 
 /// Gesto de edición en curso sobre el lienzo. El documento se muta en directo
@@ -120,6 +125,9 @@ pub struct EditorState {
     pub external_change: bool,
     /// El usuario pidió recargar desde disco en el banner de cambio externo.
     pub reload_requested: bool,
+    /// Zoom pedido desde el menú (factor); se aplica anclado al centro del
+    /// lienzo en el próximo frame, cuando se conoce su rect.
+    pub pending_zoom_factor: Option<f64>,
 }
 
 impl EditorState {
@@ -168,6 +176,7 @@ impl EditorState {
             source_metadata: None,
             external_change: false,
             reload_requested: false,
+            pending_zoom_factor: None,
         })
     }
 
@@ -201,6 +210,7 @@ impl EditorState {
             source_metadata: None,
             external_change: false,
             reload_requested: false,
+            pending_zoom_factor: None,
         }
     }
 
@@ -250,6 +260,7 @@ impl EditorState {
             source_metadata: None,
             external_change: false,
             reload_requested: false,
+            pending_zoom_factor: None,
         }
     }
 
@@ -459,13 +470,23 @@ impl EditorState {
         let undo = ctx
             .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)));
         if redo {
-            if let Err(e) = self.history.redo(&mut self.doc) {
-                tracing::error!("rehacer falló: {e}");
-            }
+            self.redo();
         } else if undo {
-            if let Err(e) = self.history.undo(&mut self.doc) {
-                tracing::error!("deshacer falló: {e}");
-            }
+            self.undo();
+        }
+    }
+
+    /// Deshace el último comando (menú Edit o Ctrl+Z).
+    pub fn undo(&mut self) {
+        if let Err(e) = self.history.undo(&mut self.doc) {
+            tracing::error!("deshacer falló: {e}");
+        }
+    }
+
+    /// Rehace el último comando deshecho (menú Edit o Ctrl+Y).
+    pub fn redo(&mut self) {
+        if let Err(e) = self.history.redo(&mut self.doc) {
+            tracing::error!("rehacer falló: {e}");
         }
     }
 
@@ -1103,6 +1124,11 @@ pub fn canvas_ui(
     });
     if fit_requested || state.viewport.needs_fit {
         state.viewport.fit(page_dims, rect.size());
+    }
+
+    // Zoom pedido desde el menú, anclado al centro del lienzo.
+    if let Some(factor) = state.pending_zoom_factor.take() {
+        state.viewport.zoom_at(rect.size() / 2.0, factor);
     }
 
     // Zoom con rueda (y pellizco), anclado al cursor.
