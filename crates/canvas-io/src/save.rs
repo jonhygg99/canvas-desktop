@@ -24,12 +24,24 @@ pub fn save_format_from_path(path: &Path) -> Option<ImageFormat> {
 }
 
 /// Codifica el RGBA horneado y lo escribe atómicamente en `path`, en el
-/// formato que dicta la extensión del propio `path`.
-pub fn save_rgba(path: &Path, rgba: Vec<u8>, width: u32, height: u32) -> Result<(), IoError> {
+/// formato que dicta la extensión del propio `path`. `jpeg_quality` (1–100)
+/// solo aplica si el destino es JPEG. `metadata` (ICC/EXIF del original) se
+/// reinserta tal cual si el contenedor destino lo soporta.
+pub fn save_rgba(
+    path: &Path,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    jpeg_quality: u8,
+    metadata: Option<&crate::ImageMetadata>,
+) -> Result<(), IoError> {
     let format = save_format_from_path(path).ok_or_else(|| IoError::UnsupportedFormat {
         path: path.to_owned(),
     })?;
-    let bytes = encode(rgba, width, height, format, path)?;
+    let mut bytes = encode(rgba, width, height, format, path, jpeg_quality)?;
+    if let Some(meta) = metadata {
+        bytes = crate::reinject_metadata(path, bytes, meta);
+    }
     write_atomic(path, &bytes)
 }
 
@@ -39,10 +51,11 @@ fn encode(
     height: u32,
     format: ImageFormat,
     path: &Path,
+    jpeg_quality: u8,
 ) -> Result<Vec<u8>, IoError> {
     let img = image::RgbaImage::from_raw(width, height, rgba).ok_or_else(|| IoError::Encode {
         path: path.to_owned(),
-        message: "el buffer horneado no cuadra con las dimensiones".into(),
+        message: "baked buffer does not match its dimensions".into(),
     })?;
     let mut out = std::io::Cursor::new(Vec::new());
     let result = match format {
@@ -55,7 +68,11 @@ fn encode(
                     dst[c] = ((u32::from(src[c]) * a + 255 * (255 - a)) / 255) as u8;
                 }
             }
-            rgb.write_to(&mut out, format)
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut out,
+                jpeg_quality.clamp(1, 100),
+            );
+            rgb.write_with_encoder(encoder)
         }
         _ => img.write_to(&mut out, format),
     };
@@ -91,6 +108,16 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IoError> {
         path: path.to_owned(),
         message: format!("fsync del temporal: {e}"),
     })?;
+
+    // Gancho SOLO para el test de integración que mata el proceso a mitad de
+    // guardado: alarga la ventana entre escribir el temporal y sustituir el
+    // original. Sin la variable de entorno es un no-op.
+    if let Some(ms) = std::env::var("CANVAS_IO_TEST_SLEEP_BEFORE_REPLACE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
 
     // Cierra el handle antes de sustituir (obligatorio en Windows).
     let (_file, tmp_path) = tmp
@@ -163,7 +190,7 @@ mod tests {
     fn saves_new_png() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("nuevo.png");
-        save_rgba(&path, checkered(8, 4), 8, 4).expect("guardar");
+        save_rgba(&path, checkered(8, 4), 8, 4, 92, None).expect("guardar");
         let back = image::open(&path).expect("reabrir").to_rgba8();
         assert_eq!(back.dimensions(), (8, 4));
         assert_eq!(back.get_pixel(0, 0).0, [255, 0, 0, 255]);
@@ -175,7 +202,7 @@ mod tests {
         let path = dir.path().join("existente.png");
         std::fs::write(&path, b"contenido viejo que no es png").expect("sembrar");
 
-        save_rgba(&path, checkered(4, 4), 4, 4).expect("sustituir");
+        save_rgba(&path, checkered(4, 4), 4, 4, 92, None).expect("sustituir");
         let back = image::open(&path).expect("reabrir");
         assert_eq!(back.width(), 4);
 
@@ -197,7 +224,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("t.jpg");
         // Totalmente transparente → debe quedar blanco.
-        save_rgba(&path, vec![0u8; 4 * 4 * 4], 4, 4).expect("guardar jpg");
+        save_rgba(&path, vec![0u8; 4 * 4 * 4], 4, 4, 92, None).expect("guardar jpg");
         let back = image::open(&path).expect("reabrir").to_rgb8();
         let p = back.get_pixel(1, 1).0;
         assert!(
@@ -210,7 +237,41 @@ mod tests {
     fn unsupported_extension_is_a_clear_error() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("dibujo.tiff");
-        let err = save_rgba(&path, checkered(2, 2), 2, 2).unwrap_err();
+        let err = save_rgba(&path, checkered(2, 2), 2, 2, 92, None).unwrap_err();
         assert!(err.to_string().contains("dibujo.tiff"));
+    }
+
+    #[test]
+    fn save_rgba_preserves_metadata_end_to_end() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("photo.jpg");
+        let meta = crate::ImageMetadata {
+            icc: Some(vec![7u8; 24]),
+            exif: None,
+        };
+        save_rgba(&path, checkered(8, 8), 8, 8, 92, Some(&meta)).expect("guardar con metadatos");
+        // El archivo en disco decodifica y conserva el bloque ICC tal cual.
+        image::open(&path).expect("decodificable");
+        let back = crate::extract_metadata_from_file(&path);
+        assert_eq!(back.icc.as_deref(), Some(&[7u8; 24][..]));
+    }
+
+    #[test]
+    fn jpeg_quality_changes_file_size() {
+        // Ruido determinista: el JPEG de baja calidad debe pesar menos.
+        let mut rgba = Vec::with_capacity(64 * 64 * 4);
+        let mut seed: u32 = 0x1234_5678;
+        for _ in 0..64 * 64 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            rgba.extend_from_slice(&[(seed >> 8) as u8, (seed >> 16) as u8, seed as u8, 255]);
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let hi = dir.path().join("hi.jpg");
+        let lo = dir.path().join("lo.jpg");
+        save_rgba(&hi, rgba.clone(), 64, 64, 95, None).expect("calidad alta");
+        save_rgba(&lo, rgba, 64, 64, 20, None).expect("calidad baja");
+        let hi_len = std::fs::metadata(&hi).expect("metadata").len();
+        let lo_len = std::fs::metadata(&lo).expect("metadata").len();
+        assert!(lo_len < hi_len, "esperaba lo ({lo_len}) < hi ({hi_len})");
     }
 }

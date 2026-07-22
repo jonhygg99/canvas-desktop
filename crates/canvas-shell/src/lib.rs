@@ -4,6 +4,21 @@
 //! Normaliza las distintas vías de apertura (argv en frío, segunda instancia,
 //! `openURLs` de macOS) en un único evento interno [`ShellEvent::OpenPath`].
 
+mod integration;
+mod single_instance;
+
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+mod linux;
+
+pub use integration::{platform, ShellError, ShellIntegration};
+pub use single_instance::{acquire_instance, InstanceListener, InstanceRole};
+
 use std::path::PathBuf;
 
 /// Evento normalizado que el resto de la app consume sin saber de qué
@@ -26,6 +41,24 @@ where
         .map(PathBuf::from)
         .filter(|p| p.exists())
         .collect()
+}
+
+/// ¿El archivo está oculto según la convención de la plataforma? En Windows,
+/// el atributo `FILE_ATTRIBUTE_HIDDEN`; en Unix, el prefijo `.` del nombre.
+#[cfg(windows)]
+pub fn is_hidden(path: &std::path::Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    std::fs::metadata(path)
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+pub fn is_hidden(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with('.'))
 }
 
 #[cfg(test)]
@@ -51,5 +84,34 @@ mod tests {
         let exe = std::env::temp_dir();
         let paths = open_paths_from_args(vec![exe.to_string_lossy().into_owned()]);
         assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn regular_file_is_not_hidden() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("canvas-shell-visible-test.tmp");
+        std::fs::write(&path, b"x").expect("escribir");
+        assert!(!is_hidden(&path));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hidden_attribute_is_detected_on_windows() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("canvas-shell-hidden-test.tmp");
+        std::fs::write(&path, b"x").expect("escribir");
+        let status = std::process::Command::new("attrib")
+            .arg("+h")
+            .arg(&path)
+            .status()
+            .expect("attrib");
+        assert!(status.success());
+        assert!(is_hidden(&path));
+        let _ = std::process::Command::new("attrib")
+            .arg("-h")
+            .arg(&path)
+            .status();
+        let _ = std::fs::remove_file(&path);
     }
 }

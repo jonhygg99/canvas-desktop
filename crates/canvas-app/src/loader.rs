@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use canvas_io::{LoadedImage, RestoredDocument};
+use canvas_io::{ImageMetadata, LoadedImage, RestoredDocument};
 use eframe::egui;
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
@@ -27,6 +27,8 @@ pub enum AppMsg {
     ImageLoaded {
         path: PathBuf,
         result: Result<LoadOutcome, String>,
+        /// ICC/EXIF del archivo original, para preservarlos al guardar.
+        metadata: ImageMetadata,
     },
     /// Imagen cargada para AÑADIRSE como capa al documento abierto.
     ImageLoadedForLayer {
@@ -42,13 +44,24 @@ pub enum AppMsg {
     },
     GalleryScanned {
         folder: PathBuf,
-        files: Vec<PathBuf>,
+        /// (ruta, fecha de modificación si se pudo leer)
+        files: Vec<(PathBuf, Option<std::time::SystemTime>)>,
     },
     GalleryThumb {
         folder: PathBuf,
-        index: usize,
+        path: PathBuf,
         result: Result<LoadedImage, String>,
     },
+    /// Ruta llegada desde una segunda instancia (por el socket local).
+    OpenPathExternal(PathBuf),
+    /// Una segunda instancia sin rutas pide traer la ventana al frente.
+    FocusWindow,
+    /// El archivo abierto cambió en disco (watcher `notify`).
+    SourceChangedOnDisk {
+        path: PathBuf,
+    },
+    /// Resultado del registro/desregistro de la integración con el shell.
+    ShellIntegrationDone(Result<String, String>),
 }
 
 /// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
@@ -69,7 +82,14 @@ pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ct
                 .map(LoadOutcome::Flat)
                 .map_err(|e| e.to_string())
         })();
-        let _ = tx.send(AppMsg::ImageLoaded { path, result });
+        // ICC/EXIF del archivo en disco (mejor esfuerzo), venga el documento
+        // aplanado o restaurado del sidecar: el original es el mismo.
+        let metadata = canvas_io::extract_metadata_from_file(&path);
+        let _ = tx.send(AppMsg::ImageLoaded {
+            path,
+            result,
+            metadata,
+        });
         ctx.request_repaint();
     });
 }
@@ -87,8 +107,8 @@ pub fn spawn_load_image_as_layer(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::C
 pub fn spawn_pick_file(tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
         let picked = rfd::FileDialog::new()
-            .set_title("Abrir imagen")
-            .add_filter("Imágenes", canvas_io::IMAGE_EXTENSIONS)
+            .set_title("Open image")
+            .add_filter("Images", canvas_io::IMAGE_EXTENSIONS)
             .pick_file();
         let _ = tx.send(AppMsg::FilePicked(picked));
         ctx.request_repaint();
@@ -98,7 +118,7 @@ pub fn spawn_pick_file(tx: Sender<AppMsg>, ctx: egui::Context) {
 pub fn spawn_pick_folder(tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
         let picked = rfd::FileDialog::new()
-            .set_title("Abrir carpeta")
+            .set_title("Open folder")
             .pick_folder();
         let _ = tx.send(AppMsg::FolderPicked(picked));
         ctx.request_repaint();
@@ -113,13 +133,17 @@ pub fn spawn_save(
     rgba: Vec<u8>,
     width: u32,
     height: u32,
+    jpeg_quality: u8,
+    metadata: Option<ImageMetadata>,
     new_source: bool,
     sidecar: Option<SidecarPayload>,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = canvas_io::save_rgba(&path, rgba, width, height).map_err(|e| e.to_string());
+        let result =
+            canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, metadata.as_ref())
+                .map_err(|e| e.to_string());
         if result.is_ok() {
             match sidecar {
                 Some(payload) => {
@@ -166,16 +190,23 @@ pub fn spawn_gallery_scan(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&folder)
+        // Solo el primer nivel, solo imágenes, sin archivos ocultos.
+        let mut files: Vec<(PathBuf, Option<std::time::SystemTime>)> = std::fs::read_dir(&folder)
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_file() && canvas_io::is_image_file(p))
+                    .filter(|p| {
+                        p.is_file() && canvas_io::is_image_file(p) && !canvas_shell::is_hidden(p)
+                    })
+                    .map(|p| {
+                        let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+                        (p, mtime)
+                    })
                     .collect()
             })
             .unwrap_or_default();
-        files.sort_by_key(|p| p.file_name().map(|n| n.to_ascii_lowercase()));
+        files.sort_by_key(|(p, _)| p.file_name().map(|n| n.to_ascii_lowercase()));
 
         let _ = tx.send(AppMsg::GalleryScanned {
             folder: folder.clone(),
@@ -184,26 +215,31 @@ pub fn spawn_gallery_scan(
         ctx.request_repaint();
 
         use rayon::prelude::*;
-        files
-            .par_iter()
-            .enumerate()
-            .for_each_with(tx, |tx, (index, path)| {
-                let result = canvas_io::thumbnail(path, 256, cache_dir.as_deref())
-                    .map_err(|e| e.to_string());
-                let _ = tx.send(AppMsg::GalleryThumb {
-                    folder: folder.clone(),
-                    index,
-                    result,
-                });
-                ctx.request_repaint();
+        files.par_iter().for_each_with(tx, |tx, (path, _mtime)| {
+            let result =
+                canvas_io::thumbnail(path, 256, cache_dir.as_deref()).map_err(|e| e.to_string());
+            let _ = tx.send(AppMsg::GalleryThumb {
+                folder: folder.clone(),
+                path: path.clone(),
+                result,
             });
+            ctx.request_repaint();
+        });
     });
 }
 
 pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: egui::Context) {
+    // El lienzo no sabe guardar SVG: sugiere el mismo nombre en .png.
+    let suggested = suggested.map(|name| {
+        if name.to_ascii_lowercase().ends_with(".svg") {
+            format!("{}.png", &name[..name.len() - 4])
+        } else {
+            name
+        }
+    });
     std::thread::spawn(move || {
         let mut dialog = rfd::FileDialog::new()
-            .set_title("Guardar como…")
+            .set_title("Save as…")
             .add_filter("PNG", &["png"])
             .add_filter("JPEG", &["jpg", "jpeg"])
             .add_filter("WebP", &["webp"])

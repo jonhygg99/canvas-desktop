@@ -37,6 +37,10 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
 ] }
 kamadak-exif = "0.6"
+# Preservación de bloques ICC/EXIF tal cual (JPEG APP1/APP2, PNG iCCP/eXIf,
+# WebP RIFF). lcms2 NO sirve para esto: es un motor de conversión de color.
+img-parts = "0.3"
+resvg = "0.45"
 rfd = "0.15"
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }
@@ -48,6 +52,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "6"
 tempfile = "3"
+interprocess = "2"
+notify = "8"
 windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
 
 [profile.dev]

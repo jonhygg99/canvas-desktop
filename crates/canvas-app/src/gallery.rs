@@ -2,12 +2,16 @@
 //! llegan por mensajes desde los hilos de trabajo; aquí solo se pintan.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use eframe::egui;
+
+use crate::settings::GallerySort;
 
 pub struct GalleryItem {
     pub path: PathBuf,
     pub name: String,
+    pub mtime: Option<SystemTime>,
     pub tex: Option<egui::TextureHandle>,
     pub failed: bool,
 }
@@ -16,36 +20,67 @@ pub struct GalleryState {
     pub folder: PathBuf,
     pub items: Vec<GalleryItem>,
     pub scanned: bool,
+    pub sort: GallerySort,
 }
 
 impl GalleryState {
-    pub fn new(folder: PathBuf) -> Self {
+    pub fn new(folder: PathBuf, sort: GallerySort) -> Self {
         Self {
             folder,
             items: Vec::new(),
             scanned: false,
+            sort,
         }
     }
 
-    pub fn set_files(&mut self, files: Vec<PathBuf>) {
+    pub fn set_files(&mut self, files: Vec<(PathBuf, Option<SystemTime>)>) {
         self.items = files
             .into_iter()
-            .map(|path| GalleryItem {
+            .map(|(path, mtime)| GalleryItem {
                 name: path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default(),
                 path,
+                mtime,
                 tex: None,
                 failed: false,
             })
             .collect();
         self.scanned = true;
+        self.apply_sort();
+    }
+
+    /// Reordena en memoria (sin reescanear el disco).
+    pub fn apply_sort(&mut self) {
+        match self.sort {
+            GallerySort::Name => self.items.sort_by_key(|i| i.name.to_ascii_lowercase()),
+            // Más recientes primero; sin fecha, al final.
+            GallerySort::DateModified => self.items.sort_by(|a, b| {
+                b.mtime.cmp(&a.mtime).then_with(|| {
+                    a.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.name.to_ascii_lowercase())
+                })
+            }),
+        }
+    }
+
+    /// Entrega una miniatura llegada de un hilo de trabajo (por ruta: el
+    /// orden puede haber cambiado desde que se lanzó el escaneo).
+    pub fn set_thumb(&mut self, path: &std::path::Path, tex: Option<egui::TextureHandle>) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.path == path) {
+            match tex {
+                Some(tex) => item.tex = Some(tex),
+                None => item.failed = true,
+            }
+        }
     }
 }
 
 pub enum GalleryAction {
     Open(PathBuf),
+    SortChanged(GallerySort),
 }
 
 const CELL: egui::Vec2 = egui::vec2(172.0, 200.0);
@@ -63,7 +98,31 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| state.folder.display().to_string()),
             );
-            ui.weak(format!("— {} imágenes", state.items.len()));
+            ui.weak(format!("— {} images", state.items.len()));
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut sort = state.sort;
+                egui::ComboBox::from_id_salt("gallery_sort")
+                    .selected_text(sort.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut sort,
+                            GallerySort::Name,
+                            GallerySort::Name.label(),
+                        );
+                        ui.selectable_value(
+                            &mut sort,
+                            GallerySort::DateModified,
+                            GallerySort::DateModified.label(),
+                        );
+                    });
+                ui.label("Sort by:");
+                if sort != state.sort {
+                    state.sort = sort;
+                    state.apply_sort();
+                    action = Some(GalleryAction::SortChanged(sort));
+                }
+            });
         });
         ui.add_space(4.0);
         ui.separator();
@@ -72,14 +131,15 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 ui.add(egui::Spinner::new().size(28.0));
-                ui.label("Buscando imágenes…");
+                ui.label("Scanning for images…");
             });
             return;
         }
         if state.items.is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label("Esta carpeta no contiene imágenes.");
+                ui.label("This folder contains no images.");
+                ui.weak("Supported formats: png, jpg, jpeg, webp, gif, bmp.");
             });
             return;
         }

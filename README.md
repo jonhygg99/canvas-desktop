@@ -40,12 +40,41 @@ El canvas mínimo funcionando de punta a punta:
   imagen con el documento completo (capas y píxeles embebidos); al reabrir el
   PNG, las capas vuelven editables tal y como se guardaron — nada de imagen
   aplanada con fondo transparente pegado. Si la imagen cambió por fuera, la
-  app avisa y deja elegir. Se puede desactivar con el checkbox «Sidecar
-  editable» para no dejar archivos extra.
+  app avisa y deja elegir. Se puede desactivar con el checkbox «Editable
+  sidecar» para no dejar archivos extra. Abrir un `foto.png.canvas` (por argv
+  o doble clic) abre su imagen con las capas restauradas.
+- **Aviso de sobrescritura destructiva**: el primer `Ctrl+S` de cada sesión
+  sobre un archivo de disco avisa de que el original se reemplaza para
+  siempre (con la calidad JPEG si aplica), con «Overwrite / Save as… instead /
+  Cancel» y un «Don't ask again» persistido en los ajustes.
+- **Ajustes persistidos** (`settings.json` en el directorio de configuración):
+  calidad JPEG (92 por defecto), aviso de sobrescritura, sidecar por defecto,
+  orden de la galería. Ventana «Settings» desde la bienvenida o el editor.
+- **Guardado no-op**: `Ctrl+S` sin cambios no reescribe el archivo (un
+  guardado que no cambia nada no puede costar calidad JPEG).
+- **ICC y EXIF preservados**: al guardar se reinsertan tal cual el perfil de
+  color y el bloque EXIF del original (fecha, GPS…), con `Orientation`
+  normalizada a 1 porque los píxeles ya se guardan orientados (`img-parts`).
+- **SVG y GIF**: se abren (el SVG rasterizado a su tamaño natural con
+  `resvg`; del GIF animado, el primer fotograma), pero `Ctrl+S` nunca los
+  sobrescribe: un diálogo lo explica y redirige a «Save as…».
+- **Galería**: ignora archivos ocultos y ordena por nombre o por fecha de
+  modificación (selector persistido).
+- **Instancia única**: abrir un segundo archivo con la app ya abierta lo
+  envía a la ventana existente por un socket local (`interprocess`); el
+  segundo proceso sale con código 0.
+- **Vigilancia del archivo** (`notify`): si el archivo abierto cambia en
+  disco por fuera, un banner ofrece «Reload / Keep mine». Los guardados
+  propios no disparan el aviso.
+- **Integración con el Explorador de Windows**: botones «Register /
+  Unregister» en Settings crean (y limpian) las asociaciones «Open with» bajo
+  `HKCU\Software\Classes` y el menú contextual de carpetas, con
+  `SHChangeNotify` para que el Explorador lo refleje al instante.
 
-Pendiente (siguientes entregas): sidecar `.canvas` editable, integración
-«Abrir con» del sistema e instancia única, texto/formas/más filtros, panel de
-capas, exportación SVG/PDF, menús nativos y empaquetado.
+Pendiente (siguientes entregas): menús nativos (`muda`), recientes + Jump
+List, tema y geometría de ventana, rotación/recorte/snap, más filtros GPU,
+texto/formas/SVG vectorial, panel de capas, portapapeles, exportación,
+empaquetado y CI.
 
 ## Compilar y ejecutar
 
@@ -79,18 +108,25 @@ filtran y solo se aceptan rutas que existan en disco.
 | Guardar / Guardar como | `Ctrl+S` / `Ctrl+Shift+S` |
 | Añadir imagen como capa | Arrastrarla sobre el editor |
 
-## Probar la integración «Abrir con» (en desarrollo, sin instalar)
+## Probar la integración «Abrir con»
 
-La integración registrada con el shell llega en una entrega posterior, pero el
-flujo ya funciona porque la ruta entra por `argv`:
-
-- **Windows**: clic derecho sobre una imagen → «Abrir con» → «Elegir otra
-  aplicación» → «Buscar otra aplicación en el equipo» → selecciona
-  `target\debug\canvas-desktop.exe`. También puedes arrastrar un archivo o
-  carpeta sobre la ventana abierta.
+- **Windows (recomendado)**: abre la app → «⚙ Settings» → «Register». Desde
+  ese momento, clic derecho sobre una imagen → «Open with» → Canvas Desktop,
+  y clic derecho sobre una carpeta (o su fondo) → «Open with Canvas Desktop».
+  «Unregister» lo limpia. OJO: el registro apunta al exe actual; si mueves o
+  recompilas el binario en otra ruta, vuelve a registrar.
+- **Windows (sin registrar)**: clic derecho sobre una imagen → «Abrir con» →
+  «Elegir otra aplicación» → «Buscar otra aplicación en el equipo» →
+  selecciona `target\debug\canvas-desktop.exe`. También puedes arrastrar un
+  archivo o carpeta sobre la ventana abierta.
 - **macOS / Linux**: `cargo run -p canvas-app -- /ruta/a/foto.png` o arrastrar
   el archivo sobre la ventana. (El registro por `Info.plist` / `.desktop`
-  llega con el empaquetado.)
+  llega con el empaquetado; los stubs de `canvas-shell` compilan pero
+  devuelven `NotImplemented`.)
+
+Con la app ya abierta, cualquier apertura nueva (Explorador, terminal,
+`canvas-desktop otra.png`) reutiliza la misma ventana: el segundo proceso
+reenvía la ruta por el socket local y sale con código 0.
 
 ## Verificación
 

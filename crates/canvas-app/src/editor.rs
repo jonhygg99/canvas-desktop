@@ -110,8 +110,16 @@ pub struct EditorState {
     pub save_clicked: bool,
     /// Botón «Guardar como…» del panel pulsado (equivale a Ctrl+Shift+S).
     pub save_as_clicked: bool,
+    /// Botón «Settings» del panel pulsado; la app abre la ventana de ajustes.
+    pub settings_clicked: bool,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     pub sidecar_enabled: bool,
+    /// ICC/EXIF del archivo original, para reinsertarlos al guardar.
+    pub source_metadata: Option<canvas_io::ImageMetadata>,
+    /// El archivo fuente cambió en disco fuera de la app (watcher).
+    pub external_change: bool,
+    /// El usuario pidió recargar desde disco en el banner de cambio externo.
+    pub reload_requested: bool,
 }
 
 impl EditorState {
@@ -124,7 +132,7 @@ impl EditorState {
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Imagen".to_owned());
+            .unwrap_or_else(|| "Image".to_owned());
         let id = doc.add_layer(
             name,
             Transform::new(0.0, 0.0, w, h),
@@ -155,7 +163,11 @@ impl EditorState {
             return_requested: false,
             save_clicked: false,
             save_as_clicked: false,
+            settings_clicked: false,
             sidecar_enabled: true,
+            source_metadata: None,
+            external_change: false,
+            reload_requested: false,
         })
     }
 
@@ -184,7 +196,11 @@ impl EditorState {
             return_requested: false,
             save_clicked: false,
             save_as_clicked: false,
+            settings_clicked: false,
             sidecar_enabled: true,
+            source_metadata: None,
+            external_change: false,
+            reload_requested: false,
         }
     }
 
@@ -229,7 +245,11 @@ impl EditorState {
             return_requested: false,
             save_clicked: false,
             save_as_clicked: false,
+            settings_clicked: false,
             sidecar_enabled: true,
+            source_metadata: None,
+            external_change: false,
+            reload_requested: false,
         }
     }
 
@@ -263,7 +283,7 @@ impl EditorState {
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Imagen".to_owned());
+            .unwrap_or_else(|| "Image".to_owned());
         let id = self.doc.allocate_layer_id();
         let layer = Layer::new(
             id,
@@ -383,7 +403,7 @@ impl EditorState {
         let id = self.doc.allocate_layer_id();
         let mut layer = Layer::new(
             id,
-            "Fondo desenfocado",
+            "Blurred background",
             transform,
             LayerContent::Image(content),
         );
@@ -392,7 +412,7 @@ impl EditorState {
 
         if let Err(e) = self.history.apply(
             &mut self.doc,
-            Box::new(canvas_core::Composite::new("Fondo desenfocado", commands)),
+            Box::new(canvas_core::Composite::new("Blurred background", commands)),
         ) {
             tracing::error!("añadir fondo falló: {e}");
             return;
@@ -455,7 +475,7 @@ impl EditorState {
             .as_deref()
             .and_then(|p| p.file_name())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Sin título".to_owned())
+            .unwrap_or_else(|| "Untitled".to_owned())
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -466,7 +486,25 @@ impl EditorState {
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.add_space(8.0);
-    if state.from_gallery.is_some() && ui.button("⏴ Volver a la galería").clicked() {
+
+    // Banner: el archivo cambió en disco fuera de la app.
+    if state.external_change {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            "⚠ This file changed on disk outside Canvas Desktop.",
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Reload").clicked() {
+                state.reload_requested = true;
+            }
+            if ui.button("Keep mine").clicked() {
+                state.external_change = false;
+            }
+        });
+        ui.separator();
+    }
+
+    if state.from_gallery.is_some() && ui.button("⏴ Back to gallery").clicked() {
         state.return_requested = true;
     }
     ui.heading(state.file_name());
@@ -488,8 +526,8 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             layer_properties_ui(state, ui, sel, page_dims);
         }
     } else {
-        ui.weak("Ninguna capa seleccionada.");
-        ui.weak("Haz clic sobre la imagen para seleccionarla.");
+        ui.weak("No layer selected.");
+        ui.weak("Click the image to select it.");
     }
 
     ui.separator();
@@ -498,29 +536,29 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         if ui
             .add_enabled(
                 !state.saving,
-                egui::Button::new(format!("💾 Guardar{dirty_mark}")),
+                egui::Button::new(format!("💾 Save{dirty_mark}")),
             )
             .clicked()
         {
             state.save_clicked = true;
         }
         if ui
-            .add_enabled(!state.saving, egui::Button::new("Guardar como…"))
+            .add_enabled(!state.saving, egui::Button::new("Save as…"))
             .clicked()
         {
             state.save_as_clicked = true;
         }
     });
-    ui.checkbox(&mut state.sidecar_enabled, "Sidecar editable (.canvas)")
+    ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
         .on_hover_text(
-            "Guarda un archivo .canvas junto a la imagen para que al reabrirla \
-             las capas sigan siendo editables. Desactívalo si no quieres \
-             archivos extra en tus carpetas.",
+            "Writes a .canvas file next to the image so the layers stay \
+             editable when you reopen it. Turn it off if you don't want \
+             extra files in your folders.",
         );
     if state.saving {
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new());
-            ui.label("Guardando…");
+            ui.label("Saving…");
         });
     }
     if let Some(error) = state.save_error.clone() {
@@ -532,8 +570,12 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         });
     }
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
-    ui.weak("Rueda: zoom · Espacio/botón central: paneo · Ctrl+0: ajustar");
-    ui.weak("Ctrl+S: guardar · Ctrl+Shift+S: guardar como");
+    ui.weak("Wheel: zoom · Space/middle button: pan · Ctrl+0: fit");
+    ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
+    ui.add_space(4.0);
+    if ui.small_button("⚙ Settings").clicked() {
+        state.settings_clicked = true;
+    }
 }
 
 /// Sección «Página»: resolución (campos + presets) y fondo desenfocado.
@@ -545,16 +587,16 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let mut changed = false;
     let mut commit = false;
 
-    ui.label("Página");
+    ui.label("Page");
     ui.horizontal(|ui| {
-        ui.label("An");
+        ui.label("W");
         let rw = ui.add(
             egui::DragValue::new(&mut w)
                 .speed(2.0)
                 .range(16.0..=16384.0)
                 .max_decimals(0),
         );
-        ui.label("Al");
+        ui.label("H");
         let rh = ui.add(
             egui::DragValue::new(&mut h)
                 .speed(2.0)
@@ -589,12 +631,7 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 preset(ui, "1080 × 1920".into(), 1080.0, 1920.0);
                 preset(ui, "1080 × 1080".into(), 1080.0, 1080.0);
                 if let Some((iw, ih)) = image_size {
-                    preset(
-                        ui,
-                        format!("Imagen ({} × {})", iw as i64, ih as i64),
-                        iw,
-                        ih,
-                    );
+                    preset(ui, format!("Image ({} × {})", iw as i64, ih as i64), iw, ih);
                 }
             });
     });
@@ -633,7 +670,7 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 state
                     .history
                     .push_applied(Box::new(canvas_core::Composite::new(
-                        "Cambiar resolución",
+                        "Resize page",
                         commands,
                     )));
             }
@@ -646,7 +683,7 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let mut bg_on = active;
     let response = ui.add_enabled(
         can_toggle,
-        egui::Checkbox::new(&mut bg_on, "Fondo desenfocado"),
+        egui::Checkbox::new(&mut bg_on, "Blurred background"),
     );
     if response.changed() && bg_on != active {
         state.set_blurred_background(bg_on);
@@ -698,7 +735,7 @@ fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
                 }
             }
         }
-        if current_blur > 0.0 && ui.button("Quitar").clicked() {
+        if current_blur > 0.0 && ui.button("Remove").clicked() {
             if let Err(e) = state.history.apply(
                 &mut state.doc,
                 Box::new(canvas_core::SetBlur {
@@ -718,7 +755,7 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
     let current = state.doc.layer(sel).ok().and_then(|l| l.effects.shadow);
 
     let mut enabled = current.is_some();
-    if ui.checkbox(&mut enabled, "Sombra").changed() {
+    if ui.checkbox(&mut enabled, "Shadow").changed() {
         let after = enabled.then(canvas_core::Shadow::default);
         if let Err(e) = state.history.apply(
             &mut state.doc,
@@ -747,7 +784,7 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
     };
 
     ui.horizontal(|ui| {
-        ui.label("Desplaz.");
+        ui.label("Offset");
         track(
             ui.add(
                 egui::DragValue::new(&mut sh.offset_x)
@@ -768,7 +805,7 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Difusión");
+        ui.label("Softness");
         track(
             ui.add(
                 egui::Slider::new(&mut sh.blur, 0.0..=100.0)
@@ -778,7 +815,7 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Opacidad");
+        ui.label("Opacity");
         let mut pct = sh.opacity * 100.0;
         track(
             ui.add(
@@ -839,7 +876,7 @@ fn layer_properties_ui(
     };
 
     // --- Posición ---
-    ui.label("Posición");
+    ui.label("Position");
     ui.horizontal(|ui| {
         ui.label("X");
         changed |= track(ui.add(egui::DragValue::new(&mut t.x).speed(1.0).max_decimals(1)));
@@ -851,11 +888,11 @@ fn layer_properties_ui(
 
     // --- Tamaño ---
     ui.horizontal(|ui| {
-        ui.label("Tamaño");
+        ui.label("Size");
         let lock_icon = if state.aspect_lock { "🔒" } else { "🔓" };
         if ui
             .selectable_label(state.aspect_lock, lock_icon)
-            .on_hover_text("Proporción bloqueada (Shift al arrastrar la invierte)")
+            .on_hover_text("Locked aspect ratio (hold Shift while dragging to invert)")
             .clicked()
         {
             state.aspect_lock = !state.aspect_lock;
@@ -863,7 +900,7 @@ fn layer_properties_ui(
     });
     let ratio = original.aspect_ratio();
     ui.horizontal(|ui| {
-        ui.label("An");
+        ui.label("W");
         let before_w = t.width;
         if track(
             ui.add(
@@ -878,7 +915,7 @@ fn layer_properties_ui(
                 t.height = (t.width / ratio).max(1.0);
             }
         }
-        ui.label("Al");
+        ui.label("H");
         let before_h = t.height;
         if track(
             ui.add(
@@ -899,7 +936,7 @@ fn layer_properties_ui(
     if natural.0 > 0.0 && natural.1 > 0.0 {
         let mut scale = t.width / natural.0 * 100.0;
         ui.horizontal(|ui| {
-            ui.label("Escala");
+            ui.label("Scale");
             if track(
                 ui.add(
                     egui::DragValue::new(&mut scale)
@@ -919,7 +956,7 @@ fn layer_properties_ui(
     ui.add_space(8.0);
 
     // --- Desenfoque (no destructivo, vista previa en vivo) ---
-    ui.label("Desenfoque");
+    ui.label("Blur");
     blur_control(state, ui, sel);
 
     ui.add_space(8.0);
@@ -930,24 +967,24 @@ fn layer_properties_ui(
     ui.add_space(8.0);
 
     // --- Alineación respecto a la página ---
-    ui.label("Alinear en la página");
+    ui.label("Align to page");
     let mut aligned: Option<Transform> = None;
     ui.horizontal(|ui| {
-        if ui.button("⏴ Izq").clicked() {
+        if ui.button("⏴ Left").clicked() {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
                 canvas_core::HAlign::Left,
             ));
         }
-        if ui.button("↔ Centro").clicked() {
+        if ui.button("↔ Center").clicked() {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
                 canvas_core::HAlign::Center,
             ));
         }
-        if ui.button("Der ⏵").clicked() {
+        if ui.button("Right ⏵").clicked() {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
@@ -956,21 +993,21 @@ fn layer_properties_ui(
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("⏶ Arriba").clicked() {
+        if ui.button("⏶ Top").clicked() {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
                 canvas_core::VAlign::Top,
             ));
         }
-        if ui.button("↕ Medio").clicked() {
+        if ui.button("↕ Middle").clicked() {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
                 canvas_core::VAlign::Middle,
             ));
         }
-        if ui.button("Abajo ⏷").clicked() {
+        if ui.button("Bottom ⏷").clicked() {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
@@ -978,7 +1015,7 @@ fn layer_properties_ui(
             ));
         }
     });
-    if ui.button("◎ Centrar en la página").clicked() {
+    if ui.button("◎ Center on page").clicked() {
         let centered = canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center);
         aligned = Some(canvas_core::align_vertical(
             &centered,
@@ -987,8 +1024,8 @@ fn layer_properties_ui(
         ));
     }
     if ui
-        .button("⛶ Cubrir el lienzo")
-        .on_hover_text("La imagen llena toda la página manteniendo su proporción")
+        .button("⛶ Cover the page")
+        .on_hover_text("The image fills the whole page keeping its aspect ratio")
         .clicked()
     {
         aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));

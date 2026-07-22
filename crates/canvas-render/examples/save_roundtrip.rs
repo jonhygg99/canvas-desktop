@@ -49,7 +49,7 @@ fn main() -> Result<()> {
 
     // Guardado atómico sobre el destino (que ya existe: es una sustitución).
     let before = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
-    canvas_io::save_rgba(std::path::Path::new(&target), rgba, bw, bh)?;
+    canvas_io::save_rgba(std::path::Path::new(&target), rgba, bw, bh, 92, None)?;
     let after = std::fs::metadata(&target)?.len();
 
     // Reabre y comprueba.

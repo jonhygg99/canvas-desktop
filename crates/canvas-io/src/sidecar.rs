@@ -83,13 +83,13 @@ pub fn write_sidecar(
         let img =
             image::RgbaImage::from_raw(*w, *h, rgba.clone()).ok_or_else(|| IoError::Encode {
                 path: path.clone(),
-                message: format!("píxeles de la capa {layer} no cuadran con sus dimensiones"),
+                message: format!("layer {layer} pixels do not match its dimensions"),
             })?;
         let mut png = std::io::Cursor::new(Vec::new());
         img.write_to(&mut png, image::ImageFormat::Png)
             .map_err(|e| IoError::Encode {
                 path: path.clone(),
-                message: format!("capa {layer}: {e}"),
+                message: format!("layer {layer}: {e}"),
             })?;
         encoded.push(SidecarImage {
             layer: *layer,
@@ -106,7 +106,7 @@ pub fn write_sidecar(
     };
     let json = serde_json::to_vec_pretty(&file).map_err(|e| IoError::Encode {
         path: path.clone(),
-        message: format!("serializando el sidecar: {e}"),
+        message: format!("serializing the sidecar: {e}"),
     })?;
     write_atomic(&path, &json)
 }
@@ -122,13 +122,14 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
     };
     let file: SidecarFile = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.clone(),
-        source: image::ImageError::IoError(std::io::Error::other(format!("sidecar corrupto: {e}"))),
+        source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
     })?;
     if file.version > SIDECAR_VERSION {
         return Err(IoError::Decode {
             path: path.clone(),
             source: image::ImageError::IoError(std::io::Error::other(format!(
-                "sidecar de versión {} (esta app entiende hasta {SIDECAR_VERSION})",
+                "this file was created with a newer version of Canvas Desktop \
+                 (version {}, this app understands up to {SIDECAR_VERSION})",
                 file.version
             ))),
         });
@@ -148,7 +149,7 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
             .map_err(|e| IoError::Decode {
                 path: path.clone(),
                 source: image::ImageError::IoError(std::io::Error::other(format!(
-                    "base64 de la capa {}: {e}",
+                    "layer {} base64: {e}",
                     entry.layer
                 ))),
             })?;

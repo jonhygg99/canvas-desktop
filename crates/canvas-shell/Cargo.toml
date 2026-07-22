@@ -7,3 +7,18 @@ license.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+tracing = { workspace = true }
+# Instancia única e IPC local (named pipe en Windows, socket local en Unix).
+interprocess = { workspace = true }
+
+# Registro de asociaciones y notificación al shell (solo Windows).
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+] }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
