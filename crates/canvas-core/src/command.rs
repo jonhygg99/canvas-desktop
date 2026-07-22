@@ -114,6 +114,31 @@ impl Command for SetEffects {
     }
 }
 
+/// Sustituye el contenido completo de una capa (edición de texto o de las
+/// propiedades de una forma, consolidada en un paso).
+#[derive(Debug)]
+pub struct SetContent {
+    pub layer: LayerId,
+    pub before: crate::layer::LayerContent,
+    pub after: crate::layer::LayerContent,
+}
+
+impl Command for SetContent {
+    fn label(&self) -> &str {
+        "Editar contenido"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.content = self.after.clone();
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.content = self.before.clone();
+        Ok(())
+    }
+}
+
 /// Cambia el recorte no destructivo de una capa de imagen.
 #[derive(Debug)]
 pub struct SetCrop {
@@ -129,8 +154,9 @@ impl SetCrop {
         value: Option<crate::layer::CropRect>,
     ) -> Result<(), CoreError> {
         let layer = doc.layer_mut(self.layer)?;
-        let crate::layer::LayerContent::Image(content) = &mut layer.content;
-        content.crop = value;
+        if let crate::layer::LayerContent::Image(content) = &mut layer.content {
+            content.crop = value;
+        }
         Ok(())
     }
 }

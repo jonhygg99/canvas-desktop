@@ -121,6 +121,8 @@ pub struct EditorState {
     /// Ajuste de color en curso (sliders): capa y efectos originales, para
     /// consolidar los 6 sliders en un solo paso de deshacer.
     color_edit: Option<(LayerId, canvas_core::Effects)>,
+    /// Edición de contenido en curso (texto/forma): capa y contenido original.
+    content_edit: Option<(LayerId, LayerContent)>,
     /// Ajuste de sombra en curso: capa y sombra original.
     shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
@@ -194,6 +196,7 @@ impl EditorState {
             background_layer: None,
             blur_edit: None,
             color_edit: None,
+            content_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -233,6 +236,7 @@ impl EditorState {
             background_layer: None,
             blur_edit: None,
             color_edit: None,
+            content_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -288,6 +292,7 @@ impl EditorState {
             background_layer,
             blur_edit: None,
             color_edit: None,
+            content_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -363,6 +368,30 @@ impl EditorState {
         self.selected = Some(id);
     }
 
+    /// Inserta una capa nueva (texto o forma) centrada en la página,
+    /// deshacible, y la selecciona.
+    pub fn insert_layer_centered(&mut self, name: &str, w: f64, h: f64, content: LayerContent) {
+        let Ok(page) = self.doc.page() else { return };
+        let (pw, ph) = (page.width, page.height);
+        let index = page.layers.len();
+        let id = self.doc.allocate_layer_id();
+        let layer = Layer::new(
+            id,
+            name,
+            Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h),
+            content,
+        );
+        if let Err(e) = self
+            .history
+            .apply(&mut self.doc, Box::new(InsertLayer { index, layer }))
+        {
+            tracing::error!("insertar capa falló: {e}");
+            return;
+        }
+        self.selected = Some(id);
+        self.crop_mode = false;
+    }
+
     /// ¿Está activa (y viva, tras posibles deshacer) la capa de fondo?
     fn background_active(&self) -> bool {
         self.background_layer
@@ -415,7 +444,9 @@ impl EditorState {
         let Ok(source) = self.doc.layer(source_id) else {
             return;
         };
-        let LayerContent::Image(content) = source.content.clone();
+        let LayerContent::Image(content) = source.content.clone() else {
+            return;
+        };
         let source_t = source.transform;
         let Some(pixels) = self.images.get(&source_id).cloned() else {
             return;
@@ -483,7 +514,9 @@ impl EditorState {
         let id = self.background_layer.filter(|_| self.background_active())?;
         let (pw, ph) = self.doc.page().map(|p| (p.width, p.height)).ok()?;
         let layer = self.doc.layer(id).ok()?;
-        let LayerContent::Image(img) = &layer.content;
+        let LayerContent::Image(img) = &layer.content else {
+            return None;
+        };
         let before = layer.transform;
         let after = cover_transform(
             f64::from(img.natural_width),
@@ -585,6 +618,51 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.separator();
 
     page_ui(state, ui);
+    ui.separator();
+
+    ui.label("Insert");
+    ui.horizontal(|ui| {
+        if ui.button("T Text").clicked() {
+            state.insert_layer_centered(
+                "Text",
+                500.0,
+                120.0,
+                LayerContent::Text(canvas_core::TextContent::default()),
+            );
+        }
+        if ui.button("R").on_hover_text("Rectangle").clicked() {
+            state.insert_layer_centered(
+                "Rectangle",
+                320.0,
+                220.0,
+                LayerContent::Shape(canvas_core::ShapeContent::default()),
+            );
+        }
+        if ui.button("O").on_hover_text("Ellipse").clicked() {
+            state.insert_layer_centered(
+                "Ellipse",
+                280.0,
+                280.0,
+                LayerContent::Shape(canvas_core::ShapeContent {
+                    kind: canvas_core::ShapeKind::Ellipse,
+                    ..Default::default()
+                }),
+            );
+        }
+        if ui.button("L").on_hover_text("Line").clicked() {
+            state.insert_layer_centered(
+                "Line",
+                400.0,
+                24.0,
+                LayerContent::Shape(canvas_core::ShapeContent {
+                    kind: canvas_core::ShapeKind::Line,
+                    stroke: [30, 30, 30, 255],
+                    stroke_width: 6.0,
+                    ..Default::default()
+                }),
+            );
+        }
+    });
     ui.separator();
 
     if let Some(sel) = state.selected {
@@ -1017,10 +1095,14 @@ fn layer_properties_ui(
     let original = layer.transform;
     let natural = match &layer.content {
         LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
+        LayerContent::Svg(svg) => (f64::from(svg.natural_width), f64::from(svg.natural_height)),
+        LayerContent::Text(_) | LayerContent::Shape(_) => (0.0, 0.0),
     };
     let current_crop = match &layer.content {
         LayerContent::Image(img) => img.crop,
+        _ => None,
     };
+    let is_image = matches!(&layer.content, LayerContent::Image(_));
     let mut t = original;
     let mut changed = false;
     let mut commit = false;
@@ -1163,26 +1245,31 @@ fn layer_properties_ui(
 
     ui.add_space(8.0);
 
-    // --- Recorte no destructivo ---
+    // --- Contenido (texto / forma) ---
+    content_properties_ui(state, ui, sel);
+
+    // --- Recorte no destructivo (solo capas de imagen) ---
     let mut reset_crop = false;
-    ui.label("Crop");
-    ui.horizontal(|ui| {
-        let label = if state.crop_mode {
-            "✔ Done"
-        } else {
-            "✂ Crop"
-        };
-        if ui
-            .button(label)
-            .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
-            .clicked()
-        {
-            state.crop_mode = !state.crop_mode;
-        }
-        if current_crop.is_some() && ui.button("Reset").clicked() {
-            reset_crop = true;
-        }
-    });
+    if is_image {
+        ui.label("Crop");
+        ui.horizontal(|ui| {
+            let label = if state.crop_mode {
+                "✔ Done"
+            } else {
+                "✂ Crop"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
+                .clicked()
+            {
+                state.crop_mode = !state.crop_mode;
+            }
+            if current_crop.is_some() && ui.button("Reset").clicked() {
+                reset_crop = true;
+            }
+        });
+    }
 
     ui.add_space(8.0);
 
@@ -1558,6 +1645,7 @@ fn layer_interaction(
                         state.gesture = if state.crop_mode {
                             let start_crop = match &layer.content {
                                 LayerContent::Image(c) => c.crop,
+                                _ => None,
                             };
                             Gesture::Crop {
                                 layer: sel,
@@ -1708,8 +1796,9 @@ fn layer_interaction(
                     );
                     if let Ok(l) = state.doc.layer_mut(layer) {
                         l.transform = t;
-                        let LayerContent::Image(content) = &mut l.content;
-                        content.crop = Some(crop);
+                        if let LayerContent::Image(content) = &mut l.content {
+                            content.crop = Some(crop);
+                        }
                     }
                     show_drag_tag(ui, pos, format_dims(&t));
                 }
@@ -1744,8 +1833,10 @@ fn layer_interaction(
             } => {
                 if let Ok(l) = state.doc.layer(layer) {
                     let after_t = l.transform;
-                    let LayerContent::Image(content) = &l.content;
-                    let after_crop = content.crop;
+                    let after_crop = match &l.content {
+                        LayerContent::Image(content) => content.crop,
+                        _ => None,
+                    };
                     if after_t != start_t || after_crop != start_crop {
                         state
                             .history
@@ -1780,6 +1871,193 @@ fn layer_interaction(
                 state.crop_mode = false;
             }
             state.selected = hit;
+        }
+    }
+}
+
+/// Propiedades del contenido de una capa de texto o forma, con edición en
+/// vivo y consolidación en UN paso de deshacer.
+fn content_properties_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
+    let Ok(layer) = state.doc.layer(sel) else {
+        return;
+    };
+    let original = layer.content.clone();
+    let mut edited = original.clone();
+    let mut changed = false;
+    let mut commit = false;
+
+    match &mut edited {
+        LayerContent::Text(text) => {
+            ui.label("Text");
+            let r = ui.add(
+                egui::TextEdit::multiline(&mut text.text)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            changed |= r.changed();
+            commit |= r.lost_focus();
+
+            ui.horizontal(|ui| {
+                ui.label("Font");
+                let r = ui
+                    .add(egui::TextEdit::singleline(&mut text.family).hint_text("System default"));
+                changed |= r.changed();
+                commit |= r.lost_focus();
+            });
+            ui.horizontal(|ui| {
+                ui.label("Size");
+                let r = ui.add(
+                    egui::DragValue::new(&mut text.size)
+                        .range(4.0..=800.0)
+                        .speed(1.0),
+                );
+                changed |= r.changed();
+                commit |= r.drag_stopped() || r.lost_focus();
+
+                let bold = text.weight >= 600;
+                if ui
+                    .selectable_label(bold, "B")
+                    .on_hover_text("Bold")
+                    .clicked()
+                {
+                    text.weight = if bold { 400 } else { 700 };
+                    changed = true;
+                    commit = true;
+                }
+                if ui
+                    .selectable_label(text.italic, "I")
+                    .on_hover_text("Italic")
+                    .clicked()
+                {
+                    text.italic = !text.italic;
+                    changed = true;
+                    commit = true;
+                }
+                let mut color = egui::Color32::from_rgba_unmultiplied(
+                    text.color[0],
+                    text.color[1],
+                    text.color[2],
+                    text.color[3],
+                );
+                if ui.color_edit_button_srgba(&mut color).changed() {
+                    text.color = color.to_array();
+                    changed = true;
+                    commit = true;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Spacing");
+                let r = ui.add(
+                    egui::DragValue::new(&mut text.letter_spacing)
+                        .range(-20.0..=60.0)
+                        .speed(0.2)
+                        .max_decimals(1),
+                );
+                changed |= r.changed();
+                commit |= r.drag_stopped() || r.lost_focus();
+                ui.label("Line");
+                let r = ui.add(
+                    egui::DragValue::new(&mut text.line_height)
+                        .range(0.5..=3.0)
+                        .speed(0.02)
+                        .max_decimals(2),
+                );
+                changed |= r.changed();
+                commit |= r.drag_stopped() || r.lost_focus();
+            });
+            ui.horizontal(|ui| {
+                for (align, label) in [
+                    (canvas_core::TextAlign::Left, "Left"),
+                    (canvas_core::TextAlign::Center, "Center"),
+                    (canvas_core::TextAlign::Right, "Right"),
+                ] {
+                    if ui.selectable_label(text.align == align, label).clicked() {
+                        text.align = align;
+                        changed = true;
+                        commit = true;
+                    }
+                }
+            });
+            ui.add_space(8.0);
+        }
+        LayerContent::Shape(shape) => {
+            ui.label("Shape");
+            ui.horizontal(|ui| {
+                ui.label("Fill");
+                let mut fill = egui::Color32::from_rgba_unmultiplied(
+                    shape.fill[0],
+                    shape.fill[1],
+                    shape.fill[2],
+                    shape.fill[3],
+                );
+                if ui.color_edit_button_srgba(&mut fill).changed() {
+                    shape.fill = fill.to_array();
+                    changed = true;
+                    commit = true;
+                }
+                ui.label("Stroke");
+                let mut stroke = egui::Color32::from_rgba_unmultiplied(
+                    shape.stroke[0],
+                    shape.stroke[1],
+                    shape.stroke[2],
+                    shape.stroke[3],
+                );
+                if ui.color_edit_button_srgba(&mut stroke).changed() {
+                    shape.stroke = stroke.to_array();
+                    changed = true;
+                    commit = true;
+                }
+                let r = ui.add(
+                    egui::DragValue::new(&mut shape.stroke_width)
+                        .range(0.0..=100.0)
+                        .speed(0.5)
+                        .max_decimals(1),
+                );
+                changed |= r.changed();
+                commit |= r.drag_stopped() || r.lost_focus();
+            });
+            if shape.kind == canvas_core::ShapeKind::Rect {
+                ui.horizontal(|ui| {
+                    ui.label("Corner radius");
+                    let r = ui.add(
+                        egui::DragValue::new(&mut shape.corner_radius)
+                            .range(0.0..=500.0)
+                            .speed(1.0)
+                            .max_decimals(0),
+                    );
+                    changed |= r.changed();
+                    commit |= r.drag_stopped() || r.lost_focus();
+                });
+            }
+            ui.add_space(8.0);
+        }
+        _ => return,
+    }
+
+    if changed && edited != original {
+        if state.content_edit.is_none() {
+            state.content_edit = Some((sel, original));
+        }
+        if let Ok(l) = state.doc.layer_mut(sel) {
+            l.content = edited;
+        }
+    }
+    if commit {
+        if let Some((id, before)) = state.content_edit.take() {
+            let after = state
+                .doc
+                .layer(id)
+                .map(|l| l.content.clone())
+                .unwrap_or_else(|_| before.clone());
+            if after != before {
+                state
+                    .history
+                    .push_applied(Box::new(canvas_core::SetContent {
+                        layer: id,
+                        before,
+                        after,
+                    }));
+            }
         }
     }
 }

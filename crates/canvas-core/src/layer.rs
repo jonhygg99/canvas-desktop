@@ -200,10 +200,99 @@ pub struct ImageContent {
     pub crop: Option<CropRect>,
 }
 
+/// Alineación del texto dentro de su caja.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextContent {
+    pub text: String,
+    /// Familia tipográfica; vacío = la por defecto del sistema.
+    pub family: String,
+    /// Tamaño en píxeles de página.
+    pub size: f32,
+    /// Peso 100..=900 (400 normal, 700 negrita).
+    pub weight: u16,
+    pub italic: bool,
+    /// Interletraje extra en píxeles.
+    pub letter_spacing: f32,
+    /// Interlineado como múltiplo del tamaño (1.0 = normal).
+    pub line_height: f32,
+    pub align: TextAlign,
+    /// Color RGBA.
+    pub color: [u8; 4],
+}
+
+impl Default for TextContent {
+    fn default() -> Self {
+        Self {
+            text: "Text".to_owned(),
+            family: String::new(),
+            size: 64.0,
+            weight: 400,
+            italic: false,
+            letter_spacing: 0.0,
+            line_height: 1.2,
+            align: TextAlign::Left,
+            color: [20, 20, 20, 255],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShapeKind {
+    #[default]
+    Rect,
+    Ellipse,
+    Line,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShapeContent {
+    pub kind: ShapeKind,
+    /// Relleno RGBA; alfa 0 = sin relleno.
+    pub fill: [u8; 4],
+    /// Borde RGBA; alfa 0 = sin borde.
+    pub stroke: [u8; 4],
+    pub stroke_width: f32,
+    /// Radio de esquina (solo Rect).
+    pub corner_radius: f32,
+}
+
+impl Default for ShapeContent {
+    fn default() -> Self {
+        Self {
+            kind: ShapeKind::Rect,
+            fill: [66, 133, 244, 255],
+            stroke: [0, 0, 0, 0],
+            stroke_width: 2.0,
+            corner_radius: 0.0,
+        }
+    }
+}
+
+/// SVG insertado como capa: conserva la FUENTE vectorial (los píxeles con los
+/// que se pinta viven en el `ImageMap` de la app, rasterizados a demanda).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SvgContent {
+    /// XML del SVG original, para re-rasterizar y exportar sin pérdida.
+    pub source: String,
+    pub natural_width: u32,
+    pub natural_height: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LayerContent {
     Image(ImageContent),
-    // Text, Shape, Svg y Group llegan en entregas posteriores.
+    Text(TextContent),
+    Shape(ShapeContent),
+    Svg(SvgContent),
+    // Group llega con el panel de capas.
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -15,10 +15,13 @@ pub use align::{
     resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform, Corner, HAlign, VAlign,
 };
 pub use command::{
-    Command, Composite, History, InsertLayer, RemoveLayer, SetBlur, SetCrop, SetEffects,
-    SetPageSize, SetShadow, SetTransform,
+    Command, Composite, History, InsertLayer, RemoveLayer, SetBlur, SetContent, SetCrop,
+    SetEffects, SetPageSize, SetShadow, SetTransform,
 };
 pub use document::{Document, Page};
 pub use error::CoreError;
-pub use layer::{CropRect, Effects, ImageContent, Layer, LayerContent, LayerId, Shadow, Transform};
+pub use layer::{
+    CropRect, Effects, ImageContent, Layer, LayerContent, LayerId, Shadow, ShapeContent, ShapeKind,
+    SvgContent, TextAlign, TextContent, Transform,
+};
 pub use snap::{snap_translation, SnapResult};

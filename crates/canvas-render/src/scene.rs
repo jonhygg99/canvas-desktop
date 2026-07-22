@@ -1,13 +1,104 @@
 //! Construcción de la escena vello a partir del documento.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use canvas_core::{Document, LayerContent, LayerId};
+use canvas_core::{Document, LayerContent, LayerId, ShapeKind, TextAlign, TextContent};
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::color::palette;
-use vello::peniko::{Blob, Fill, ImageData};
+use vello::peniko::{Blob, Color, Fill, ImageData};
 use vello::Scene;
+
+/// Colocación del rect de una capa: posición + rotación sobre el centro +
+/// volteo sobre el centro.
+fn place_transform(t: &canvas_core::Transform) -> Affine {
+    let center = vello::kurbo::Point::new(t.width / 2.0, t.height / 2.0);
+    let flip = Affine::translate((center.x, center.y))
+        * Affine::scale_non_uniform(
+            if t.flip_h { -1.0 } else { 1.0 },
+            if t.flip_v { -1.0 } else { 1.0 },
+        )
+        * Affine::translate((-center.x, -center.y));
+    Affine::translate((t.x, t.y)) * Affine::rotate_about(t.rotation.to_radians(), center) * flip
+}
+
+/// Contextos de parley reutilizados entre frames (crear un `FontContext`
+/// enumera las fuentes del sistema: demasiado caro por frame).
+struct TextCtx {
+    fonts: parley::FontContext,
+    layouts: parley::LayoutContext<[u8; 4]>,
+}
+
+fn text_ctx() -> &'static Mutex<TextCtx> {
+    static CTX: OnceLock<Mutex<TextCtx>> = OnceLock::new();
+    CTX.get_or_init(|| {
+        Mutex::new(TextCtx {
+            fonts: parley::FontContext::new(),
+            layouts: parley::LayoutContext::new(),
+        })
+    })
+}
+
+/// Pinta una capa de texto: layout con parley, glifos con vello.
+fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_width: f64) {
+    let Ok(mut ctx) = text_ctx().lock() else {
+        return;
+    };
+    let TextCtx { fonts, layouts } = &mut *ctx;
+    let mut builder = layouts.ranged_builder(fonts, &content.text, 1.0, true);
+    builder.push_default(parley::StyleProperty::FontSize(content.size.max(1.0)));
+    if !content.family.is_empty() {
+        builder.push_default(parley::StyleProperty::FontFamily(
+            parley::FontFamily::named(content.family.as_str()),
+        ));
+    }
+    builder.push_default(parley::StyleProperty::FontWeight(parley::FontWeight::new(
+        f32::from(content.weight),
+    )));
+    if content.italic {
+        builder.push_default(parley::StyleProperty::FontStyle(parley::FontStyle::Italic));
+    }
+    builder.push_default(parley::StyleProperty::LetterSpacing(content.letter_spacing));
+    builder.push_default(parley::StyleProperty::LineHeight(
+        parley::LineHeight::FontSizeRelative(content.line_height.max(0.5)),
+    ));
+    let mut layout = builder.build(&content.text);
+    layout.break_all_lines(Some(box_width.max(1.0) as f32));
+    let align = match content.align {
+        TextAlign::Left => parley::Alignment::Start,
+        TextAlign::Center => parley::Alignment::Center,
+        TextAlign::Right => parley::Alignment::End,
+    };
+    layout.align(align, parley::AlignmentOptions::default());
+
+    let [r, g, b, a] = content.color;
+    let brush = Color::from_rgba8(r, g, b, a);
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
+                continue;
+            };
+            let font = run.run().font().clone();
+            let font_size = run.run().font_size();
+            let coords = run.run().normalized_coords().to_vec();
+            let glyphs: Vec<vello::Glyph> = run
+                .positioned_glyphs()
+                .map(|glyph| vello::Glyph {
+                    id: glyph.id,
+                    x: glyph.x,
+                    y: glyph.y,
+                })
+                .collect();
+            scene
+                .draw_glyphs(&font)
+                .font_size(font_size)
+                .normalized_coords(&coords)
+                .brush(brush)
+                .transform(transform)
+                .draw(Fill::NonZero, glyphs.into_iter());
+        }
+    }
+}
 
 /// Mapa de bits de cada capa de imagen, gestionado por la app.
 pub type ImageMap = HashMap<LayerId, ImageData>;
@@ -131,18 +222,7 @@ pub fn build_scene(
                     continue;
                 }
                 let t = layer.transform;
-                // Colocación del rect de la capa: posición + rotación sobre
-                // el centro + volteo sobre el centro.
-                let center = vello::kurbo::Point::new(t.width / 2.0, t.height / 2.0);
-                let flip = Affine::translate((center.x, center.y))
-                    * Affine::scale_non_uniform(
-                        if t.flip_h { -1.0 } else { 1.0 },
-                        if t.flip_v { -1.0 } else { 1.0 },
-                    )
-                    * Affine::translate((-center.x, -center.y));
-                let place = Affine::translate((t.x, t.y))
-                    * Affine::rotate_about(t.rotation.to_radians(), center)
-                    * flip;
+                let place = place_transform(&t);
 
                 // Recorte no destructivo: la fracción `crop` del mapa de bits
                 // llena el rect; el resto se recorta con una capa de clip.
@@ -169,6 +249,71 @@ pub fn build_scene(
                 scene.draw_image(image, view * place * image_local);
                 if cropped {
                     scene.pop_layer();
+                }
+            }
+            // El SVG pinta sus píxeles rasterizados del ImageMap (la fuente
+            // vectorial viaja en el documento para reexportar sin pérdida).
+            LayerContent::Svg(_) => {
+                let Some(image) = blurred.get(&layer.id).or_else(|| images.get(&layer.id)) else {
+                    continue;
+                };
+                if image.width == 0 || image.height == 0 {
+                    continue;
+                }
+                let t = layer.transform;
+                let place = place_transform(&t);
+                let image_local = Affine::scale_non_uniform(
+                    t.width / f64::from(image.width),
+                    t.height / f64::from(image.height),
+                );
+                scene.draw_image(image, view * place * image_local);
+            }
+            LayerContent::Text(text) => {
+                let t = layer.transform;
+                draw_text(&mut scene, view * place_transform(&t), text, t.width);
+            }
+            LayerContent::Shape(shape) => {
+                let t = layer.transform;
+                let place = view * place_transform(&t);
+                let [fr, fg, fb, fa] = shape.fill;
+                let [sr, sg, sb, sa] = shape.stroke;
+                let fill_color = Color::from_rgba8(fr, fg, fb, fa);
+                let stroke_color = Color::from_rgba8(sr, sg, sb, sa);
+                let stroke = vello::kurbo::Stroke::new(f64::from(shape.stroke_width.max(0.0)));
+                match shape.kind {
+                    ShapeKind::Rect => {
+                        let rounded = vello::kurbo::RoundedRect::from_rect(
+                            Rect::new(0.0, 0.0, t.width, t.height),
+                            f64::from(shape.corner_radius.max(0.0)),
+                        );
+                        if fa > 0 {
+                            scene.fill(Fill::NonZero, place, fill_color, None, &rounded);
+                        }
+                        if sa > 0 && shape.stroke_width > 0.0 {
+                            scene.stroke(&stroke, place, stroke_color, None, &rounded);
+                        }
+                    }
+                    ShapeKind::Ellipse => {
+                        let ellipse = vello::kurbo::Ellipse::new(
+                            (t.width / 2.0, t.height / 2.0),
+                            (t.width / 2.0, t.height / 2.0),
+                            0.0,
+                        );
+                        if fa > 0 {
+                            scene.fill(Fill::NonZero, place, fill_color, None, &ellipse);
+                        }
+                        if sa > 0 && shape.stroke_width > 0.0 {
+                            scene.stroke(&stroke, place, stroke_color, None, &ellipse);
+                        }
+                    }
+                    ShapeKind::Line => {
+                        let line = vello::kurbo::Line::new(
+                            (0.0, t.height / 2.0),
+                            (t.width, t.height / 2.0),
+                        );
+                        let color = if sa > 0 { stroke_color } else { fill_color };
+                        scene.stroke(&stroke, place, color, None, &line);
+                    }
                 }
             }
         }

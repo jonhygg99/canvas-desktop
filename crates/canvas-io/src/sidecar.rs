@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{write_atomic, IoError, LoadedImage};
 
-/// Versión del formato, por si cambia en el futuro.
-const SIDECAR_VERSION: u32 = 1;
+/// Versión del formato. v2 añade capas de texto/forma/SVG; los sidecar v1
+/// se leen sin migración (los campos nuevos tienen serde(default)).
+const SIDECAR_VERSION: u32 = 2;
 
 /// Píxeles de una capa a embeber: (id crudo, RGBA, ancho, alto).
 pub type LayerPixels = (u64, Vec<u8>, u32, u32);
