@@ -123,7 +123,7 @@ pub fn build_scene(
             );
         }
         match &layer.content {
-            LayerContent::Image(_) => {
+            LayerContent::Image(content) => {
                 let Some(image) = blurred.get(&layer.id).or_else(|| images.get(&layer.id)) else {
                     continue;
                 };
@@ -131,16 +131,45 @@ pub fn build_scene(
                     continue;
                 }
                 let t = layer.transform;
-                let local = Affine::translate((t.x, t.y))
-                    * Affine::rotate_about(
-                        t.rotation.to_radians(),
-                        vello::kurbo::Point::new(t.width / 2.0, t.height / 2.0),
-                    )
+                // Colocación del rect de la capa: posición + rotación sobre
+                // el centro + volteo sobre el centro.
+                let center = vello::kurbo::Point::new(t.width / 2.0, t.height / 2.0);
+                let flip = Affine::translate((center.x, center.y))
                     * Affine::scale_non_uniform(
-                        t.width / f64::from(image.width),
-                        t.height / f64::from(image.height),
+                        if t.flip_h { -1.0 } else { 1.0 },
+                        if t.flip_v { -1.0 } else { 1.0 },
+                    )
+                    * Affine::translate((-center.x, -center.y));
+                let place = Affine::translate((t.x, t.y))
+                    * Affine::rotate_about(t.rotation.to_radians(), center)
+                    * flip;
+
+                // Recorte no destructivo: la fracción `crop` del mapa de bits
+                // llena el rect; el resto se recorta con una capa de clip.
+                let crop = content
+                    .crop
+                    .map(canvas_core::CropRect::clamped)
+                    .unwrap_or_else(canvas_core::CropRect::full);
+                let (iw, ih) = (f64::from(image.width), f64::from(image.height));
+                let sx = t.width / (crop.width * iw);
+                let sy = t.height / (crop.height * ih);
+                let image_local = Affine::scale_non_uniform(sx, sy)
+                    * Affine::translate((-crop.x * iw, -crop.y * ih));
+
+                let cropped = content.crop.is_some();
+                if cropped {
+                    scene.push_layer(
+                        Fill::NonZero,
+                        vello::peniko::Mix::Normal,
+                        1.0,
+                        view * place,
+                        &Rect::new(0.0, 0.0, t.width, t.height),
                     );
-                scene.draw_image(image, view * local);
+                }
+                scene.draw_image(image, view * place * image_local);
+                if cropped {
+                    scene.pop_layer();
+                }
             }
         }
     }

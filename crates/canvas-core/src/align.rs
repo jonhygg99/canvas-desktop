@@ -1,7 +1,7 @@
 //! Geometría pura de alineación y redimensionado. Sin UI: funciones
 //! deterministas y testeables que la app usa para botones y manejadores.
 
-use crate::layer::Transform;
+use crate::layer::{CropRect, Transform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HAlign {
@@ -130,7 +130,179 @@ pub fn resize_from_corner(
         y,
         width,
         height,
-        rotation: start.rotation,
+        ..*start
+    }
+}
+
+/// Como [`resize_from_corner`], pero correcto con la capa ROTADA: el delta
+/// del puntero llega en coordenadas de página, se pasa al espacio local de la
+/// capa, se redimensiona ahí, y la esquina opuesta (el ancla) queda clavada
+/// EN PÁGINA aunque el rect gire alrededor de su centro.
+pub fn resize_rotated_from_corner(
+    start: &Transform,
+    corner: Corner,
+    page_dx: f64,
+    page_dy: f64,
+    keep_aspect: bool,
+    min_size: f64,
+) -> Transform {
+    let theta = start.rotation.to_radians();
+    if theta == 0.0 {
+        return resize_from_corner(start, corner, page_dx, page_dy, keep_aspect, min_size);
+    }
+    // Delta del puntero en el espacio local (des-rotado).
+    let (sin, cos) = (-theta).sin_cos();
+    let local_dx = page_dx * cos - page_dy * sin;
+    let local_dy = page_dx * sin + page_dy * cos;
+
+    // Redimensiona en local: solo interesan width/height nuevos.
+    let resized = resize_from_corner(start, corner, local_dx, local_dy, keep_aspect, min_size);
+    let (w, h) = (resized.width, resized.height);
+
+    // Ancla: la esquina opuesta, en coordenadas de página (rotada).
+    let anchor_index = match corner {
+        Corner::TopLeft => 3,     // ancla = inferior derecha
+        Corner::TopRight => 2,    // ancla = inferior izquierda
+        Corner::BottomLeft => 1,  // ancla = superior derecha
+        Corner::BottomRight => 0, // ancla = superior izquierda
+    };
+    let anchor = start.corners()[anchor_index];
+
+    // Vector local del ancla al centro con las dimensiones nuevas.
+    let (ox, oy) = match corner {
+        Corner::TopLeft => (-w / 2.0, -h / 2.0),
+        Corner::TopRight => (w / 2.0, -h / 2.0),
+        Corner::BottomLeft => (-w / 2.0, h / 2.0),
+        Corner::BottomRight => (w / 2.0, h / 2.0),
+    };
+    // Centro nuevo = ancla + R(θ)·(vector local ancla→centro).
+    let (sin_f, cos_f) = theta.sin_cos();
+    let cx = anchor.0 + (ox * cos_f - oy * sin_f);
+    let cy = anchor.1 + (ox * sin_f + oy * cos_f);
+
+    Transform {
+        x: cx - w / 2.0,
+        y: cy - h / 2.0,
+        width: w,
+        height: h,
+        ..*start
+    }
+}
+
+/// Recorte «por bordes» arrastrando una esquina en modo recorte: la esquina
+/// mueve los dos bordes adyacentes; el CONTENIDO queda clavado en la página
+/// (la ventana visible se estrecha o se ensancha sobre él) y el rect de la
+/// capa se ajusta en consecuencia. Devuelve el transform y el crop nuevos.
+///
+/// La expansión se limita a lo que quede de imagen fuera del recorte actual,
+/// y la reducción a un mínimo de 8 px de página por eje.
+pub fn trim_crop_from_corner(
+    start: &Transform,
+    start_crop: CropRect,
+    corner: Corner,
+    page_dx: f64,
+    page_dy: f64,
+) -> (Transform, CropRect) {
+    const MIN_PX: f64 = 8.0;
+    let start_crop = start_crop.clamped();
+    let theta = start.rotation.to_radians();
+
+    // Delta del puntero en el espacio local de la capa.
+    let (sin_inv, cos_inv) = (-theta).sin_cos();
+    let local_dx = page_dx * cos_inv - page_dy * sin_inv;
+    let local_dy = page_dx * sin_inv + page_dy * cos_inv;
+
+    // Tamaño del mapa de bits COMPLETO en píxeles de página.
+    let full_w = start.width / start_crop.width;
+    let full_h = start.height / start_crop.height;
+    // Márgenes de contenido disponibles para expandir por cada lado.
+    let max_left = start_crop.x * full_w;
+    let max_right = (1.0 - start_crop.x - start_crop.width) * full_w;
+    let max_top = start_crop.y * full_h;
+    let max_bottom = (1.0 - start_crop.y - start_crop.height) * full_h;
+
+    // Cambio de cada borde en local (positivo = expandir hacia fuera).
+    let (mut d_left, mut d_right, mut d_top, mut d_bottom) = (0.0, 0.0, 0.0, 0.0);
+    match corner {
+        Corner::TopLeft => {
+            d_left = -local_dx;
+            d_top = -local_dy;
+        }
+        Corner::TopRight => {
+            d_right = local_dx;
+            d_top = -local_dy;
+        }
+        Corner::BottomLeft => {
+            d_left = -local_dx;
+            d_bottom = local_dy;
+        }
+        Corner::BottomRight => {
+            d_right = local_dx;
+            d_bottom = local_dy;
+        }
+    }
+    let shrink_w = start.width - MIN_PX;
+    let shrink_h = start.height - MIN_PX;
+    d_left = d_left.clamp(-shrink_w, max_left);
+    d_right = d_right.clamp(-shrink_w, max_right);
+    d_top = d_top.clamp(-shrink_h, max_top);
+    d_bottom = d_bottom.clamp(-shrink_h, max_bottom);
+
+    let new_w = (start.width + d_left + d_right).max(MIN_PX);
+    let new_h = (start.height + d_top + d_bottom).max(MIN_PX);
+
+    let crop = CropRect {
+        x: start_crop.x - d_left / full_w,
+        y: start_crop.y - d_top / full_h,
+        width: new_w / full_w,
+        height: new_h / full_h,
+    }
+    .clamped();
+
+    // El centro local se desplaza la mitad de lo que cambian los bordes
+    // opuestos; a página con la rotación de la capa.
+    let (shift_x, shift_y) = ((d_right - d_left) / 2.0, (d_bottom - d_top) / 2.0);
+    let (sin_f, cos_f) = theta.sin_cos();
+    let (pcx, pcy) = start.center();
+    let cx = pcx + shift_x * cos_f - shift_y * sin_f;
+    let cy = pcy + shift_x * sin_f + shift_y * cos_f;
+
+    (
+        Transform {
+            x: cx - new_w / 2.0,
+            y: cy - new_h / 2.0,
+            width: new_w,
+            height: new_h,
+            ..*start
+        },
+        crop,
+    )
+}
+
+/// Transform que muestra la imagen COMPLETA de nuevo (quitar el recorte),
+/// dejando el contenido clavado en la página.
+pub fn uncrop_transform(t: &Transform, crop: CropRect) -> Transform {
+    let crop = crop.clamped();
+    let full_w = t.width / crop.width;
+    let full_h = t.height / crop.height;
+    let d_left = crop.x * full_w;
+    let d_right = (1.0 - crop.x - crop.width) * full_w;
+    let d_top = crop.y * full_h;
+    let d_bottom = (1.0 - crop.y - crop.height) * full_h;
+
+    let (shift_x, shift_y) = ((d_right - d_left) / 2.0, (d_bottom - d_top) / 2.0);
+    let theta = t.rotation.to_radians();
+    let (sin_f, cos_f) = theta.sin_cos();
+    let (pcx, pcy) = t.center();
+    let cx = pcx + shift_x * cos_f - shift_y * sin_f;
+    let cy = pcy + shift_x * sin_f + shift_y * cos_f;
+
+    Transform {
+        x: cx - full_w / 2.0,
+        y: cy - full_h / 2.0,
+        width: full_w,
+        height: full_h,
+        ..*t
     }
 }
 
@@ -140,6 +312,19 @@ mod tests {
 
     fn t(x: f64, y: f64, w: f64, h: f64) -> Transform {
         Transform::new(x, y, w, h)
+    }
+
+    #[test]
+    fn uncrop_restores_full_content_in_place() {
+        // Recorte del cuarto superior izquierdo de una imagen 100×100 en (25,10).
+        let start = t(0.0, 0.0, 100.0, 100.0);
+        let (cropped_t, crop) =
+            trim_crop_from_corner(&start, CropRect::full(), Corner::BottomRight, -50.0, -50.0);
+        let restored = uncrop_transform(&cropped_t, crop);
+        assert!((restored.x - start.x).abs() < 1e-9);
+        assert!((restored.y - start.y).abs() < 1e-9);
+        assert!((restored.width - 100.0).abs() < 1e-9);
+        assert!((restored.height - 100.0).abs() < 1e-9);
     }
 
     #[test]
@@ -215,6 +400,78 @@ mod tests {
         let start = t(0.0, 0.0, 200.0, 100.0);
         let r = resize_from_corner(&start, Corner::BottomRight, 0.0, 100.0, false, 1.0);
         assert_eq!((r.width, r.height), (200.0, 200.0));
+    }
+
+    #[test]
+    fn rotated_resize_keeps_opposite_corner_anchored() {
+        let mut start = t(100.0, 100.0, 200.0, 100.0);
+        start.rotation = 30.0;
+        let anchor_before = start.corners()[0]; // superior izquierda
+
+        // Arrastra la esquina inferior derecha 40 px en página.
+        let r = resize_rotated_from_corner(&start, Corner::BottomRight, 40.0, 10.0, false, 1.0);
+        let anchor_after = r.corners()[0];
+        assert!((anchor_after.0 - anchor_before.0).abs() < 1e-9);
+        assert!((anchor_after.1 - anchor_before.1).abs() < 1e-9);
+        assert_eq!(r.rotation, 30.0);
+    }
+
+    #[test]
+    fn rotated_resize_with_zero_rotation_matches_plain() {
+        let start = t(10.0, 20.0, 100.0, 50.0);
+        let plain = resize_from_corner(&start, Corner::BottomRight, 30.0, 15.0, true, 1.0);
+        let rotated =
+            resize_rotated_from_corner(&start, Corner::BottomRight, 30.0, 15.0, true, 1.0);
+        assert_eq!(plain, rotated);
+    }
+
+    #[test]
+    fn trim_crop_shrinks_window_and_keeps_content_fixed() {
+        let start = t(0.0, 0.0, 100.0, 100.0);
+        let (nt, crop) =
+            trim_crop_from_corner(&start, CropRect::full(), Corner::BottomRight, -20.0, -30.0);
+        assert_eq!((nt.x, nt.y), (0.0, 0.0)); // la esquina opuesta no se mueve
+        assert_eq!((nt.width, nt.height), (80.0, 70.0));
+        assert!((crop.width - 0.8).abs() < 1e-9);
+        assert!((crop.height - 0.7).abs() < 1e-9);
+        assert_eq!((crop.x, crop.y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn trim_crop_cannot_expand_beyond_content() {
+        let start = t(0.0, 0.0, 100.0, 100.0);
+        // Sin recorte previo no hay contenido extra: expandir no hace nada.
+        let (nt, crop) =
+            trim_crop_from_corner(&start, CropRect::full(), Corner::BottomRight, 50.0, 50.0);
+        assert_eq!((nt.width, nt.height), (100.0, 100.0));
+        assert_eq!(crop, CropRect::full().clamped());
+    }
+
+    #[test]
+    fn trim_crop_top_left_moves_origin_and_crop_offset() {
+        let start = t(0.0, 0.0, 100.0, 100.0);
+        let (nt, crop) =
+            trim_crop_from_corner(&start, CropRect::full(), Corner::TopLeft, 25.0, 10.0);
+        // El borde izquierdo entra 25 px y el superior 10.
+        assert_eq!((nt.x, nt.y), (25.0, 10.0));
+        assert_eq!((nt.width, nt.height), (75.0, 90.0));
+        assert!((crop.x - 0.25).abs() < 1e-9);
+        assert!((crop.y - 0.10).abs() < 1e-9);
+        // Deshacer el recorte (expandir de nuevo) recupera contenido.
+        let (nt2, crop2) = trim_crop_from_corner(&nt, crop, Corner::TopLeft, -25.0, -10.0);
+        assert!((nt2.x).abs() < 1e-9);
+        assert!((crop2.x).abs() < 1e-9);
+        assert!((crop2.width - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn contains_point_respects_rotation() {
+        let mut layer = t(0.0, 0.0, 100.0, 20.0);
+        // Punto justo fuera de la esquina AABB.
+        assert!(!layer.contains_point(95.0, 25.0));
+        layer.rotation = 90.0; // ahora es alto y estrecho alrededor de (50,10)
+        assert!(layer.contains_point(50.0, 55.0));
+        assert!(!layer.contains_point(95.0, 10.0));
     }
 
     #[test]

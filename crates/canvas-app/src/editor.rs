@@ -3,8 +3,9 @@
 use std::path::PathBuf;
 
 use canvas_core::{
-    cover_transform, resize_from_corner, CoreError, Corner, Document, History, ImageContent,
-    InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, SetPageSize, SetTransform, Transform,
+    cover_transform, resize_rotated_from_corner, snap_translation, trim_crop_from_corner,
+    uncrop_transform, CoreError, Corner, CropRect, Document, History, ImageContent, InsertLayer,
+    Layer, LayerContent, LayerId, RemoveLayer, SetCrop, SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, ImageMap};
@@ -80,6 +81,22 @@ enum Gesture {
         start: Transform,
         origin: egui::Pos2,
     },
+    Rotate {
+        layer: LayerId,
+        start: Transform,
+        /// `rotación inicial − ángulo inicial del puntero` (grados): la capa
+        /// sigue al puntero sin saltar al agarrar el manejador.
+        grab_offset: f64,
+    },
+    /// Modo recorte: las esquinas mueven los bordes de la ventana visible
+    /// sobre el contenido, que queda clavado en la página.
+    Crop {
+        layer: LayerId,
+        corner: Corner,
+        start_t: Transform,
+        start_crop: Option<CropRect>,
+        origin: egui::Pos2,
+    },
 }
 
 pub struct EditorState {
@@ -128,6 +145,14 @@ pub struct EditorState {
     /// Zoom pedido desde el menú (factor); se aplica anclado al centro del
     /// lienzo en el próximo frame, cuando se conoce su rect.
     pub pending_zoom_factor: Option<f64>,
+    /// Cuadrícula y reglas (menú View).
+    pub show_grid: bool,
+    pub show_rulers: bool,
+    /// Modo recorte activo: las esquinas recortan en vez de redimensionar.
+    pub crop_mode: bool,
+    /// Guías de alineación magnéticas activas durante un arrastre
+    /// (posiciones de página: verticales, horizontales).
+    snap_guides: (Vec<f64>, Vec<f64>),
 }
 
 impl EditorState {
@@ -148,6 +173,7 @@ impl EditorState {
                 source_path: Some(path),
                 natural_width: img.width,
                 natural_height: img.height,
+                crop: None,
             }),
         )?;
         let mut images = ImageMap::new();
@@ -177,6 +203,10 @@ impl EditorState {
             external_change: false,
             reload_requested: false,
             pending_zoom_factor: None,
+            show_grid: false,
+            show_rulers: false,
+            crop_mode: false,
+            snap_guides: (Vec::new(), Vec::new()),
         })
     }
 
@@ -211,6 +241,10 @@ impl EditorState {
             external_change: false,
             reload_requested: false,
             pending_zoom_factor: None,
+            show_grid: false,
+            show_rulers: false,
+            crop_mode: false,
+            snap_guides: (Vec::new(), Vec::new()),
         }
     }
 
@@ -261,6 +295,10 @@ impl EditorState {
             external_change: false,
             reload_requested: false,
             pending_zoom_factor: None,
+            show_grid: false,
+            show_rulers: false,
+            crop_mode: false,
+            snap_guides: (Vec::new(), Vec::new()),
         }
     }
 
@@ -304,6 +342,7 @@ impl EditorState {
                 source_path: Some(path),
                 natural_width: img.width,
                 natural_height: img.height,
+                crop: None,
             }),
         );
         if let Err(e) = self
@@ -884,6 +923,9 @@ fn layer_properties_ui(
     let natural = match &layer.content {
         LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
     };
+    let current_crop = match &layer.content {
+        LayerContent::Image(img) => img.crop,
+    };
     let mut t = original;
     let mut changed = false;
     let mut commit = false;
@@ -904,6 +946,56 @@ fn layer_properties_ui(
         ui.label("Y");
         changed |= track(ui.add(egui::DragValue::new(&mut t.y).speed(1.0).max_decimals(1)));
     });
+
+    // --- Rotación y volteo ---
+    let mut reset_rotation = false;
+    let mut flip_h = false;
+    let mut flip_v = false;
+    ui.horizontal(|ui| {
+        ui.label("Rotation");
+        if track(
+            ui.add(
+                egui::DragValue::new(&mut t.rotation)
+                    .speed(1.0)
+                    .range(-180.0..=180.0)
+                    .suffix("°")
+                    .max_decimals(1),
+            ),
+        ) {
+            changed = true;
+        }
+        reset_rotation = t.rotation != 0.0
+            && ui
+                .small_button("0°")
+                .on_hover_text("Reset rotation")
+                .clicked();
+        flip_h = ui
+            .small_button("⇋")
+            .on_hover_text("Flip horizontally")
+            .clicked();
+        flip_v = ui
+            .small_button("⇅")
+            .on_hover_text("Flip vertically")
+            .clicked();
+    });
+    // `track` retiene prestado `commit` hasta su último uso: los botones
+    // acumulan en un flag aparte que se fusiona al final.
+    let mut force_commit = false;
+    if reset_rotation {
+        t.rotation = 0.0;
+        changed = true;
+        force_commit = true;
+    }
+    if flip_h {
+        t.flip_h = !t.flip_h;
+        changed = true;
+        force_commit = true;
+    }
+    if flip_v {
+        t.flip_v = !t.flip_v;
+        changed = true;
+        force_commit = true;
+    }
 
     ui.add_space(6.0);
 
@@ -973,6 +1065,29 @@ fn layer_properties_ui(
             }
         });
     }
+
+    ui.add_space(8.0);
+
+    // --- Recorte no destructivo ---
+    let mut reset_crop = false;
+    ui.label("Crop");
+    ui.horizontal(|ui| {
+        let label = if state.crop_mode {
+            "✔ Done"
+        } else {
+            "✂ Crop"
+        };
+        if ui
+            .button(label)
+            .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
+            .clicked()
+        {
+            state.crop_mode = !state.crop_mode;
+        }
+        if current_crop.is_some() && ui.button("Reset").clicked() {
+            reset_crop = true;
+        }
+    });
 
     ui.add_space(8.0);
 
@@ -1053,6 +1168,34 @@ fn layer_properties_ui(
     }
 
     // --- Aplicar cambios ---
+    if reset_crop {
+        if let Some(crop) = current_crop {
+            let before = state.panel_edit.take().map_or(original, |(_, b)| b);
+            let restored = uncrop_transform(&before, crop);
+            if let Err(e) = state.history.apply(
+                &mut state.doc,
+                Box::new(canvas_core::Composite::new(
+                    "Reset crop",
+                    vec![
+                        Box::new(SetTransform {
+                            layer: sel,
+                            before,
+                            after: restored,
+                        }),
+                        Box::new(SetCrop {
+                            layer: sel,
+                            before: current_crop,
+                            after: None,
+                        }),
+                    ],
+                )),
+            ) {
+                tracing::error!("reset crop falló: {e}");
+            }
+        }
+        return;
+    }
+
     if let Some(after) = aligned {
         // Botón de alineación: comando inmediato (consolidando cualquier
         // edición de campo pendiente como parte del mismo paso).
@@ -1080,7 +1223,7 @@ fn layer_properties_ui(
             l.transform = t;
         }
     }
-    if commit {
+    if commit || force_commit {
         if let Some((id, before)) = state.panel_edit.take() {
             if let Ok(l) = state.doc.layer(id) {
                 let after = l.transform;
@@ -1203,7 +1346,13 @@ pub fn canvas_ui(
         egui::Color32::WHITE,
     );
 
+    if state.show_grid {
+        draw_grid(state, ui, rect, page_dims);
+    }
     draw_selection_overlay(state, ui, rect);
+    if state.show_rulers {
+        draw_rulers(state, ui, rect);
+    }
 }
 
 const HANDLE_SIZE: f32 = 9.0;
@@ -1218,23 +1367,39 @@ fn screen_to_page(vp: &Viewport, rect: egui::Rect, pos: egui::Pos2) -> (f64, f64
     (f64::from(local.x) / vp.zoom, f64::from(local.y) / vp.zoom)
 }
 
-/// Rect en pantalla de una capa.
-fn layer_screen_rect(vp: &Viewport, rect: egui::Rect, t: &Transform) -> egui::Rect {
-    egui::Rect::from_min_max(
-        page_to_screen(vp, rect, t.x, t.y),
-        page_to_screen(vp, rect, t.x + t.width, t.y + t.height),
-    )
+/// Esquinas de la capa (rotadas) en pantalla: [sup-izq, sup-der, inf-izq, inf-der].
+fn layer_corners_screen(vp: &Viewport, rect: egui::Rect, t: &Transform) -> [egui::Pos2; 4] {
+    t.corners().map(|(x, y)| page_to_screen(vp, rect, x, y))
 }
 
-/// Los cuatro manejadores de esquina de un rect de pantalla.
-fn corner_handles(r: egui::Rect) -> [(Corner, egui::Rect); 4] {
-    let h = |p: egui::Pos2| egui::Rect::from_center_size(p, egui::Vec2::splat(HANDLE_SIZE));
-    [
-        (Corner::TopLeft, h(r.left_top())),
-        (Corner::TopRight, h(r.right_top())),
-        (Corner::BottomLeft, h(r.left_bottom())),
-        (Corner::BottomRight, h(r.right_bottom())),
-    ]
+/// Posición en pantalla del manejador de rotación (por encima del centro del
+/// borde superior, en la dirección local de la capa).
+fn rotation_handle_screen(vp: &Viewport, rect: egui::Rect, t: &Transform) -> egui::Pos2 {
+    const OFFSET_SCREEN: f64 = 26.0;
+    let theta = t.rotation.to_radians();
+    let (sin, cos) = theta.sin_cos();
+    let (cx, cy) = t.center();
+    // Centro del borde superior + prolongación hacia fuera (en px de página).
+    let reach = t.height / 2.0 + OFFSET_SCREEN / vp.zoom;
+    let px = cx + reach * sin;
+    let py = cy - reach * cos;
+    page_to_screen(vp, rect, px, py)
+}
+
+/// La esquina (si hay) cuyo manejador contiene el punto de pantalla.
+fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Corner> {
+    const ORDER: [Corner; 4] = [
+        Corner::TopLeft,
+        Corner::TopRight,
+        Corner::BottomLeft,
+        Corner::BottomRight,
+    ];
+    let reach = HANDLE_SIZE / 2.0 + 3.0;
+    ORDER
+        .into_iter()
+        .zip(corners)
+        .find(|(_, p)| p.distance(pos) <= reach)
+        .map(|(c, _)| c)
 }
 
 fn layer_interaction(
@@ -1250,18 +1415,24 @@ fn layer_interaction(
     // Cursor según lo que hay debajo.
     if let (Some(pos), Some(sel)) = (pointer, state.selected) {
         if let Ok(layer) = state.doc.layer(sel) {
-            let srect = layer_screen_rect(&state.viewport, rect, &layer.transform);
-            let on_handle = corner_handles(srect)
-                .into_iter()
-                .find(|(_, hr)| hr.expand(2.0).contains(pos));
-            if let Some((corner, _)) = on_handle {
+            let corners = layer_corners_screen(&state.viewport, rect, &layer.transform);
+            let on_rotate = rotation_handle_screen(&state.viewport, rect, &layer.transform)
+                .distance(pos)
+                <= HANDLE_SIZE / 2.0 + 3.0;
+            if on_rotate {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            } else if let Some(corner) = corner_at(corners, pos) {
                 let icon = match corner {
                     Corner::TopLeft | Corner::BottomRight => egui::CursorIcon::ResizeNwSe,
                     Corner::TopRight | Corner::BottomLeft => egui::CursorIcon::ResizeNeSw,
                 };
                 ui.ctx().set_cursor_icon(icon);
-            } else if srect.contains(pos) && matches!(state.gesture, Gesture::None) {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+            } else {
+                let (px, py) = screen_to_page(&state.viewport, rect, pos);
+                if layer.transform.contains_point(px, py) && matches!(state.gesture, Gesture::None)
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                }
             }
         }
     }
@@ -1273,16 +1444,38 @@ fn layer_interaction(
             // ¿Sobre un manejador de la selección actual?
             if let Some(sel) = state.selected {
                 if let Ok(layer) = state.doc.layer(sel) {
-                    let srect = layer_screen_rect(&state.viewport, rect, &layer.transform);
-                    if let Some((corner, _)) = corner_handles(srect)
-                        .into_iter()
-                        .find(|(_, hr)| hr.expand(2.0).contains(pos))
-                    {
-                        state.gesture = Gesture::Resize {
+                    let t = layer.transform;
+                    let corners = layer_corners_screen(&state.viewport, rect, &t);
+                    let on_rotate = rotation_handle_screen(&state.viewport, rect, &t).distance(pos)
+                        <= HANDLE_SIZE / 2.0 + 3.0;
+                    if on_rotate {
+                        let (px, py) = screen_to_page(&state.viewport, rect, pos);
+                        let (cx, cy) = t.center();
+                        let pointer_angle = (py - cy).atan2(px - cx).to_degrees();
+                        state.gesture = Gesture::Rotate {
                             layer: sel,
-                            corner,
-                            start: layer.transform,
-                            origin: pos,
+                            start: t,
+                            grab_offset: t.rotation - pointer_angle,
+                        };
+                    } else if let Some(corner) = corner_at(corners, pos) {
+                        state.gesture = if state.crop_mode {
+                            let start_crop = match &layer.content {
+                                LayerContent::Image(c) => c.crop,
+                            };
+                            Gesture::Crop {
+                                layer: sel,
+                                corner,
+                                start_t: t,
+                                start_crop,
+                                origin: pos,
+                            }
+                        } else {
+                            Gesture::Resize {
+                                layer: sel,
+                                corner,
+                                start: t,
+                                origin: pos,
+                            }
                         };
                     }
                 }
@@ -1291,6 +1484,9 @@ fn layer_interaction(
             if matches!(state.gesture, Gesture::None) {
                 let (px, py) = screen_to_page(&state.viewport, rect, pos);
                 let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
+                if hit != state.selected {
+                    state.crop_mode = false;
+                }
                 state.selected = hit;
                 if let Some(id) = hit {
                     if let Ok(layer) = state.doc.layer(id) {
@@ -1320,9 +1516,38 @@ fn layer_interaction(
                         f64::from(pos.x - origin.x) / state.viewport.zoom,
                         f64::from(pos.y - origin.y) / state.viewport.zoom,
                     );
+                    let mut moved = Transform {
+                        x: start.x + dx,
+                        y: start.y + dy,
+                        ..start
+                    };
+                    // Guías magnéticas (Alt las desactiva).
+                    state.snap_guides = (Vec::new(), Vec::new());
+                    let alt = ui.ctx().input(|i| i.modifiers.alt);
+                    if !alt {
+                        if let Ok(page) = state.doc.page() {
+                            let others: Vec<Transform> = page
+                                .layers
+                                .iter()
+                                .filter(|l| l.id != layer && l.visible)
+                                .map(|l| l.transform)
+                                .collect();
+                            let threshold = 6.0 / state.viewport.zoom;
+                            let snap = snap_translation(
+                                &moved,
+                                &others,
+                                page.width,
+                                page.height,
+                                threshold,
+                            );
+                            moved.x += snap.dx;
+                            moved.y += snap.dy;
+                            state.snap_guides = (snap.v_guides, snap.h_guides);
+                        }
+                    }
                     if let Ok(l) = state.doc.layer_mut(layer) {
-                        l.transform.x = start.x + dx;
-                        l.transform.y = start.y + dy;
+                        l.transform.x = moved.x;
+                        l.transform.y = moved.y;
                     }
                 }
                 Gesture::Resize {
@@ -1337,12 +1562,59 @@ fn layer_interaction(
                     );
                     let shift = ui.ctx().input(|i| i.modifiers.shift);
                     let keep_aspect = state.aspect_lock != shift; // Shift invierte el candado
-                    let t = resize_from_corner(&start, corner, dx, dy, keep_aspect, 1.0);
+                    let t = resize_rotated_from_corner(&start, corner, dx, dy, keep_aspect, 1.0);
                     if let Ok(l) = state.doc.layer_mut(layer) {
                         l.transform = t;
                     }
                     // Dimensiones en píxeles junto al cursor mientras se arrastra.
-                    show_dims_tag(ui, pos, &t);
+                    show_drag_tag(ui, pos, format_dims(&t));
+                }
+                Gesture::Rotate {
+                    layer,
+                    start,
+                    grab_offset,
+                } => {
+                    let (px, py) = screen_to_page(&state.viewport, rect, pos);
+                    let (cx, cy) = start.center();
+                    let pointer_angle = (py - cy).atan2(px - cx).to_degrees();
+                    let mut rotation = grab_offset + pointer_angle;
+                    // Shift: pasos de 15°.
+                    if ui.ctx().input(|i| i.modifiers.shift) {
+                        rotation = (rotation / 15.0).round() * 15.0;
+                    }
+                    rotation = rotation.rem_euclid(360.0);
+                    if rotation > 180.0 {
+                        rotation -= 360.0;
+                    }
+                    if let Ok(l) = state.doc.layer_mut(layer) {
+                        l.transform.rotation = rotation;
+                    }
+                    show_drag_tag(ui, pos, format!("{rotation:.0}°"));
+                }
+                Gesture::Crop {
+                    layer,
+                    corner,
+                    start_t,
+                    start_crop,
+                    origin,
+                } => {
+                    let (dx, dy) = (
+                        f64::from(pos.x - origin.x) / state.viewport.zoom,
+                        f64::from(pos.y - origin.y) / state.viewport.zoom,
+                    );
+                    let (t, crop) = trim_crop_from_corner(
+                        &start_t,
+                        start_crop.unwrap_or_else(CropRect::full),
+                        corner,
+                        dx,
+                        dy,
+                    );
+                    if let Ok(l) = state.doc.layer_mut(layer) {
+                        l.transform = t;
+                        let LayerContent::Image(content) = &mut l.content;
+                        content.crop = Some(crop);
+                    }
+                    show_drag_tag(ui, pos, format_dims(&t));
                 }
                 Gesture::None => {}
             }
@@ -1351,8 +1623,11 @@ fn layer_interaction(
 
     // Fin de gesto: consolida en UN comando de deshacer.
     if response.drag_stopped_by(egui::PointerButton::Primary) {
+        state.snap_guides = (Vec::new(), Vec::new());
         match std::mem::replace(&mut state.gesture, Gesture::None) {
-            Gesture::Move { layer, start, .. } | Gesture::Resize { layer, start, .. } => {
+            Gesture::Move { layer, start, .. }
+            | Gesture::Resize { layer, start, .. }
+            | Gesture::Rotate { layer, start, .. } => {
                 if let Ok(l) = state.doc.layer(layer) {
                     let after = l.transform;
                     if after != start {
@@ -1364,6 +1639,37 @@ fn layer_interaction(
                     }
                 }
             }
+            Gesture::Crop {
+                layer,
+                start_t,
+                start_crop,
+                ..
+            } => {
+                if let Ok(l) = state.doc.layer(layer) {
+                    let after_t = l.transform;
+                    let LayerContent::Image(content) = &l.content;
+                    let after_crop = content.crop;
+                    if after_t != start_t || after_crop != start_crop {
+                        state
+                            .history
+                            .push_applied(Box::new(canvas_core::Composite::new(
+                                "Recortar",
+                                vec![
+                                    Box::new(SetTransform {
+                                        layer,
+                                        before: start_t,
+                                        after: after_t,
+                                    }),
+                                    Box::new(SetCrop {
+                                        layer,
+                                        before: start_crop,
+                                        after: after_crop,
+                                    }),
+                                ],
+                            )));
+                    }
+                }
+            }
             Gesture::None => {}
         }
     }
@@ -1372,18 +1678,25 @@ fn layer_interaction(
     if response.clicked_by(egui::PointerButton::Primary) {
         if let Some(pos) = response.interact_pointer_pos() {
             let (px, py) = screen_to_page(&state.viewport, rect, pos);
-            state.selected = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
+            let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
+            if hit != state.selected {
+                state.crop_mode = false;
+            }
+            state.selected = hit;
         }
     }
 }
 
-/// Etiqueta «ancho × alto px» junto al cursor durante el redimensionado.
-fn show_dims_tag(ui: &egui::Ui, pos: egui::Pos2, t: &Transform) {
-    let text = format!(
+fn format_dims(t: &Transform) -> String {
+    format!(
         "{} × {} px",
         t.width.round() as i64,
         t.height.round() as i64
-    );
+    )
+}
+
+/// Etiqueta flotante junto al cursor durante un gesto (dimensiones, grados).
+fn show_drag_tag(ui: &egui::Ui, pos: egui::Pos2, text: String) {
     let painter = ui.painter();
     let galley =
         painter.layout_no_wrap(text, egui::FontId::proportional(12.0), egui::Color32::WHITE);
@@ -1393,28 +1706,163 @@ fn show_dims_tag(ui: &egui::Ui, pos: egui::Pos2, t: &Transform) {
     painter.galley(tag_pos + egui::vec2(5.0, 3.0), galley, egui::Color32::WHITE);
 }
 
-/// Recuadro de selección y manejadores, pintados por encima del lienzo.
+/// Recuadro de selección (rotado), manejadores, manejador de rotación y guías
+/// magnéticas, pintados por encima del lienzo.
 fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
+    let painter = ui.painter_at(rect);
+
+    // Guías magnéticas activas (líneas que cruzan todo el lienzo).
+    let guide_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 64, 129));
+    for &gx in &state.snap_guides.0 {
+        let x = page_to_screen(&state.viewport, rect, gx, 0.0).x;
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            guide_stroke,
+        );
+    }
+    for &gy in &state.snap_guides.1 {
+        let y = page_to_screen(&state.viewport, rect, 0.0, gy).y;
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            guide_stroke,
+        );
+    }
+
     let Some(sel) = state.selected else { return };
     let Ok(layer) = state.doc.layer(sel) else {
         return;
     };
-    let srect = layer_screen_rect(&state.viewport, rect, &layer.transform);
-    let painter = ui.painter_at(rect);
+    let t = &layer.transform;
+    let accent = if state.crop_mode {
+        egui::Color32::from_rgb(255, 149, 0) // naranja: modo recorte
+    } else {
+        ACCENT
+    };
 
-    painter.rect_stroke(
-        srect,
-        0.0,
-        egui::Stroke::new(1.5, ACCENT),
-        egui::StrokeKind::Outside,
-    );
-    for (_, hrect) in corner_handles(srect) {
+    // Contorno rotado: sup-izq → sup-der → inf-der → inf-izq.
+    let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, rect, t);
+    painter.add(egui::Shape::closed_line(
+        vec![tl, tr, br, bl],
+        egui::Stroke::new(1.5, accent),
+    ));
+
+    // Manejador de rotación: línea + círculo (no en modo recorte).
+    if !state.crop_mode {
+        let top_center = egui::pos2((tl.x + tr.x) / 2.0, (tl.y + tr.y) / 2.0);
+        let handle = rotation_handle_screen(&state.viewport, rect, t);
+        painter.line_segment([top_center, handle], egui::Stroke::new(1.0, accent));
+        painter.circle_filled(handle, HANDLE_SIZE / 2.0, egui::Color32::WHITE);
+        painter.circle_stroke(handle, HANDLE_SIZE / 2.0, egui::Stroke::new(1.5, accent));
+    }
+
+    // Manejadores de esquina (cuadrados centrados en las esquinas rotadas).
+    for corner in [tl, tr, bl, br] {
+        let hrect = egui::Rect::from_center_size(corner, egui::Vec2::splat(HANDLE_SIZE));
         painter.rect_filled(hrect, 2.0, egui::Color32::WHITE);
         painter.rect_stroke(
             hrect,
             2.0,
-            egui::Stroke::new(1.5, ACCENT),
+            egui::Stroke::new(1.5, accent),
             egui::StrokeKind::Inside,
         );
+    }
+
+    if state.crop_mode {
+        show_drag_tag(
+            ui,
+            egui::pos2(tl.x, tl.y - 34.0),
+            "Crop: drag the corners; click Done to finish".to_owned(),
+        );
+    }
+}
+
+/// Cuadrícula adaptativa sobre la página (paso elegido para ~24 px de
+/// pantalla como mínimo entre líneas).
+fn draw_grid(state: &EditorState, ui: &egui::Ui, rect: egui::Rect, page: (f64, f64)) {
+    const STEPS: [f64; 10] = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
+    let zoom = state.viewport.zoom;
+    let Some(step) = STEPS.iter().copied().find(|s| s * zoom >= 24.0) else {
+        return;
+    };
+    let painter = ui.painter_at(rect);
+    let stroke = egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.15));
+    let (pw, ph) = page;
+
+    let mut x = 0.0;
+    while x <= pw {
+        let a = page_to_screen(&state.viewport, rect, x, 0.0);
+        let b = page_to_screen(&state.viewport, rect, x, ph);
+        painter.line_segment([a, b], stroke);
+        x += step;
+    }
+    let mut y = 0.0;
+    while y <= ph {
+        let a = page_to_screen(&state.viewport, rect, 0.0, y);
+        let b = page_to_screen(&state.viewport, rect, pw, y);
+        painter.line_segment([a, b], stroke);
+        y += step;
+    }
+}
+
+/// Reglas superior e izquierda con marcas y números en píxeles de página.
+fn draw_rulers(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
+    const THICKNESS: f32 = 18.0;
+    const STEPS: [f64; 10] = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
+    let zoom = state.viewport.zoom;
+    let Some(step) = STEPS.iter().copied().find(|s| s * zoom >= 56.0) else {
+        return;
+    };
+    let painter = ui.painter_at(rect);
+    let bg = ui.visuals().extreme_bg_color.gamma_multiply(0.9);
+    let fg = ui.visuals().text_color().gamma_multiply(0.75);
+    let tick_stroke = egui::Stroke::new(1.0, fg);
+    let font = egui::FontId::proportional(9.5);
+
+    let top = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.min.y + THICKNESS));
+    let left = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + THICKNESS, rect.max.y));
+    painter.rect_filled(top, 0.0, bg);
+    painter.rect_filled(left, 0.0, bg);
+
+    // Rango de página visible en el lienzo.
+    let (x0, y0) = screen_to_page(&state.viewport, rect, rect.min);
+    let (x1, y1) = screen_to_page(&state.viewport, rect, rect.max);
+
+    let mut x = (x0 / step).floor() * step;
+    while x <= x1 {
+        let sx = page_to_screen(&state.viewport, rect, x, 0.0).x;
+        painter.line_segment(
+            [
+                egui::pos2(sx, top.bottom() - 6.0),
+                egui::pos2(sx, top.bottom()),
+            ],
+            tick_stroke,
+        );
+        painter.text(
+            egui::pos2(sx + 3.0, top.top() + 1.0),
+            egui::Align2::LEFT_TOP,
+            format!("{x:.0}"),
+            font.clone(),
+            fg,
+        );
+        x += step;
+    }
+    let mut y = (y0 / step).floor() * step;
+    while y <= y1 {
+        let sy = page_to_screen(&state.viewport, rect, 0.0, y).y;
+        painter.line_segment(
+            [
+                egui::pos2(left.right() - 6.0, sy),
+                egui::pos2(left.right(), sy),
+            ],
+            tick_stroke,
+        );
+        painter.text(
+            egui::pos2(left.left() + 1.0, sy + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!("{y:.0}"),
+            font.clone(),
+            fg,
+        );
+        y += step;
     }
 }

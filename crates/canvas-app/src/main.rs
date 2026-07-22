@@ -367,6 +367,16 @@ impl App {
                     state.viewport.request_fit();
                 }
             }
+            A::ToggleGrid => {
+                if let View::Editor(state) = &mut self.view {
+                    state.show_grid = !state.show_grid;
+                }
+            }
+            A::ToggleRulers => {
+                if let View::Editor(state) = &mut self.view {
+                    state.show_rulers = !state.show_rulers;
+                }
+            }
             A::FullScreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));

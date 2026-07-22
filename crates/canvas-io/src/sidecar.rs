@@ -203,6 +203,7 @@ mod tests {
                     source_path: None,
                     natural_width: 4,
                     natural_height: 2,
+                    crop: None,
                 }),
             )
             .unwrap();

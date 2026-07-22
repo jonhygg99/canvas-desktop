@@ -89,6 +89,41 @@ impl Command for SetShadow {
     }
 }
 
+/// Cambia el recorte no destructivo de una capa de imagen.
+#[derive(Debug)]
+pub struct SetCrop {
+    pub layer: LayerId,
+    pub before: Option<crate::layer::CropRect>,
+    pub after: Option<crate::layer::CropRect>,
+}
+
+impl SetCrop {
+    fn set(
+        &self,
+        doc: &mut Document,
+        value: Option<crate::layer::CropRect>,
+    ) -> Result<(), CoreError> {
+        let layer = doc.layer_mut(self.layer)?;
+        let crate::layer::LayerContent::Image(content) = &mut layer.content;
+        content.crop = value;
+        Ok(())
+    }
+}
+
+impl Command for SetCrop {
+    fn label(&self) -> &str {
+        "Recortar"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        self.set(doc, self.after)
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        self.set(doc, self.before)
+    }
+}
+
 /// Agrupa varios comandos en UN solo paso de deshacer: se aplican en orden y
 /// se revierten en orden inverso.
 #[derive(Debug)]
@@ -346,6 +381,7 @@ mod tests {
                     source_path: None,
                     natural_width: 100,
                     natural_height: 50,
+                    crop: None,
                 }),
             )
             .expect("documento recién creado tiene página");
@@ -584,6 +620,7 @@ mod tests {
                 source_path: None,
                 natural_width: 10,
                 natural_height: 10,
+                crop: None,
             }),
         );
         history

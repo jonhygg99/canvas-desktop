@@ -27,6 +27,8 @@ pub enum MenuAction {
     ZoomIn,
     ZoomOut,
     FitToWindow,
+    ToggleGrid,
+    ToggleRulers,
     FullScreen,
     Settings,
     About,
@@ -177,6 +179,8 @@ mod native {
                 zoom_in_item,
                 zoom_out_item,
                 fit_item,
+                grid_item,
+                rulers_item,
             ];
 
             Ok(Self {
@@ -210,6 +214,8 @@ mod native {
                 "zoom_in" => Some(MenuAction::ZoomIn),
                 "zoom_out" => Some(MenuAction::ZoomOut),
                 "fit" => Some(MenuAction::FitToWindow),
+                "grid" => Some(MenuAction::ToggleGrid),
+                "rulers" => Some(MenuAction::ToggleRulers),
                 "full_screen" => Some(MenuAction::FullScreen),
                 "settings" => Some(MenuAction::Settings),
                 "about" => Some(MenuAction::About),
@@ -346,6 +352,18 @@ pub fn menu_bar_ui(
                 .clicked()
             {
                 action = Some(MenuAction::FitToWindow);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Grid"))
+                .clicked()
+            {
+                action = Some(MenuAction::ToggleGrid);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Rulers"))
+                .clicked()
+            {
+                action = Some(MenuAction::ToggleRulers);
             }
             if ui.button("Full Screen").clicked() {
                 action = Some(MenuAction::FullScreen);

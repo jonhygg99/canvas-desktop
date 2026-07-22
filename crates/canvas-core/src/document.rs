@@ -34,15 +34,14 @@ impl Page {
         self.layers.iter_mut().find(|l| l.id == id)
     }
 
-    /// Capa visible más alta bajo el punto dado (coordenadas de página).
-    /// La rotación se ignora por ahora (las capas de esta entrega no rotan).
+    /// Capa visible más alta bajo el punto dado (coordenadas de página),
+    /// teniendo en cuenta la rotación de cada capa.
     pub fn layer_at(&self, x: f64, y: f64) -> Option<LayerId> {
-        self.layers.iter().rev().find_map(|l| {
-            let t = &l.transform;
-            let hit =
-                l.visible && x >= t.x && x <= t.x + t.width && y >= t.y && y <= t.y + t.height;
-            hit.then_some(l.id)
-        })
+        self.layers
+            .iter()
+            .rev()
+            .find(|l| l.visible && !l.locked && l.transform.contains_point(x, y))
+            .map(|l| l.id)
     }
 }
 
@@ -120,6 +119,7 @@ mod tests {
             source_path: None,
             natural_width: 100,
             natural_height: 50,
+            crop: None,
         })
     }
 

@@ -32,6 +32,7 @@ fn main() -> Result<()> {
             source_path: None,
             natural_width: w,
             natural_height: h,
+            crop: None,
         }),
     )?;
     doc.layer_mut(id)?.effects.blur_radius = 6.0;
