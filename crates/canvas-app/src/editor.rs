@@ -118,6 +118,9 @@ pub struct EditorState {
     background_layer: Option<LayerId>,
     /// Ajuste de desenfoque en curso (slider): capa y radio original.
     blur_edit: Option<(LayerId, f32)>,
+    /// Ajuste de color en curso (sliders): capa y efectos originales, para
+    /// consolidar los 6 sliders en un solo paso de deshacer.
+    color_edit: Option<(LayerId, canvas_core::Effects)>,
     /// Ajuste de sombra en curso: capa y sombra original.
     shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
@@ -190,6 +193,7 @@ impl EditorState {
             page_edit: None,
             background_layer: None,
             blur_edit: None,
+            color_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -228,6 +232,7 @@ impl EditorState {
             page_edit: None,
             background_layer: None,
             blur_edit: None,
+            color_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -282,6 +287,7 @@ impl EditorState {
             page_edit: None,
             background_layer,
             blur_edit: None,
+            color_edit: None,
             shadow_edit: None,
             saving: false,
             save_error: None,
@@ -810,6 +816,95 @@ fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
     });
 }
 
+/// Sliders de ajuste de color de una capa (brillo, contraste, saturación,
+/// temperatura, grises, sepia). Preview en vivo por GPU y consolidación de
+/// todos los sliders en UN paso de deshacer al soltar.
+fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
+    let Ok(layer) = state.doc.layer(sel) else {
+        return;
+    };
+    let original = layer.effects;
+    let mut fx = original;
+    let mut changed = false;
+    let mut commit = false;
+    let mut reset = false;
+
+    ui.label("Adjustments");
+    let mut slider =
+        |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                let mut pct = *value * 100.0;
+                let r = ui.add(
+                    egui::Slider::new(&mut pct, *range.start() * 100.0..=*range.end() * 100.0)
+                        .suffix(" %")
+                        .fixed_decimals(0),
+                );
+                *value = pct / 100.0;
+                if r.changed() {
+                    changed = true;
+                }
+                if r.drag_stopped() || r.lost_focus() {
+                    commit = true;
+                }
+            });
+        };
+    slider(ui, "Brightness", &mut fx.brightness, -1.0..=1.0);
+    slider(ui, "Contrast", &mut fx.contrast, -1.0..=1.0);
+    slider(ui, "Saturation", &mut fx.saturation, -1.0..=1.0);
+    slider(ui, "Temperature", &mut fx.temperature, -1.0..=1.0);
+    slider(ui, "Grayscale", &mut fx.grayscale, 0.0..=1.0);
+    slider(ui, "Sepia", &mut fx.sepia, 0.0..=1.0);
+    if original.has_color_adjustments() && ui.small_button("Reset adjustments").clicked() {
+        reset = true;
+    }
+
+    if reset {
+        let mut neutral = original;
+        neutral.brightness = 0.0;
+        neutral.contrast = 0.0;
+        neutral.saturation = 0.0;
+        neutral.temperature = 0.0;
+        neutral.grayscale = 0.0;
+        neutral.sepia = 0.0;
+        let before = state.color_edit.take().map_or(original, |(_, b)| b);
+        if let Err(e) = state.history.apply(
+            &mut state.doc,
+            Box::new(canvas_core::SetEffects {
+                layer: sel,
+                before,
+                after: neutral,
+            }),
+        ) {
+            tracing::error!("reset de ajustes falló: {e}");
+        }
+        return;
+    }
+
+    if changed && fx != original {
+        if state.color_edit.is_none() {
+            state.color_edit = Some((sel, original));
+        }
+        if let Ok(l) = state.doc.layer_mut(sel) {
+            l.effects = fx;
+        }
+    }
+    if commit {
+        if let Some((id, before)) = state.color_edit.take() {
+            let after = state.doc.layer(id).map(|l| l.effects).unwrap_or(before);
+            if after != before {
+                state
+                    .history
+                    .push_applied(Box::new(canvas_core::SetEffects {
+                        layer: id,
+                        before,
+                        after,
+                    }));
+            }
+        }
+    }
+}
+
 /// Checkbox y controles de la sombra proyectada de una capa.
 fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
     let current = state.doc.layer(sel).ok().and_then(|l| l.effects.shadow);
@@ -1097,6 +1192,11 @@ fn layer_properties_ui(
 
     ui.add_space(8.0);
 
+    // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
+    color_adjustments_ui(state, ui, sel);
+
+    ui.add_space(8.0);
+
     // --- Sombra proyectada ---
     shadow_ui(state, ui, sel);
 
@@ -1315,16 +1415,13 @@ pub fn canvas_ui(
     let height = (rect.height() * ppp).round().max(1.0) as u32;
     let surface = CanvasSurface::ensure(surface_slot, rs, width, height);
 
-    // Sincroniza el desenfoque GPU de cada capa antes de montar la escena.
+    // Sincroniza los efectos GPU de cada capa antes de montar la escena.
     if let Ok(page) = state.doc.page() {
-        let blur_targets: Vec<(LayerId, f32)> = page
-            .layers
-            .iter()
-            .map(|l| (l.id, l.effects.blur_radius))
-            .collect();
-        for (id, radius) in blur_targets {
+        let fx_targets: Vec<(LayerId, canvas_core::Effects)> =
+            page.layers.iter().map(|l| (l.id, l.effects)).collect();
+        for (id, effects) in fx_targets {
             if let Some(source) = state.images.get(&id) {
-                renderer.sync_layer_blur(&rs.device, &rs.queue, id, source, radius);
+                renderer.sync_layer_effects(&rs.device, &rs.queue, id, source, &effects);
             }
         }
     }

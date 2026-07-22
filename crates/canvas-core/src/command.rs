@@ -89,6 +89,31 @@ impl Command for SetShadow {
     }
 }
 
+/// Cambia el bloque completo de efectos de una capa (los sliders de ajuste
+/// de color se consolidan en un solo paso con este comando).
+#[derive(Debug)]
+pub struct SetEffects {
+    pub layer: LayerId,
+    pub before: crate::layer::Effects,
+    pub after: crate::layer::Effects,
+}
+
+impl Command for SetEffects {
+    fn label(&self) -> &str {
+        "Ajustes"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.effects = self.before;
+        Ok(())
+    }
+}
+
 /// Cambia el recorte no destructivo de una capa de imagen.
 #[derive(Debug)]
 pub struct SetCrop {

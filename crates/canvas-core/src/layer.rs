@@ -113,6 +113,8 @@ impl Default for Shadow {
 
 /// Efectos no destructivos de la capa: parámetros que se ajustan o quitan en
 /// cualquier momento y solo se aplican de verdad al exportar/guardar.
+/// Todos los campos nuevos llevan `serde(default)`: los documentos guardados
+/// antes de existir siguen abriendo.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Effects {
     /// Radio del desenfoque gaussiano en píxeles; 0 = sin desenfoque.
@@ -120,6 +122,34 @@ pub struct Effects {
     /// Sombra proyectada, si está activa.
     #[serde(default)]
     pub shadow: Option<Shadow>,
+    /// Ajustes de color (0 = neutro). Rango −1..=1 salvo indicación.
+    #[serde(default)]
+    pub brightness: f32,
+    #[serde(default)]
+    pub contrast: f32,
+    #[serde(default)]
+    pub saturation: f32,
+    /// Temperatura: negativo = frío (azul), positivo = cálido (rojo).
+    #[serde(default)]
+    pub temperature: f32,
+    /// Mezcla a escala de grises, 0..=1.
+    #[serde(default)]
+    pub grayscale: f32,
+    /// Mezcla sepia, 0..=1.
+    #[serde(default)]
+    pub sepia: f32,
+}
+
+impl Effects {
+    /// ¿Hay algún ajuste de color distinto del neutro?
+    pub fn has_color_adjustments(&self) -> bool {
+        self.brightness != 0.0
+            || self.contrast != 0.0
+            || self.saturation != 0.0
+            || self.temperature != 0.0
+            || self.grayscale != 0.0
+            || self.sepia != 0.0
+    }
 }
 
 /// Recorte no destructivo de una imagen: la fracción visible del mapa de

@@ -4,6 +4,7 @@
 mod blur;
 mod scene;
 
+pub use blur::ColorParams;
 pub use scene::{build_scene, image_data_from_rgba, ImageMap};
 
 use blur::BlurEngine;
@@ -40,28 +41,33 @@ impl CanvasRenderer {
         })
     }
 
-    /// Sincroniza el desenfoque GPU (no destructivo) de una capa de imagen.
-    /// Con radio 0 retira la textura desenfocada y vuelve a la original.
-    pub fn sync_layer_blur(
+    /// Sincroniza los efectos GPU (no destructivos) de una capa de imagen:
+    /// filtro de color + desenfoque, encadenados. Sin efectos activos retira
+    /// la textura procesada y vuelve a la original.
+    pub fn sync_layer_effects(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layer: LayerId,
         source: &ImageData,
-        radius: f32,
+        effects: &canvas_core::Effects,
     ) {
         let renderer = &mut self.renderer;
-        let removed = self
-            .blur
-            .sync_layer(device, queue, layer, source, radius, &mut |texture| {
-                renderer.register_texture(texture)
-            });
+        let removed = self.blur.sync_layer(
+            device,
+            queue,
+            layer,
+            source,
+            ColorParams::from(effects),
+            effects.blur_radius,
+            &mut |texture| renderer.register_texture(texture),
+        );
         if let Some(image) = removed {
             renderer.override_image(&image, None);
         }
     }
 
-    /// Imágenes sustitutas (desenfocadas) por capa, para `build_scene`.
+    /// Imágenes sustitutas (procesadas) por capa, para `build_scene`.
     pub fn blur_overrides(&self) -> std::collections::HashMap<LayerId, ImageData> {
         self.blur.overrides()
     }
@@ -147,10 +153,10 @@ impl CanvasRenderer {
         let width = (page.width * scale).round().max(1.0) as u32;
         let height = (page.height * scale).round().max(1.0) as u32;
 
-        // Asegura las texturas de desenfoque de todas las capas.
+        // Asegura las texturas de efectos de todas las capas.
         for layer in &page.layers {
             if let Some(source) = images.get(&layer.id) {
-                self.sync_layer_blur(device, queue, layer.id, source, layer.effects.blur_radius);
+                self.sync_layer_effects(device, queue, layer.id, source, &layer.effects);
             }
         }
 
