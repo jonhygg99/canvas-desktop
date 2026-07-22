@@ -43,6 +43,8 @@ kamadak-exif = "0.6"
 # WebP RIFF). lcms2 NO sirve para esto: es un motor de conversión de color.
 img-parts = "0.3"
 resvg = "0.45"
+# Texto: parley 0.11 comparte peniko 0.6 con vello 0.9 (validado con cargo tree).
+parley = "0.11"
 rfd = "0.15"
 rayon = "1.10"
 serde = { version = "1", features = ["derive"] }
