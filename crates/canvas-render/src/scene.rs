@@ -316,6 +316,10 @@ pub fn build_scene(
                     }
                 }
             }
+            // El grupo no pinta nada por sí mismo; su composición (herencia
+            // de visibilidad/opacidad sobre el subárbol) llega en el bucle
+            // indexado con pila de grupos abiertos de la Fase 11.
+            LayerContent::Group(_) => {}
         }
     }
 

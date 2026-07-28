@@ -21,7 +21,7 @@ pub use command::{
 pub use document::{Document, Page};
 pub use error::CoreError;
 pub use layer::{
-    CropRect, Effects, ImageContent, Layer, LayerContent, LayerId, Shadow, ShapeContent, ShapeKind,
-    SvgContent, TextAlign, TextContent, Transform,
+    CropRect, Effects, GroupContent, ImageContent, Layer, LayerContent, LayerId, Shadow,
+    ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform,
 };
 pub use snap::{snap_translation, SnapResult};

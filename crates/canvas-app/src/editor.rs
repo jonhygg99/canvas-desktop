@@ -1046,7 +1046,7 @@ fn layer_properties_ui(
     let natural = match &layer.content {
         LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
         LayerContent::Svg(svg) => (f64::from(svg.natural_width), f64::from(svg.natural_height)),
-        LayerContent::Text(_) | LayerContent::Shape(_) => (0.0, 0.0),
+        LayerContent::Text(_) | LayerContent::Shape(_) | LayerContent::Group(_) => (0.0, 0.0),
     };
     let current_crop = match &layer.content {
         LayerContent::Image(img) => img.crop,

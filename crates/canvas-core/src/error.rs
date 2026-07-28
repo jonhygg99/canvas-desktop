@@ -7,4 +7,8 @@ pub enum CoreError {
     LayerNotFound(LayerId),
     #[error("el documento no tiene ninguna página")]
     NoPages,
+    #[error("la capa {0:?} no es un grupo")]
+    NotAGroup(LayerId),
+    #[error("mover {child:?} dentro de {parent:?} crearía un ciclo")]
+    CycleWouldForm { child: LayerId, parent: LayerId },
 }

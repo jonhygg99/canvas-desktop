@@ -15,9 +15,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::{write_atomic, IoError, LoadedImage};
 
-/// Versión del formato. v2 añade capas de texto/forma/SVG; los sidecar v1
-/// se leen sin migración (los campos nuevos tienen serde(default)).
-const SIDECAR_VERSION: u32 = 2;
+/// Versión del formato. v2 añadió capas de texto/forma/SVG; v3 añade capas
+/// de grupo (`LayerContent::Group`, ilegible para un build v2). Los sidecar
+/// v1/v2 se siguen leyendo sin migración (los campos nuevos tienen
+/// serde(default)); `parent_id` en particular es `serde(default)` así que
+/// todo lo anterior abre como raíz de la pila.
+const SIDECAR_VERSION: u32 = 3;
+
+/// Solo el campo `version`, para decidir si merece la pena parsear el resto
+/// del archivo. Parsear `SidecarFile` directamente ante un sidecar más nuevo
+/// (con variantes de capa que este build no conoce) fallaría con un genérico
+/// "corrupt sidecar" en vez del mensaje amable de versión.
+#[derive(Debug, Deserialize)]
+struct VersionProbe {
+    version: u32,
+}
 
 /// Píxeles de una capa a embeber: (id crudo, RGBA, ancho, alto).
 pub type LayerPixels = (u64, Vec<u8>, u32, u32);
@@ -121,19 +133,32 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(IoError::Open { path, source }),
     };
-    let file: SidecarFile = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
+    // Comprueba la versión ANTES de intentar parsear el documento completo:
+    // un sidecar más nuevo puede traer variantes de capa que este build no
+    // conoce, y eso debe reportarse como "versión más reciente", no como
+    // "corrupto".
+    let probe: VersionProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.clone(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
     })?;
-    if file.version > SIDECAR_VERSION {
+    if probe.version > SIDECAR_VERSION {
         return Err(IoError::Decode {
             path: path.clone(),
             source: image::ImageError::IoError(std::io::Error::other(format!(
                 "this file was created with a newer version of Canvas Desktop \
                  (version {}, this app understands up to {SIDECAR_VERSION})",
-                file.version
+                probe.version
             ))),
         });
+    }
+    let mut file: SidecarFile = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
+        path: path.clone(),
+        source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
+    })?;
+    // Repara la invariante de preorden ante un sidecar ajeno o corrupto
+    // (padres colgando, ciclos…) antes de que nada más lo toque.
+    for page in &mut file.document.pages {
+        page.normalize_tree();
     }
 
     // ¿El archivo de imagen sigue siendo el que este sidecar acompañaba?
@@ -251,6 +276,62 @@ mod tests {
             .expect("leer")
             .expect("hay sidecar");
         assert!(!restored.hash_matches);
+    }
+
+    #[test]
+    fn groups_survive_a_sidecar_roundtrip() {
+        use canvas_core::Layer;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("foto.png");
+        let fake_image = b"bytes de la imagen guardada";
+        std::fs::write(&image_path, fake_image).unwrap();
+
+        let (mut doc, images) = sample_doc();
+        let child = doc
+            .layer(canvas_core::LayerId::from_raw(images[0].0))
+            .unwrap()
+            .id;
+        let group_id = doc.allocate_layer_id();
+        {
+            let page = doc.page_mut().unwrap();
+            page.insert_child(Layer::group(group_id, "Group"), None, 1);
+            page.move_subtree(child, Some(group_id), 0).unwrap();
+        }
+
+        write_sidecar(&image_path, fake_image, &doc, &images, None).expect("escribir");
+        let restored = read_sidecar(&image_path)
+            .expect("leer")
+            .expect("hay sidecar");
+        assert_eq!(restored.document, doc);
+        assert_eq!(
+            restored.document.layer(child).unwrap().parent_id,
+            Some(group_id)
+        );
+        assert!(restored.document.page().unwrap().is_group(group_id));
+    }
+
+    #[test]
+    fn version_probe_rejects_a_newer_sidecar_before_parsing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("foto.png");
+        std::fs::write(&image_path, b"x").unwrap();
+
+        // Documento con un campo de version futura y contenido que este
+        // build no sabria deserializar (para probar que el rechazo ocurre
+        // ANTES de intentar parsear `SidecarFile`).
+        let fake_future = serde_json::json!({
+            "version": SIDECAR_VERSION + 1,
+            "algo_que_no_existe_todavia": { "esto": "no es un Document" },
+        });
+        let path = sidecar_path(&image_path);
+        std::fs::write(&path, serde_json::to_vec(&fake_future).unwrap()).unwrap();
+
+        match read_sidecar(&image_path) {
+            Err(IoError::Decode { .. }) => {}
+            Err(other) => panic!("se esperaba IoError::Decode, se obtuvo otro error: {other}"),
+            Ok(_) => panic!("un sidecar de version futura no deberia leerse con exito"),
+        }
     }
 
     #[test]

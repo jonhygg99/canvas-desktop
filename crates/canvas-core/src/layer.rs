@@ -286,13 +286,22 @@ pub struct SvgContent {
     pub natural_height: u32,
 }
 
+/// Grupo de capas: no pinta nada por sí mismo, solo compone a sus hijos
+/// (visibilidad, bloqueo y opacidad se heredan; ver `Page::effective_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct GroupContent {
+    /// Plegado en el panel de capas; no afecta al renderizado.
+    #[serde(default)]
+    pub collapsed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LayerContent {
     Image(ImageContent),
     Text(TextContent),
     Shape(ShapeContent),
     Svg(SvgContent),
-    // Group llega con el panel de capas.
+    Group(GroupContent),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -303,6 +312,10 @@ pub struct Layer {
     pub locked: bool,
     /// 0.0..=1.0
     pub opacity: f32,
+    /// Grupo contenedor; `None` = raíz de la pila. `serde(default)`: los
+    /// documentos guardados antes de existir los grupos siguen abriendo.
+    #[serde(default)]
+    pub parent_id: Option<LayerId>,
     pub transform: Transform,
     pub effects: Effects,
     pub content: LayerContent,
@@ -321,9 +334,31 @@ impl Layer {
             visible: true,
             locked: false,
             opacity: 1.0,
+            parent_id: None,
             transform,
             effects: Effects::default(),
             content,
         }
     }
+
+    /// Capa de grupo. Su `transform` es una caja envolvente DERIVADA de los
+    /// hijos (la recalcula `Page::refresh_group_bounds`), no geometría propia.
+    pub fn group(id: LayerId, name: impl Into<String>) -> Self {
+        Self::new(
+            id,
+            name,
+            Transform::new(0.0, 0.0, 0.0, 0.0),
+            LayerContent::Group(GroupContent::default()),
+        )
+    }
+}
+
+/// Métricas de UNA línea de un texto ya maquetado. Las produce
+/// `canvas-render` con parley y las consume la exportación a SVG (un
+/// `<tspan x y>` por línea).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextLine {
+    pub text: String,
+    pub x: f64,
+    pub baseline: f64,
 }
