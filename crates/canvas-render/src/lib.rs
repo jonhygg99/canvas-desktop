@@ -5,7 +5,7 @@ mod blur;
 mod scene;
 
 pub use blur::ColorParams;
-pub use scene::{build_scene, image_data_from_rgba, ImageMap};
+pub use scene::{build_scene, image_data_from_rgba, text_lines, ImageMap};
 
 use blur::BlurEngine;
 use canvas_core::LayerId;

@@ -39,12 +39,15 @@ fn text_ctx() -> &'static Mutex<TextCtx> {
     })
 }
 
-/// Pinta una capa de texto: layout con parley, glifos con vello.
-fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_width: f64) {
-    let Ok(mut ctx) = text_ctx().lock() else {
-        return;
-    };
-    let TextCtx { fonts, layouts } = &mut *ctx;
+/// Arma el layout de parley de un texto (line breaking + alineación): el
+/// MISMO que usan `draw_text` (para pintar) y `text_lines` (para exportar a
+/// SVG), así el SVG nunca puede desincronizarse de lo que se ve en el lienzo.
+fn build_layout(
+    fonts: &mut parley::FontContext,
+    layouts: &mut parley::LayoutContext<[u8; 4]>,
+    content: &TextContent,
+    box_width: f64,
+) -> parley::Layout<[u8; 4]> {
     let mut builder = layouts.ranged_builder(fonts, &content.text, 1.0, true);
     builder.push_default(parley::StyleProperty::FontSize(content.size.max(1.0)));
     if !content.family.is_empty() {
@@ -70,6 +73,16 @@ fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_wi
         TextAlign::Right => parley::Alignment::End,
     };
     layout.align(align, parley::AlignmentOptions::default());
+    layout
+}
+
+/// Pinta una capa de texto: layout con parley, glifos con vello.
+fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_width: f64) {
+    let Ok(mut ctx) = text_ctx().lock() else {
+        return;
+    };
+    let TextCtx { fonts, layouts } = &mut *ctx;
+    let layout = build_layout(fonts, layouts, content, box_width);
 
     let [r, g, b, a] = content.color;
     let brush = Color::from_rgba8(r, g, b, a);
@@ -98,6 +111,37 @@ fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_wi
                 .draw(Fill::NonZero, glyphs.into_iter());
         }
     }
+}
+
+/// Métricas de las líneas de un texto tal y como las rompe parley, en
+/// coordenadas locales de la caja (el MISMO layout que pinta `draw_text`).
+/// Lo usa la exportación a SVG para emitir un `<tspan x y>` por línea, sin
+/// que el renderer SVG tenga que tomar ninguna decisión de salto de línea ni
+/// de alineación por su cuenta: `x` ya lleva el desplazamiento de
+/// alineación (`LineMetrics::offset`) y `y` es la línea base.
+pub fn text_lines(content: &TextContent, box_width: f64) -> Vec<canvas_core::TextLine> {
+    let Ok(mut ctx) = text_ctx().lock() else {
+        return Vec::new();
+    };
+    let TextCtx { fonts, layouts } = &mut *ctx;
+    let layout = build_layout(fonts, layouts, content, box_width);
+    layout
+        .lines()
+        .map(|line| {
+            let metrics = line.metrics();
+            let text = content
+                .text
+                .get(line.text_range())
+                .unwrap_or("")
+                .trim_end_matches(['\n', '\r'])
+                .to_owned();
+            canvas_core::TextLine {
+                text,
+                x: f64::from(metrics.offset),
+                baseline: f64::from(metrics.baseline),
+            }
+        })
+        .collect()
 }
 
 /// Mapa de bits de cada capa de imagen, gestionado por la app.
@@ -184,7 +228,15 @@ pub fn build_scene(
     }
 
     // Capas, de abajo arriba, recortadas al rect de la página (lo que
-    // sobresale del lienzo no se ve ni se hornea).
+    // sobresale del lienzo no se ve ni se hornea). Se recorre con un índice
+    // (no un `for … in`) porque los grupos necesitan abrir/cerrar su propia
+    // capa de opacidad alrededor de todo su subárbol contiguo (invariante de
+    // preorden de `Page`): `open` lleva, por cada grupo abierto, el índice de
+    // su último descendiente y si de verdad se empujó una capa de opacidad
+    // (alpha < 1.0 — el camino rápido con alpha == 1.0 no cuesta nada extra).
+    // Las hojas hacen lo mismo, más ceñido, alrededor de sombra+contenido.
+    // Los `push_layer` anidados se multiplican solos: así `Layer::opacity` se
+    // honra de forma uniforme y estructural en las cuatro clases de capa.
     scene.push_layer(
         Fill::NonZero,
         vello::peniko::Mix::Normal,
@@ -192,10 +244,42 @@ pub fn build_scene(
         view,
         &page_rect,
     );
-    for layer in &page.layers {
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    let mut i = 0usize;
+    while i < page.layers.len() {
+        while open.last().is_some_and(|&(end, _)| i > end) {
+            let (_, pushed) = open.pop().expect("comprobado en la condición del while");
+            if pushed {
+                scene.pop_layer();
+            }
+        }
+        let layer = &page.layers[i];
+        let len = page.subtree_len(i);
         if !layer.visible {
+            i += 1 + len; // un grupo oculto se salta entero, con sus hijos
             continue;
         }
+
+        let alpha = layer.opacity.clamp(0.0, 1.0);
+        let fade = alpha < 1.0;
+        if fade {
+            scene.push_layer(
+                Fill::NonZero,
+                vello::peniko::Mix::Normal,
+                alpha,
+                view,
+                &page_rect,
+            );
+        }
+
+        if matches!(layer.content, LayerContent::Group(_)) {
+            // El grupo no pinta nada por sí mismo: solo deja abierta su capa
+            // de opacidad (si la hay) hasta que se recorra todo su subárbol.
+            open.push((i + len, fade));
+            i += 1;
+            continue;
+        }
+
         // Sombra proyectada (rectangular, difusa) por debajo de la capa.
         if let Some(shadow) = layer.effects.shadow {
             let t = layer.transform;
@@ -316,12 +400,26 @@ pub fn build_scene(
                     }
                 }
             }
-            // El grupo no pinta nada por sí mismo; su composición (herencia
-            // de visibilidad/opacidad sobre el subárbol) llega en el bucle
-            // indexado con pila de grupos abiertos de la Fase 11.
-            LayerContent::Group(_) => {}
+            // Los grupos se gestionan más arriba (con `continue`, antes de
+            // sombra+contenido): esta rama nunca se alcanza para ellos.
+            LayerContent::Group(_) => unreachable!("los grupos no llegan a pintarse aquí"),
+        }
+
+        if fade {
+            scene.pop_layer();
+        }
+        i += 1;
+    }
+    // Cierra cualquier grupo que quedara abierto al final de la página (no
+    // debería quedar ninguno si la invariante de preorden se cumple, pero un
+    // documento restaurado de un sidecar corrupto no puede colgar el hilo de
+    // render por un `push_layer`/`pop_layer` desbalanceado).
+    while let Some((_, pushed)) = open.pop() {
+        if pushed {
+            scene.pop_layer();
         }
     }
+    debug_assert!(open.is_empty());
 
     scene.pop_layer();
 
