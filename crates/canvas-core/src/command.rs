@@ -274,11 +274,12 @@ impl Command for InsertLayer {
     }
 }
 
-/// Quita una capa de la página (recordando dónde estaba para poder rehacer).
+/// Quita una capa de la página, CON todo su subárbol si es un grupo
+/// (recordando dónde estaba para poder rehacer).
 #[derive(Debug)]
 pub struct RemoveLayer {
     pub layer: LayerId,
-    removed: Option<(usize, Layer)>,
+    removed: Option<(usize, Vec<Layer>)>,
 }
 
 impl RemoveLayer {
@@ -298,22 +299,319 @@ impl Command for RemoveLayer {
     fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         let page = doc.page_mut()?;
         let pos = page
-            .layers
-            .iter()
-            .position(|l| l.id == self.layer)
+            .index_of(self.layer)
             .ok_or(CoreError::LayerNotFound(self.layer))?;
-        self.removed = Some((pos, page.layers.remove(pos)));
+        let len = 1 + page.subtree_len(pos);
+        let removed: Vec<Layer> = page.layers.drain(pos..pos + len).collect();
+        self.removed = Some((pos, removed));
         Ok(())
     }
 
     fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
-        let (index, layer) = self
+        let (index, layers) = self
             .removed
             .take()
             .ok_or(CoreError::LayerNotFound(self.layer))?;
         let page = doc.page_mut()?;
         let index = index.min(page.layers.len());
-        page.layers.insert(index, layer);
+        page.layers.splice(index..index, layers);
+        Ok(())
+    }
+}
+
+/// Mueve una capa (con su subárbol, si es un grupo) a otra posición y/o a
+/// otro grupo. Es el comando del arrastre en el panel de capas.
+#[derive(Debug)]
+pub struct Reorder {
+    pub layer: LayerId,
+    pub new_parent: Option<LayerId>,
+    /// Posición entre los hijos directos del destino, contada SIN la capa
+    /// movida (0 = el más bajo).
+    pub new_index: usize,
+    before: Option<(Option<LayerId>, usize)>,
+}
+
+impl Reorder {
+    pub fn new(layer: LayerId, new_parent: Option<LayerId>, new_index: usize) -> Self {
+        Self {
+            layer,
+            new_parent,
+            new_index,
+            before: None,
+        }
+    }
+}
+
+impl Command for Reorder {
+    fn label(&self) -> &str {
+        "Reordenar capas"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        let parent = page
+            .layer(self.layer)
+            .ok_or(CoreError::LayerNotFound(self.layer))?
+            .parent_id;
+        let index = page.sibling_index(self.layer).unwrap_or(0);
+        self.before = Some((parent, index));
+        page.move_subtree(self.layer, self.new_parent, self.new_index)
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let (parent, index) = self
+            .before
+            .take()
+            .ok_or(CoreError::LayerNotFound(self.layer))?;
+        doc.page_mut()?.move_subtree(self.layer, parent, index)
+    }
+}
+
+/// Mete varias capas en un grupo nuevo, insertado en la posición de la capa
+/// seleccionada más alta (las que ya son descendientes de otro miembro del
+/// conjunto se descartan: agrupar un grupo ya arrastra a sus hijos consigo).
+#[derive(Debug)]
+pub struct Group {
+    pub layers: Vec<LayerId>,
+    /// Id ya reservado con `Document::allocate_layer_id`.
+    pub group: LayerId,
+    pub name: String,
+    before: Vec<(LayerId, Option<LayerId>, usize)>,
+}
+
+impl Group {
+    pub fn new(layers: Vec<LayerId>, group: LayerId, name: impl Into<String>) -> Self {
+        Self {
+            layers,
+            group,
+            name: name.into(),
+            before: Vec::new(),
+        }
+    }
+}
+
+impl Command for Group {
+    fn label(&self) -> &str {
+        "Agrupar"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        self.before.clear();
+        let page = doc.page_mut()?;
+        let mut members: Vec<LayerId> = self
+            .layers
+            .iter()
+            .copied()
+            .filter(|&id| {
+                page.layer(id).is_some()
+                    && !self
+                        .layers
+                        .iter()
+                        .any(|&other| other != id && page.is_ancestor(other, id))
+            })
+            .collect();
+        if members.is_empty() {
+            return Ok(());
+        }
+        // Orden de pila (de abajo arriba), para elegir al miembro más alto.
+        members.sort_by_key(|&id| page.index_of(id).unwrap_or(usize::MAX));
+
+        let topmost = *members
+            .last()
+            .unwrap_or_else(|| unreachable!("comprobado arriba"));
+        let parent = page.layer(topmost).and_then(|l| l.parent_id);
+        let slot = page.sibling_index(topmost).map_or(0, |i| i + 1);
+        page.insert_child(Layer::group(self.group, self.name.clone()), parent, slot);
+
+        // Captura la posición ORIGINAL de cada miembro con el grupo YA
+        // insertado pero ANTES de mover a ninguno: si se capturase dentro del
+        // propio bucle, cada movimiento desplazaría el índice de hermano de
+        // los miembros siguientes y el deshacer no restauraría el orden real.
+        for &id in &members {
+            let before_parent = page.layer(id).and_then(|l| l.parent_id);
+            let before_index = page.sibling_index(id).unwrap_or(0);
+            self.before.push((id, before_parent, before_index));
+        }
+        for (k, &id) in members.iter().enumerate() {
+            page.move_subtree(id, Some(self.group), k)?;
+        }
+        page.refresh_group_bounds(self.group);
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        let mut restore = std::mem::take(&mut self.before);
+        // Restaura en orden ASCENDENTE de índice de hermano: cada inserción
+        // encuentra ya en su sitio a los hermanos de índice menor.
+        restore.sort_by_key(|&(_, _, index)| index);
+        for (id, parent, index) in restore {
+            page.move_subtree(id, parent, index)?;
+        }
+        // El grupo queda vacío: se quita entero.
+        if let Some(pos) = page.index_of(self.group) {
+            page.layers.remove(pos);
+        }
+        Ok(())
+    }
+}
+
+/// Disuelve un grupo: sus hijos DIRECTOS ocupan su hueco en la pila, en el
+/// mismo orden relativo que tenían dentro de él.
+#[derive(Debug)]
+pub struct Ungroup {
+    pub group: LayerId,
+    removed: Option<(Layer, Option<LayerId>, usize, Vec<LayerId>)>,
+}
+
+impl Ungroup {
+    pub fn new(group: LayerId) -> Self {
+        Self {
+            group,
+            removed: None,
+        }
+    }
+}
+
+impl Command for Ungroup {
+    fn label(&self) -> &str {
+        "Desagrupar"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let page = doc.page_mut()?;
+        if !page.is_group(self.group) {
+            return Err(CoreError::NotAGroup(self.group));
+        }
+        let group_layer = page
+            .layer(self.group)
+            .cloned()
+            .ok_or(CoreError::LayerNotFound(self.group))?;
+        let parent = group_layer.parent_id;
+        let index = page.sibling_index(self.group).unwrap_or(0);
+        let children = page.children_of(Some(self.group));
+        self.removed = Some((group_layer, parent, index, children.clone()));
+        for (k, child) in children.iter().enumerate() {
+            page.move_subtree(*child, parent, index + k)?;
+        }
+        // El grupo queda vacío: se quita entero.
+        if let Some(pos) = page.index_of(self.group) {
+            page.layers.remove(pos);
+        }
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        let (group_layer, parent, index, children) = self
+            .removed
+            .take()
+            .ok_or(CoreError::LayerNotFound(self.group))?;
+        let page = doc.page_mut()?;
+        // El grupo vuelve a su hueco ORIGINAL entre sus hermanos (los hijos,
+        // que ahora ocupan ese tramo como raíces temporales, se anidan justo
+        // después: no hace falta +n, la inserción los desplaza solos).
+        page.insert_child(group_layer, parent, index);
+        for (k, child) in children.iter().enumerate() {
+            page.move_subtree(*child, Some(self.group), k)?;
+        }
+        Ok(())
+    }
+}
+
+/// Renombra una capa.
+#[derive(Debug)]
+pub struct Rename {
+    pub layer: LayerId,
+    pub before: String,
+    pub after: String,
+}
+
+impl Command for Rename {
+    fn label(&self) -> &str {
+        "Renombrar capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.name = self.after.clone();
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.name = self.before.clone();
+        Ok(())
+    }
+}
+
+/// Muestra/oculta una capa (o un grupo entero: la visibilidad se hereda,
+/// ver `Page::effective_visible`).
+#[derive(Debug)]
+pub struct SetVisible {
+    pub layer: LayerId,
+    pub before: bool,
+    pub after: bool,
+}
+
+impl Command for SetVisible {
+    fn label(&self) -> &str {
+        "Mostrar/ocultar capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.visible = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.visible = self.before;
+        Ok(())
+    }
+}
+
+/// Bloquea/desbloquea una capa (o un grupo entero: el bloqueo se hereda).
+#[derive(Debug)]
+pub struct SetLocked {
+    pub layer: LayerId,
+    pub before: bool,
+    pub after: bool,
+}
+
+impl Command for SetLocked {
+    fn label(&self) -> &str {
+        "Bloquear capa"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.locked = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.locked = self.before;
+        Ok(())
+    }
+}
+
+/// Cambia la opacidad de una capa (o de un grupo entero: las opacidades de
+/// la cadena se multiplican, ver `Page::effective_opacity`).
+#[derive(Debug)]
+pub struct SetOpacity {
+    pub layer: LayerId,
+    pub before: f32,
+    pub after: f32,
+}
+
+impl Command for SetOpacity {
+    fn label(&self) -> &str {
+        "Opacidad"
+    }
+
+    fn apply(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.opacity = self.after;
+        Ok(())
+    }
+
+    fn revert(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        doc.layer_mut(self.layer)?.opacity = self.before;
         Ok(())
     }
 }
@@ -445,6 +743,29 @@ mod tests {
             before,
             after: Transform { x, y, ..before },
         })
+    }
+
+    fn image_content() -> LayerContent {
+        LayerContent::Image(ImageContent {
+            source_path: None,
+            natural_width: 10,
+            natural_height: 10,
+            crop: None,
+        })
+    }
+
+    /// Documento con dos capas de imagen raíz: `a` (más abajo), `b` (más
+    /// arriba). Sin agrupar todavía: cada test construye el árbol que
+    /// necesita con los propios comandos que está probando.
+    fn doc_with_two_layers() -> (Document, LayerId, LayerId) {
+        let mut doc = Document::new(800.0, 600.0);
+        let a = doc
+            .add_layer("a", Transform::new(0.0, 0.0, 10.0, 10.0), image_content())
+            .unwrap();
+        let b = doc
+            .add_layer("b", Transform::new(20.0, 20.0, 10.0, 10.0), image_content())
+            .unwrap();
+        (doc, a, b)
     }
 
     #[test]
@@ -718,5 +1039,276 @@ mod tests {
             history.is_dirty(),
             "el estado inicial se perdió del historial"
         );
+    }
+
+    #[test]
+    fn reorder_moves_a_layer_and_undo_puts_it_back() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let mut history = History::default();
+        assert_eq!(doc.page().unwrap().children_of(None), vec![a, b]);
+
+        history
+            .apply(&mut doc, Box::new(Reorder::new(a, None, 1)))
+            .unwrap();
+        assert_eq!(doc.page().unwrap().children_of(None), vec![b, a]);
+
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.page().unwrap().children_of(None), vec![a, b]);
+    }
+
+    #[test]
+    fn reorder_reparents_a_whole_subtree() {
+        let (mut doc, a, _b) = doc_with_two_layers();
+        let mut history = History::default();
+        let group_id = doc.allocate_layer_id();
+        history
+            .apply(&mut doc, Box::new(Group::new(vec![a], group_id, "G")))
+            .unwrap();
+        let c = doc
+            .add_layer("c", Transform::new(40.0, 40.0, 10.0, 10.0), image_content())
+            .unwrap();
+        let outer_id = doc.allocate_layer_id();
+        history
+            .apply(&mut doc, Box::new(Group::new(vec![c], outer_id, "Outer")))
+            .unwrap();
+
+        history
+            .apply(
+                &mut doc,
+                Box::new(Reorder::new(group_id, Some(outer_id), 0)),
+            )
+            .unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!(page.layer(a).unwrap().parent_id, Some(group_id));
+        assert_eq!(page.layer(group_id).unwrap().parent_id, Some(outer_id));
+        assert!(page.is_ancestor(outer_id, a));
+
+        history.undo(&mut doc).unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!(page.layer(group_id).unwrap().parent_id, None);
+        assert!(!page.is_ancestor(outer_id, a));
+    }
+
+    #[test]
+    fn group_wraps_the_selection_and_undo_restores_the_order() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let group_id = doc.allocate_layer_id();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![a, b], group_id, "Group")),
+            )
+            .unwrap();
+
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(None), vec![group_id]);
+        assert_eq!(page.children_of(Some(group_id)), vec![a, b]);
+
+        history.undo(&mut doc).unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(None), vec![a, b]);
+        assert!(
+            page.layer(group_id).is_none(),
+            "el grupo desaparece al deshacer"
+        );
+    }
+
+    #[test]
+    fn group_ignores_children_whose_parent_is_also_selected() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let inner_id = doc.allocate_layer_id();
+        let mut history = History::default();
+        history
+            .apply(&mut doc, Box::new(Group::new(vec![a], inner_id, "Inner")))
+            .unwrap();
+
+        // Selecciona el grupo interno Y su hijo "a": "a" debe descartarse
+        // porque ya es descendiente de "inner_id".
+        let outer_id = doc.allocate_layer_id();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![inner_id, a, b], outer_id, "Outer")),
+            )
+            .unwrap();
+
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(Some(outer_id)), vec![inner_id, b]);
+        assert_eq!(page.layer(a).unwrap().parent_id, Some(inner_id));
+    }
+
+    #[test]
+    fn ungroup_dissolves_the_group_in_place() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let group_id = doc.allocate_layer_id();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![a, b], group_id, "Group")),
+            )
+            .unwrap();
+
+        history
+            .apply(&mut doc, Box::new(Ungroup::new(group_id)))
+            .unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(None), vec![a, b]);
+        assert!(page.layer(group_id).is_none());
+    }
+
+    #[test]
+    fn group_then_ungroup_is_the_identity() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let group_id = doc.allocate_layer_id();
+        let mut history = History::default();
+
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![a, b], group_id, "Group")),
+            )
+            .unwrap();
+        history
+            .apply(&mut doc, Box::new(Ungroup::new(group_id)))
+            .unwrap();
+
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(None), vec![a, b]);
+        assert_eq!(page.layer(a).unwrap().parent_id, None);
+        assert_eq!(page.layer(b).unwrap().parent_id, None);
+
+        // Y el propio deshacer/rehacer de los dos pasos también cierra bien.
+        history.undo(&mut doc).unwrap(); // deshace Ungroup
+        assert!(doc.page().unwrap().is_group(group_id));
+        history.undo(&mut doc).unwrap(); // deshace Group
+        assert_eq!(doc.page().unwrap().children_of(None), vec![a, b]);
+        assert!(doc.page().unwrap().layer(group_id).is_none());
+    }
+
+    #[test]
+    fn rename_roundtrips() {
+        let (mut doc, id) = doc_with_layer();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Rename {
+                    layer: id,
+                    before: "img".to_owned(),
+                    after: "Renamed".to_owned(),
+                }),
+            )
+            .unwrap();
+        assert_eq!(doc.layer(id).unwrap().name, "Renamed");
+        history.undo(&mut doc).unwrap();
+        assert_eq!(doc.layer(id).unwrap().name, "img");
+    }
+
+    #[test]
+    fn set_visible_locked_and_opacity_roundtrip() {
+        let (mut doc, id) = doc_with_layer();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(SetVisible {
+                    layer: id,
+                    before: true,
+                    after: false,
+                }),
+            )
+            .unwrap();
+        assert!(!doc.layer(id).unwrap().visible);
+        history
+            .apply(
+                &mut doc,
+                Box::new(SetLocked {
+                    layer: id,
+                    before: false,
+                    after: true,
+                }),
+            )
+            .unwrap();
+        assert!(doc.layer(id).unwrap().locked);
+        history
+            .apply(
+                &mut doc,
+                Box::new(SetOpacity {
+                    layer: id,
+                    before: 1.0,
+                    after: 0.4,
+                }),
+            )
+            .unwrap();
+        assert!((doc.layer(id).unwrap().opacity - 0.4).abs() < 1e-6);
+
+        history.undo(&mut doc).unwrap();
+        assert!((doc.layer(id).unwrap().opacity - 1.0).abs() < 1e-6);
+        history.undo(&mut doc).unwrap();
+        assert!(!doc.layer(id).unwrap().locked);
+        history.undo(&mut doc).unwrap();
+        assert!(doc.layer(id).unwrap().visible);
+    }
+
+    #[test]
+    fn remove_layer_takes_the_whole_subtree_with_it() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let group_id = doc.allocate_layer_id();
+        let mut history = History::default();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![a, b], group_id, "Group")),
+            )
+            .unwrap();
+
+        history
+            .apply(&mut doc, Box::new(RemoveLayer::new(group_id)))
+            .unwrap();
+        assert!(doc.page().unwrap().layers.is_empty());
+
+        history.undo(&mut doc).unwrap();
+        let page = doc.page().unwrap();
+        assert_eq!(page.children_of(None), vec![group_id]);
+        assert_eq!(page.children_of(Some(group_id)), vec![a, b]);
+    }
+
+    #[test]
+    fn nested_groups_survive_undo_redo() {
+        let (mut doc, a, b) = doc_with_two_layers();
+        let mut history = History::default();
+        let inner = doc.allocate_layer_id();
+        history
+            .apply(&mut doc, Box::new(Group::new(vec![a], inner, "Inner")))
+            .unwrap();
+        let middle = doc.allocate_layer_id();
+        history
+            .apply(
+                &mut doc,
+                Box::new(Group::new(vec![inner], middle, "Middle")),
+            )
+            .unwrap();
+        let outer = doc.allocate_layer_id();
+        history
+            .apply(&mut doc, Box::new(Group::new(vec![middle], outer, "Outer")))
+            .unwrap();
+
+        let page = doc.page().unwrap();
+        assert_eq!(page.depth(a), 3, "a está dentro de outer > middle > inner");
+        assert!(page.is_ancestor(outer, a));
+
+        for _ in 0..3 {
+            history.undo(&mut doc).unwrap();
+        }
+        assert_eq!(doc.page().unwrap().children_of(None), vec![a, b]);
+
+        for _ in 0..3 {
+            history.redo(&mut doc).unwrap();
+        }
+        let page = doc.page().unwrap();
+        assert!(page.is_ancestor(outer, a));
+        assert_eq!(page.depth(a), 3);
     }
 }

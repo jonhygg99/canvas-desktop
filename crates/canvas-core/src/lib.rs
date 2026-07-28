@@ -15,8 +15,9 @@ pub use align::{
     resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform, Corner, HAlign, VAlign,
 };
 pub use command::{
-    Command, Composite, History, InsertLayer, RemoveLayer, SetBlur, SetContent, SetCrop,
-    SetEffects, SetPageSize, SetShadow, SetTransform,
+    Command, Composite, Group, History, InsertLayer, RemoveLayer, Rename, Reorder, SetBlur,
+    SetContent, SetCrop, SetEffects, SetLocked, SetOpacity, SetPageSize, SetShadow, SetTransform,
+    SetVisible, Ungroup,
 };
 pub use document::{Document, Page};
 pub use error::CoreError;
