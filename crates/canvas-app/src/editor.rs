@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use canvas_core::{
     cover_transform, resize_rotated_from_corner, snap_translation, trim_crop_from_corner,
     uncrop_transform, CoreError, Corner, CropRect, Document, History, ImageContent, InsertLayer,
-    Layer, LayerContent, LayerId, RemoveLayer, SetCrop, SetPageSize, SetTransform, Transform,
+    Layer, LayerContent, LayerId, RemoveLayer, Selection, SetCrop, SetPageSize, SetTransform,
+    Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, ImageMap};
@@ -103,7 +104,7 @@ pub struct EditorState {
     pub doc: Document,
     pub history: History,
     pub images: ImageMap,
-    pub selected: Option<LayerId>,
+    pub selection: Selection,
     pub viewport: Viewport,
     /// Proporción bloqueada al redimensionar (por defecto sí; `Shift` la libera).
     pub aspect_lock: bool,
@@ -167,14 +168,14 @@ impl EditorState {
     fn base(
         doc: Document,
         images: ImageMap,
-        selected: Option<LayerId>,
+        selection: Selection,
         background_layer: Option<LayerId>,
     ) -> Self {
         Self {
             doc,
             history: History::default(),
             images,
-            selected,
+            selection,
             viewport: Viewport::default(),
             aspect_lock: true,
             gesture: Gesture::None,
@@ -226,7 +227,7 @@ impl EditorState {
         )?;
         let mut images = ImageMap::new();
         images.insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
-        Ok(Self::base(doc, images, Some(id), None))
+        Ok(Self::base(doc, images, Selection::single(id), None))
     }
 
     /// Proyecto nuevo en blanco (página blanca, sin capas).
@@ -235,7 +236,7 @@ impl EditorState {
         if let Ok(page) = doc.page_mut() {
             page.background = Some([255, 255, 255, 255]);
         }
-        Self::base(doc, ImageMap::new(), None, None)
+        Self::base(doc, ImageMap::new(), Selection::default(), None)
     }
 
     /// Documento restaurado desde un sidecar `.canvas`: las capas siguen
@@ -260,7 +261,8 @@ impl EditorState {
                 .or_else(|| p.layers.last())
                 .map(|l| l.id)
         });
-        Self::base(doc, images, selected, background_layer)
+        let selection = selected.map_or_else(Selection::default, Selection::single);
+        Self::base(doc, images, selection, background_layer)
     }
 
     /// Datos para que el hilo de guardado escriba el sidecar: documento
@@ -315,7 +317,7 @@ impl EditorState {
         }
         self.images
             .insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
-        self.selected = Some(id);
+        self.selection = Selection::single(id);
     }
 
     /// Inserta una capa nueva (texto o forma) centrada en la página,
@@ -338,7 +340,7 @@ impl EditorState {
             tracing::error!("insertar capa falló: {e}");
             return;
         }
-        self.selected = Some(id);
+        self.selection = Selection::single(id);
         self.crop_mode = false;
     }
 
@@ -354,7 +356,7 @@ impl EditorState {
             matches!(l.content, LayerContent::Image(_)) && Some(l.id) != self.background_layer
         };
         // La seleccionada si vale; si no, la capa de imagen más alta.
-        if let Some(sel) = self.selected {
+        if let Some(sel) = self.selection.primary() {
             if let Ok(l) = self.doc.layer(sel) {
                 if is_candidate(l) {
                     return Some(sel);
@@ -509,12 +511,22 @@ impl EditorState {
         if let Err(e) = self.history.undo(&mut self.doc) {
             tracing::error!("deshacer falló: {e}");
         }
+        self.forget_deleted_selection();
     }
 
     /// Rehace el último comando deshecho (menú Edit o Ctrl+Y).
     pub fn redo(&mut self) {
         if let Err(e) = self.history.redo(&mut self.doc) {
             tracing::error!("rehacer falló: {e}");
+        }
+        self.forget_deleted_selection();
+    }
+
+    /// Olvida de la selección los ids que ya no existen en el documento
+    /// (tras deshacer/rehacer un borrado, o después de cortar/borrar).
+    fn forget_deleted_selection(&mut self) {
+        if let Ok(page) = self.doc.page() {
+            self.selection.retain_existing(page);
         }
     }
 
@@ -615,7 +627,7 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     });
     ui.separator();
 
-    if let Some(sel) = state.selected {
+    if let Some(sel) = state.selection.primary() {
         if state.doc.layer(sel).is_ok() {
             layer_properties_ui(state, ui, sel, page_dims);
         }
@@ -1547,7 +1559,7 @@ fn layer_interaction(
         .or_else(|| response.hover_pos());
 
     // Cursor según lo que hay debajo.
-    if let (Some(pos), Some(sel)) = (pointer, state.selected) {
+    if let (Some(pos), Some(sel)) = (pointer, state.selection.primary()) {
         if let Ok(layer) = state.doc.layer(sel) {
             let corners = layer_corners_screen(&state.viewport, rect, &layer.transform);
             let on_rotate = rotation_handle_screen(&state.viewport, rect, &layer.transform)
@@ -1576,7 +1588,7 @@ fn layer_interaction(
         if let Some(pos) = response.interact_pointer_pos() {
             state.gesture = Gesture::None;
             // ¿Sobre un manejador de la selección actual?
-            if let Some(sel) = state.selected {
+            if let Some(sel) = state.selection.primary() {
                 if let Ok(layer) = state.doc.layer(sel) {
                     let t = layer.transform;
                     let corners = layer_corners_screen(&state.viewport, rect, &t);
@@ -1619,10 +1631,24 @@ fn layer_interaction(
             if matches!(state.gesture, Gesture::None) {
                 let (px, py) = screen_to_page(&state.viewport, rect, pos);
                 let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
-                if hit != state.selected {
+                if hit != state.selection.primary() {
                     state.crop_mode = false;
                 }
-                state.selected = hit;
+                // Ctrl añade/quita de la selección, Shift extiende el tramo
+                // de pila hasta la capa tocada; sin modificadores, la
+                // selección se reemplaza entera (como un clic normal).
+                let mods = ui.input(|i| i.modifiers);
+                if mods.command {
+                    if let Some(id) = hit {
+                        state.selection.toggle(id);
+                    }
+                } else if mods.shift {
+                    if let (Some(id), Ok(page)) = (hit, state.doc.page()) {
+                        state.selection.extend_range(page, id);
+                    }
+                } else {
+                    state.selection.set(hit);
+                }
                 if let Some(id) = hit {
                     if let Ok(layer) = state.doc.layer(id) {
                         state.gesture = Gesture::Move {
@@ -1817,10 +1843,21 @@ fn layer_interaction(
         if let Some(pos) = response.interact_pointer_pos() {
             let (px, py) = screen_to_page(&state.viewport, rect, pos);
             let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
-            if hit != state.selected {
+            if hit != state.selection.primary() {
                 state.crop_mode = false;
             }
-            state.selected = hit;
+            let mods = ui.input(|i| i.modifiers);
+            if mods.command {
+                if let Some(id) = hit {
+                    state.selection.toggle(id);
+                }
+            } else if mods.shift {
+                if let (Some(id), Ok(page)) = (hit, state.doc.page()) {
+                    state.selection.extend_range(page, id);
+                }
+            } else {
+                state.selection.set(hit);
+            }
         }
     }
 }
@@ -2053,7 +2090,26 @@ fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) 
         );
     }
 
-    let Some(sel) = state.selected else { return };
+    // Contorno fino (sin manejadores) para las capas seleccionadas que NO
+    // son la primaria: la primaria es la única que manda en el panel y los
+    // gestos, pero el resto de la selección múltiple sigue siendo visible.
+    for &id in state.selection.ids() {
+        if Some(id) == state.selection.primary() {
+            continue;
+        }
+        let Ok(layer) = state.doc.layer(id) else {
+            continue;
+        };
+        let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, rect, &layer.transform);
+        painter.add(egui::Shape::closed_line(
+            vec![tl, tr, br, bl],
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 122, 255, 140)),
+        ));
+    }
+
+    let Some(sel) = state.selection.primary() else {
+        return;
+    };
     let Ok(layer) = state.doc.layer(sel) else {
         return;
     };

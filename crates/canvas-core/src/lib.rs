@@ -8,6 +8,7 @@ mod command;
 mod document;
 mod error;
 mod layer;
+mod selection;
 mod snap;
 
 pub use align::{
@@ -25,4 +26,5 @@ pub use layer::{
     CropRect, Effects, GroupContent, ImageContent, Layer, LayerContent, LayerId, Shadow,
     ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform,
 };
+pub use selection::Selection;
 pub use snap::{snap_translation, SnapResult};
