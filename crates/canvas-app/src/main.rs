@@ -2,6 +2,7 @@
 
 mod editor;
 mod gallery;
+mod layers_panel;
 mod loader;
 mod menus;
 mod settings;
@@ -1150,6 +1151,9 @@ impl eframe::App for App {
                     }
                 }
 
+                egui::Panel::left("layers")
+                    .default_size(220.0)
+                    .show(ui, |ui| layers_panel::layers_panel_ui(state, ui));
                 egui::Panel::right("properties")
                     .default_size(260.0)
                     .show(ui, |ui| editor::properties_ui(state, ui));

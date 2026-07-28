@@ -115,8 +115,10 @@ pub struct EditorState {
     /// Edición en curso del tamaño de página (campos An/Al de la sección
     /// Página): dimensiones originales, para consolidar al terminar.
     page_edit: Option<(f64, f64)>,
-    /// Capa de «fondo desenfocado» activa, si la hay.
-    background_layer: Option<LayerId>,
+    /// Capa de «fondo desenfocado» activa, si la hay. `pub(crate)` porque el
+    /// panel de capas (otro módulo) necesita fijarla como fila no arrastrable
+    /// y excluirla de "Agrupar".
+    pub(crate) background_layer: Option<LayerId>,
     /// Ajuste de desenfoque en curso (slider): capa y radio original.
     blur_edit: Option<(LayerId, f32)>,
     /// Ajuste de color en curso (sliders): capa y efectos originales, para
@@ -159,6 +161,9 @@ pub struct EditorState {
     /// Guías de alineación magnéticas activas durante un arrastre
     /// (posiciones de página: verticales, horizontales).
     snap_guides: (Vec<f64>, Vec<f64>),
+    /// Renombrado en curso en el panel de capas: capa, texto editable y
+    /// nombre original (para poder cancelar sin comando con Escape).
+    pub rename_edit: Option<(LayerId, String, String)>,
 }
 
 impl EditorState {
@@ -202,6 +207,7 @@ impl EditorState {
             show_rulers: false,
             crop_mode: false,
             snap_guides: (Vec::new(), Vec::new()),
+            rename_edit: None,
         }
     }
 
@@ -524,7 +530,7 @@ impl EditorState {
 
     /// Olvida de la selección los ids que ya no existen en el documento
     /// (tras deshacer/rehacer un borrado, o después de cortar/borrar).
-    fn forget_deleted_selection(&mut self) {
+    pub(crate) fn forget_deleted_selection(&mut self) {
         if let Ok(page) = self.doc.page() {
             self.selection.retain_existing(page);
         }
@@ -1054,11 +1060,21 @@ fn layer_properties_ui(
     let Ok(layer) = state.doc.layer(sel) else {
         return;
     };
+    // Un grupo no tiene geometría propia (su `transform` es una caja
+    // envolvente derivada de sus hijos, recalculada por
+    // `refresh_group_bounds`): posición/tamaño/rotación/recorte no
+    // significan nada aquí. Se gestiona desde el panel de capas.
+    if matches!(layer.content, LayerContent::Group(_)) {
+        ui.label(format!("Group: {}", layer.name));
+        ui.weak("Manage its contents from the layers panel on the left.");
+        return;
+    }
     let original = layer.transform;
     let natural = match &layer.content {
         LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
         LayerContent::Svg(svg) => (f64::from(svg.natural_width), f64::from(svg.natural_height)),
-        LayerContent::Text(_) | LayerContent::Shape(_) | LayerContent::Group(_) => (0.0, 0.0),
+        LayerContent::Text(_) | LayerContent::Shape(_) => (0.0, 0.0),
+        LayerContent::Group(_) => unreachable!("ya se devolvió arriba para los grupos"),
     };
     let current_crop = match &layer.content {
         LayerContent::Image(img) => img.crop,
@@ -1687,10 +1703,19 @@ fn layer_interaction(
                     let alt = ui.ctx().input(|i| i.modifiers.alt);
                     if !alt {
                         if let Ok(page) = state.doc.page() {
+                            // Los grupos no tienen geometría propia (su
+                            // `transform` es una caja envolvente derivada) y
+                            // una capa oculta por un ancestro no debe atraer
+                            // el arrastre aunque su propio flag `visible`
+                            // siga en `true`.
                             let others: Vec<Transform> = page
                                 .layers
                                 .iter()
-                                .filter(|l| l.id != layer && l.visible)
+                                .filter(|l| {
+                                    l.id != layer
+                                        && !matches!(l.content, LayerContent::Group(_))
+                                        && page.effective_visible(l.id)
+                                })
                                 .map(|l| l.transform)
                                 .collect();
                             let threshold = 6.0 / state.viewport.zoom;
