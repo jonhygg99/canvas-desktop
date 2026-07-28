@@ -161,127 +161,18 @@ pub struct EditorState {
 }
 
 impl EditorState {
-    /// Documento nuevo a partir de una imagen: página a sus dimensiones
-    /// reales y la imagen como capa a tamaño completo.
-    pub fn from_image(path: PathBuf, img: LoadedImage) -> Result<Self, CoreError> {
-        let (w, h) = (f64::from(img.width), f64::from(img.height));
-        let mut doc = Document::new(w, h);
-        doc.source_path = Some(path.clone());
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Image".to_owned());
-        let id = doc.add_layer(
-            name,
-            Transform::new(0.0, 0.0, w, h),
-            LayerContent::Image(ImageContent {
-                source_path: Some(path),
-                natural_width: img.width,
-                natural_height: img.height,
-                crop: None,
-            }),
-        )?;
-        let mut images = ImageMap::new();
-        images.insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
-        Ok(Self {
-            doc,
-            history: History::default(),
-            images,
-            selected: Some(id),
-            viewport: Viewport::default(),
-            aspect_lock: true,
-            gesture: Gesture::None,
-            panel_edit: None,
-            page_edit: None,
-            background_layer: None,
-            blur_edit: None,
-            color_edit: None,
-            content_edit: None,
-            shadow_edit: None,
-            saving: false,
-            save_error: None,
-            from_gallery: None,
-            return_requested: false,
-            save_clicked: false,
-            save_as_clicked: false,
-            settings_clicked: false,
-            sidecar_enabled: true,
-            source_metadata: None,
-            external_change: false,
-            reload_requested: false,
-            pending_zoom_factor: None,
-            show_grid: false,
-            show_rulers: false,
-            crop_mode: false,
-            snap_guides: (Vec::new(), Vec::new()),
-        })
-    }
-
-    /// Proyecto nuevo en blanco (página blanca, sin capas).
-    pub fn new_blank(width: f64, height: f64) -> Self {
-        let mut doc = Document::new(width, height);
-        if let Ok(page) = doc.page_mut() {
-            page.background = Some([255, 255, 255, 255]);
-        }
+    /// Constructor común: los tres puntos de entrada (imagen nueva, proyecto
+    /// en blanco, restaurado desde sidecar) solo difieren en el documento, sus
+    /// píxeles, la selección inicial y el fondo desenfocado.
+    fn base(
+        doc: Document,
+        images: ImageMap,
+        selected: Option<LayerId>,
+        background_layer: Option<LayerId>,
+    ) -> Self {
         Self {
             doc,
             history: History::default(),
-            images: ImageMap::new(),
-            selected: None,
-            viewport: Viewport::default(),
-            aspect_lock: true,
-            gesture: Gesture::None,
-            panel_edit: None,
-            page_edit: None,
-            background_layer: None,
-            blur_edit: None,
-            color_edit: None,
-            content_edit: None,
-            shadow_edit: None,
-            saving: false,
-            save_error: None,
-            from_gallery: None,
-            return_requested: false,
-            save_clicked: false,
-            save_as_clicked: false,
-            settings_clicked: false,
-            sidecar_enabled: true,
-            source_metadata: None,
-            external_change: false,
-            reload_requested: false,
-            pending_zoom_factor: None,
-            show_grid: false,
-            show_rulers: false,
-            crop_mode: false,
-            snap_guides: (Vec::new(), Vec::new()),
-        }
-    }
-
-    /// Documento restaurado desde un sidecar `.canvas`: las capas siguen
-    /// siendo editables tal y como se guardaron (nada de fondo aplanado).
-    pub fn from_restored(path: PathBuf, restored: canvas_io::RestoredDocument) -> Self {
-        let mut doc = restored.document;
-        doc.source_path = Some(path);
-        let mut images = ImageMap::new();
-        for (raw, pixels) in restored.images {
-            images.insert(
-                LayerId::from_raw(raw),
-                image_data_from_rgba(pixels.rgba, pixels.width, pixels.height),
-            );
-        }
-        let background_layer = restored.background_layer.map(LayerId::from_raw);
-        // Selecciona la capa más alta que no sea el fondo desenfocado.
-        let selected = doc.page().ok().and_then(|p| {
-            p.layers
-                .iter()
-                .rev()
-                .find(|l| Some(l.id) != background_layer)
-                .or_else(|| p.layers.last())
-                .map(|l| l.id)
-        });
-        Self {
-            doc,
-            history: History::default(), // recién abierto = sin cambios
             images,
             selected,
             viewport: Viewport::default(),
@@ -311,6 +202,65 @@ impl EditorState {
             crop_mode: false,
             snap_guides: (Vec::new(), Vec::new()),
         }
+    }
+
+    /// Documento nuevo a partir de una imagen: página a sus dimensiones
+    /// reales y la imagen como capa a tamaño completo.
+    pub fn from_image(path: PathBuf, img: LoadedImage) -> Result<Self, CoreError> {
+        let (w, h) = (f64::from(img.width), f64::from(img.height));
+        let mut doc = Document::new(w, h);
+        doc.source_path = Some(path.clone());
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Image".to_owned());
+        let id = doc.add_layer(
+            name,
+            Transform::new(0.0, 0.0, w, h),
+            LayerContent::Image(ImageContent {
+                source_path: Some(path),
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+            }),
+        )?;
+        let mut images = ImageMap::new();
+        images.insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
+        Ok(Self::base(doc, images, Some(id), None))
+    }
+
+    /// Proyecto nuevo en blanco (página blanca, sin capas).
+    pub fn new_blank(width: f64, height: f64) -> Self {
+        let mut doc = Document::new(width, height);
+        if let Ok(page) = doc.page_mut() {
+            page.background = Some([255, 255, 255, 255]);
+        }
+        Self::base(doc, ImageMap::new(), None, None)
+    }
+
+    /// Documento restaurado desde un sidecar `.canvas`: las capas siguen
+    /// siendo editables tal y como se guardaron (nada de fondo aplanado).
+    pub fn from_restored(path: PathBuf, restored: canvas_io::RestoredDocument) -> Self {
+        let mut doc = restored.document;
+        doc.source_path = Some(path);
+        let mut images = ImageMap::new();
+        for (raw, pixels) in restored.images {
+            images.insert(
+                LayerId::from_raw(raw),
+                image_data_from_rgba(pixels.rgba, pixels.width, pixels.height),
+            );
+        }
+        let background_layer = restored.background_layer.map(LayerId::from_raw);
+        // Selecciona la capa más alta que no sea el fondo desenfocado.
+        let selected = doc.page().ok().and_then(|p| {
+            p.layers
+                .iter()
+                .rev()
+                .find(|l| Some(l.id) != background_layer)
+                .or_else(|| p.layers.last())
+                .map(|l| l.id)
+        });
+        Self::base(doc, images, selected, background_layer)
     }
 
     /// Datos para que el hilo de guardado escriba el sidecar: documento
