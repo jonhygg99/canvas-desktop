@@ -144,7 +144,8 @@ fn groupable_roots(state: &EditorState, page: &Page) -> Vec<LayerId> {
         .collect()
 }
 
-fn group_selection(state: &mut EditorState) {
+/// `pub(crate)`: también la usa el atajo Ctrl+G en `EditorState::handle_shortcuts`.
+pub(crate) fn group_selection(state: &mut EditorState) {
     let Ok(page) = state.doc.page() else { return };
     let roots = groupable_roots(state, page);
     if roots.is_empty() {
@@ -158,7 +159,8 @@ fn group_selection(state: &mut EditorState) {
     }
 }
 
-fn ungroup_selection(state: &mut EditorState) {
+/// `pub(crate)`: también la usa el atajo Ctrl+Shift+G en `EditorState::handle_shortcuts`.
+pub(crate) fn ungroup_selection(state: &mut EditorState) {
     let Ok(page) = state.doc.page() else { return };
     let groups: Vec<LayerId> = state
         .selection

@@ -287,8 +287,15 @@ impl EditorState {
     }
 
     /// Añade una imagen como capa nueva encima de las existentes (deshacible),
-    /// encajada en la página si es mayor que ella, y la selecciona.
-    pub fn add_image_layer(&mut self, path: PathBuf, img: LoadedImage) {
+    /// encajada en la página si es mayor que ella, y la selecciona. `source`
+    /// es `None` cuando la imagen viene del portapapeles del sistema (no
+    /// tiene un archivo de origen en disco).
+    pub fn add_image_layer(
+        &mut self,
+        name: impl Into<String>,
+        source: Option<PathBuf>,
+        img: LoadedImage,
+    ) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
         let index = page.layers.len();
@@ -298,17 +305,13 @@ impl EditorState {
         let (w, h) = (nw * scale, nh * scale);
         let transform = Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h);
 
-        let name = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Image".to_owned());
         let id = self.doc.allocate_layer_id();
         let layer = Layer::new(
             id,
             name,
             transform,
             LayerContent::Image(ImageContent {
-                source_path: Some(path),
+                source_path: source,
                 natural_width: img.width,
                 natural_height: img.height,
                 crop: None,
@@ -496,6 +499,12 @@ impl EditorState {
     /// Atajos de edición globales del editor (deshacer/rehacer).
     pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
+        // Un TextEdit con el foco (renombrar en el panel de capas, editar el
+        // texto de una capa) manda: Ctrl+C/V/X/Z, Supr y Ctrl+A son suyos,
+        // no del lienzo.
+        if ctx.text_edit_focused() {
+            return;
+        }
         // El orden importa: Ctrl+Shift+Z debe consumirse antes que Ctrl+Z.
         let redo = ctx.input_mut(|i| {
             i.consume_shortcut(&KeyboardShortcut::new(
@@ -509,6 +518,50 @@ impl EditorState {
             self.redo();
         } else if undo {
             self.undo();
+        }
+
+        // Ctrl+Shift+G (desagrupar) antes que Ctrl+G (agrupar): mismo patrón
+        // que redo/undo arriba, lo más específico primero.
+        let ungroup = ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::G,
+            ))
+        });
+        let group = ctx
+            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::G)));
+        if ungroup {
+            crate::layers_panel::ungroup_selection(self);
+        } else if group {
+            crate::layers_panel::group_selection(self);
+        }
+
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::X)))
+        {
+            crate::clipboard::cut(self);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::C)))
+        {
+            crate::clipboard::copy(self);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::V)))
+        {
+            crate::clipboard::paste(self);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
+        {
+            crate::clipboard::duplicate(self);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::A)))
+        {
+            crate::clipboard::select_all(self);
+        }
+        let delete = ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::Delete))
+                || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::Backspace))
+        });
+        if delete {
+            crate::clipboard::delete_selected(self);
         }
     }
 

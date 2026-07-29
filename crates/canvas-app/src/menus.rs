@@ -32,6 +32,14 @@ pub enum MenuAction {
     FullScreen,
     Settings,
     About,
+    Cut,
+    Copy,
+    Paste,
+    Duplicate,
+    Delete,
+    SelectAll,
+    Group,
+    Ungroup,
 }
 
 #[cfg(windows)]
@@ -110,7 +118,6 @@ mod native {
 
             let undo_item = MenuItem::with_id("undo", "Undo", false, accel(ctrl, Code::KeyZ));
             let redo_item = MenuItem::with_id("redo", "Redo", false, accel(ctrl, Code::KeyY));
-            // Pendientes de sus fases (portapapeles, selección múltiple).
             let cut_item = MenuItem::with_id("cut", "Cut", false, accel(ctrl, Code::KeyX));
             let copy_item = MenuItem::with_id("copy", "Copy", false, accel(ctrl, Code::KeyC));
             let paste_item = MenuItem::with_id("paste", "Paste", false, accel(ctrl, Code::KeyV));
@@ -119,6 +126,9 @@ mod native {
             let delete_item = MenuItem::with_id("delete", "Delete", false, None);
             let select_all_item =
                 MenuItem::with_id("select_all", "Select All", false, accel(ctrl, Code::KeyA));
+            let group_item = MenuItem::with_id("group", "Group", false, accel(ctrl, Code::KeyG));
+            let ungroup_item =
+                MenuItem::with_id("ungroup", "Ungroup", false, accel(ctrl_shift, Code::KeyG));
 
             let edit = Submenu::with_items(
                 "&Edit",
@@ -134,6 +144,9 @@ mod native {
                     &delete_item,
                     &PredefinedMenuItem::separator(),
                     &select_all_item,
+                    &PredefinedMenuItem::separator(),
+                    &group_item,
+                    &ungroup_item,
                 ],
             )?;
 
@@ -181,6 +194,14 @@ mod native {
                 fit_item,
                 grid_item,
                 rulers_item,
+                cut_item,
+                copy_item,
+                paste_item,
+                duplicate_item,
+                delete_item,
+                select_all_item,
+                group_item,
+                ungroup_item,
             ];
 
             Ok(Self {
@@ -217,6 +238,14 @@ mod native {
                 "grid" => Some(MenuAction::ToggleGrid),
                 "rulers" => Some(MenuAction::ToggleRulers),
                 "full_screen" => Some(MenuAction::FullScreen),
+                "cut" => Some(MenuAction::Cut),
+                "copy" => Some(MenuAction::Copy),
+                "paste" => Some(MenuAction::Paste),
+                "duplicate" => Some(MenuAction::Duplicate),
+                "delete" => Some(MenuAction::Delete),
+                "select_all" => Some(MenuAction::SelectAll),
+                "group" => Some(MenuAction::Group),
+                "ungroup" => Some(MenuAction::Ungroup),
                 "settings" => Some(MenuAction::Settings),
                 "about" => Some(MenuAction::About),
                 _ => None,
@@ -332,6 +361,57 @@ pub fn menu_bar_ui(
                 .clicked()
             {
                 action = Some(MenuAction::Redo);
+            }
+            ui.separator();
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Cut"))
+                .clicked()
+            {
+                action = Some(MenuAction::Cut);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Copy"))
+                .clicked()
+            {
+                action = Some(MenuAction::Copy);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Paste"))
+                .clicked()
+            {
+                action = Some(MenuAction::Paste);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Duplicate"))
+                .clicked()
+            {
+                action = Some(MenuAction::Duplicate);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Delete"))
+                .clicked()
+            {
+                action = Some(MenuAction::Delete);
+            }
+            ui.separator();
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Select All"))
+                .clicked()
+            {
+                action = Some(MenuAction::SelectAll);
+            }
+            ui.separator();
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Group"))
+                .clicked()
+            {
+                action = Some(MenuAction::Group);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Ungroup"))
+                .clicked()
+            {
+                action = Some(MenuAction::Ungroup);
             }
         });
         ui.menu_button("View", |ui| {

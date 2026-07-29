@@ -22,6 +22,7 @@ directories = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
+arboard = { workspace = true }
 
 # Menús nativos solo en Windows (en Linux muda exige GTK: allí se usa una
 # barra de menús egui como fallback).

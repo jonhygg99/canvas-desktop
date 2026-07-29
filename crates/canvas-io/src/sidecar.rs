@@ -9,7 +9,6 @@
 
 use std::path::{Path, PathBuf};
 
-use base64::Engine;
 use canvas_core::Document;
 use serde::{Deserialize, Serialize};
 
@@ -93,20 +92,10 @@ pub fn write_sidecar(
     let path = sidecar_path(image_path);
     let mut encoded = Vec::with_capacity(images.len());
     for (layer, rgba, w, h) in images {
-        let img =
-            image::RgbaImage::from_raw(*w, *h, rgba.clone()).ok_or_else(|| IoError::Encode {
-                path: path.clone(),
-                message: format!("layer {layer} pixels do not match its dimensions"),
-            })?;
-        let mut png = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut png, image::ImageFormat::Png)
-            .map_err(|e| IoError::Encode {
-                path: path.clone(),
-                message: format!("layer {layer}: {e}"),
-            })?;
+        let png_base64 = crate::png_codec::encode_layer_png(rgba, *w, *h, &path)?;
         encoded.push(SidecarImage {
             layer: *layer,
-            png_base64: base64::engine::general_purpose::STANDARD.encode(png.into_inner()),
+            png_base64,
         });
     }
 
@@ -170,26 +159,11 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
 
     let mut images = Vec::with_capacity(file.images.len());
     for entry in &file.images {
-        let png = base64::engine::general_purpose::STANDARD
-            .decode(&entry.png_base64)
-            .map_err(|e| IoError::Decode {
-                path: path.clone(),
-                source: image::ImageError::IoError(std::io::Error::other(format!(
-                    "layer {} base64: {e}",
-                    entry.layer
-                ))),
-            })?;
-        let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
-            .map_err(|source| IoError::Decode {
-                path: path.clone(),
-                source,
-            })?
-            .to_rgba8();
-        let (width, height) = img.dimensions();
+        let (rgba, width, height) = crate::png_codec::decode_layer_png(&entry.png_base64, &path)?;
         images.push((
             entry.layer,
             LoadedImage {
-                rgba: img.into_raw(),
+                rgba,
                 width,
                 height,
             },

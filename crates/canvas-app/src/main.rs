@@ -1,5 +1,6 @@
 //! Binario de Canvas Desktop: ventana eframe/egui con el lienzo vello.
 
+mod clipboard;
 mod editor;
 mod gallery;
 mod layers_panel;
@@ -384,6 +385,46 @@ impl App {
             }
             A::Settings => self.show_settings = true,
             A::About => self.show_about = true,
+            A::Cut => {
+                if let View::Editor(state) = &mut self.view {
+                    clipboard::cut(state);
+                }
+            }
+            A::Copy => {
+                if let View::Editor(state) = &self.view {
+                    clipboard::copy(state);
+                }
+            }
+            A::Paste => {
+                if let View::Editor(state) = &mut self.view {
+                    clipboard::paste(state);
+                }
+            }
+            A::Duplicate => {
+                if let View::Editor(state) = &mut self.view {
+                    clipboard::duplicate(state);
+                }
+            }
+            A::Delete => {
+                if let View::Editor(state) = &mut self.view {
+                    clipboard::delete_selected(state);
+                }
+            }
+            A::SelectAll => {
+                if let View::Editor(state) = &mut self.view {
+                    clipboard::select_all(state);
+                }
+            }
+            A::Group => {
+                if let View::Editor(state) = &mut self.view {
+                    layers_panel::group_selection(state);
+                }
+            }
+            A::Ungroup => {
+                if let View::Editor(state) = &mut self.view {
+                    layers_panel::ungroup_selection(state);
+                }
+            }
         }
     }
 
@@ -438,7 +479,13 @@ impl App {
                 AppMsg::ImageLoadedForLayer { path, result } => {
                     if let View::Editor(state) = &mut self.view {
                         match result {
-                            Ok(img) => state.add_image_layer(path, img),
+                            Ok(img) => {
+                                let name = path
+                                    .file_stem()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| "Image".to_owned());
+                                state.add_image_layer(name, Some(path), img);
+                            }
                             Err(e) => {
                                 state.save_error =
                                     Some(format!("Could not add \"{}\": {e}", path.display()));

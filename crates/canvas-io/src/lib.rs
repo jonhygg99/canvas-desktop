@@ -1,13 +1,18 @@
 //! Carga y guardado de imágenes: decode con orientación EXIF, escritura
 //! atómica sobre el archivo original y miniaturas de galería.
 
+mod clipboard;
 mod load;
 mod metadata;
+mod png_codec;
 mod save;
 mod sidecar;
 mod svg;
 mod thumbs;
 
+pub use clipboard::{
+    decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
+};
 pub use load::{can_overwrite, is_image_file, load_image, LoadedImage, IMAGE_EXTENSIONS};
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
