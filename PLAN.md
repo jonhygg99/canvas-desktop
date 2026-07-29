@@ -13,31 +13,6 @@ no solo compilando. `cargo test`, `cargo clippy -- -D warnings` y
 
 ## PENDIENTE
 
-### Fase 11 — Grupos, panel de capas, portapapeles y exportación
-
-- **Grupos** en `canvas-core`: árbol plano con `parent_id` (más simple para el
-  panel que anidar `Vec<Layer>`), comandos `Reorder` / `Group` / `Ungroup` /
-  `Rename` con tests.
-- **Panel de capas** (`crates/canvas-app/src/layers_panel.rs`, nuevo): lista a
-  la izquierda con reordenar arrastrando (`ui.dnd_drag_source` de egui 0.35),
-  renombrar con doble clic, ojo de visibilidad, candado, agrupar/desagrupar.
-- **Portapapeles** (`crates/canvas-app/src/clipboard.rs`, nuevo): cortar,
-  copiar, pegar y duplicar capas (serialización JSON interna) y **pegar
-  imágenes del portapapeles del sistema** con `arboard::Clipboard::get_image()`
-  (ya está en el árbol de dependencias vía eframe). Conectar los ítems Cut /
-  Copy / Paste / Duplicate / Delete / Select All del menú Edit (hoy
-  deshabilitados en `menus.rs`).
-- **Exportación** (`export.rs` en canvas-app + canvas-io): diálogo Export con
-  formato PNG / JPEG / SVG / PDF y escala 1x/2x/3x. PNG/JPEG reutilizan
-  `bake_page` (ya acepta parámetro de escala). El SVG se genera a mano
-  (capas raster como `<image>` base64; texto y formas como elementos
-  nativos) y el PDF con `svg2pdf` sobre ese mismo SVG, como sugiere la spec.
-  Conectar el ítem Export del menú File (hoy deshabilitado).
-
-**Verificar**: arrastrar en el panel cambia el orden de apilado en el lienzo;
-Win+Shift+S (recorte de pantalla) → Ctrl+V pega la captura como capa nueva;
-Export PNG 2x produce exactamente el doble de píxeles; el PDF abre en Edge.
-
 ### Fase 12 — Empaquetado e instalador + CI
 
 - **`packaging/windows/`**: configuración de `cargo-packager` (NSIS, x64 +
@@ -88,10 +63,20 @@ Lo automatizable ya está verificado; esto necesita ojos y ratón:
    reabrir → siguen siendo capas editables (criterio de producto 5 adaptado).
 10. Repasar los 10 criterios de aceptación de la primera entrega de
     `PROMPT.md` de una sentada.
+11. Arrastrar una fila en el panel de capas cambia el orden de apilado en el
+    lienzo (Above/Below/Into); Ctrl+G/Ctrl+Shift+G agrupan/desagrupan desde el
+    teclado; el ojo y el candado ocultan/bloquean con herencia visible sobre
+    los hijos; renombrar con doble clic.
+12. Win+Shift+S (recorte de pantalla) → Ctrl+V pega la captura como capa
+    nueva; Ctrl+C/X/V/D sobre una selección múltiple (Ctrl+clic/Shift+clic)
+    copian/cortan/pegan/duplican el conjunto completo.
+13. File → Export… → PDF abre en Edge con texto nítido al ampliar (vectorial,
+    no rasterizado); Export SVG abre en Edge/Inkscape con el texto como
+    `<text>` real, no una imagen; Export PNG a 2x/3x.
 
 ---
 
-## HECHO (commits `eede998` … `761d639`)
+## HECHO (commits `eede998` … `b854c94`)
 
 | Fase | Contenido | Verificación |
 |---|---|---|
@@ -105,8 +90,9 @@ Lo automatizable ya está verificado; esto necesita ojos y ratón:
 | 8 | Rotación (manejador, Shift=15°), volteo, recorte no destructivo (`CropRect` + trim/uncrop), guías magnéticas (`snap.rs`), cuadrícula y reglas | 12 tests nuevos de geometría pura |
 | 9 | Filtros de color GPU (brillo/contraste/saturación/temperatura/grises/sepia) encadenados al blur, `SetEffects` consolidado | example `bake_filters`: neutro byte-idéntico, grises R≈G≈B |
 | 10 | Gate parley 0.11 + vello 0.9 (un solo `peniko`), capas de **texto** y **formas** editables, `SvgContent`, sidecar v2 | example `text_probe` (PNG verificado) + clippy/tests |
+| 11 | Grupos (`parent_id` + invariante de preorden, comandos `Reorder`/`Group`/`Ungroup`/`Rename`/`SetVisible`/`SetLocked`/`SetOpacity`), panel de capas (arrastrar, renombrar, ojo, candado), `Selection` multi-capa con primaria, portapapeles interno + pegado de imágenes del sistema (`arboard`), exportación PNG/JPEG/SVG/PDF con escala (`svg2pdf`), sidecar v3 | example `export_probe`: escala 2x exacta, opacidad de grupo horneada (alpha 127≈128), SVG reparseado con usvg + 107 tests |
 
-Estado global: **67 tests**, `clippy -D warnings` y `fmt --check` limpios.
+Estado global: **107 tests**, `clippy -D warnings` y `fmt --check` limpios.
 
 ## Decisiones tomadas (no reabrir sin motivo)
 
@@ -125,3 +111,18 @@ Estado global: **67 tests**, `clippy -D warnings` y `fmt --check` limpios.
 - **parley fijado en 0.11** (comparte `peniko 0.6` con vello 0.9); si se
   actualiza vello hay que revalidar con `cargo tree -i peniko` y el example
   `text_probe`.
+- **Grupos: `parent_id` + invariante de preorden**, no anidar `Vec<Layer>`: los
+  descendientes de un grupo ocupan el tramo contiguo justo por encima de su
+  cabecera en `Page::layers`; el renderer y el exportador SVG recorren esa
+  lista con un índice + pila de fin de subárbol. Toda mutación del árbol pasa
+  por `Page::move_subtree`/`insert_child` para no romper la invariante.
+- **Selección múltiple con primaria** (`canvas_core::Selection`): la primera
+  capa manda en el panel de propiedades y los gestos del lienzo; el resto de
+  la selección solo participa en operaciones en bloque (`roots`/
+  `in_stack_order`) como agrupar, borrar o copiar.
+- **Texto en SVG con un `<tspan>` por línea**, usando las métricas reales de
+  parley (`canvas_render::text_lines`) en vez de dejar que el visor SVG rompa
+  líneas por su cuenta; canvas-io no lleva motor de texto propio.
+- **PDF vía `svg2pdf` sobre `resvg::usvg`** (no `svg2pdf::usvg`): fuerza a que
+  ambos compartan la misma versión de usvg 0.45 — si se actualiza `resvg` hay
+  que revalidar con `cargo tree -i usvg` (una sola entrada).
