@@ -11,6 +11,7 @@ image = { workspace = true }
 kamadak-exif = { workspace = true }
 img-parts = { workspace = true }
 resvg = { workspace = true }
+svg2pdf = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

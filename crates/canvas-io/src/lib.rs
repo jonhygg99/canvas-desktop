@@ -2,6 +2,7 @@
 //! atómica sobre el archivo original y miniaturas de galería.
 
 mod clipboard;
+mod export;
 mod load;
 mod metadata;
 mod png_codec;
@@ -13,6 +14,7 @@ mod thumbs;
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
 };
+pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
 pub use load::{can_overwrite, is_image_file, load_image, LoadedImage, IMAGE_EXTENSIONS};
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,

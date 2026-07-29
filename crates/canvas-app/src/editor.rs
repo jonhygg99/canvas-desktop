@@ -130,6 +130,8 @@ pub struct EditorState {
     shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
     pub saving: bool,
+    /// Hay una exportación en curso en un hilo de trabajo.
+    pub exporting: bool,
     /// Último error de guardado, visible hasta descartarlo.
     pub save_error: Option<String>,
     /// Galería de la que se abrió este documento, si procede de una.
@@ -192,6 +194,7 @@ impl EditorState {
             content_edit: None,
             shadow_edit: None,
             saving: false,
+            exporting: false,
             save_error: None,
             from_gallery: None,
             return_requested: false,

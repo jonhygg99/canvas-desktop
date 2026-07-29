@@ -42,6 +42,12 @@ pub enum AppMsg {
         /// true si venía de «Guardar como…» y el documento debe apuntar aquí.
         new_source: bool,
     },
+    /// Ruta elegida para exportar (o `None` si se canceló el diálogo).
+    ExportPathPicked(Option<PathBuf>),
+    Exported {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
     GalleryScanned {
         folder: PathBuf,
         /// (ruta, fecha de modificación si se pudo leer)
@@ -250,6 +256,85 @@ pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: 
         }
         let picked = dialog.save_file();
         let _ = tx.send(AppMsg::SaveAsPicked(picked));
+        ctx.request_repaint();
+    });
+}
+
+/// Diálogo «Guardar como…» de Export: un único filtro para el formato ya
+/// elegido en el modal (a diferencia de `spawn_pick_save_path`, que ofrece
+/// los cinco formatos rasterizables de Guardar).
+pub fn spawn_pick_export_path(
+    suggested_name: String,
+    format: canvas_io::ExportFormat,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let picked = rfd::FileDialog::new()
+            .set_title(format!("Export as {}…", format.label()))
+            .add_filter(format.label(), &[format.extension()])
+            .set_file_name(suggested_name)
+            .save_file();
+        let _ = tx.send(AppMsg::ExportPathPicked(picked));
+        ctx.request_repaint();
+    });
+}
+
+/// Codifica y escribe un export raster (PNG/JPEG) en un hilo de trabajo; el
+/// RGBA ya viene horneado de la GPU a la escala elegida. Sin metadatos: no
+/// es el archivo original que se está sobrescribiendo, es un export nuevo.
+pub fn spawn_export_raster(
+    path: PathBuf,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    jpeg_quality: u8,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, None)
+            .map_err(|e| e.to_string());
+        let _ = tx.send(AppMsg::Exported { path, result });
+        ctx.request_repaint();
+    });
+}
+
+/// Genera el SVG (y, si el formato lo pide, el PDF a partir de él) en un
+/// hilo de trabajo: codifica cada capa raster a PNG, monta el documento a
+/// mano y escribe atómicamente.
+pub fn spawn_export_vector(
+    path: PathBuf,
+    document: canvas_core::Document,
+    images: Vec<canvas_io::LayerPixels>,
+    format: canvas_io::ExportFormat,
+    scale: f64,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let mut export_images = canvas_io::ExportImages::new();
+            for (id, rgba, w, h) in &images {
+                let png_base64 =
+                    canvas_io::encode_layer_png(rgba, *w, *h).map_err(|e| e.to_string())?;
+                export_images.insert(*id, png_base64);
+            }
+            let svg = canvas_io::document_to_svg(
+                &document,
+                &export_images,
+                scale,
+                &canvas_render::text_lines,
+            )
+            .map_err(|e| e.to_string())?;
+            let bytes = if format == canvas_io::ExportFormat::Pdf {
+                canvas_io::svg_to_pdf(&svg).map_err(|e| e.to_string())?
+            } else {
+                svg.into_bytes()
+            };
+            canvas_io::write_atomic(&path, &bytes).map_err(|e| e.to_string())
+        })();
+        let _ = tx.send(AppMsg::Exported { path, result });
         ctx.request_repaint();
     });
 }

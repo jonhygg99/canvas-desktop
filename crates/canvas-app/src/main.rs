@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod editor;
+mod export;
 mod gallery;
 mod layers_panel;
 mod loader;
@@ -127,6 +128,12 @@ struct App {
     /// Ventana de gracia tras un guardado propio: los eventos del watcher
     /// hasta este instante son nuestros y se descartan.
     ignore_fs_events_until: Option<std::time::Instant>,
+    /// Diálogo de exportación visible.
+    export_dialog: Option<export::ExportDialog>,
+    /// Ajustes ya elegidos en el diálogo, pendientes de la ruta de archivo.
+    pending_export_settings: Option<export::ExportSettings>,
+    /// Ruta y ajustes de exportación, pendiente de hornear (necesita la GPU).
+    pending_export: Option<(PathBuf, export::ExportSettings)>,
 }
 
 impl App {
@@ -197,6 +204,9 @@ impl App {
             menus_editor_open: false,
             watcher: None,
             ignore_fs_events_until: None,
+            export_dialog: None,
+            pending_export_settings: None,
+            pending_export: None,
         };
         if let Some(m) = app.menus.as_mut() {
             m.set_recents(&app.settings.recent_files);
@@ -343,6 +353,11 @@ impl App {
                     state.save_as_clicked = true;
                 }
             }
+            A::Export => {
+                if let View::Editor(_) = &self.view {
+                    self.export_dialog = Some(export::ExportDialog::default());
+                }
+            }
             A::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             A::Undo => {
                 if let View::Editor(state) = &mut self.view {
@@ -472,6 +487,26 @@ impl App {
                                 self.close_after_save = false;
                                 self.after_save = None;
                                 state.save_error = Some(e);
+                            }
+                        }
+                    }
+                }
+                AppMsg::ExportPathPicked(path) => {
+                    if let (Some(path), Some(settings)) =
+                        (path, self.pending_export_settings.take())
+                    {
+                        self.pending_export = Some((path, settings));
+                    } else {
+                        self.pending_export_settings = None;
+                    }
+                }
+                AppMsg::Exported { path, result } => {
+                    if let View::Editor(state) = &mut self.view {
+                        state.exporting = false;
+                        match result {
+                            Ok(()) => tracing::info!("exportado OK: {}", path.display()),
+                            Err(e) => {
+                                state.save_error = Some(format!("Could not export: {e}"));
                             }
                         }
                     }
@@ -789,6 +824,94 @@ fn start_save(
             state.save_error = Some(format!("Could not prepare the save: {e}"));
         }
     }
+}
+
+/// PNG/JPEG hornean en la GPU igual que al guardar. SVG/PDF se generan a
+/// mano a partir del documento, pero primero hay que sincronizar los
+/// efectos GPU (desenfoque, ajustes de color) y tomar las texturas ya
+/// procesadas — lo mismo que hace `bake_page` por dentro — para que el SVG
+/// lleve los píxeles TAL Y COMO se ven en el lienzo, sin reimplementar los
+/// efectos como filtros SVG.
+fn start_export(
+    state: &mut editor::EditorState,
+    renderer: &mut CanvasRenderer,
+    rs: &RenderState,
+    tx: &std::sync::mpsc::Sender<AppMsg>,
+    ctx: &egui::Context,
+    path: PathBuf,
+    settings: export::ExportSettings,
+) {
+    if state.exporting {
+        return;
+    }
+    tracing::info!("exportando a {}", path.display());
+    let scale = f64::from(settings.scale);
+
+    if settings.format.needs_bake() {
+        match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, scale) {
+            Ok((rgba, width, height)) => {
+                state.exporting = true;
+                state.save_error = None;
+                loader::spawn_export_raster(
+                    path,
+                    rgba,
+                    width,
+                    height,
+                    settings.jpeg_quality,
+                    tx.clone(),
+                    ctx.clone(),
+                );
+            }
+            Err(e) => {
+                tracing::error!("horneado falló: {e}");
+                state.save_error = Some(format!("Could not prepare the export: {e}"));
+            }
+        }
+        return;
+    }
+
+    if let Ok(page) = state.doc.page() {
+        for layer in &page.layers {
+            if let Some(source) = state.images.get(&layer.id) {
+                renderer.sync_layer_effects(
+                    &rs.device,
+                    &rs.queue,
+                    layer.id,
+                    source,
+                    &layer.effects,
+                );
+            }
+        }
+    }
+    let blurred = renderer.blur_overrides();
+    let mut images: Vec<canvas_io::LayerPixels> = Vec::new();
+    if let Ok(page) = state.doc.page() {
+        for layer in &page.layers {
+            let Some(data) = blurred
+                .get(&layer.id)
+                .or_else(|| state.images.get(&layer.id))
+            else {
+                continue;
+            };
+            images.push((
+                layer.id.raw(),
+                data.data.data().to_vec(),
+                data.width,
+                data.height,
+            ));
+        }
+    }
+    state.exporting = true;
+    state.save_error = None;
+    loader::spawn_export_vector(
+        path,
+        state.doc.clone(),
+        images,
+        settings.format,
+        scale,
+        tx.clone(),
+        ctx.clone(),
+    );
 }
 
 /// ¿La extensión de `path` es JPEG? (para el aviso de calidad de recompresión)
@@ -1196,6 +1319,50 @@ impl eframe::App for App {
                         self.close_after_save = false;
                         self.after_save = None;
                     }
+                }
+
+                // Diálogo de exportación.
+                if let Some(dialog) = &mut self.export_dialog {
+                    let page_size = state
+                        .doc
+                        .page()
+                        .map(|p| (p.width, p.height))
+                        .unwrap_or((0.0, 0.0));
+                    match export::export_modal(dialog, &ctx, page_size) {
+                        export::ExportChoice::None => {}
+                        export::ExportChoice::Cancel => {
+                            self.export_dialog = None;
+                        }
+                        export::ExportChoice::Pick(settings) => {
+                            self.export_dialog = None;
+                            let stem = state
+                                .doc
+                                .source_path
+                                .as_deref()
+                                .and_then(|p| p.file_stem())
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "Untitled".to_owned());
+                            let suggested = format!("{stem}.{}", settings.format.extension());
+                            loader::spawn_pick_export_path(
+                                suggested,
+                                settings.format,
+                                self.tx.clone(),
+                                ctx.clone(),
+                            );
+                            self.pending_export_settings = Some(settings);
+                        }
+                    }
+                }
+                if let Some((path, settings)) = self.pending_export.take() {
+                    start_export(
+                        state,
+                        &mut self.renderer,
+                        &rs,
+                        &self.tx,
+                        &ctx,
+                        path,
+                        settings,
+                    );
                 }
 
                 egui::Panel::left("layers")

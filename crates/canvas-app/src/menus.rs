@@ -20,6 +20,7 @@ pub enum MenuAction {
     OpenFolder,
     Save,
     SaveAs,
+    Export,
     OpenRecent(PathBuf),
     Quit,
     Undo,
@@ -94,7 +95,8 @@ mod native {
             let save_item = MenuItem::with_id("save", "Save", false, accel(ctrl, Code::KeyS));
             let save_as_item =
                 MenuItem::with_id("save_as", "Save As…", false, accel(ctrl_shift, Code::KeyS));
-            let export_item = MenuItem::with_id("export", "Export…", false, None);
+            let export_item =
+                MenuItem::with_id("export", "Export…", false, accel(ctrl_shift, Code::KeyE));
             let recent_menu = Submenu::with_id("recent", "Open Recent", true);
             let quit_item = MenuItem::with_id("quit", "Quit", true, accel(ctrl, Code::KeyQ));
 
@@ -187,6 +189,7 @@ mod native {
             let editor_items = vec![
                 save_item,
                 save_as_item,
+                export_item,
                 undo_item,
                 redo_item,
                 zoom_in_item,
@@ -229,6 +232,7 @@ mod native {
                 "open_folder" => Some(MenuAction::OpenFolder),
                 "save" => Some(MenuAction::Save),
                 "save_as" => Some(MenuAction::SaveAs),
+                "export" => Some(MenuAction::Export),
                 "quit" => Some(MenuAction::Quit),
                 "undo" => Some(MenuAction::Undo),
                 "redo" => Some(MenuAction::Redo),
@@ -331,6 +335,12 @@ pub fn menu_bar_ui(
                 .clicked()
             {
                 action = Some(MenuAction::SaveAs);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Export…"))
+                .clicked()
+            {
+                action = Some(MenuAction::Export);
             }
             ui.separator();
             ui.menu_button("Open Recent", |ui| {
