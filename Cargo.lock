@@ -587,6 +587,7 @@ dependencies = [
  "image",
  "parley",
  "pollster",
+ "resvg",
  "thiserror 2.0.18",
  "vello",
 ]

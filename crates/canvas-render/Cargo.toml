@@ -17,3 +17,6 @@ canvas-io = { workspace = true }
 pollster = "0.4"
 image = { workspace = true }
 anyhow = { workspace = true }
+# Reparsear el SVG generado por canvas-io::document_to_svg en export_probe:
+# la misma versión que ya usa canvas-io, así que no duplica el árbol.
+resvg = { workspace = true }
