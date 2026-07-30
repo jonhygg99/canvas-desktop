@@ -31,6 +31,27 @@ fn main() -> Result<()> {
         )
         .init();
 
+    // Flags headless para el instalador: registran/quitan la integración con
+    // el Explorador sin abrir ventana, sin tocar la instancia única. Deben
+    // interceptarse antes que cualquier otra cosa en main.
+    if let Some(register) = shell_registration_flag(std::env::args()) {
+        let shell = canvas_shell::platform();
+        let exe =
+            std::env::current_exe().context("no se pudo resolver la ruta del ejecutable actual")?;
+        if register {
+            shell
+                .register_file_associations(&exe)
+                .map_err(|e| anyhow!("registro de integración con el Explorador fallido: {e}"))?;
+            println!("Explorer integration registered.");
+        } else {
+            shell.unregister_file_associations().map_err(|e| {
+                anyhow!("desregistro de integración con el Explorador fallido: {e}")
+            })?;
+            println!("Explorer integration removed.");
+        }
+        return Ok(());
+    }
+
     // Identidad ante la barra de tareas (Jump List); antes de crear la ventana.
     canvas_shell::set_app_identity();
 
@@ -48,11 +69,15 @@ fn main() -> Result<()> {
     };
     let initial_path = initial_paths.into_iter().next();
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([640.0, 480.0]);
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 480.0]),
+        viewport,
         ..Default::default()
     };
 
@@ -62,6 +87,72 @@ fn main() -> Result<()> {
         Box::new(move |cc| Ok(Box::new(App::new(cc, initial_path, instance)?))),
     )
     .map_err(|e| anyhow!("no se pudo arrancar la ventana: {e}"))
+}
+
+/// Icono de la ventana (barra de título/alt-tab), generado desde
+/// `assets/icon.svg` por `cargo run -p canvas-render --example gen_icons`.
+const APP_ICON_PNG: &[u8] =
+    include_bytes!("../../../assets/linux/hicolor/256x256/apps/canvas-desktop.png");
+
+fn load_app_icon() -> Option<egui::IconData> {
+    let img = image::load_from_memory(APP_ICON_PNG).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
+}
+
+/// Busca `--register-shell`/`--unregister-shell` en argv; usado por el
+/// instalador NSIS (`nsExec`) para escribir/limpiar el registro sin abrir la
+/// app. `Some(true)` = registrar, `Some(false)` = quitar, `None` = ninguno.
+fn shell_registration_flag(args: impl Iterator<Item = String>) -> Option<bool> {
+    for arg in args {
+        match arg.as_str() {
+            "--register-shell" => return Some(true),
+            "--unregister-shell" => return Some(false),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_registration_flag;
+
+    fn args(items: &[&str]) -> impl Iterator<Item = String> {
+        items
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn detects_register_flag() {
+        assert_eq!(
+            shell_registration_flag(args(&["canvas-desktop.exe", "--register-shell"])),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn detects_unregister_flag() {
+        assert_eq!(
+            shell_registration_flag(args(&["canvas-desktop.exe", "--unregister-shell"])),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn ignores_unrelated_args() {
+        assert_eq!(
+            shell_registration_flag(args(&["canvas-desktop.exe", "C:\\photo.png"])),
+            None
+        );
+    }
 }
 
 enum View {
@@ -166,6 +257,7 @@ impl App {
         }
 
         // Menú nativo (Windows): necesita el HWND de la ventana recién creada.
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut native_menus = None;
         #[cfg(windows)]
         {

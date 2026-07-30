@@ -13,30 +13,6 @@ no solo compilando. `cargo test`, `cargo clippy -- -D warnings` y
 
 ## PENDIENTE
 
-### Fase 12 — Empaquetado e instalador + CI
-
-- **`packaging/windows/`**: configuración de `cargo-packager` (NSIS, x64 +
-  arm64) con hooks `.nsi` que escriban y limpien **exactamente las mismas
-  claves** de registro que `canvas-shell/src/windows.rs` (esa lista es la
-  canónica: ProgID `CanvasDesktop.Image`, `OpenWithProgids` por extensión,
-  `Directory\shell\CanvasDesktop`, `Directory\Background\shell\CanvasDesktop`,
-  `SHChangeNotify` al instalar/desinstalar).
-- **`packaging/macos/Info.plist`** (CFBundleDocumentTypes completo +
-  `public.folder`) y **`packaging/linux/`** (`.desktop` con `MimeType=…;
-  inode/directory;` y `Exec=canvas-desktop %U`, iconos hicolor) — preparados
-  pero sin verificar, según la decisión "Windows primero".
-- **`assets/`**: iconos (`.ico` multitamaño, `.icns`, PNGs).
-- **`.github/workflows/ci.yml`**: en push/PR → `fmt --check`, `clippy -D
-  warnings`, `cargo test` en windows/ubuntu/macos (los examples GPU quedan
-  fuera de CI: los runners no tienen adaptador).
-- **`.github/workflows/release.yml`**: en tag → instaladores de las tres
-  plataformas; NSIS x64/arm64 garantizados, dmg/AppImage/deb best-effort, con
-  firma/notarización de macOS desactivables por variable de entorno.
-
-**Verificar** (criterio de producto 8, en Windows): instalar el NSIS en un
-perfil limpio → asociaciones y menú contextual funcionan SIN abrir la app;
-desinstalar limpia el registro; CI en verde en un tag de prueba.
-
 ### Verificación interactiva pendiente (requiere una persona delante)
 
 Lo automatizable ya está verificado; esto necesita ojos y ratón:
@@ -73,6 +49,38 @@ Lo automatizable ya está verificado; esto necesita ojos y ratón:
 13. File → Export… → PDF abre en Edge con texto nítido al ampliar (vectorial,
     no rasterizado); Export SVG abre en Edge/Inkscape con el texto como
     `<text>` real, no una imagen; Export PNG a 2x/3x.
+14. Confirmar en un runner real de GitHub Actions (`windows-latest`) que el
+    cross-compile a `aarch64-pc-windows-msvc` enlaza: en local falla
+    (`link.exe` sin el componente "MSVC ARM64 build tools" de Visual
+    Studio instalado) — `release.yml` lo marca `continue-on-error` y no
+    bloquea el release de x64. Tampoco hay hardware Windows ARM64 para
+    instalar y probar el `.exe` resultante aunque compile.
+15. Generar de verdad el bundle `.app`/`.dmg` en un Mac: `canvas-shell/src/
+    macos.rs` sigue siendo el stub `NotImplemented`; falta instalar un
+    `NSApplicationDelegate` propio con `objc2` que envuelva el de `winit` y
+    encole `application:openURLs:` (puede llegar antes de que la ventana
+    exista). `packaging/macos/Info.plist` está escrito y es XML válido, pero
+    sin `plutil -lint` real ni instalación en un Mac.
+16. Generar de verdad el AppImage/`.deb` en Linux: `canvas-shell/src/
+    linux.rs` sigue siendo el stub `NotImplemented`. Ojo:
+    `cargo packager --formats deb,appimage` genera su PROPIO `.desktop` a
+    partir de `[package.metadata.packager]` (no lee
+    `packaging/linux/canvas-desktop.desktop`), así que el `.desktop`
+    real que sale del build de CI hoy NO incluye ni el MIME propio
+    `.canvas` ni `inode/directory` — los archivos vendidos en
+    `packaging/linux/` (`.desktop` + `canvas-desktop.xml` de
+    shared-mime-info) son referencia para cuando se conecte de verdad, no
+    algo que el pipeline ya use.
+17. Confirmar en un tag de prueba real que `ci.yml` queda en verde en los
+    tres sistemas operativos: esta sesión solo pudo compilar/testear en
+    Windows localmente. Se corrigieron dos bloqueadores para que
+    `canvas-app` compile fuera de Windows (`anyhow`/`tracing`/
+    `tracing-subscriber` estaban mal ubicados bajo
+    `[target.'cfg(windows)'.dependencies]`; `unused_mut` en
+    `native_menus`), pero el fallback de menú egui de ~180 líneas en
+    `menus.rs` (`#[cfg(not(windows))]`) nunca se ha compilado de verdad
+    fuera de Windows — es la primera cosa a mirar si `ci.yml` falla en
+    ubuntu/macos.
 
 ---
 
@@ -91,8 +99,9 @@ Lo automatizable ya está verificado; esto necesita ojos y ratón:
 | 9 | Filtros de color GPU (brillo/contraste/saturación/temperatura/grises/sepia) encadenados al blur, `SetEffects` consolidado | example `bake_filters`: neutro byte-idéntico, grises R≈G≈B |
 | 10 | Gate parley 0.11 + vello 0.9 (un solo `peniko`), capas de **texto** y **formas** editables, `SvgContent`, sidecar v2 | example `text_probe` (PNG verificado) + clippy/tests |
 | 11 | Grupos (`parent_id` + invariante de preorden, comandos `Reorder`/`Group`/`Ungroup`/`Rename`/`SetVisible`/`SetLocked`/`SetOpacity`), panel de capas (arrastrar, renombrar, ojo, candado), `Selection` multi-capa con primaria, portapapeles interno + pegado de imágenes del sistema (`arboard`), exportación PNG/JPEG/SVG/PDF con escala (`svg2pdf`), sidecar v3 | example `export_probe`: escala 2x exacta, opacidad de grupo horneada (alpha 127≈128), SVG reparseado con usvg + 107 tests |
+| 12 | Empaquetado Windows real: `build.rs` + `winresource` incrusta `assets/windows/icon.ico` en el `.exe`; flags headless `--register-shell`/`--unregister-shell` en `canvas-desktop` delegan en `canvas_shell::windows` (sigue siendo la única lista canónica); `packaging/windows/installer.nsi` bifurcado de cargo-packager (fork documentado y pineado al tag `@crabnebula/packager-v0.11.8`) invoca esos flags por `nsExec` en Install/Uninstall y corrige el AppUserModelID de los accesos directos (`${AUMID}`, no `${IDENTIFIER}`); `[package.metadata.packager]` en `canvas-app/Cargo.toml` (`installer-mode = "currentUser"`, sin usar el `file-associations` propio del empaquetador); iconos `.ico`/`.icns`/hicolor generados sin herramientas externas (`cargo run -p canvas-render --example gen_icons`, solo `resvg`+`tiny-skia`); `packaging/macos/Info.plist` y `packaging/linux/{.desktop,canvas-desktop.xml}` preparados, sin verificar; `.github/workflows/ci.yml` (fmt/clippy `-D warnings`/test en windows+ubuntu+macos) y `release.yml` (NSIS x64 garantizado; arm64/dmg/AppImage/deb best-effort, `continue-on-error`) | ciclo real `cargo packager --formats nsis` → instalar → `reg query` confirma las 8 claves canónicas + entrada de desinstalación → desinstalar → registro y carpeta completamente limpios (probado dos veces); icono visible en la barra de título (captura); 110 tests + clippy/fmt limpios tras mover `anyhow`/`tracing`/`tracing-subscriber` fuera de `[target.'cfg(windows)']` |
 
-Estado global: **107 tests**, `clippy -D warnings` y `fmt --check` limpios.
+Estado global: **110 tests**, `clippy -D warnings` y `fmt --check` limpios (Windows; ver ítem 17 de verificación pendiente para ubuntu/macos).
 
 ## Decisiones tomadas (no reabrir sin motivo)
 
@@ -126,3 +135,35 @@ Estado global: **107 tests**, `clippy -D warnings` y `fmt --check` limpios.
 - **PDF vía `svg2pdf` sobre `resvg::usvg`** (no `svg2pdf::usvg`): fuerza a que
   ambos compartan la misma versión de usvg 0.45 — si se actualiza `resvg` hay
   que revalidar con `cargo tree -i usvg` (una sola entrada).
+- **cargo-packager NO tiene `installer_hooks`** (eso es de Tauri v2): solo
+  expone `preinstall_section` (código antes de instalar, no toca el
+  desinstalador) y `template` (sustituir el `.nsi` entero). Por eso el
+  registro «Abrir con» se delega en el propio binario
+  (`--register-shell`/`--unregister-shell`, headless, sin ventana, sin tocar
+  la instancia única — se interceptan al principio mismo de `main()`,
+  antes de `acquire_instance`) invocado por `nsExec` desde
+  `packaging/windows/installer.nsi`, una plantilla bifurcada y pineada al
+  tag `@crabnebula/packager-v0.11.8` con solo 4 cambios documentados en su
+  propia cabecera. `windows.rs` sigue siendo la única lista canónica; no
+  hay una segunda copia de las claves de registro que pueda desincronizarse.
+- **NO se usa el `file-associations` propio de cargo-packager**: su macro
+  `APP_ASSOCIATE` fija un ProgID **por defecto** por extensión, y esta app
+  solo quiere aparecer como opción en «Abrir con» (`OpenWithProgids`), nunca
+  robar el asociado por defecto.
+- **El AppUserModelID de los accesos directos NSIS usa `${AUMID}`
+  ("CanvasDesktop.App"), no `${IDENTIFIER}`** (el identificador de
+  empaquetado, `com.canvas-desktop.CanvasDesktop`, una cadena distinta): si
+  no coincide exactamente con lo que `set_app_user_model_id()` pasa a
+  `SetCurrentProcessExplicitAppUserModelID`, la Jump List de la barra de
+  tareas se parte en dos entradas.
+- **Iconos generados con el propio árbol de dependencias**
+  (`cargo run -p canvas-render --example gen_icons`), no con Inkscape ni
+  ImageMagick: rasteriza `assets/icon.svg` con `resvg`/`tiny-skia` (ya en el
+  árbol para exportar SVG) y escribe `.ico`/`.icns` a mano (formatos simples,
+  contenedores con PNG embebido) — repetible sin instalar nada al cambiar el
+  arte definitivo.
+- **`aarch64-pc-windows-msvc` no compila en todas las máquinas de
+  desarrollo**: enlaza con `link.exe` solo si Visual Studio tiene el
+  componente "MSVC ARM64 build tools"; confirmado que falla sin él. El
+  workflow de release lo trata como best-effort (`continue-on-error`), nunca
+  bloquea el release x64.

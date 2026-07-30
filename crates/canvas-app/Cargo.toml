@@ -9,12 +9,47 @@ license.workspace = true
 name = "canvas-desktop"
 path = "src/main.rs"
 
+# `cargo packager` (Fase 12): empaquetado e instaladores. Rutas relativas a
+# este Cargo.toml (crates/canvas-app), igual que build.rs.
+[package.metadata.packager]
+product-name = "Canvas Desktop"
+identifier = "com.canvas-desktop.CanvasDesktop"
+description = "A native Canva-like design editor."
+publisher = "Canvas Desktop"
+copyright = "Copyright 2026 Canvas Desktop"
+category = "Graphics and Design"
+binaries = [{ path = "canvas-desktop", main = true }]
+icons = [
+  "../../assets/windows/icon.ico",
+  "../../assets/macos/icon.icns",
+  "../../assets/linux/hicolor/16x16/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/24x24/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/32x32/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/48x48/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/64x64/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/128x128/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/256x256/apps/canvas-desktop.png",
+  "../../assets/linux/hicolor/512x512/apps/canvas-desktop.png",
+]
+
+# NSIS bifurcado (ver packaging/windows/installer.nsi): delega el registro
+# «Abrir con» en `canvas-desktop.exe --register-shell`/`--unregister-shell`
+# en vez de duplicar las claves de `canvas-shell::windows`. `currentUser` es
+# obligatorio: esas claves viven en HKCU, no HKLM.
+[package.metadata.packager.nsis]
+template = "../../packaging/windows/installer.nsi"
+installer-mode = "currentUser"
+
+[build-dependencies]
+winresource = { workspace = true }
+
 [dependencies]
 canvas-core = { workspace = true }
 canvas-render = { workspace = true }
 canvas-io = { workspace = true }
 canvas-shell = { workspace = true }
 eframe = { workspace = true }
+image = { workspace = true }
 vello = { workspace = true }
 rfd = { workspace = true }
 rayon = { workspace = true }
@@ -23,12 +58,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
 arboard = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # Menús nativos solo en Windows (en Linux muda exige GTK: allí se usa una
 # barra de menús egui como fallback).
 [target.'cfg(windows)'.dependencies]
 muda = { workspace = true }
 raw-window-handle = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }

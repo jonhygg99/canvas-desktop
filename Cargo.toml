@@ -72,6 +72,8 @@ notify = "8"
 muda = "0.17"
 raw-window-handle = "0.6"
 windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
+# Incrusta el icono en el .exe (build.rs); no-op fuera de Windows.
+winresource = "0.1"
 
 [profile.dev]
 # vello/wgpu en debug puro son inusablemente lentos; optimiza las dependencias.

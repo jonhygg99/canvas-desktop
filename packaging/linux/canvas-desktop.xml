@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Registro shared-mime-info para la extension propia `.canvas` (documento
+  editable de Canvas Desktop). Sin esto, listar el MIME en el .desktop no
+  basta: el sistema no sabe asociar la extension `.canvas` a ningun tipo.
+  Se instala en ~/.local/share/mime/packages/ y requiere `update-mime-database`.
+  Equivalente Linux de `UTExportedTypeDeclarations` en packaging/macos/Info.plist
+  y de la entrada `.canvas` en ASSOC_EXTENSIONS (crates/canvas-shell/src/windows.rs).
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.canvas-desktop.canvas-document">
+    <comment>Canvas Desktop Document</comment>
+    <glob pattern="*.canvas"/>
+  </mime-type>
+</mime-info>

@@ -1,0 +1,16 @@
+[Desktop Entry]
+# Preparado pero SIN VERIFICAR (decision "Windows primero", ver PLAN.md
+# Fase 12): sin una maquina Linux en el equipo de desarrollo para probarlo.
+# Se instala en ~/.local/share/applications/ y requiere `update-desktop-database`
+# tras copiarlo (ver crates/canvas-shell/src/linux.rs, que hoy solo tiene el
+# stub NotImplemented). El AppImage/deb reales van vía `cargo packager`.
+Type=Application
+Name=Canvas Desktop
+GenericName=Image Editor
+Comment=A native Canva-like design editor
+Exec=canvas-desktop %U
+Icon=canvas-desktop
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;VectorGraphics;
+MimeType=image/png;image/jpeg;image/webp;image/svg+xml;image/gif;image/bmp;application/vnd.canvas-desktop.canvas-document;inode/directory;
+StartupWMClass=canvas-desktop

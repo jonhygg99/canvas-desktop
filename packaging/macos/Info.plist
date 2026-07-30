@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Preparado pero SIN VERIFICAR (decisión "Windows primero", ver PLAN.md
+  Fase 12): no hay Mac en el equipo de desarrollo para probarlo. Antes de
+  usarlo de verdad hace falta, como mínimo:
+    - Instalar un NSApplicationDelegate propio con objc2 que envuelva el de
+      winit y encole las rutas de `application:openURLs:` (llegan ANTES de
+      que la ventana exista) hasta que la app esté lista — ver PROMPT.md §1.
+    - Generar el bundle .app real (`cargo packager` con formatos app y dmg)
+      con este Info.plist y assets/macos/icon.icns, y comprobar con
+      `plutil -lint`.
+    - Revisar si "org.webmproject.webp" sigue siendo el UTI correcto para
+      WebP en la versión de macOS objetivo (Apple no tiene uno propio
+      estable en todas las versiones).
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Canvas Desktop</string>
+  <key>CFBundleDisplayName</key>
+  <string>Canvas Desktop</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.canvas-desktop.CanvasDesktop</string>
+  <key>CFBundleExecutable</key>
+  <string>canvas-desktop</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.icns</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright 2026 Canvas Desktop</string>
+
+  <!-- Formatos de imagen que la app sabe abrir (misma lista que
+       canvas_io::IMAGE_EXTENSIONS + `.canvas` propio; ver
+       crates/canvas-shell/src/windows.rs::ASSOC_EXTENSIONS, la lista
+       canónica en Windows). -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PNG Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>png</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>public.png</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>JPEG Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>jpg</string><string>jpeg</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>public.jpeg</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>WebP Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>webp</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>org.webmproject.webp</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>SVG Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>svg</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>public.svg-image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>GIF Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>gif</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>com.compuserve.gif</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>BMP Image</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>bmp</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>com.microsoft.bmp</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Canvas Desktop Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>canvas</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>com.canvas-desktop.canvas-document</string></array>
+    </dict>
+    <!-- Carpetas: clic derecho > Abrir con Canvas Desktop (equivalente al
+         menú contextual de Directory\shell en Windows). -->
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Folder</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>public.folder</string></array>
+    </dict>
+  </array>
+
+  <!-- Declaración del tipo propio `.canvas`, referenciado arriba. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.canvas-desktop.canvas-document</string>
+      <key>UTTypeDescription</key>
+      <string>Canvas Desktop Document</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>canvas</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # NSIS x64: la plataforma principal (ver CLAUDE.md "Windows es el objetivo
+  # primario"). Debe compilar y empaquetar sin fallos.
+  windows-x64:
+    name: Windows NSIS (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-packager --locked
+      - run: cargo build --release --locked -p canvas-app
+      - run: cargo packager --release -p canvas-app --formats nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-desktop-windows-x64
+          path: target/release/*-setup.exe
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: target/release/*-setup.exe
+          fail_on_unmatched_files: false
+
+  # NSIS arm64: best-effort. Cross-compilar aarch64-pc-windows-msvc necesita
+  # el componente "MSVC ARM64 build tools" en la imagen del runner; no se ha
+  # podido verificar en local (falla el link.exe en un dev machine sin ese
+  # componente instalado) y tampoco hay hardware ARM64 para probar el
+  # instalador resultante. `continue-on-error` para que un fallo aqui no
+  # bloquee el release de x64. Ver PLAN.md, verificacion pendiente.
+  windows-arm64:
+    name: Windows NSIS (arm64, best-effort)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-packager --locked
+      - run: cargo build --release --locked --target aarch64-pc-windows-msvc -p canvas-app
+      - run: cargo packager --release --target aarch64-pc-windows-msvc -p canvas-app --formats nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-desktop-windows-arm64
+          path: target/aarch64-pc-windows-msvc/release/*-setup.exe
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: target/aarch64-pc-windows-msvc/release/*-setup.exe
+          fail_on_unmatched_files: false
+
+  # macOS y Linux: preparados pero sin verificar (decision "Windows primero",
+  # ver PLAN.md). best-effort: no bloquean el release si fallan.
+  macos-dmg:
+    name: macOS DMG (best-effort)
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      # Desactivable: sin certificado de firma/notarizacion no se puede
+      # compilar en CI. Poner a "true" y configurar los secrets de
+      # cargo-packager (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+      # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) para activarlo de verdad.
+      CANVAS_MACOS_SIGN: ${{ vars.CANVAS_MACOS_SIGN || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-packager --locked
+      - run: cargo build --release --locked -p canvas-app
+      - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
+        run: cargo packager --release -p canvas-app --formats dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-desktop-macos
+          path: target/release/*.dmg
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: target/release/*.dmg
+          fail_on_unmatched_files: false
+
+  linux-packages:
+    name: Linux AppImage/deb (best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux GUI + packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
+            fuse libfuse2
+      - run: cargo install cargo-packager --locked
+      - run: cargo build --release --locked -p canvas-app
+      - run: cargo packager --release -p canvas-app --formats deb,appimage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-desktop-linux
+          path: |
+            target/release/*.deb
+            target/release/*.AppImage
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            target/release/*.deb
+            target/release/*.AppImage
+          fail_on_unmatched_files: false
