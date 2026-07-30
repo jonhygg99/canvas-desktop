@@ -167,3 +167,13 @@ Estado global: **110 tests**, `clippy -D warnings` y `fmt --check` limpios (Wind
   componente "MSVC ARM64 build tools"; confirmado que falla sin él. El
   workflow de release lo trata como best-effort (`continue-on-error`), nunca
   bloquea el release x64.
+- **Subsistema GUI de Windows solo en release**
+  (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` en
+  `crates/canvas-app/src/main.rs`): sin esto el binario se enlaza con el
+  subsistema console por defecto de Rust y Windows le abre una consola negra
+  detrás de la ventana al lanzarlo desde el Explorador (acceso directo del
+  instalador). Condicionado a `not(debug_assertions)` para no perder la
+  consola con `cargo run` en desarrollo. No rompe
+  `packaging/windows/installer.nsi`: `nsExec::ExecToLog` lanza
+  `--register-shell`/`--unregister-shell` con sus propias tuberías de
+  stdout/stderr, que se heredan igual sea cual sea el subsistema del `.exe`.

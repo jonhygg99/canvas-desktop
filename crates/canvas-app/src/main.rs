@@ -1,5 +1,11 @@
 //! Binario de Canvas Desktop: ventana eframe/egui con el lienzo vello.
 
+// Subsistema GUI solo en release: evita la consola negra que Windows abre
+// detrás de la ventana al lanzar la app instalada desde el Explorador. En
+// debug se mantiene la consola para seguir viendo los logs de `tracing`
+// con `cargo run`.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod clipboard;
 mod editor;
 mod export;
