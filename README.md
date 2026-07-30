@@ -128,6 +128,30 @@ Con la app ya abierta, cualquier apertura nueva (Explorador, terminal,
 `canvas-desktop otra.png`) reutiliza la misma ventana: el segundo proceso
 reenvía la ruta por el socket local y sale con código 0.
 
+## Instalar en Windows
+
+No hace falta tener Rust instalado si ya descargaste un `*-setup.exe` desde
+[Releases](https://github.com/jonhygg99/canvas-desktop/releases) (se publica
+al empujar un tag `v*`, ver `.github/workflows/release.yml`): ejecútalo y
+sigue el asistente. Instala el `.exe`, registra las asociaciones «Abrir con»
+del Explorador y crea accesos directos en el menú Inicio/escritorio, con su
+propio desinstalador en «Agregar o quitar programas».
+
+Para generarlo tú mismo (necesitas Rust estable con toolchain MSVC):
+
+```sh
+cargo install cargo-packager --locked   # una sola vez
+cargo build --release -p canvas-app
+cargo packager --release -p canvas-app --formats nsis
+```
+
+El instalador queda en `target\release\*-setup.exe`. La configuración del
+paquete (nombre, icono, asociaciones) vive en
+`crates/canvas-app/Cargo.toml` bajo `[package.metadata.packager]`; la
+plantilla NSIS con los hooks de registro del Explorador está en
+`packaging/windows/installer.nsi` (ver comentarios «CANVAS DESKTOP» ahí para
+las diferencias respecto a la plantilla original de cargo-packager).
+
 ## Verificación
 
 ```sh
