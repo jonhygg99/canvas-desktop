@@ -1,9 +1,10 @@
 # Plan de trabajo — Canvas Desktop
 
-Plan derivado de `PROMPT.md` con las decisiones fijadas: **solo sidecar** (el
-`.canvas` es el archivo `foto.png.canvas` junto a la imagen; no hay "Save as…
-→ .canvas" autocontenido), **Windows primero** (macOS/Linux quedan como stubs
-compilables en `canvas-shell`), y plan completo hasta empaquetado y CI.
+Plan derivado de `PROMPT.md` con las decisiones fijadas: **Windows primero**
+(macOS/Linux quedan como stubs compilables en `canvas-shell`) y plan completo
+hasta empaquetado y CI. Desde la Fase 13, un `.canvas` puede ser también un
+**diseño autónomo** (sin imagen que lo acompañe) además del sidecar clásico de
+`foto.png.canvas` — ver la fase y las decisiones correspondientes más abajo.
 
 Regla de oro heredada de la spec: cada fase se verifica **ejecutando la app**,
 no solo compilando. `cargo test`, `cargo clippy -- -D warnings` y
@@ -100,8 +101,9 @@ Lo automatizable ya está verificado; esto necesita ojos y ratón:
 | 10 | Gate parley 0.11 + vello 0.9 (un solo `peniko`), capas de **texto** y **formas** editables, `SvgContent`, sidecar v2 | example `text_probe` (PNG verificado) + clippy/tests |
 | 11 | Grupos (`parent_id` + invariante de preorden, comandos `Reorder`/`Group`/`Ungroup`/`Rename`/`SetVisible`/`SetLocked`/`SetOpacity`), panel de capas (arrastrar, renombrar, ojo, candado), `Selection` multi-capa con primaria, portapapeles interno + pegado de imágenes del sistema (`arboard`), exportación PNG/JPEG/SVG/PDF con escala (`svg2pdf`), sidecar v3 | example `export_probe`: escala 2x exacta, opacidad de grupo horneada (alpha 127≈128), SVG reparseado con usvg + 107 tests |
 | 12 | Empaquetado Windows real: `build.rs` + `winresource` incrusta `assets/windows/icon.ico` en el `.exe`; flags headless `--register-shell`/`--unregister-shell` en `canvas-desktop` delegan en `canvas_shell::windows` (sigue siendo la única lista canónica); `packaging/windows/installer.nsi` bifurcado de cargo-packager (fork documentado y pineado al tag `@crabnebula/packager-v0.11.8`) invoca esos flags por `nsExec` en Install/Uninstall y corrige el AppUserModelID de los accesos directos (`${AUMID}`, no `${IDENTIFIER}`); `[package.metadata.packager]` en `canvas-app/Cargo.toml` (`installer-mode = "currentUser"`, sin usar el `file-associations` propio del empaquetador); iconos `.ico`/`.icns`/hicolor generados sin herramientas externas (`cargo run -p canvas-render --example gen_icons`, solo `resvg`+`tiny-skia`); `packaging/macos/Info.plist` y `packaging/linux/{.desktop,canvas-desktop.xml}` preparados, sin verificar; `.github/workflows/ci.yml` (fmt/clippy `-D warnings`/test en windows+ubuntu+macos) y `release.yml` (NSIS x64 garantizado; arm64/dmg/AppImage/deb best-effort, `continue-on-error`) | ciclo real `cargo packager --formats nsis` → instalar → `reg query` confirma las 8 claves canónicas + entrada de desinstalación → desinstalar → registro y carpeta completamente limpios (probado dos veces); icono visible en la barra de título (captura); 110 tests + clippy/fmt limpios tras mover `anyhow`/`tracing`/`tracing-subscriber` fuera de `[target.'cfg(windows)']` |
+| 13 | Diseños `.canvas` de primera clase: sidecar v4 (`image_hash` opcional, `preview_png` embebido), diseño autónomo (`write_design`/`read_design`, sin imagen que lo acompañe), la galería lista imágenes Y diseños con su miniatura embebida, «✚ New design» crea-y-abre dentro de la carpeta actual con nombre libre (`Untitled.canvas`, `Untitled 2.canvas`…), menú contextual (Open/Duplicate/Copy/Reveal in Explorer) y Ctrl+C/Ctrl+V para copiar diseños entre carpetas, tamaño de página heredado del último documento (`settings.last_page_size`). De paso, arregla un bug preexistente: Ctrl+C/X/V nunca llegaban como `Key` porque winit los intercepta como `Event::Copy/Cut/Paste` — el portapapeles interno de capas (Fase 11) llevaba built pero inalcanzable por teclado | 63 tests de `canvas-app` + 46 de `canvas-io` (18 nuevos) verdes; app real: New Design → editar → Ctrl+S → diálogo `.canvas` → cerrar → reabrir → capas intactas; galería con imagen+sidecar+diseño autónomo muestra un tile por imagen y uno por diseño; Duplicate copia imagen+sidecar; Ctrl+C en una carpeta y Ctrl+V en otra mueve el diseño y abre limpio |
 
-Estado global: **110 tests**, `clippy -D warnings` y `fmt --check` limpios (Windows; ver ítem 17 de verificación pendiente para ubuntu/macos).
+Estado global: **118 tests**, `clippy -D warnings` y `fmt --check` limpios (Windows; ver ítem 17 de verificación pendiente para ubuntu/macos).
 
 ## Decisiones tomadas (no reabrir sin motivo)
 
@@ -167,6 +169,44 @@ Estado global: **110 tests**, `clippy -D warnings` y `fmt --check` limpios (Wind
   componente "MSVC ARM64 build tools"; confirmado que falla sin él. El
   workflow de release lo trata como best-effort (`continue-on-error`), nunca
   bloquea el release x64.
+- **Un `.canvas` sirve para dos papeles, discriminados por un campo, no por
+  dos formatos**: `image_hash: Option<String>` — `Some` es el sidecar clásico
+  de una imagen, `None` es un diseño autónomo. Un solo `SIDECAR_VERSION`, un
+  solo parser (`sidecar.rs`); evita duplicar toda la lógica de lectura para
+  "el mismo archivo pero sin imagen".
+- **La miniatura de un diseño va EMBEBIDA en el propio `.canvas`
+  (`preview_png`)**, no generada bajo demanda: el hilo de miniaturas de la
+  galería es un `rayon::for_each` sin contexto de GPU, así que no puede
+  hornear la página él mismo. Se hornea a escala reducida (`preview_scale`,
+  lado mayor ≤ 256 px) en el momento de guardar, que es cuando la GPU ya está
+  disponible en el hilo de UI.
+- **Los nombres nuevos de la galería se reservan con `create_new`
+  (`reserve_unique_path`), nunca con un `exists()` suelto**: un `exists()`
+  deja una ventana TOCTOU en la que `write_atomic`/`fs::copy` podrían
+  sobrescribir en silencio un archivo creado por otra ventana o proceso justo
+  entre la comprobación y la escritura.
+- **El portapapeles de archivos de la galería es una ranura de proceso
+  (`OnceLock<Mutex<Option<PathBuf>>>`)**, igual que el portapapeles interno de
+  capas de la Fase 11, y a propósito no toca el portapapeles del SO: `arboard`
+  no sabe escribir `CF_HDROP`, así que intentarlo machacaría el portapapeles
+  de texto del usuario sin ganar nada (copiar un archivo entre ventanas de la
+  propia app no necesita salir del proceso).
+- **Ctrl+C/Ctrl+X/Ctrl+V nunca llegan como pulsaciones de tecla normales**:
+  winit los intercepta para la integración con el portapapeles del sistema
+  operativo y egui los entrega como `Event::Copy`/`Event::Cut`/
+  `Event::Paste(texto)` en vez de `Event::Key{C/X/V, pressed: true, ...}`, así
+  que `InputState::consume_shortcut` nunca los ve. Confirmado con un log de
+  eventos crudos (`ctx.input(|i| i.events.clone())`): la pulsación genera
+  `Copy`/`Paste`, y solo el KEY-UP aparece como `Key`. Esto es lo que hacía
+  que el portapapeles interno de capas de la Fase 11 (`crate::clipboard`)
+  nunca respondiera a Ctrl+C/X/V pese a estar completamente implementado; el
+  fix (mirar `i.events` en vez de `consume_shortcut`) se aplicó tanto en
+  `EditorState::handle_shortcuts` como en el portapapeles de archivos de la
+  galería. `Ctrl+D`/`Ctrl+A`/`Ctrl+G`/`Ctrl+Z` no están afectados: solo
+  C/X/V son especiales para el SO.
+- **«Save a Copy» en el menú File queda descartado**: la vía para tener dos
+  copias de un diseño es Duplicate/Ctrl+C+Ctrl+V desde la galería, no un
+  ítem de menú adicional dentro del editor.
 - **Subsistema GUI de Windows solo en release**
   (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` en
   `crates/canvas-app/src/main.rs`): sin esto el binario se enlaza con el

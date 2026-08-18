@@ -67,6 +67,9 @@ pub struct AppSettings {
     pub recent_files: Vec<PathBuf>,
     /// Tema de la interfaz.
     pub theme: ThemeChoice,
+    /// Tamaño de página del último documento abierto o creado: lo hereda el
+    /// siguiente diseño nuevo (galería, Ctrl+N o bienvenida).
+    pub last_page_size: (f64, f64),
 }
 
 impl Default for AppSettings {
@@ -78,6 +81,7 @@ impl Default for AppSettings {
             gallery_sort: GallerySort::default(),
             recent_files: Vec::new(),
             theme: ThemeChoice::default(),
+            last_page_size: (1920.0, 1080.0),
         }
     }
 }

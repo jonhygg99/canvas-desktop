@@ -145,7 +145,11 @@ pub struct EditorState {
     /// Botón «Settings» del panel pulsado; la app abre la ventana de ajustes.
     pub settings_clicked: bool,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
+    /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,
+    /// El documento ES un `.canvas` autónomo: `Ctrl+S` lo reescribe sin
+    /// rasterizar. «Export…» sigue produciendo PNG/JPEG/SVG/PDF.
+    pub is_design: bool,
     /// ICC/EXIF del archivo original, para reinsertarlos al guardar.
     pub source_metadata: Option<canvas_io::ImageMetadata>,
     /// El archivo fuente cambió en disco fuera de la app (watcher).
@@ -202,6 +206,7 @@ impl EditorState {
             save_as_clicked: false,
             settings_clicked: false,
             sidecar_enabled: true,
+            is_design: false,
             source_metadata: None,
             external_change: false,
             reload_requested: false,
@@ -239,13 +244,16 @@ impl EditorState {
         Ok(Self::base(doc, images, Selection::single(id), None))
     }
 
-    /// Proyecto nuevo en blanco (página blanca, sin capas).
+    /// Proyecto nuevo en blanco (página blanca, sin capas). Es un diseño: el
+    /// primer guardado ofrece un `.canvas`, no un raster.
     pub fn new_blank(width: f64, height: f64) -> Self {
         let mut doc = Document::new(width, height);
         if let Ok(page) = doc.page_mut() {
             page.background = Some([255, 255, 255, 255]);
         }
-        Self::base(doc, ImageMap::new(), Selection::default(), None)
+        let mut state = Self::base(doc, ImageMap::new(), Selection::default(), None);
+        state.is_design = true;
+        state
     }
 
     /// Documento restaurado desde un sidecar `.canvas`: las capas siguen
@@ -274,18 +282,32 @@ impl EditorState {
         Self::base(doc, images, selection, background_layer)
     }
 
-    /// Datos para que el hilo de guardado escriba el sidecar: documento
-    /// clonado y píxeles RGBA de cada capa.
-    pub fn sidecar_payload(&self) -> crate::loader::SidecarPayload {
+    /// Diseño autónomo restaurado desde su propio `.canvas`: como
+    /// `from_restored`, salvo que aquí `path` es el diseño mismo, no la
+    /// imagen que acompaña. Un `.canvas` duplicado puede traer un
+    /// `source_path` incrustado que sigue apuntando al original — inocuo,
+    /// porque `from_restored` lo sobrescribe con la ruta realmente abierta.
+    pub fn from_design(path: PathBuf, restored: canvas_io::RestoredDocument) -> Self {
+        let mut state = Self::from_restored(path, restored);
+        state.is_design = true;
+        state
+    }
+
+    /// Datos para que el hilo de guardado escriba el `.canvas`: documento
+    /// clonado y píxeles RGBA de cada capa. `preview` queda en `None`: este
+    /// método no tiene acceso a la GPU, así que quien la necesite (el
+    /// horneado de guardado) la rellena después.
+    pub fn sidecar_payload(&self) -> canvas_io::CanvasPayload {
         let images = self
             .images
             .iter()
             .map(|(id, data)| (id.raw(), data.data.data().to_vec(), data.width, data.height))
             .collect();
-        crate::loader::SidecarPayload {
+        canvas_io::CanvasPayload {
             document: self.doc.clone(),
             images,
             background_layer: self.background_layer.map(|id| id.raw()),
+            preview: None,
         }
     }
 
@@ -501,7 +523,7 @@ impl EditorState {
 
     /// Atajos de edición globales del editor (deshacer/rehacer).
     pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        use egui::{Key, KeyboardShortcut, Modifiers};
+        use egui::{Event, Key, KeyboardShortcut, Modifiers};
         // Un TextEdit con el foco (renombrar en el panel de capas, editar el
         // texto de una capa) manda: Ctrl+C/V/X/Z, Supr y Ctrl+A son suyos,
         // no del lienzo.
@@ -539,16 +561,31 @@ impl EditorState {
             crate::layers_panel::group_selection(self);
         }
 
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::X)))
-        {
+        // Ctrl+X/C/V no llegan como pulsaciones de tecla normales: winit los
+        // intercepta para la integración con el portapapeles del SO y egui
+        // los entrega como `Event::Cut`/`Copy`/`Paste(texto)`, así que
+        // `consume_shortcut` nunca los ve — hay que mirar los eventos crudos.
+        let (want_cut, want_copy, want_paste) = ctx.input(|i| {
+            let mut cut = false;
+            let mut copy = false;
+            let mut paste = false;
+            for ev in &i.events {
+                match ev {
+                    Event::Cut => cut = true,
+                    Event::Copy => copy = true,
+                    Event::Paste(_) => paste = true,
+                    _ => {}
+                }
+            }
+            (cut, copy, paste)
+        });
+        if want_cut {
             crate::clipboard::cut(self);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::C)))
-        {
+        if want_copy {
             crate::clipboard::copy(self);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::V)))
-        {
+        if want_paste {
             crate::clipboard::paste(self);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
@@ -717,12 +754,16 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             state.save_as_clicked = true;
         }
     });
-    ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
-        .on_hover_text(
-            "Writes a .canvas file next to the image so the layers stay \
-             editable when you reopen it. Turn it off if you don't want \
-             extra files in your folders.",
-        );
+    if state.is_design {
+        ui.weak("Design file (.canvas) — layers are always kept.");
+    } else {
+        ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
+            .on_hover_text(
+                "Writes a .canvas file next to the image so the layers stay \
+                 editable when you reopen it. Turn it off if you don't want \
+                 extra files in your folders.",
+            );
+    }
     if state.saving {
         ui.horizontal(|ui| {
             ui.add(egui::Spinner::new());
@@ -740,6 +781,7 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
     ui.weak("Wheel: zoom · Space/middle button: pan · Ctrl+0: fit");
     ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
+    ui.weak("Ctrl+C / Ctrl+V: copy layers, even between designs");
     ui.add_space(4.0);
     if ui.small_button("⚙ Settings").clicked() {
         state.settings_clicked = true;

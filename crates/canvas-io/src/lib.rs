@@ -15,14 +15,19 @@ pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
 };
 pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
-pub use load::{can_overwrite, is_image_file, load_image, LoadedImage, IMAGE_EXTENSIONS};
+pub use load::{
+    can_overwrite, is_canvas_file, is_image_file, is_standalone_design, load_image,
+    reserve_unique_path, LoadedImage, CANVAS_EXTENSION, IMAGE_EXTENSIONS,
+};
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
     ImageMetadata,
 };
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
-    delete_sidecar, read_sidecar, sidecar_path, write_sidecar, LayerPixels, RestoredDocument,
+    blank_design, delete_sidecar, make_preview, preview_scale, read_design, read_preview,
+    read_sidecar, sidecar_path, write_design, write_sidecar, CanvasPayload, LayerPixels,
+    RestoredDocument, PREVIEW_MAX_DIM,
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;

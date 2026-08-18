@@ -12,7 +12,12 @@ pub enum WelcomeAction {
     OpenRecent(PathBuf),
 }
 
-pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Option<WelcomeAction> {
+pub fn show(
+    ui: &mut egui::Ui,
+    error: Option<&str>,
+    recents: &[PathBuf],
+    page_size: (f64, f64),
+) -> Option<WelcomeAction> {
     let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
@@ -22,9 +27,10 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
             ui.label("Edit images right on top of your files.");
             ui.add_space(24.0);
 
+            let (w, h) = page_size;
             if ui
                 .add(
-                    egui::Button::new("✨  New design (1920 × 1080)")
+                    egui::Button::new(format!("✨  New design ({} × {})", w as i64, h as i64))
                         .min_size(egui::vec2(220.0, 36.0)),
                 )
                 .clicked()
@@ -56,6 +62,8 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
                         .unwrap_or_else(|| path.display().to_string());
                     let icon = if Path::new(path).is_dir() {
                         "📁"
+                    } else if canvas_io::is_canvas_file(path) {
+                        "🖹"
                     } else {
                         "🖼"
                     };

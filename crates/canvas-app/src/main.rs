@@ -331,6 +331,14 @@ impl App {
             );
             self.push_recent(&path);
             self.view = View::Gallery(gallery::GalleryState::new(path, self.settings.gallery_sort));
+        } else if canvas_io::is_canvas_file(&path) {
+            // Diseño autónomo: el `.canvas` ES el documento.
+            if self.gallery_origin.as_deref() != path.parent() {
+                self.gallery_origin = None;
+            }
+            loader::spawn_load_design(path.clone(), self.tx.clone(), ctx.clone());
+            self.push_recent(&path);
+            self.view = View::Loading { path };
         } else if canvas_io::is_image_file(&path) {
             // Abrir un archivo que no viene de la galería actual rompe el
             // vínculo con ella (el botón «volver» desaparece).
@@ -370,10 +378,37 @@ impl App {
         });
     }
 
-    /// Documento nuevo en blanco (desde la bienvenida o el menú File).
+    /// Relanza el escaneo de la carpeta actualmente abierta en la galería
+    /// (tras crear/duplicar/pegar un archivo). `GalleryState::merge_files`
+    /// conserva las miniaturas ya cargadas, así que esto es casi gratis.
+    fn rescan_gallery(&mut self, ctx: &egui::Context) {
+        if let View::Gallery(g) = &self.view {
+            loader::spawn_gallery_scan(
+                g.folder.clone(),
+                self.thumb_cache.clone(),
+                self.tx.clone(),
+                ctx.clone(),
+            );
+        }
+    }
+
+    /// Recuerda el tamaño de página para el próximo diseño nuevo, sin
+    /// escribir ajustes si no cambió (`save_in_background` lanza un hilo).
+    fn remember_page_size(&mut self, doc: &canvas_core::Document) {
+        let Ok(page) = doc.page() else { return };
+        let size = (page.width, page.height);
+        if self.settings.last_page_size != size {
+            self.settings.last_page_size = size;
+            self.settings.save_in_background();
+        }
+    }
+
+    /// Documento nuevo en blanco (desde la bienvenida o el menú File):
+    /// hereda el tamaño de página del último documento abierto o creado.
     fn new_design(&mut self, ctx: &egui::Context) {
         self.gallery_origin = None;
-        let mut state = editor::EditorState::new_blank(1920.0, 1080.0);
+        let (w, h) = self.settings.last_page_size;
+        let mut state = editor::EditorState::new_blank(w, h);
         state.sidecar_enabled = self.settings.sidecar_default;
         self.view = View::Editor(Box::new(state));
         self.sync_title(ctx);
@@ -437,7 +472,23 @@ impl App {
     fn handle_menu_action(&mut self, action: menus::MenuAction, ctx: &egui::Context) {
         use menus::MenuAction as A;
         match action {
-            A::NewDesign => self.request_nav(Nav::NewDesign, ctx),
+            // Desde una galería, Ctrl+N crea el diseño DENTRO de esa carpeta
+            // en vez de un documento fantasma sin sitio en disco.
+            A::NewDesign => {
+                if let View::Gallery(g) = &self.view {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::NewDesign {
+                            folder: g.folder.clone(),
+                            page: self.settings.last_page_size,
+                        },
+                        true,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
+                } else {
+                    self.request_nav(Nav::NewDesign, ctx);
+                }
+            }
             A::OpenFile => loader::spawn_pick_file(self.tx.clone(), ctx.clone()),
             A::OpenFolder => loader::spawn_pick_folder(self.tx.clone(), ctx.clone()),
             A::OpenRecent(path) => self.request_nav(Nav::Open(path), ctx),
@@ -629,7 +680,7 @@ impl App {
                 AppMsg::GalleryScanned { folder, files } => {
                     if let View::Gallery(g) = &mut self.view {
                         if g.folder == folder {
-                            g.set_files(files);
+                            g.merge_files(files);
                         }
                     }
                 }
@@ -658,6 +709,38 @@ impl App {
                                     g.set_thumb(&path, None);
                                 }
                             }
+                        }
+                    }
+                }
+                AppMsg::GalleryOpDone {
+                    folder,
+                    created,
+                    result,
+                    open,
+                } => {
+                    // Lo que vamos a abrir lo acabamos de escribir nosotros:
+                    // ventana de gracia para que el watcher no cante «cambió
+                    // en disco» si el usuario ya estaba en el editor.
+                    self.ignore_fs_events_until =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                    match result {
+                        Ok(()) if open => {
+                            if let Some(path) = created {
+                                open_after = Some(Nav::Open(path));
+                            }
+                        }
+                        Ok(()) => {
+                            // Solo rescanea si el usuario sigue en esa galería:
+                            // pudo haber navegado mientras corría la copia.
+                            if matches!(&self.view, View::Gallery(g) if g.folder == folder) {
+                                self.rescan_gallery(ctx);
+                            }
+                        }
+                        Err(e) => {
+                            // No hay nada destructivo que deshacer (la copia
+                            // fallida ya se revirtió en el hilo de trabajo);
+                            // se queda en la galería y solo se registra.
+                            tracing::warn!("operación de galería fallida: {e}");
                         }
                     }
                 }
@@ -721,6 +804,7 @@ impl App {
                                 state.from_gallery = self.gallery_origin.clone();
                                 state.sidecar_enabled = self.settings.sidecar_default;
                                 state.source_metadata = metadata;
+                                self.remember_page_size(&state.doc);
                                 self.view = View::Editor(Box::new(state));
                             } else {
                                 // Recarga plana, ignorando el sidecar.
@@ -733,12 +817,23 @@ impl App {
                                 self.view = View::Loading { path: path.clone() };
                             }
                         }
+                        Ok(loader::LoadOutcome::Design(restored)) => {
+                            // Diseño autónomo: `hash_matches` siempre es
+                            // `true` (no hay nada que contrastar), así que no
+                            // hace falta el diálogo de «cambió por fuera».
+                            let mut state =
+                                editor::EditorState::from_design(path.clone(), restored);
+                            state.from_gallery = self.gallery_origin.clone();
+                            self.remember_page_size(&state.doc);
+                            self.view = View::Editor(Box::new(state));
+                        }
                         Ok(loader::LoadOutcome::Flat(img)) => {
                             match editor::EditorState::from_image(path.clone(), img) {
                                 Ok(mut state) => {
                                     state.from_gallery = self.gallery_origin.clone();
                                     state.sidecar_enabled = self.settings.sidecar_default;
                                     state.source_metadata = metadata;
+                                    self.remember_page_size(&state.doc);
                                     self.view = View::Editor(Box::new(state));
                                 }
                                 Err(e) => {
@@ -924,6 +1019,41 @@ fn start_save(
     }
 }
 
+/// Guarda un diseño autónomo. La GPU solo interviene para hornear la
+/// MINIATURA embebida (a escala reducida: nadie necesita 4K en una celda de
+/// 156 px). Si el horneado falla, el diseño se guarda igual sin miniatura:
+/// no es motivo para bloquear el guardado real.
+#[allow(clippy::too_many_arguments)]
+fn start_save_design(
+    state: &mut editor::EditorState,
+    renderer: &mut CanvasRenderer,
+    rs: &RenderState,
+    tx: &std::sync::mpsc::Sender<AppMsg>,
+    ctx: &egui::Context,
+    path: PathBuf,
+    new_source: bool,
+) {
+    if state.saving {
+        return;
+    }
+    tracing::info!("guardando diseño en {}", path.display());
+    state.is_design = true; // «Save as… → .canvas» convierte el documento.
+    let mut payload = state.sidecar_payload();
+    let (pw, ph) = state
+        .doc
+        .page()
+        .map(|p| (p.width, p.height))
+        .unwrap_or((0.0, 0.0));
+    let scale = canvas_io::preview_scale(pw, ph);
+    match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, scale) {
+        Ok((rgba, w, h)) => payload.preview = canvas_io::make_preview(&rgba, w, h),
+        Err(e) => tracing::warn!("miniatura del diseño no horneada: {e}"),
+    }
+    state.saving = true;
+    state.save_error = None;
+    loader::spawn_save_design(path, payload, new_source, tx.clone(), ctx.clone());
+}
+
 /// PNG/JPEG hornean en la GPU igual que al guardar. SVG/PDF se generan a
 /// mano a partir del documento, pero primero hay que sincronizar los
 /// efectos GPU (desenfoque, ajustes de color) y tomar las texturas ya
@@ -1020,16 +1150,16 @@ fn is_jpeg_path(path: &std::path::Path) -> bool {
 }
 
 /// `foto.png.canvas` → `foto.png` si esa imagen existe; cualquier otra ruta
-/// se devuelve tal cual.
+/// se devuelve tal cual. El guard exige que `inner` sea además una imagen
+/// (no solo un archivo cualquiera) para que un diseño autónomo con nombre
+/// `Untitled.canvas` (cuyo `inner` es `Untitled`, sin extensión) nunca se
+/// confunda con el sidecar de otra cosa.
 fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
-    let is_canvas = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("canvas"));
+    let is_canvas = canvas_io::is_canvas_file(&path);
     if is_canvas {
         // `with_extension("")` quita solo la última extensión: .canvas.
         let inner = path.with_extension("");
-        if inner.is_file() {
+        if canvas_io::is_image_file(&inner) && inner.is_file() {
             return inner;
         }
     }
@@ -1080,12 +1210,14 @@ impl eframe::App for App {
         match &mut self.view {
             View::Welcome { error } => {
                 let error = error.clone();
-                match welcome::show(ui, error.as_deref(), &self.settings.recent_files) {
+                match welcome::show(
+                    ui,
+                    error.as_deref(),
+                    &self.settings.recent_files,
+                    self.settings.last_page_size,
+                ) {
                     Some(welcome::WelcomeAction::NewProject) => {
-                        self.gallery_origin = None;
-                        let mut state = editor::EditorState::new_blank(1920.0, 1080.0);
-                        state.sidecar_enabled = self.settings.sidecar_default;
-                        self.view = View::Editor(Box::new(state));
+                        open_next = Some(Nav::NewDesign);
                     }
                     Some(welcome::WelcomeAction::OpenFile) => {
                         loader::spawn_pick_file(self.tx.clone(), ctx.clone());
@@ -1123,6 +1255,36 @@ impl eframe::App for App {
                 Some(gallery::GalleryAction::SortChanged(sort)) => {
                     self.settings.gallery_sort = sort;
                     self.settings.save_in_background();
+                }
+                Some(gallery::GalleryAction::NewDesign) => {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::NewDesign {
+                            folder: g.folder.clone(),
+                            page: self.settings.last_page_size,
+                        },
+                        true,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
+                Some(gallery::GalleryAction::Duplicate(path)) => {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::Duplicate { path },
+                        false,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
+                Some(gallery::GalleryAction::PasteHere(src)) => {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::CopyInto {
+                            src,
+                            folder: g.folder.clone(),
+                        },
+                        false,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
                 }
                 None => {}
             },
@@ -1203,11 +1365,19 @@ impl eframe::App for App {
                 self.save_requested = false;
 
                 if save_as {
-                    loader::spawn_pick_save_path(
-                        Some(state.file_name()),
-                        self.tx.clone(),
-                        ctx.clone(),
-                    );
+                    if state.is_design {
+                        loader::spawn_pick_design_path(
+                            Some(state.file_name()),
+                            self.tx.clone(),
+                            ctx.clone(),
+                        );
+                    } else {
+                        loader::spawn_pick_save_path(
+                            Some(state.file_name()),
+                            self.tx.clone(),
+                            ctx.clone(),
+                        );
+                    }
                     save = false;
                 }
                 if save {
@@ -1221,6 +1391,26 @@ impl eframe::App for App {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         } else if let Some(nav) = self.after_save.take() {
                             open_next = Some(nav);
+                        }
+                    } else if state.is_design {
+                        // Un diseño no se rasteriza: no hay nada destructivo
+                        // que avisar, ni SVG/GIF que redirigir, así que se
+                        // saltan ambos modales.
+                        match state.doc.source_path.clone() {
+                            Some(path) => start_save_design(
+                                state,
+                                &mut self.renderer,
+                                &rs,
+                                &self.tx,
+                                &ctx,
+                                path,
+                                false,
+                            ),
+                            None => loader::spawn_pick_design_path(
+                                Some(state.file_name()),
+                                self.tx.clone(),
+                                ctx.clone(),
+                            ),
                         }
                     } else {
                         match state.doc.source_path.clone() {
@@ -1261,16 +1451,31 @@ impl eframe::App for App {
                     }
                 }
                 if let Some(path) = self.pending_save_as.take() {
-                    start_save(
-                        state,
-                        &mut self.renderer,
-                        &rs,
-                        &self.tx,
-                        &ctx,
-                        path,
-                        true,
-                        self.settings.jpeg_quality,
-                    );
+                    // La extensión final de la ruta elegida decide la rama,
+                    // venga del diálogo de diseño o del de imagen (ambos
+                    // acaban en el mismo `SaveAsPicked`).
+                    if canvas_io::is_canvas_file(&path) {
+                        start_save_design(
+                            state,
+                            &mut self.renderer,
+                            &rs,
+                            &self.tx,
+                            &ctx,
+                            path,
+                            true,
+                        );
+                    } else {
+                        start_save(
+                            state,
+                            &mut self.renderer,
+                            &rs,
+                            &self.tx,
+                            &ctx,
+                            path,
+                            true,
+                            self.settings.jpeg_quality,
+                        );
+                    }
                 }
 
                 // Modal de aviso de sobrescritura destructiva.
@@ -1479,8 +1684,9 @@ impl eframe::App for App {
                     self.show_settings = true;
                 }
                 // El checkbox del sidecar en el editor ES el valor por defecto
-                // persistido: cambiarlo ahí lo recuerda para el futuro.
-                if state.sidecar_enabled != self.settings.sidecar_default {
+                // persistido: cambiarlo ahí lo recuerda para el futuro. En un
+                // diseño el checkbox ni se muestra: no debe tocar el ajuste.
+                if !state.is_design && state.sidecar_enabled != self.settings.sidecar_default {
                     self.settings.sidecar_default = state.sidecar_enabled;
                     self.settings.save_in_background();
                 }

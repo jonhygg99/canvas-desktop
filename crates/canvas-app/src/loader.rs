@@ -8,17 +8,12 @@ use canvas_io::{ImageMetadata, LoadedImage, RestoredDocument};
 use eframe::egui;
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
-/// restaurado desde su sidecar `.canvas`.
+/// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
+/// el archivo abierto ES el documento, no la imagen que lo acompaña.
 pub enum LoadOutcome {
     Flat(LoadedImage),
     Restored(RestoredDocument),
-}
-
-/// Datos que el hilo de guardado necesita para escribir el sidecar.
-pub struct SidecarPayload {
-    pub document: canvas_core::Document,
-    pub images: Vec<canvas_io::LayerPixels>,
-    pub background_layer: Option<u64>,
+    Design(RestoredDocument),
 }
 
 pub enum AppMsg {
@@ -68,6 +63,126 @@ pub enum AppMsg {
     },
     /// Resultado del registro/desregistro de la integración con el shell.
     ShellIntegrationDone(Result<String, String>),
+    /// Una operación de archivos de la galería (crear, duplicar, pegar)
+    /// terminó. `created` es la ruta resultante, para abrirla o para que la
+    /// galería la resalte al rescanear; ausente si la operación falló.
+    GalleryOpDone {
+        folder: PathBuf,
+        created: Option<PathBuf>,
+        result: Result<(), String>,
+        /// Si venía de «✚ New design», abre el archivo recién creado.
+        open: bool,
+    },
+}
+
+/// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:
+/// copiar un PNG grande no puede bloquear la UI.
+pub enum GalleryOp {
+    /// Crea un `.canvas` en blanco en `folder` con un nombre libre.
+    NewDesign { folder: PathBuf, page: (f64, f64) },
+    /// Duplica `path` (y su sidecar, si es una imagen que tiene uno) dentro
+    /// de la misma carpeta, con sufijo « copy».
+    Duplicate { path: PathBuf },
+    /// Copia `src` (y su sidecar, si lo tiene) dentro de `folder`. Mismo
+    /// nombre si no colisiona; si `src` ya está en `folder`, se comporta
+    /// como `Duplicate` (sufijo « copy»).
+    CopyInto { src: PathBuf, folder: PathBuf },
+}
+
+/// Nombre de archivo sin su última extensión, y esa extensión (ambos vacíos
+/// si `path` no los tiene).
+fn split_name(path: &std::path::Path) -> (String, String) {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    (stem, ext)
+}
+
+/// Copia `src` (y su sidecar, si es una imagen que tiene uno) a una ruta
+/// libre en `folder`. Con `force_copy_suffix`, el nombre siempre lleva
+/// « copy» (duplicar en el sitio); si no, se intenta primero el mismo
+/// nombre y solo se numera si colisiona (pegar en otra carpeta). Revierte
+/// la primera copia si la del sidecar falla, para no dejar un duplicado a
+/// medias.
+fn duplicate_into(
+    src: &std::path::Path,
+    folder: &std::path::Path,
+    force_copy_suffix: bool,
+) -> Result<PathBuf, String> {
+    let (stem, ext) = split_name(src);
+    let base = if force_copy_suffix {
+        format!("{stem} copy")
+    } else {
+        stem
+    };
+    let dst = canvas_io::reserve_unique_path(folder, &base, &ext).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::copy(src, &dst) {
+        let _ = std::fs::remove_file(&dst);
+        return Err(e.to_string());
+    }
+    if canvas_io::is_image_file(src) {
+        let src_sidecar = canvas_io::sidecar_path(src);
+        if src_sidecar.is_file() {
+            let dst_sidecar = canvas_io::sidecar_path(&dst);
+            if let Err(e) = std::fs::copy(&src_sidecar, &dst_sidecar) {
+                let _ = std::fs::remove_file(&dst);
+                return Err(e.to_string());
+            }
+        }
+    }
+    Ok(dst)
+}
+
+/// Ejecuta una `GalleryOp` en un hilo de trabajo y avisa con
+/// `AppMsg::GalleryOpDone`.
+pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), String>) = match op {
+            GalleryOp::NewDesign { folder, page } => {
+                let outcome = canvas_io::reserve_unique_path(
+                    &folder,
+                    "Untitled",
+                    canvas_io::CANVAS_EXTENSION,
+                )
+                .map_err(|e| e.to_string())
+                .and_then(|path| {
+                    canvas_io::write_design(&path, &canvas_io::blank_design(page.0, page.1))
+                        .map(|()| path)
+                        .map_err(|e| e.to_string())
+                });
+                match outcome {
+                    Ok(path) => (folder, Some(path), Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
+            GalleryOp::Duplicate { path } => {
+                let folder = path.parent().map(PathBuf::from).unwrap_or_default();
+                match duplicate_into(&path, &folder, true) {
+                    Ok(dst) => (folder, Some(dst), Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
+            GalleryOp::CopyInto { src, folder } => {
+                let same_folder = src.parent() == Some(folder.as_path());
+                match duplicate_into(&src, &folder, same_folder) {
+                    Ok(dst) => (folder, Some(dst), Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
+        };
+        let _ = tx.send(AppMsg::GalleryOpDone {
+            folder,
+            created,
+            result,
+            open,
+        });
+        ctx.request_repaint();
+    });
 }
 
 /// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
@@ -96,6 +211,67 @@ pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ct
             result,
             metadata,
         });
+        ctx.request_repaint();
+    });
+}
+
+/// Carga un diseño autónomo. Reutiliza `AppMsg::ImageLoaded` (y con él la
+/// puerta de `View::Loading{path}` que descarta cargas obsoletas): un diseño
+/// no tiene ICC/EXIF que preservar, así que la metadata va vacía.
+pub fn spawn_load_design(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let result = canvas_io::read_design(&path)
+            .map(LoadOutcome::Design)
+            .map_err(|e| e.to_string());
+        let _ = tx.send(AppMsg::ImageLoaded {
+            path,
+            result,
+            metadata: ImageMetadata::default(),
+        });
+        ctx.request_repaint();
+    });
+}
+
+/// Reescribe (atómico) un diseño autónomo en `path`, sin rasterizar nada.
+pub fn spawn_save_design(
+    path: PathBuf,
+    payload: canvas_io::CanvasPayload,
+    new_source: bool,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = canvas_io::write_design(&path, &payload).map_err(|e| e.to_string());
+        let _ = tx.send(AppMsg::Saved {
+            path,
+            result,
+            new_source,
+        });
+        ctx.request_repaint();
+    });
+}
+
+/// Diálogo «Guardar como…» para un diseño: un único filtro `.canvas`, a
+/// diferencia de `spawn_pick_save_path` que ofrece los cinco formatos
+/// rasterizables de Guardar.
+pub fn spawn_pick_design_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: egui::Context) {
+    let suffix = format!(".{}", canvas_io::CANVAS_EXTENSION);
+    let suggested = suggested.map(|name| {
+        if name.to_ascii_lowercase().ends_with(&suffix) {
+            name
+        } else {
+            format!("{name}{suffix}")
+        }
+    });
+    std::thread::spawn(move || {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Save design as…")
+            .add_filter("Canvas design", &[canvas_io::CANVAS_EXTENSION]);
+        if let Some(name) = suggested {
+            dialog = dialog.set_file_name(name);
+        }
+        let picked = dialog.save_file();
+        let _ = tx.send(AppMsg::SaveAsPicked(picked));
         ctx.request_repaint();
     });
 }
@@ -142,28 +318,30 @@ pub fn spawn_save(
     jpeg_quality: u8,
     metadata: Option<ImageMetadata>,
     new_source: bool,
-    sidecar: Option<SidecarPayload>,
+    sidecar: Option<canvas_io::CanvasPayload>,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
+        // La miniatura embebida del sidecar se reduce de este mismo RGBA
+        // (ya horneado a tamaño completo): no hace falta una segunda pasada
+        // de GPU solo para la celda de la galería.
+        let preview = sidecar
+            .is_some()
+            .then(|| canvas_io::make_preview(&rgba, width, height))
+            .flatten();
         let result =
             canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, metadata.as_ref())
                 .map_err(|e| e.to_string());
         if result.is_ok() {
             match sidecar {
-                Some(payload) => {
+                Some(mut payload) => {
+                    payload.preview = preview;
                     // El hash del sidecar debe ser el del archivo tal y como
                     // quedó en disco: se relee tras la escritura atómica.
                     match std::fs::read(&path) {
                         Ok(bytes) => {
-                            if let Err(e) = canvas_io::write_sidecar(
-                                &path,
-                                &bytes,
-                                &payload.document,
-                                &payload.images,
-                                payload.background_layer,
-                            ) {
+                            if let Err(e) = canvas_io::write_sidecar(&path, &bytes, &payload) {
                                 tracing::warn!("no se pudo escribir el sidecar: {e}");
                             }
                         }
@@ -196,14 +374,18 @@ pub fn spawn_gallery_scan(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        // Solo el primer nivel, solo imágenes, sin archivos ocultos.
+        // Solo el primer nivel, imágenes y diseños, sin archivos ocultos.
+        // `is_standalone_design` deja fuera el sidecar de una imagen que ya
+        // sale por sí sola en la cuadrícula.
         let mut files: Vec<(PathBuf, Option<std::time::SystemTime>)> = std::fs::read_dir(&folder)
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
                     .filter(|p| {
-                        p.is_file() && canvas_io::is_image_file(p) && !canvas_shell::is_hidden(p)
+                        p.is_file()
+                            && (canvas_io::is_image_file(p) || canvas_io::is_standalone_design(p))
+                            && !canvas_shell::is_hidden(p)
                     })
                     .map(|p| {
                         let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();

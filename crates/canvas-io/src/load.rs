@@ -1,6 +1,6 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 
@@ -9,10 +9,64 @@ use crate::IoError;
 /// Extensiones de imagen que la app sabe abrir (minúsculas).
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"];
 
+/// Extensión de un archivo de diseño (sidecar de imagen o diseño autónomo).
+pub const CANVAS_EXTENSION: &str = "canvas";
+
 pub fn is_image_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_canvas_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(CANVAS_EXTENSION))
+}
+
+/// ¿Este `.canvas` es un diseño de pleno derecho? Un `foto.png.canvas` con
+/// `foto.png` al lado es el sidecar de esa imagen, que ya sale por sí sola
+/// en la galería: no debe listarse dos veces.
+pub fn is_standalone_design(path: &Path) -> bool {
+    if !is_canvas_file(path) {
+        return false;
+    }
+    let inner = path.with_extension("");
+    !(is_image_file(&inner) && inner.is_file())
+}
+
+/// Reserva una ruta libre en `folder`: `{stem}.{ext}`, `{stem} 2.{ext}`…
+/// Crea el archivo (vacío) con `create_new` para ganar la carrera contra
+/// otro proceso u otra ventana que estuviera creando el mismo nombre; un
+/// `exists()` suelto dejaría una ventana TOCTOU en la que la escritura
+/// posterior machacaría un archivo del usuario en silencio.
+pub fn reserve_unique_path(folder: &Path, stem: &str, ext: &str) -> Result<PathBuf, IoError> {
+    for n in 0..10_000u32 {
+        let name = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem} {}.{ext}", n + 1)
+        };
+        let candidate = folder.join(&name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(_) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(IoError::Write {
+                    path: candidate,
+                    message: source.to_string(),
+                })
+            }
+        }
+    }
+    Err(IoError::Write {
+        path: folder.join(format!("{stem}.{ext}")),
+        message: "too many name collisions".to_owned(),
+    })
 }
 
 /// ¿`Ctrl+S` puede sobrescribir este archivo? Un SVG es vectorial (un lienzo
@@ -171,5 +225,42 @@ mod tests {
         assert!(!can_overwrite(Path::new("a.GIF")));
         assert!(can_overwrite(Path::new("a.png")));
         assert!(can_overwrite(Path::new("a.jpg")));
+    }
+
+    #[test]
+    fn unique_path_walks_past_collisions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p1 = reserve_unique_path(dir.path(), "Untitled", "canvas").expect("primero");
+        assert_eq!(p1, dir.path().join("Untitled.canvas"));
+        let p2 = reserve_unique_path(dir.path(), "Untitled", "canvas").expect("segundo");
+        assert_eq!(p2, dir.path().join("Untitled 2.canvas"));
+        let p3 = reserve_unique_path(dir.path(), "Untitled", "canvas").expect("tercero");
+        assert_eq!(p3, dir.path().join("Untitled 3.canvas"));
+        assert!(p1.is_file());
+        assert!(p2.is_file());
+        assert!(p3.is_file());
+    }
+
+    #[test]
+    fn standalone_design_ignores_image_sidecars() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = dir.path().join("foto.png");
+        std::fs::write(&image, b"x").unwrap();
+        let sidecar = dir.path().join("foto.png.canvas");
+        std::fs::write(&sidecar, b"{}").unwrap();
+        // Sidecar de una imagen presente: no es un diseño autónomo.
+        assert!(!is_standalone_design(&sidecar));
+
+        let orphan = dir.path().join("huerfano.png.canvas");
+        std::fs::write(&orphan, b"{}").unwrap();
+        // La imagen que acompañaba ya no está: se trata como diseño.
+        assert!(is_standalone_design(&orphan));
+
+        let design = dir.path().join("Untitled.canvas");
+        std::fs::write(&design, b"{}").unwrap();
+        assert!(is_standalone_design(&design));
+
+        // No es un `.canvas` en absoluto.
+        assert!(!is_standalone_design(&image));
     }
 }

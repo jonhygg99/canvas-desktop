@@ -4,7 +4,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::{load_image, IoError, LoadedImage};
+use crate::{is_canvas_file, load_image, read_preview, IoError, LoadedImage};
 
 /// Genera (o recupera de la caché) una miniatura RGBA cuyo lado mayor es
 /// `max_dim`. Los fallos de caché nunca son fatales: se regenera.
@@ -18,7 +18,18 @@ pub fn thumbnail(
         return Ok(hit);
     }
 
-    let full = load_image(path)?;
+    // Un diseño lleva su miniatura embebida: este hilo (rayon) no tiene GPU
+    // para hornear la página él mismo.
+    let full = if is_canvas_file(path) {
+        read_preview(path)?.ok_or_else(|| IoError::Decode {
+            path: path.to_owned(),
+            source: image::ImageError::IoError(std::io::Error::other(
+                "this design has no preview yet",
+            )),
+        })?
+    } else {
+        load_image(path)?
+    };
     let src = image::RgbaImage::from_raw(full.width, full.height, full.rgba).ok_or_else(|| {
         IoError::Decode {
             path: path.to_owned(),
@@ -45,7 +56,7 @@ pub fn thumbnail(
     })
 }
 
-fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
+pub(crate) fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
     let max = w.max(h).max(1);
     if max <= max_dim {
         return (w.max(1), h.max(1));
@@ -109,5 +120,40 @@ mod tests {
         assert_eq!(cached_files, 1);
         let t2 = thumbnail(&img_path, 256, Some(&cache)).expect("miniatura cacheada");
         assert_eq!((t2.width, t2.height), (256, 128));
+    }
+
+    #[test]
+    fn thumbnail_reads_the_embedded_preview() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&cache).expect("crear caché");
+        let path = dir.path().join("Untitled.canvas");
+
+        let (w, h) = (8u32, 4u32);
+        let mut preview_rgba = Vec::with_capacity((w * h * 4) as usize);
+        for _ in 0..(w * h) {
+            preview_rgba.extend_from_slice(&[10, 200, 30, 255]);
+        }
+        let payload = crate::CanvasPayload {
+            document: canvas_core::Document::new(800.0, 400.0),
+            images: Vec::new(),
+            background_layer: None,
+            preview: Some(LoadedImage {
+                rgba: preview_rgba.clone(),
+                width: w,
+                height: h,
+            }),
+        };
+        crate::write_design(&path, &payload).expect("escribir diseño");
+
+        // Este hilo (rayon) no tiene GPU: debe pintar la miniatura embebida.
+        let t = thumbnail(&path, 256, Some(&cache)).expect("miniatura");
+        assert_eq!((t.width, t.height), (w, h));
+        assert_eq!(t.rgba[0..4], [10, 200, 30, 255]);
+
+        let cached_files = std::fs::read_dir(&cache).expect("leer").count();
+        assert_eq!(cached_files, 1);
+        let t2 = thumbnail(&path, 256, Some(&cache)).expect("miniatura cacheada");
+        assert_eq!((t2.width, t2.height), (w, h));
     }
 }
