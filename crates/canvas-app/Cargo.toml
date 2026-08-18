@@ -68,3 +68,13 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 muda = { workspace = true }
 raw-window-handle = { workspace = true }
+# `with_msg_hook` (`paste_hook.rs`) para detectar Ctrl+V con un bitmap en el
+# portapapeles, que egui-winit se traga sin emitir `Event::Paste`; y
+# `GetClipboardSequenceNumber`/`GetKeyState` para lo mismo + saber cuál
+# portapapeles (interno o del SO) es más reciente.
+winit = { workspace = true }
+windows = { workspace = true, features = [
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_DataExchange",
+] }

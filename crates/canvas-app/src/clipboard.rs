@@ -4,9 +4,11 @@
 //! de sesión, a propósito NO en el portapapeles del sistema operativo: eso
 //! machacaría el portapapeles de texto del usuario. El portapapeles del
 //! sistema solo se toca para pegar una imagen externa (Win+Shift+S, "Copiar
-//! imagen"…) cuando el interno está vacío, y solo en un Paste explícito
-//! (nunca por frame: en Windows abre el portapapeles del SO y puede fallar
-//! mientras otra app lo tiene).
+//! imagen"…) en un Paste explícito (nunca por frame: en Windows abre el
+//! portapapeles del SO y puede fallar mientras otra app lo tiene). Se
+//! prueba antes que la ranura interna cuando su número de secuencia indica
+//! que cambió después de la última copia interna (`prefer_system`); si no,
+//! se prueba primero la ranura interna y el del sistema queda de reserva.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -16,9 +18,38 @@ use canvas_render::image_data_from_rgba;
 
 use crate::editor::EditorState;
 
-fn slot() -> &'static Mutex<Option<String>> {
-    static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+/// JSON de la copia interna junto con el número de secuencia del
+/// portapapeles del SISTEMA en el momento de copiar (ver `prefer_system`).
+/// Mensaje para `EditorState::save_error` cuando `paste` no encuentra nada
+/// que pegar, ni en la ranura interna ni en el portapapeles del sistema.
+pub const PASTE_EMPTY_MSG: &str = "Clipboard has no image or layers to paste";
+
+fn slot() -> &'static Mutex<Option<(String, u32)>> {
+    static SLOT: OnceLock<Mutex<Option<(String, u32)>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// Número de secuencia del portapapeles del sistema: cambia cada vez que
+/// alguna app pone algo ahí, sin abrirlo ni bloquearlo. Solo tiene sentido
+/// en Windows — fuera de ahí `prefer_system` siempre compara `0` contra
+/// `0` y no altera el orden de prioridad de siempre.
+#[cfg(windows)]
+fn clipboard_sequence() -> u32 {
+    // SAFETY: no toma punteros ni requiere el portapapeles abierto.
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+#[cfg(not(windows))]
+fn clipboard_sequence() -> u32 {
+    0
+}
+
+/// Si el portapapeles del sistema cambió desde la última copia interna
+/// (p.ej. el usuario copió una capa, fue al navegador y copió una imagen),
+/// eso es lo que el usuario espera pegar — probarlo antes que la copia
+/// interna, más vieja pero todavía en la ranura.
+fn prefer_system(slot_seq: u32, now_seq: u32) -> bool {
+    now_seq != slot_seq
 }
 
 /// El conjunto a copiar: cada raíz de la selección y todos sus
@@ -80,7 +111,7 @@ pub fn copy(state: &EditorState) {
         return;
     };
     if let Ok(mut s) = slot().lock() {
-        *s = Some(json);
+        *s = Some((json, clipboard_sequence()));
     }
 }
 
@@ -181,20 +212,41 @@ fn select_ids(state: &mut EditorState, ids: &[LayerId]) {
 }
 
 /// Pega desde el portapapeles interno si tiene algo; si no, intenta una
-/// imagen del portapapeles del SISTEMA operativo.
-pub fn paste(state: &mut EditorState) {
-    let json = slot().lock().ok().and_then(|s| s.clone());
-    if let Some(json) = json {
-        if let Ok(clip) = canvas_io::read_clipboard(&json) {
-            if let Some(ids) = paste_doc(state, clip) {
-                select_ids(state, &ids);
-                return;
-            }
+/// imagen del portapapeles del SISTEMA operativo. Si el portapapeles del
+/// sistema cambió desde la última copia interna, se prueba primero él (ver
+/// `prefer_system`) — si no, "copiar una capa, luego copiar una imagen en
+/// el navegador, Ctrl+V" seguiría pegando la capa vieja. Devuelve `false`
+/// si no había nada que pegar en ningún sitio.
+pub fn paste(state: &mut EditorState) -> bool {
+    let internal = slot().lock().ok().and_then(|s| s.clone());
+    if let Some((json, slot_seq)) = &internal {
+        if prefer_system(*slot_seq, clipboard_sequence()) && paste_system(state) {
+            return true;
+        }
+        if paste_internal(state, json) {
+            return true;
         }
     }
-    if let Some(img) = system_image() {
-        state.add_image_layer("Pasted Image", None, img);
-    }
+    paste_system(state)
+}
+
+fn paste_internal(state: &mut EditorState, json: &str) -> bool {
+    let Ok(clip) = canvas_io::read_clipboard(json) else {
+        return false;
+    };
+    let Some(ids) = paste_doc(state, clip) else {
+        return false;
+    };
+    select_ids(state, &ids);
+    true
+}
+
+fn paste_system(state: &mut EditorState) -> bool {
+    let Some(img) = system_image() else {
+        return false;
+    };
+    state.add_image_layer("Pasted Image", None, img);
+    true
 }
 
 /// Duplica la selección: copia en memoria (sin tocar la ranura de sesión,
@@ -241,4 +293,26 @@ pub fn system_image() -> Option<canvas_io::LoadedImage> {
         width,
         height,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prefer_system;
+
+    #[test]
+    fn keeps_internal_first_when_system_clipboard_is_unchanged() {
+        assert!(!prefer_system(7, 7));
+    }
+
+    #[test]
+    fn prefers_system_once_its_sequence_number_moved() {
+        assert!(prefer_system(7, 8));
+    }
+
+    #[test]
+    fn treats_a_lower_sequence_number_as_a_change_too() {
+        // El contador puede reiniciarse (p.ej. tras reiniciar sesión); da
+        // igual la dirección, cualquier diferencia cuenta como "cambió".
+        assert!(prefer_system(8, 7));
+    }
 }

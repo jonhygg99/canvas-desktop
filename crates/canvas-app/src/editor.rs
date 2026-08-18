@@ -533,7 +533,13 @@ impl EditorState {
     }
 
     /// Atajos de edición globales del editor (deshacer/rehacer).
-    pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+    ///
+    /// `paste_requested` es la señal de Ctrl+V/Shift+Insert capturada por
+    /// `paste_hook` a nivel de mensajes de Windows: en Win32, egui-winit se
+    /// traga esa combinación sin emitir `Event::Paste` cuando el
+    /// portapapeles solo tiene un bitmap (ver `paste_hook.rs`), así que en
+    /// esa plataforma es la única señal fiable.
+    pub fn handle_shortcuts(&mut self, ctx: &egui::Context, paste_requested: bool) {
         use egui::{Event, Key, KeyboardShortcut, Modifiers};
         // Un TextEdit con el foco (renombrar en el panel de capas, editar el
         // texto de una capa) manda: Ctrl+C/V/X/Z, Supr y Ctrl+A son suyos,
@@ -572,11 +578,11 @@ impl EditorState {
             crate::layers_panel::group_selection(self);
         }
 
-        // Ctrl+X/C/V no llegan como pulsaciones de tecla normales: winit los
+        // Ctrl+X/C no llegan como pulsaciones de tecla normales: winit los
         // intercepta para la integración con el portapapeles del SO y egui
-        // los entrega como `Event::Cut`/`Copy`/`Paste(texto)`, así que
-        // `consume_shortcut` nunca los ve — hay que mirar los eventos crudos.
-        let (want_cut, want_copy, want_paste) = ctx.input(|i| {
+        // los entrega como `Event::Cut`/`Copy`, así que `consume_shortcut`
+        // nunca los ve — hay que mirar los eventos crudos.
+        let (want_cut, want_copy, event_paste) = ctx.input(|i| {
             let mut cut = false;
             let mut copy = false;
             let mut paste = false;
@@ -596,8 +602,18 @@ impl EditorState {
         if want_copy {
             crate::clipboard::copy(self);
         }
-        if want_paste {
-            crate::clipboard::paste(self);
+        // En Windows, `Event::Paste` no llega cuando el portapapeles solo
+        // trae un bitmap (ver el doc del parámetro y `paste_hook.rs`): ahí
+        // se usa la señal del hook en su lugar. Fuera de Windows
+        // `paste_requested` siempre es `false` (el hook es un no-op) y
+        // `Event::Paste` sigue siendo la única señal.
+        let want_paste = if cfg!(windows) {
+            paste_requested
+        } else {
+            event_paste
+        };
+        if want_paste && !crate::clipboard::paste(self) {
+            self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
         }
         if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
         {

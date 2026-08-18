@@ -13,6 +13,7 @@ mod gallery;
 mod layers_panel;
 mod loader;
 mod menus;
+mod paste_hook;
 mod settings;
 mod surface;
 mod watcher;
@@ -84,6 +85,7 @@ fn main() -> Result<()> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport,
+        event_loop_builder: Some(Box::new(paste_hook::install)),
         ..Default::default()
     };
 
@@ -561,7 +563,9 @@ impl App {
             }
             A::Paste => {
                 if let View::Editor(state) = &mut self.view {
-                    clipboard::paste(state);
+                    if !clipboard::paste(state) {
+                        state.save_error = Some(clipboard::PASTE_EMPTY_MSG.to_owned());
+                    }
                 }
             }
             A::Duplicate => {
@@ -1220,6 +1224,9 @@ fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Se consume siempre, en cualquier vista, para que no quede pegado
+        // de un frame a otro si no había ningún editor abierto para leerlo.
+        let paste_requested = paste_hook::take_request();
 
         // Tema (System/Light/Dark) según los ajustes; solo al cambiar.
         if self.applied_theme != Some(self.settings.theme) {
@@ -1359,7 +1366,7 @@ impl eframe::App for App {
                 let Some(rs) = frame.wgpu_render_state().cloned() else {
                     return;
                 };
-                state.handle_shortcuts(&ctx);
+                state.handle_shortcuts(&ctx, paste_requested);
 
                 // Recarga pedida desde el banner de «cambió en disco».
                 if std::mem::take(&mut state.reload_requested) {

@@ -51,6 +51,11 @@ svg2pdf = "0.13"
 parley = "0.11"
 rfd = "0.15"
 rayon = "1.10"
+# Mismo winit que trae eframe 0.35 (ver `cargo tree -i winit`): usado solo en
+# Windows para `EventLoopBuilderExtWindows::with_msg_hook` (pegar Ctrl+V con
+# un bitmap en el portapapeles, ver `paste_hook.rs`). Revalidar la versión al
+# subir eframe.
+winit = "0.30.13"
 # Portapapeles del sistema (pegar una captura de pantalla como capa). Ya está
 # en el árbol como dependencia transitiva de egui-winit con la feature
 # image-data: repetirla exactamente evita duplicar el crate.
