@@ -170,6 +170,14 @@ pub struct EditorState {
     /// Renombrado en curso en el panel de capas: capa, texto editable y
     /// nombre original (para poder cancelar sin comando con Escape).
     pub rename_edit: Option<(LayerId, String, String)>,
+    /// Renombrado en curso del ARCHIVO abierto (lápiz junto al nombre en el
+    /// panel de propiedades): solo el nombre base editable, sin extensión.
+    pub file_rename_edit: Option<String>,
+    /// Nuevo nombre de archivo confirmado, pendiente de aplicar en disco.
+    pub file_rename_requested: Option<String>,
+    /// El usuario confirmó (diálogo nativo ya mostrado) borrar el archivo
+    /// abierto.
+    pub delete_requested: bool,
 }
 
 impl EditorState {
@@ -216,6 +224,9 @@ impl EditorState {
             crop_mode: false,
             snap_guides: (Vec::new(), Vec::new()),
             rename_edit: None,
+            file_rename_edit: None,
+            file_rename_requested: None,
+            delete_requested: false,
         }
     }
 
@@ -667,7 +678,7 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     if state.from_gallery.is_some() && ui.button("⏴ Back to gallery").clicked() {
         state.return_requested = true;
     }
-    ui.heading(state.file_name());
+    file_name_ui(state, ui);
     let page_dims = match state.doc.page() {
         Ok(p) => (p.width, p.height),
         Err(_) => (0.0, 0.0),
@@ -753,6 +764,18 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         {
             state.save_as_clicked = true;
         }
+        // Va a la Papelera de reciclaje (`trash::delete`), no borrado
+        // permanente: recuperable si el usuario se equivoca, así que no
+        // hace falta pedir confirmación aparte.
+        if ui
+            .add_enabled(
+                !state.saving && state.doc.source_path.is_some(),
+                egui::Button::new("Delete"),
+            )
+            .clicked()
+        {
+            state.delete_requested = true;
+        }
     });
     if state.is_design {
         ui.weak("Design file (.canvas) — layers are always kept.");
@@ -785,6 +808,63 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     if ui.small_button("⚙ Settings").clicked() {
         state.settings_clicked = true;
+    }
+}
+
+/// Nombre del archivo abierto, arriba del panel: un lápiz lo vuelve editable
+/// in-place (mismo patrón que el renombrado de la galería —
+/// `gallery::gallery_cell` — y el de capas — `rename_edit_ui` más abajo)
+/// cuando el documento ya tiene archivo en disco. Un diseño nuevo sin
+/// guardar (`source_path` en `None`) no ofrece el lápiz: no hay nada que
+/// renombrar todavía.
+fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    let id = egui::Id::new("editor_file_rename");
+    if state.file_rename_edit.is_some() {
+        // Mismo patrón que `gallery::gallery_cell`: Escape cancela, perder
+        // el foco confirma (comprobado antes que `lost_focus` para que el
+        // propio Escape no dispare un commit).
+        let mut cancel = false;
+        let mut commit = false;
+        if let Some(text) = state.file_rename_edit.as_mut() {
+            let resp = ui.add(egui::TextEdit::singleline(text).id(id));
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            } else if resp.lost_focus() {
+                commit = true;
+            }
+        }
+        if cancel {
+            state.file_rename_edit = None;
+        } else if commit {
+            if let Some(text) = state.file_rename_edit.take() {
+                let new_stem = text.trim().to_owned();
+                let original_stem = state
+                    .doc
+                    .source_path
+                    .as_deref()
+                    .and_then(|p| p.file_stem())
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !new_stem.is_empty() && new_stem != original_stem {
+                    state.file_rename_requested = Some(new_stem);
+                }
+            }
+        }
+    } else {
+        ui.horizontal(|ui| {
+            ui.heading(state.file_name());
+            if state.doc.source_path.is_some() && ui.small_button("✏").clicked() {
+                let stem = state
+                    .doc
+                    .source_path
+                    .as_deref()
+                    .and_then(|p| p.file_stem())
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                state.file_rename_edit = Some(stem);
+                ui.memory_mut(|m| m.request_focus(id));
+            }
+        });
     }
 }
 

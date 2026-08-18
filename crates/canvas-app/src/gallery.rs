@@ -32,6 +32,12 @@ pub struct GalleryState {
     pub sort: GallerySort,
     /// Última celda marcada con clic derecho: lo que copia Ctrl+C.
     pub selected: Option<PathBuf>,
+    /// Renombrado en curso: ruta y texto editable (solo el nombre base, sin
+    /// extensión — cambiarla rompería la detección de imagen/diseño).
+    pub rename_edit: Option<(PathBuf, String)>,
+    /// Último fallo de una operación de archivos (crear/duplicar/pegar/
+    /// renombrar/borrar), visible hasta que el usuario lo descarta.
+    pub op_error: Option<String>,
 }
 
 impl GalleryState {
@@ -42,6 +48,8 @@ impl GalleryState {
             scanned: false,
             sort,
             selected: None,
+            rename_edit: None,
+            op_error: None,
         }
     }
 
@@ -118,6 +126,11 @@ pub enum GalleryAction {
     Duplicate(PathBuf),
     /// Pegar en esta carpeta el archivo copiado (ruta de origen).
     PasteHere(PathBuf),
+    /// Cambiar el nombre base de este archivo (ruta, nuevo nombre).
+    Rename(PathBuf, String),
+    /// Enviar este archivo a la Papelera de reciclaje. La confirmación ya
+    /// ocurrió (diálogo nativo) antes de devolver esta acción.
+    Delete(PathBuf),
 }
 
 /// Ruta copiada desde una galería. Ranura de proceso, como el portapapeles
@@ -165,8 +178,8 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     // para la integración con el portapapeles del SO y en su lugar egui los
     // entrega como `Event::Copy`/`Event::Paste(texto)`, así que
     // `consume_shortcut` nunca los ve; hay que mirar los eventos crudos.
-    // Se ignoran mientras se edita texto (p. ej. un renombrado futuro) para
-    // no robarle el atajo al campo — mismo guard que
+    // Se ignoran mientras se edita texto (p. ej. un renombrado en curso)
+    // para no robarle el atajo al campo — mismo guard que
     // `EditorState::handle_shortcuts`.
     let (want_copy, want_paste) = ui.ctx().input(|i| {
         let mut copy = false;
@@ -236,6 +249,14 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         ui.weak(
             "Right-click a tile for Duplicate · Ctrl+C / Ctrl+V to copy designs between folders",
         );
+        if let Some(error) = state.op_error.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.visuals().error_fg_color, &error);
+                if ui.small_button("✕").clicked() {
+                    state.op_error = None;
+                }
+            });
+        }
         ui.add_space(4.0);
         ui.separator();
 
@@ -259,7 +280,9 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for item in &state.items {
-                    if let Some(cell_action) = gallery_cell(ui, item, &mut state.selected) {
+                    if let Some(cell_action) =
+                        gallery_cell(ui, item, &mut state.selected, &mut state.rename_edit)
+                    {
                         action = Some(cell_action);
                     }
                 }
@@ -273,9 +296,15 @@ fn gallery_cell(
     ui: &mut egui::Ui,
     item: &GalleryItem,
     selected: &mut Option<PathBuf>,
+    rename_edit: &mut Option<(PathBuf, String)>,
 ) -> Option<GalleryAction> {
     let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
     let is_selected = selected.as_deref() == Some(item.path.as_path());
+    let renaming = rename_edit.as_ref().is_some_and(|(p, _)| p == &item.path);
+    // Posición del nombre bajo la miniatura: la necesita tanto el pintado
+    // (fuera del scroll no se pinta) como el campo de renombrado (que si
+    // hace falta se coloca aunque la celda esté al borde del scroll).
+    let name_pos = egui::pos2(rect.center().x, rect.bottom() - 18.0);
     // Fuera del scroll: no pintamos nada (la cuadrícula sigue fluida aunque
     // haya cientos de ítems), pero SÍ devolvemos `response` — un menú
     // contextual enganchado a ella no debe morir al hacer scroll.
@@ -356,48 +385,110 @@ fn gallery_cell(
             );
         }
 
-        // Nombre truncado bajo la miniatura.
-        let name_pos = egui::pos2(rect.center().x, rect.bottom() - 18.0);
-        let font = egui::FontId::proportional(12.5);
-        let mut name = item.name.clone();
-        if name.chars().count() > 24 {
-            name = format!("{}…", name.chars().take(23).collect::<String>());
+        // Nombre truncado bajo la miniatura — o el campo de renombrado si
+        // esta celda está en edición.
+        if !renaming {
+            let font = egui::FontId::proportional(12.5);
+            let mut name = item.name.clone();
+            if name.chars().count() > 24 {
+                name = format!("{}…", name.chars().take(23).collect::<String>());
+            }
+            painter.text(
+                name_pos,
+                egui::Align2::CENTER_CENTER,
+                name,
+                font,
+                ui.visuals().text_color(),
+            );
         }
-        painter.text(
-            name_pos,
-            egui::Align2::CENTER_CENTER,
-            name,
-            font,
-            ui.visuals().text_color(),
-        );
     }
 
-    let mut action = response
-        .clicked()
-        .then(|| GalleryAction::Open(item.path.clone()));
+    let mut action = None;
 
-    if response.secondary_clicked() {
-        *selected = Some(item.path.clone());
-    }
-    response.context_menu(|ui| {
-        if ui.button("Open").clicked() {
-            action = Some(GalleryAction::Open(item.path.clone()));
-            ui.close();
+    if renaming {
+        // Mismo patrón que `layers_panel.rs::rename_edit_ui`: Escape
+        // cancela, perder el foco confirma (comprobado antes que
+        // `lost_focus` para que el propio Escape no dispare un commit).
+        let text_id = egui::Id::new(("gallery_rename", item.path.clone()));
+        let name_rect = egui::Rect::from_center_size(name_pos, egui::vec2(CELL.x - 8.0, 20.0));
+        let mut cancel = false;
+        let mut commit = false;
+        if let Some((_, text)) = rename_edit.as_mut() {
+            let resp = ui.put(
+                name_rect,
+                egui::TextEdit::singleline(text)
+                    .id(text_id)
+                    .horizontal_align(egui::Align::Center),
+            );
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                cancel = true;
+            } else if resp.lost_focus() {
+                commit = true;
+            }
         }
-        if ui.button("Duplicate").clicked() {
-            action = Some(GalleryAction::Duplicate(item.path.clone()));
-            ui.close();
+        if cancel {
+            *rename_edit = None;
+        } else if commit {
+            if let Some((path, text)) = rename_edit.take() {
+                let new_stem = text.trim().to_owned();
+                let original_stem = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !new_stem.is_empty() && new_stem != original_stem {
+                    action = Some(GalleryAction::Rename(path, new_stem));
+                }
+            }
         }
-        if ui.button("Copy").clicked() {
+    } else {
+        action = response
+            .clicked()
+            .then(|| GalleryAction::Open(item.path.clone()));
+
+        if response.secondary_clicked() {
             *selected = Some(item.path.clone());
-            copy_to_slot(item.path.clone());
-            ui.close();
         }
-        if ui.button("Reveal in Explorer").clicked() {
-            reveal_in_explorer(&item.path);
-            ui.close();
-        }
-    });
+        response.context_menu(|ui| {
+            if ui.button("Open").clicked() {
+                action = Some(GalleryAction::Open(item.path.clone()));
+                ui.close();
+            }
+            if ui.button("Rename").clicked() {
+                let stem = item
+                    .path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                *rename_edit = Some((item.path.clone(), stem));
+                ui.memory_mut(|m| {
+                    m.request_focus(egui::Id::new(("gallery_rename", item.path.clone())))
+                });
+                ui.close();
+            }
+            if ui.button("Duplicate").clicked() {
+                action = Some(GalleryAction::Duplicate(item.path.clone()));
+                ui.close();
+            }
+            if ui.button("Copy").clicked() {
+                *selected = Some(item.path.clone());
+                copy_to_slot(item.path.clone());
+                ui.close();
+            }
+            if ui.button("Reveal in Explorer").clicked() {
+                reveal_in_explorer(&item.path);
+                ui.close();
+            }
+            ui.separator();
+            // Va a la Papelera de reciclaje (`trash::delete`), no borrado
+            // permanente: recuperable si el usuario se equivoca, así que
+            // no hace falta pedir confirmación aparte.
+            let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+            if ui.button(delete_label).clicked() {
+                action = Some(GalleryAction::Delete(item.path.clone()));
+                ui.close();
+            }
+        });
+    }
 
     action
 }

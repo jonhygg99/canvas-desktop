@@ -73,6 +73,19 @@ pub enum AppMsg {
         /// Si venía de «✚ New design», abre el archivo recién creado.
         open: bool,
     },
+    /// El archivo abierto en el editor se renombró (botón «✏» junto al
+    /// nombre en el panel). No reutiliza `Saved`: renombrar no debe marcar
+    /// el documento como recién guardado.
+    DocumentRenamed {
+        old_path: PathBuf,
+        result: Result<PathBuf, String>,
+    },
+    /// El archivo abierto en el editor se envió a la Papelera (botón
+    /// «Delete» del panel).
+    DocumentDeleted {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 /// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:
@@ -87,6 +100,12 @@ pub enum GalleryOp {
     /// nombre si no colisiona; si `src` ya está en `folder`, se comporta
     /// como `Duplicate` (sufijo « copy»).
     CopyInto { src: PathBuf, folder: PathBuf },
+    /// Cambia solo el nombre base (stem); la extensión no se toca —
+    /// cambiarla rompería `is_image_file`/`is_canvas_file` y la detección
+    /// de sidecar.
+    Rename { path: PathBuf, new_stem: String },
+    /// A la Papelera de reciclaje (crate `trash`), no borrado permanente.
+    Delete { path: PathBuf },
 }
 
 /// Nombre de archivo sin su última extensión, y esa extensión (ambos vacíos
@@ -138,6 +157,54 @@ fn duplicate_into(
     Ok(dst)
 }
 
+/// Cambia el nombre base de `path` a `new_stem`, conservando su extensión
+/// original. Si el destino ya existe se rechaza en vez de sobrescribir:
+/// `std::fs::rename` en Windows usa `MOVEFILE_REPLACE_EXISTING`, así que sin
+/// este chequeo previo un nombre repetido perdería el archivo que ya
+/// hubiera ahí en silencio. Si `path` es una imagen con sidecar, lo
+/// renombra también (mejor esfuerzo: un fallo ahí no deshace el renombrado
+/// principal, solo se registra).
+fn rename_with_sidecar(path: &std::path::Path, new_stem: &str) -> Result<PathBuf, String> {
+    let folder = path.parent().map(PathBuf::from).unwrap_or_default();
+    let (_, ext) = split_name(path);
+    let new_name = if ext.is_empty() {
+        new_stem.to_owned()
+    } else {
+        format!("{new_stem}.{ext}")
+    };
+    let dst = folder.join(&new_name);
+    if dst.exists() {
+        return Err(format!("\"{new_name}\" already exists"));
+    }
+    std::fs::rename(path, &dst).map_err(|e| e.to_string())?;
+    if canvas_io::is_image_file(path) {
+        let src_sidecar = canvas_io::sidecar_path(path);
+        if src_sidecar.is_file() {
+            let dst_sidecar = canvas_io::sidecar_path(&dst);
+            if let Err(e) = std::fs::rename(&src_sidecar, &dst_sidecar) {
+                tracing::warn!("no se pudo renombrar el sidecar: {e}");
+            }
+        }
+    }
+    Ok(dst)
+}
+
+/// Envía `path` (y su sidecar, si es una imagen que tiene uno) a la
+/// Papelera de reciclaje del sistema: recuperable si el usuario se
+/// equivoca, a diferencia de un borrado permanente.
+fn trash_with_sidecar(path: &std::path::Path) -> Result<(), String> {
+    trash::delete(path).map_err(|e| e.to_string())?;
+    if canvas_io::is_image_file(path) {
+        let sidecar = canvas_io::sidecar_path(path);
+        if sidecar.is_file() {
+            if let Err(e) = trash::delete(&sidecar) {
+                tracing::warn!("no se pudo borrar el sidecar: {e}");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Ejecuta una `GalleryOp` en un hilo de trabajo y avisa con
 /// `AppMsg::GalleryOpDone`.
 pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
@@ -174,6 +241,20 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                     Err(e) => (folder, None, Err(e)),
                 }
             }
+            GalleryOp::Rename { path, new_stem } => {
+                let folder = path.parent().map(PathBuf::from).unwrap_or_default();
+                match rename_with_sidecar(&path, &new_stem) {
+                    Ok(dst) => (folder, Some(dst), Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
+            GalleryOp::Delete { path } => {
+                let folder = path.parent().map(PathBuf::from).unwrap_or_default();
+                match trash_with_sidecar(&path) {
+                    Ok(()) => (folder, None, Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
         };
         let _ = tx.send(AppMsg::GalleryOpDone {
             folder,
@@ -181,6 +262,34 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
             result,
             open,
         });
+        ctx.request_repaint();
+    });
+}
+
+/// Renombra el archivo abierto en el editor (y su sidecar, si lo tiene) —
+/// disparado desde el lápiz junto al nombre en el panel de propiedades.
+pub fn spawn_document_rename(
+    path: PathBuf,
+    new_stem: String,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = rename_with_sidecar(&path, &new_stem);
+        let _ = tx.send(AppMsg::DocumentRenamed {
+            old_path: path,
+            result,
+        });
+        ctx.request_repaint();
+    });
+}
+
+/// Envía a la Papelera de reciclaje el archivo abierto en el editor (y su
+/// sidecar) — disparado desde el botón «Delete» del panel de propiedades.
+pub fn spawn_document_delete(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let result = trash_with_sidecar(&path);
+        let _ = tx.send(AppMsg::DocumentDeleted { path, result });
         ctx.request_repaint();
     });
 }

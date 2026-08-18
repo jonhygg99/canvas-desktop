@@ -68,6 +68,8 @@ directories = "6"
 tempfile = "3"
 interprocess = "2"
 notify = "8"
+# Papelera de reciclaje del SO (borrar desde la galería sin ser permanente).
+trash = "5"
 # Menús nativos (Windows: init_for_hwnd; en Linux exigiría GTK → fallback egui).
 muda = "0.17"
 raw-window-handle = "0.6"

@@ -733,15 +733,66 @@ impl App {
                             // Solo rescanea si el usuario sigue en esa galería:
                             // pudo haber navegado mientras corría la copia.
                             if matches!(&self.view, View::Gallery(g) if g.folder == folder) {
+                                // El resultado de la operación queda
+                                // seleccionado (borde azul): la copia recién
+                                // duplicada/pegada, el archivo recién
+                                // renombrado, o nada tras un borrado
+                                // (`created` es `None`, limpia la marca).
+                                if let View::Gallery(g) = &mut self.view {
+                                    g.selected = created.clone();
+                                }
                                 self.rescan_gallery(ctx);
                             }
                         }
                         Err(e) => {
                             // No hay nada destructivo que deshacer (la copia
-                            // fallida ya se revirtió en el hilo de trabajo);
-                            // se queda en la galería y solo se registra.
+                            // fallida ya se revirtió en el hilo de trabajo).
+                            // Se registra y, si el usuario sigue en esa
+                            // galería, también se le muestra: antes solo
+                            // quedaba en el log, invisible en la UI.
                             tracing::warn!("operación de galería fallida: {e}");
+                            if let View::Gallery(g) = &mut self.view {
+                                if g.folder == folder {
+                                    g.op_error = Some(e);
+                                }
+                            }
                         }
+                    }
+                }
+                AppMsg::DocumentRenamed { old_path, result } => {
+                    if let View::Editor(state) = &mut self.view {
+                        if state.doc.source_path.as_deref() == Some(old_path.as_path()) {
+                            match result {
+                                Ok(new_path) => state.doc.source_path = Some(new_path),
+                                // Reutiliza el banner de error que ya existe
+                                // en el panel: no hace falta un campo nuevo.
+                                Err(e) => state.save_error = Some(e),
+                            }
+                        }
+                    }
+                }
+                AppMsg::DocumentDeleted { path, result } => {
+                    // `state` toma prestado `self.view`; no se puede
+                    // reasignar `self.view` mientras siga vivo, así que la
+                    // decisión se guarda en una variable local y se aplica
+                    // después de que el préstamo termine.
+                    let mut go_to_welcome = false;
+                    if let View::Editor(state) = &mut self.view {
+                        if state.doc.source_path.as_deref() == Some(path.as_path()) {
+                            match result {
+                                // El archivo ya no existe: no tiene sentido
+                                // preguntar por cambios sin guardar, se
+                                // navega directo.
+                                Ok(()) => match state.from_gallery.clone() {
+                                    Some(folder) => open_after = Some(Nav::Open(folder)),
+                                    None => go_to_welcome = true,
+                                },
+                                Err(e) => state.save_error = Some(e),
+                            }
+                        }
+                    }
+                    if go_to_welcome {
+                        self.view = View::Welcome { error: None };
                     }
                 }
                 AppMsg::FocusWindow => {
@@ -1286,6 +1337,22 @@ impl eframe::App for App {
                         ctx.clone(),
                     );
                 }
+                Some(gallery::GalleryAction::Rename(path, new_stem)) => {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::Rename { path, new_stem },
+                        false,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
+                Some(gallery::GalleryAction::Delete(path)) => {
+                    loader::spawn_gallery_op(
+                        loader::GalleryOp::Delete { path },
+                        false,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
                 None => {}
             },
             View::Editor(state) => {
@@ -1342,6 +1409,35 @@ impl eframe::App for App {
                                 _ => {}
                             }
                         }
+                    }
+                }
+
+                // Renombrar/borrar el archivo abierto (lápiz junto al
+                // nombre / botón «Delete» del panel).
+                if let Some(new_stem) = state.file_rename_requested.take() {
+                    if let Some(path) = state.doc.source_path.clone() {
+                        // Misma ventana de gracia que un guardado
+                        // (`Saved` de éxito, más abajo): se abre ANTES de
+                        // lanzar la operación, no solo al recibir la
+                        // respuesta. Renombrar hace que el watcher (que
+                        // sigue mirando la ruta vieja) vea el archivo
+                        // "desaparecer" — un evento mucho más inmediato
+                        // que el de un guardado en el sitio — y sin esto
+                        // el banner de «cambió por fuera» podía saltar en
+                        // la carrera entre ese evento y el mensaje
+                        // `DocumentRenamed` que actualiza `source_path`.
+                        self.ignore_fs_events_until =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                        self.watcher = None;
+                        loader::spawn_document_rename(path, new_stem, self.tx.clone(), ctx.clone());
+                    }
+                }
+                if std::mem::take(&mut state.delete_requested) {
+                    if let Some(path) = state.doc.source_path.clone() {
+                        self.ignore_fs_events_until =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                        self.watcher = None;
+                        loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                     }
                 }
 
