@@ -12,8 +12,9 @@ mod selection;
 mod snap;
 
 pub use align::{
-    align_horizontal, align_vertical, contain_transform, cover_transform, resize_from_corner,
-    resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform, Corner, HAlign, VAlign,
+    align_horizontal, align_vertical, contain_transform, cover_transform, resize_around_center,
+    resize_from_corner, resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform,
+    Corner, HAlign, VAlign,
 };
 pub use command::{
     Command, Composite, Group, History, InsertLayer, RemoveLayer, Rename, Reorder, SetBlur,

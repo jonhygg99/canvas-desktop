@@ -1455,6 +1455,15 @@ fn layer_properties_ui(
         });
     }
 
+    // Los campos de tamaño (W/H/Scale) escalan alrededor del centro, igual
+    // que la rotación gira sobre él; anclar la esquina superior izquierda
+    // hacía "caer" la capa hacia abajo-derecha al agrandarla.
+    if t.width != original.width || t.height != original.height {
+        let sized = canvas_core::resize_around_center(&original, t.width, t.height);
+        t.x = sized.x;
+        t.y = sized.y;
+    }
+
     ui.add_space(8.0);
 
     // --- Contenido (texto / forma) ---

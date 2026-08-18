@@ -76,6 +76,24 @@ pub fn contain_transform(natural_w: f64, natural_h: f64, page_w: f64, page_h: f6
     )
 }
 
+/// Cambia el tamaño de una capa manteniendo su centro fijo (el aumento o la
+/// disminución se reparte por igual a los cuatro lados). Es lo que usan los
+/// campos de tamaño del panel de propiedades; los tiradores de esquina del
+/// lienzo, en cambio, anclan la esquina opuesta (`resize_from_corner`).
+///
+/// La rotación no necesita tratamiento especial: ya es alrededor del centro.
+pub fn resize_around_center(start: &Transform, width: f64, height: f64) -> Transform {
+    let (cx, cy) = start.center();
+    let (width, height) = (width.max(1.0), height.max(1.0));
+    Transform {
+        x: cx - width / 2.0,
+        y: cy - height / 2.0,
+        width,
+        height,
+        ..*start
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corner {
     TopLeft,
@@ -411,6 +429,49 @@ mod tests {
         let cover = cover_transform(1080.0, 1080.0, 500.0, 500.0);
         assert_eq!(contain, cover);
         assert_eq!((contain.width, contain.height), (500.0, 500.0));
+    }
+
+    #[test]
+    fn resize_around_center_keeps_center() {
+        let start = t(10.0, 20.0, 100.0, 50.0);
+        let (cx, cy) = start.center();
+
+        let grown = resize_around_center(&start, 200.0, 150.0);
+        assert_eq!((grown.width, grown.height), (200.0, 150.0));
+        let (gcx, gcy) = grown.center();
+        assert!((gcx - cx).abs() < 1e-9);
+        assert!((gcy - cy).abs() < 1e-9);
+
+        let shrunk = resize_around_center(&start, 40.0, 10.0);
+        assert_eq!((shrunk.width, shrunk.height), (40.0, 10.0));
+        let (scx, scy) = shrunk.center();
+        assert!((scx - cx).abs() < 1e-9);
+        assert!((scy - cy).abs() < 1e-9);
+    }
+
+    #[test]
+    fn resize_around_center_preserves_rotation_and_flips() {
+        let start = Transform {
+            rotation: 30.0,
+            flip_h: true,
+            flip_v: true,
+            ..t(10.0, 20.0, 100.0, 50.0)
+        };
+        let r = resize_around_center(&start, 200.0, 150.0);
+        assert_eq!(r.rotation, 30.0);
+        assert!(r.flip_h);
+        assert!(r.flip_v);
+    }
+
+    #[test]
+    fn resize_around_center_clamps_min_size() {
+        let start = t(10.0, 20.0, 100.0, 50.0);
+        let (cx, cy) = start.center();
+        let r = resize_around_center(&start, 0.0, -5.0);
+        assert_eq!((r.width, r.height), (1.0, 1.0));
+        let (rcx, rcy) = r.center();
+        assert!((rcx - cx).abs() < 1e-9);
+        assert!((rcy - cy).abs() < 1e-9);
     }
 
     #[test]
