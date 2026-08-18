@@ -56,6 +56,26 @@ pub fn cover_transform(natural_w: f64, natural_h: f64, page_w: f64, page_h: f64)
     )
 }
 
+/// Transform que ENCAJA la imagen dentro de la página conservando su
+/// proporción (estilo «contain»: escala al mínimo necesario para tocar el
+/// borde que antes llegue y centra). A diferencia del encaje al añadir una
+/// capa sobre un lienzo no vacío, aquí sí se amplía si la imagen es más
+/// pequeña que la página.
+pub fn contain_transform(natural_w: f64, natural_h: f64, page_w: f64, page_h: f64) -> Transform {
+    if natural_w <= 0.0 || natural_h <= 0.0 {
+        return Transform::new(0.0, 0.0, page_w.max(1.0), page_h.max(1.0));
+    }
+    let scale = (page_w / natural_w).min(page_h / natural_h);
+    let width = natural_w * scale;
+    let height = natural_h * scale;
+    Transform::new(
+        (page_w - width) / 2.0,
+        (page_h - height) / 2.0,
+        width,
+        height,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corner {
     TopLeft,
@@ -359,6 +379,38 @@ mod tests {
         assert!((c.height - 1920.0).abs() < 1e-9);
         assert!(c.width > 1080.0);
         assert!((c.x - (1080.0 - c.width) / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn contain_upscales_a_smaller_image_and_centers() {
+        // Imagen vertical 9:16 pequeña sobre página cuadrada: manda el alto,
+        // se amplía (a diferencia de un simple "encajar sin ampliar"), y
+        // sobra ancho repartido a partes iguales.
+        let c = contain_transform(540.0, 960.0, 1080.0, 1080.0);
+        assert!((c.height - 1080.0).abs() < 1e-9);
+        assert!(c.width < 1080.0);
+        assert!(c.width > 540.0);
+        assert!((c.x - (1080.0 - c.width) / 2.0).abs() < 1e-9);
+        assert_eq!(c.y, 0.0);
+    }
+
+    #[test]
+    fn contain_shrinks_a_larger_image_to_fit() {
+        // Imagen 4:3 grande sobre página 16:9: manda el alto, sobra ancho.
+        let c = contain_transform(3000.0, 2000.0, 1920.0, 1080.0);
+        assert!((c.height - 1080.0).abs() < 1e-9);
+        assert!(c.width < 1920.0);
+        assert!((c.x - (1920.0 - c.width) / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn contain_matches_cover_when_the_aspect_ratio_is_the_same() {
+        // Misma proporción que la página: "contain" y "cover" coinciden
+        // exactamente, sin hueco ni recorte.
+        let contain = contain_transform(1080.0, 1080.0, 500.0, 500.0);
+        let cover = cover_transform(1080.0, 1080.0, 500.0, 500.0);
+        assert_eq!(contain, cover);
+        assert_eq!((contain.width, contain.height), (500.0, 500.0));
     }
 
     #[test]

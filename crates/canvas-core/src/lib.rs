@@ -12,7 +12,7 @@ mod selection;
 mod snap;
 
 pub use align::{
-    align_horizontal, align_vertical, cover_transform, resize_from_corner,
+    align_horizontal, align_vertical, contain_transform, cover_transform, resize_from_corner,
     resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform, Corner, HAlign, VAlign,
 };
 pub use command::{

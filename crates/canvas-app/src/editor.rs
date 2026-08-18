@@ -3,10 +3,10 @@
 use std::path::PathBuf;
 
 use canvas_core::{
-    cover_transform, resize_rotated_from_corner, snap_translation, trim_crop_from_corner,
-    uncrop_transform, CoreError, Corner, CropRect, Document, History, ImageContent, InsertLayer,
-    Layer, LayerContent, LayerId, RemoveLayer, Selection, SetCrop, SetPageSize, SetTransform,
-    Transform,
+    contain_transform, cover_transform, resize_rotated_from_corner, snap_translation,
+    trim_crop_from_corner, uncrop_transform, CoreError, Corner, CropRect, Document, History,
+    ImageContent, InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, Selection, SetCrop,
+    SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, ImageMap};
@@ -322,10 +322,18 @@ impl EditorState {
         }
     }
 
-    /// Añade una imagen como capa nueva encima de las existentes (deshacible),
-    /// encajada en la página si es mayor que ella, y la selecciona. `source`
-    /// es `None` cuando la imagen viene del portapapeles del sistema (no
-    /// tiene un archivo de origen en disco).
+    /// Añade una imagen como capa nueva (deshacible) y la selecciona.
+    /// `source` es `None` cuando la imagen viene del portapapeles del
+    /// sistema (no tiene un archivo de origen en disco).
+    ///
+    /// Sobre un lienzo VACÍO (sin ninguna capa, el caso de un diseño nuevo),
+    /// la imagen se AMPLÍA para tocar el borde que antes llegue («contain»,
+    /// estilo CapCut/Canva) en vez de solo encajarla si es mayor que la
+    /// página; si con eso no cubre la página entera, se añade también un
+    /// fondo desenfocado automático — misma receta que el checkbox «Blurred
+    /// background» (`set_blurred_background`), en el mismo paso de deshacer.
+    /// Sobre un lienzo con contenido, el comportamiento es el de siempre:
+    /// centrada, sin ampliar y sin fondo.
     pub fn add_image_layer(
         &mut self,
         name: impl Into<String>,
@@ -334,34 +342,66 @@ impl EditorState {
     ) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
+        let empty = page.layers.is_empty();
         let index = page.layers.len();
 
         let (nw, nh) = (f64::from(img.width), f64::from(img.height));
-        let scale = (pw / nw).min(ph / nh).min(1.0);
-        let (w, h) = (nw * scale, nh * scale);
-        let transform = Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h);
+        let transform = if empty {
+            contain_transform(nw, nh, pw, ph)
+        } else {
+            let scale = (pw / nw).min(ph / nh).min(1.0);
+            let (w, h) = (nw * scale, nh * scale);
+            Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h)
+        };
+        // Con el mismo aspecto que la página, "contain" ya la cubre entera:
+        // ese margen es solo tolerancia de redondeo, no hueco real.
+        let needs_background =
+            empty && !(transform.width >= pw * 0.999 && transform.height >= ph * 0.999);
 
+        let content = ImageContent {
+            source_path: source,
+            natural_width: img.width,
+            natural_height: img.height,
+            crop: None,
+        };
+        let pixels = image_data_from_rgba(img.rgba, img.width, img.height);
         let id = self.doc.allocate_layer_id();
-        let layer = Layer::new(
-            id,
-            name,
-            transform,
-            LayerContent::Image(ImageContent {
-                source_path: source,
-                natural_width: img.width,
-                natural_height: img.height,
-                crop: None,
-            }),
-        );
-        if let Err(e) = self
-            .history
-            .apply(&mut self.doc, Box::new(InsertLayer { index, layer }))
-        {
+        let layer = Layer::new(id, name, transform, LayerContent::Image(content.clone()));
+
+        let mut commands: Vec<Box<dyn canvas_core::Command>> = Vec::new();
+        let mut bg_id = None;
+        if needs_background {
+            let new_bg_id = self.doc.allocate_layer_id();
+            let mut bg = Layer::new(
+                new_bg_id,
+                "Blurred background",
+                cover_transform(nw, nh, pw, ph),
+                LayerContent::Image(content),
+            );
+            bg.effects.blur_radius = 50.0;
+            commands.push(Box::new(InsertLayer {
+                index: 0,
+                layer: bg,
+            }));
+            bg_id = Some(new_bg_id);
+        }
+        commands.push(Box::new(InsertLayer {
+            index: index + usize::from(bg_id.is_some()),
+            layer,
+        }));
+
+        if let Err(e) = self.history.apply(
+            &mut self.doc,
+            Box::new(canvas_core::Composite::new("Add image", commands)),
+        ) {
             tracing::error!("añadir capa falló: {e}");
             return;
         }
-        self.images
-            .insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
+        if let Some(bg_id) = bg_id {
+            self.images.insert(bg_id, pixels.clone());
+            self.background_layer = Some(bg_id);
+        }
+        self.images.insert(id, pixels);
         self.selection = Selection::single(id);
     }
 
@@ -2464,5 +2504,83 @@ fn draw_rulers(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
             fg,
         );
         y += step;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canvas_core::ShapeContent;
+
+    fn loaded_image(width: u32, height: u32) -> LoadedImage {
+        LoadedImage {
+            rgba: vec![0u8; (width * height * 4) as usize],
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn pasting_into_an_empty_canvas_expands_and_adds_a_blurred_background() {
+        let mut state = EditorState::new_blank(1080.0, 1080.0);
+        state.add_image_layer("Pasted Image", None, loaded_image(540, 960));
+
+        let page = state.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 2);
+
+        // Fondo: al fondo de la pila, cubre la página entera y desenfocado.
+        let bg = &page.layers[0];
+        assert_eq!(bg.name, "Blurred background");
+        assert_eq!(bg.effects.blur_radius, 50.0);
+        assert!(bg.transform.width >= page.width - 1e-6);
+        assert!(bg.transform.height >= page.height - 1e-6);
+        assert_eq!(Some(bg.id), state.background_layer);
+
+        // Imagen: se amplía hasta tocar el alto (9:16 en página 1:1), centrada.
+        let fg = &page.layers[1];
+        assert!((fg.transform.height - page.height).abs() < 1e-6);
+        assert!(fg.transform.width < page.width);
+        assert!((fg.transform.x - (page.width - fg.transform.width) / 2.0).abs() < 1e-6);
+        assert_eq!(state.selection.primary(), Some(fg.id));
+
+        // Un solo Ctrl+Z deja el lienzo vacío otra vez (imagen + fondo).
+        state.undo();
+        assert!(state.doc.page().unwrap().layers.is_empty());
+        assert!(state.selection.primary().is_none());
+    }
+
+    #[test]
+    fn pasting_a_square_image_into_a_matching_square_canvas_skips_the_background() {
+        let mut state = EditorState::new_blank(1000.0, 1000.0);
+        state.add_image_layer("Pasted Image", None, loaded_image(500, 500));
+
+        let page = state.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 1);
+        assert_eq!(state.background_layer, None);
+        let fg = &page.layers[0];
+        assert_eq!((fg.transform.width, fg.transform.height), (1000.0, 1000.0));
+    }
+
+    #[test]
+    fn pasting_into_a_non_empty_canvas_keeps_the_old_contain_behavior() {
+        let mut state = EditorState::new_blank(1080.0, 1080.0);
+        // Deja el lienzo no vacío con una capa que no es una imagen.
+        state.insert_layer_centered(
+            "Rect",
+            100.0,
+            100.0,
+            LayerContent::Shape(ShapeContent::default()),
+        );
+
+        state.add_image_layer("Pasted Image", None, loaded_image(540, 960));
+
+        let page = state.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 2);
+        assert_eq!(state.background_layer, None);
+
+        // Nunca se amplía sobre un lienzo no vacío: 960 < 1080, cabe sin
+        // escalar, y "contain" no se aplica (comportamiento de siempre).
+        let fg = &page.layers[1];
+        assert_eq!((fg.transform.width, fg.transform.height), (540.0, 960.0));
     }
 }
