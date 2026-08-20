@@ -1267,6 +1267,14 @@ impl App {
                                     if self.deck.slots.len() > 1 {
                                         let removed = self.deck.active;
                                         self.deck.slots.remove(removed);
+                                        // Sin esto los supervivientes se
+                                        // quedan con el `rect` viejo
+                                        // (calculado con la borrada
+                                        // todavía en la pila) hasta el
+                                        // próximo cambio que sí encienda
+                                        // el flag — se ve como un hueco
+                                        // vacío que nadie ocupa.
+                                        self.deck.layout_dirty = true;
                                         let neighbor =
                                             removed.min(self.deck.slots.len().saturating_sub(1));
                                         if let Some(slot) = self.deck.slots.get_mut(neighbor) {
@@ -1308,6 +1316,22 @@ impl App {
                                     self.deck.slots.iter().position(|s| s.path == path)
                                 {
                                     self.deck.slots.remove(idx);
+                                    // Si la borrada estaba ANTES de la
+                                    // activa en el `Vec`, todo lo posterior
+                                    // se desplaza un puesto — sin este
+                                    // ajuste `deck.active` (un índice, no un
+                                    // id) pasaría a apuntar a la ranura
+                                    // equivocada, y la que de verdad sigue
+                                    // activa dejaría de encajar en ninguna
+                                    // rama del render (ni "es la activa" ni
+                                    // "tiene contenido `Ready`", porque su
+                                    // contenido es el marcador `Active`) —
+                                    // su cuerpo desaparecía aunque la
+                                    // cabecera se siguiera pintando.
+                                    if idx < self.deck.active {
+                                        self.deck.active -= 1;
+                                    }
+                                    self.deck.layout_dirty = true;
                                 }
                             }
                             Err(e) => tracing::warn!(
