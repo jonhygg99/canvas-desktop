@@ -49,7 +49,14 @@ fn main() -> Result<()> {
 
     // 1) Sin ajustes: los píxeles salen tal cual entraron.
     let (doc, images, _) = make_doc(w, h, rgba.clone())?;
-    let (neutral, ..) = renderer.bake_page(device, queue, &doc, &images, 1.0)?;
+    let (neutral, ..) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    )?;
     anyhow::ensure!(
         neutral == rgba,
         "el horneado neutro debería ser idéntico al original"
@@ -59,7 +66,14 @@ fn main() -> Result<()> {
     // 2) Escala de grises al 100 %: R, G y B casi iguales en todo píxel.
     let (mut doc, images, id) = make_doc(w, h, rgba)?;
     doc.layer_mut(id)?.effects.grayscale = 1.0;
-    let (gray, ..) = renderer.bake_page(device, queue, &doc, &images, 1.0)?;
+    let (gray, ..) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    )?;
     let center = ((32 * w + 32) * 4) as usize;
     let px = &gray[center..center + 3];
     anyhow::ensure!(

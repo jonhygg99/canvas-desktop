@@ -44,7 +44,14 @@ fn main() -> Result<()> {
     let (device, queue) = (&handle.device, &handle.queue);
 
     let mut renderer = CanvasRenderer::new(device)?;
-    let (rgba, bw, bh) = renderer.bake_page(device, queue, &doc, &images, 1.0)?;
+    let (rgba, bw, bh) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    )?;
 
     image::RgbaImage::from_raw(bw, bh, rgba)
         .context("buffer horneado con tamaño inesperado")?

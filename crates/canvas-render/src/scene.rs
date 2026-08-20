@@ -173,12 +173,9 @@ fn checker_image() -> &'static ImageData {
     })
 }
 
-/// Construye la escena del documento con la transformación de vista dada
-/// (página → píxeles físicos del lienzo). `blurred` sustituye la imagen de
-/// las capas con desenfoque activo (textura GPU ya procesada).
-///
-/// Con `decorated` se pintan los adornos de edición (tablero de transparencia
-/// y borde de página); el horneado para guardar/exportar va sin ellos.
+/// Construye la escena de UN documento con la transformación de vista dada
+/// (página → píxeles físicos del lienzo). Envoltorio de una sola llamada a
+/// `append_document`: mismo resultado byte a byte que antes de que existiera.
 pub fn build_scene(
     doc: &Document,
     images: &ImageMap,
@@ -187,8 +184,28 @@ pub fn build_scene(
     decorated: bool,
 ) -> Scene {
     let mut scene = Scene::new();
+    append_document(&mut scene, doc, images, blurred, view, decorated);
+    scene
+}
+
+/// Añade UN documento a una escena ya empezada, con su propia transformación
+/// de vista. El editor multi-lienzo llama a esto una vez por lienzo visible
+/// de la baraja, todos en la MISMA escena (un solo `CanvasSurface`). `blurred`
+/// sustituye la imagen de las capas con desenfoque activo (textura GPU ya
+/// procesada).
+///
+/// Con `decorated` se pintan los adornos de edición (tablero de transparencia
+/// y borde de página); el horneado para guardar/exportar va sin ellos.
+pub fn append_document(
+    scene: &mut Scene,
+    doc: &Document,
+    images: &ImageMap,
+    blurred: &ImageMap,
+    view: Affine,
+    decorated: bool,
+) {
     let Ok(page) = doc.page() else {
-        return scene;
+        return;
     };
     let page_rect = Rect::new(0.0, 0.0, page.width, page.height);
 
@@ -354,7 +371,7 @@ pub fn build_scene(
             }
             LayerContent::Text(text) => {
                 let t = layer.transform;
-                draw_text(&mut scene, view * place_transform(&t), text, t.width);
+                draw_text(scene, view * place_transform(&t), text, t.width);
             }
             LayerContent::Shape(shape) => {
                 let t = layer.transform;
@@ -433,6 +450,4 @@ pub fn build_scene(
             &page_rect,
         );
     }
-
-    scene
 }

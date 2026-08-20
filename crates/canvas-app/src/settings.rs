@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+use crate::deck::{DeckAxis, StripSide};
+
 /// Tema de la interfaz.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeChoice {
@@ -36,11 +38,17 @@ impl ThemeChoice {
 }
 
 /// Criterio de orden de la galería de carpetas.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
 pub enum GallerySort {
     #[default]
     Name,
     DateModified,
+    /// Orden explícito del usuario (flechas ◀/▶ del panel del lienzo).
+    /// Nunca se ofrece como opción del selector de la galería: se entra en
+    /// él implícitamente al mover una ranura (`Deck::move_slot`), y
+    /// DELIBERADAMENTE no se persiste en `AppSettings` — es una decisión
+    /// sobre esta carpeta, no una preferencia global.
+    Manual,
 }
 
 impl GallerySort {
@@ -48,7 +56,103 @@ impl GallerySort {
         match self {
             GallerySort::Name => "Name",
             GallerySort::DateModified => "Date modified",
+            GallerySort::Manual => "Manual order",
         }
+    }
+}
+
+/// Compara dos nombres tratando cada tramo de dígitos consecutivos como un
+/// número, no como texto — así "6.png" ordena antes que "51.png" en vez de
+/// después. El `Ord` de `String` puro (byte a byte) es lo que usaba antes
+/// `GallerySort::Name`: en una carpeta de fotos numeradas sin ceros de
+/// relleno (`1.png`..`51.png`) las de un solo dígito (6,7,8,9) acababan
+/// DESPUÉS de la 51 — una sorpresa real, no una preferencia de nadie.
+/// Explorador de Windows y Finder ya comparan así por defecto, así que
+/// "Name" pasa a significar esto en vez de añadir un tercer criterio.
+pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        let (ac, bc) = match (ai.peek().copied(), bi.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(ac), Some(bc)) => (ac, bc),
+        };
+        if ac.is_ascii_digit() && bc.is_ascii_digit() {
+            let mut a_run = String::new();
+            while let Some(&c) = ai.peek() {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                a_run.push(c);
+                ai.next();
+            }
+            let mut b_run = String::new();
+            while let Some(&c) = bi.peek() {
+                if !c.is_ascii_digit() {
+                    break;
+                }
+                b_run.push(c);
+                bi.next();
+            }
+            // Sin ceros a la izquierda para comparar el valor, no los
+            // dígitos: longitud primero (más dígitos = número mayor, ya sin
+            // ceros de relleno), luego lexicográfico como desempate entre
+            // tramos de igual longitud.
+            let a_trimmed = a_run.trim_start_matches('0');
+            let b_trimmed = b_run.trim_start_matches('0');
+            let ord = a_trimmed
+                .len()
+                .cmp(&b_trimmed.len())
+                .then_with(|| a_trimmed.cmp(b_trimmed));
+            if ord != Ordering::Equal {
+                return ord;
+            }
+            // Mismo valor numérico (p.ej. "007" y "7"): sigue comparando el
+            // resto del nombre en vez de darlo por empatado aquí.
+        } else {
+            let al = ac.to_ascii_lowercase();
+            let bl = bc.to_ascii_lowercase();
+            if al != bl {
+                return al.cmp(&bl);
+            }
+            ai.next();
+            bi.next();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn natural_cmp_orders_numbered_filenames_numerically() {
+        let mut names = vec!["6.png", "51.png", "10.png", "1.png", "9.png"];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(names, vec!["1.png", "6.png", "9.png", "10.png", "51.png"]);
+    }
+
+    #[test]
+    fn natural_cmp_is_case_insensitive_on_the_non_numeric_parts() {
+        assert_eq!(
+            natural_cmp("Photo2.png", "photo10.png"),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn natural_cmp_treats_leading_zeros_as_the_same_number() {
+        assert_eq!(natural_cmp("007.png", "7.png"), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn natural_cmp_falls_back_to_plain_text_without_digits() {
+        let mut names = vec!["banana.png", "apple.png", "cherry.png"];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(names, vec!["apple.png", "banana.png", "cherry.png"]);
     }
 }
 
@@ -70,6 +174,14 @@ pub struct AppSettings {
     /// Tamaño de página del último documento abierto o creado: lo hereda el
     /// siguiente diseño nuevo (galería, Ctrl+N o bienvenida).
     pub last_page_size: (f64, f64),
+    /// Eje de apilado de la baraja del editor (Fase 14e): con qué eje se
+    /// abre la próxima carpeta, hasta que el usuario lo cambie otra vez.
+    pub deck_axis: DeckAxis,
+    /// La tira de miniaturas de la baraja está visible por defecto.
+    pub deck_strip_visible: bool,
+    /// Lado de la ventana donde se ancla la tira de la baraja. Independiente
+    /// de `deck_axis` — ver la doc de `StripSide`.
+    pub deck_strip_side: StripSide,
 }
 
 impl Default for AppSettings {
@@ -82,6 +194,9 @@ impl Default for AppSettings {
             recent_files: Vec::new(),
             theme: ThemeChoice::default(),
             last_page_size: (1920.0, 1080.0),
+            deck_axis: DeckAxis::default(),
+            deck_strip_visible: true,
+            deck_strip_side: StripSide::default(),
         }
     }
 }

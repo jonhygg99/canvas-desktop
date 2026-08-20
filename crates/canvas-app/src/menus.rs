@@ -20,6 +20,8 @@ pub enum MenuAction {
     OpenFolder,
     Save,
     SaveAs,
+    /// Guarda todas las ranuras sucias de la baraja, no solo la activa.
+    SaveAll,
     Export,
     OpenRecent(PathBuf),
     Quit,
@@ -30,6 +32,19 @@ pub enum MenuAction {
     FitToWindow,
     ToggleGrid,
     ToggleRulers,
+    /// Salta al siguiente/anterior lienzo de la baraja (equivale a
+    /// `PageDown`/`PageUp`); no hace nada con un solo archivo abierto.
+    NextCanvas,
+    PrevCanvas,
+    /// Muestra/oculta la tira lateral de miniaturas de la baraja.
+    ToggleCanvasesPanel,
+    /// Alterna el eje de apilado de la baraja (vertical/horizontal).
+    ToggleCanvasesAxis,
+    /// Mueve la tira de la baraja al siguiente lado de la ventana.
+    CycleCanvasesSide,
+    /// Añade un lienzo en blanco al final de la baraja (celda "+" de la
+    /// tira, o aquí cuando la tira está oculta con un solo archivo).
+    AddCanvas,
     FullScreen,
     Settings,
     About,
@@ -83,6 +98,7 @@ mod native {
         fn build(hwnd: isize) -> Result<Self, muda::Error> {
             let ctrl = Modifiers::CONTROL;
             let ctrl_shift = Modifiers::CONTROL | Modifiers::SHIFT;
+            let ctrl_alt = Modifiers::CONTROL | Modifiers::ALT;
 
             let new_item = MenuItem::with_id("new", "New Design", true, accel(ctrl, Code::KeyN));
             let open_item = MenuItem::with_id("open", "Open…", true, accel(ctrl, Code::KeyO));
@@ -95,6 +111,8 @@ mod native {
             let save_item = MenuItem::with_id("save", "Save", false, accel(ctrl, Code::KeyS));
             let save_as_item =
                 MenuItem::with_id("save_as", "Save As…", false, accel(ctrl_shift, Code::KeyS));
+            let save_all_item =
+                MenuItem::with_id("save_all", "Save All", false, accel(ctrl_alt, Code::KeyS));
             let export_item =
                 MenuItem::with_id("export", "Export…", false, accel(ctrl_shift, Code::KeyE));
             let recent_menu = Submenu::with_id("recent", "Open Recent", true);
@@ -110,6 +128,7 @@ mod native {
                     &PredefinedMenuItem::separator(),
                     &save_item,
                     &save_as_item,
+                    &save_all_item,
                     &export_item,
                     &PredefinedMenuItem::separator(),
                     &recent_menu,
@@ -160,6 +179,15 @@ mod native {
                 MenuItem::with_id("fit", "Fit to Window", false, accel(ctrl, Code::Digit0));
             let grid_item = MenuItem::with_id("grid", "Grid", false, None);
             let rulers_item = MenuItem::with_id("rulers", "Rulers", false, None);
+            let next_canvas_item = MenuItem::with_id("next_canvas", "Next Canvas", false, None);
+            let prev_canvas_item = MenuItem::with_id("prev_canvas", "Previous Canvas", false, None);
+            let canvases_panel_item =
+                MenuItem::with_id("canvases_panel", "Canvases Panel", false, None);
+            let canvases_axis_item =
+                MenuItem::with_id("canvases_axis", "Canvases Axis", false, None);
+            let canvases_side_item =
+                MenuItem::with_id("canvases_side", "Canvases Panel Side", false, None);
+            let add_canvas_item = MenuItem::with_id("add_canvas", "Add Canvas", false, None);
             let full_screen_item = MenuItem::with_id("full_screen", "Full Screen", true, None);
 
             let view = Submenu::with_items(
@@ -172,6 +200,13 @@ mod native {
                     &PredefinedMenuItem::separator(),
                     &grid_item,
                     &rulers_item,
+                    &PredefinedMenuItem::separator(),
+                    &prev_canvas_item,
+                    &next_canvas_item,
+                    &canvases_panel_item,
+                    &canvases_axis_item,
+                    &canvases_side_item,
+                    &add_canvas_item,
                     &PredefinedMenuItem::separator(),
                     &full_screen_item,
                 ],
@@ -189,6 +224,7 @@ mod native {
             let editor_items = vec![
                 save_item,
                 save_as_item,
+                save_all_item,
                 export_item,
                 undo_item,
                 redo_item,
@@ -197,6 +233,12 @@ mod native {
                 fit_item,
                 grid_item,
                 rulers_item,
+                next_canvas_item,
+                prev_canvas_item,
+                canvases_panel_item,
+                canvases_axis_item,
+                canvases_side_item,
+                add_canvas_item,
                 cut_item,
                 copy_item,
                 paste_item,
@@ -232,6 +274,7 @@ mod native {
                 "open_folder" => Some(MenuAction::OpenFolder),
                 "save" => Some(MenuAction::Save),
                 "save_as" => Some(MenuAction::SaveAs),
+                "save_all" => Some(MenuAction::SaveAll),
                 "export" => Some(MenuAction::Export),
                 "quit" => Some(MenuAction::Quit),
                 "undo" => Some(MenuAction::Undo),
@@ -241,6 +284,12 @@ mod native {
                 "fit" => Some(MenuAction::FitToWindow),
                 "grid" => Some(MenuAction::ToggleGrid),
                 "rulers" => Some(MenuAction::ToggleRulers),
+                "next_canvas" => Some(MenuAction::NextCanvas),
+                "prev_canvas" => Some(MenuAction::PrevCanvas),
+                "canvases_panel" => Some(MenuAction::ToggleCanvasesPanel),
+                "canvases_axis" => Some(MenuAction::ToggleCanvasesAxis),
+                "canvases_side" => Some(MenuAction::CycleCanvasesSide),
+                "add_canvas" => Some(MenuAction::AddCanvas),
                 "full_screen" => Some(MenuAction::FullScreen),
                 "cut" => Some(MenuAction::Cut),
                 "copy" => Some(MenuAction::Copy),
@@ -335,6 +384,12 @@ pub fn menu_bar_ui(
                 .clicked()
             {
                 action = Some(MenuAction::SaveAs);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Save All"))
+                .clicked()
+            {
+                action = Some(MenuAction::SaveAll);
             }
             if ui
                 .add_enabled(editor_open, egui::Button::new("Export…"))
@@ -455,6 +510,44 @@ pub fn menu_bar_ui(
             {
                 action = Some(MenuAction::ToggleRulers);
             }
+            ui.separator();
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Previous Canvas"))
+                .clicked()
+            {
+                action = Some(MenuAction::PrevCanvas);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Next Canvas"))
+                .clicked()
+            {
+                action = Some(MenuAction::NextCanvas);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Canvases Panel"))
+                .clicked()
+            {
+                action = Some(MenuAction::ToggleCanvasesPanel);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Canvases Axis"))
+                .clicked()
+            {
+                action = Some(MenuAction::ToggleCanvasesAxis);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Canvases Panel Side"))
+                .clicked()
+            {
+                action = Some(MenuAction::CycleCanvasesSide);
+            }
+            if ui
+                .add_enabled(editor_open, egui::Button::new("Add Canvas"))
+                .clicked()
+            {
+                action = Some(MenuAction::AddCanvas);
+            }
+            ui.separator();
             if ui.button("Full Screen").clicked() {
                 action = Some(MenuAction::FullScreen);
             }

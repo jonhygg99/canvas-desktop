@@ -1,6 +1,7 @@
 //! Estado y UI del editor: el lienzo con zoom/paneo y el panel de propiedades.
 
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 use canvas_core::{
     contain_transform, cover_transform, resize_rotated_from_corner, snap_translation,
@@ -9,15 +10,30 @@ use canvas_core::{
     SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
-use canvas_render::{image_data_from_rgba, CanvasRenderer, ImageMap};
+use canvas_render::{image_data_from_rgba, CanvasRenderer, FxScope, ImageMap};
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 use vello::kurbo::Affine;
 
+use crate::deck::{Deck, DeckAxis, DeckRect, MoveDir, Slot, SlotContent};
+use crate::gallery::ItemKind;
+use crate::loader::{self, AppMsg};
 use crate::surface::CanvasSurface;
 
 const MIN_ZOOM: f64 = 0.02;
 const MAX_ZOOM: f64 = 32.0;
+
+/// Qué se vuelve a ajustar solo cuando la ventana cambia de tamaño. El
+/// último ajuste automático manda: `Ctrl+0` deja `Active`, `Ctrl+Alt+0` deja
+/// `All`, y cualquier zoom o paneo MANUAL lo apaga (`Off`) — nadie quiere
+/// pelearse con un reajuste que le deshace el zoom que acaba de hacer a
+/// mano. `Ctrl+0`/`Ctrl+Alt+0` lo vuelven a encender.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoFit {
+    Off,
+    Active,
+    All,
+}
 
 pub struct Viewport {
     /// Factor página → puntos de pantalla.
@@ -25,6 +41,18 @@ pub struct Viewport {
     /// Desplazamiento del origen de la página, en puntos, relativo al lienzo.
     pub pan: egui::Vec2,
     needs_fit: bool,
+    /// Centrar este rect (en espacio de baraja) en el próximo frame, sin
+    /// tocar el zoom: saltar a otro lienzo de la baraja por la tira o el
+    /// teclado. `canvas_ui` lo consume en cuanto conoce el tamaño real del
+    /// lienzo — un clic directo sobre un lienzo visible no lo usa, porque
+    /// si ya se ve no hace falta recentrar la vista.
+    center_request: Option<DeckRect>,
+    /// Qué volver a ajustar si el área de dibujo cambia de tamaño (ventana
+    /// maximizada/restaurada, un panel lateral arrastrado). `Off` tras
+    /// cualquier zoom o paneo manual.
+    auto_fit: AutoFit,
+    /// Último tamaño visto del área de dibujo, para detectar el cambio.
+    last_avail: egui::Vec2,
 }
 
 impl Default for Viewport {
@@ -33,37 +61,82 @@ impl Default for Viewport {
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             needs_fit: true,
+            center_request: None,
+            auto_fit: AutoFit::Active,
+            last_avail: egui::Vec2::ZERO,
         }
     }
 }
 
 impl Viewport {
-    fn fit(&mut self, page: (f64, f64), avail: egui::Vec2) {
+    /// Ajusta `target` (en espacio de baraja) a la ventana: cambia zoom y
+    /// pan. Con `target = (0,0,w,h)` (un solo lienzo en el origen) es
+    /// idéntico al `fit` de antes de la Fase 14c — el caso general solo
+    /// añade centrar sobre el centro de `target`, no necesariamente el
+    /// origen. `mode` es qué volver a repetir si la ventana cambia de
+    /// tamaño más tarde (ver `AutoFit`) — se recibe como parámetro, no se
+    /// asigna suelto en cada sitio, para que sea imposible añadir un camino
+    /// de ajuste que se olvide de armar/desarmar el reajuste automático.
+    fn fit(&mut self, target: DeckRect, avail: egui::Vec2, mode: AutoFit) {
         const MARGIN: f32 = 24.0;
-        let (pw, ph) = page;
-        if pw <= 0.0 || ph <= 0.0 {
+        if target.w <= 0.0 || target.h <= 0.0 {
             return;
         }
         let usable_w = f64::from((avail.x - 2.0 * MARGIN).max(32.0));
         let usable_h = f64::from((avail.y - 2.0 * MARGIN).max(32.0));
-        self.zoom = (usable_w / pw).min(usable_h / ph).clamp(MIN_ZOOM, MAX_ZOOM);
-        self.pan = egui::vec2(
-            ((f64::from(avail.x) - pw * self.zoom) / 2.0) as f32,
-            ((f64::from(avail.y) - ph * self.zoom) / 2.0) as f32,
-        );
+        self.zoom = (usable_w / target.w)
+            .min(usable_h / target.h)
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.center_on(target, avail);
         self.needs_fit = false;
+        self.auto_fit = mode;
+    }
+
+    /// Centra `target` (en espacio de baraja) en la ventana sin tocar el
+    /// zoom — saltar a otro lienzo de la baraja sin que el nivel de zoom
+    /// cambie de golpe.
+    fn center_on(&mut self, target: DeckRect, avail: egui::Vec2) {
+        let (cx, cy) = (target.x + target.w / 2.0, target.y + target.h / 2.0);
+        self.pan = egui::vec2(
+            (f64::from(avail.x) / 2.0 - cx * self.zoom) as f32,
+            (f64::from(avail.y) / 2.0 - cy * self.zoom) as f32,
+        );
     }
 
     fn zoom_at(&mut self, anchor: egui::Vec2, factor: f64) {
+        self.manual_view_change();
         let new_zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
         let applied = new_zoom / self.zoom;
         self.pan = anchor - (anchor - self.pan) * applied as f32;
         self.zoom = new_zoom;
     }
 
-    /// Vuelve a ajustar la página a la ventana en el próximo frame.
+    /// Vuelve a ajustar el lienzo activo a la ventana en el próximo frame.
     pub fn request_fit(&mut self) {
         self.needs_fit = true;
+    }
+
+    /// Pide centrar `target` (en espacio de baraja) en cuanto se conozca el
+    /// tamaño real del lienzo, sin tocar el zoom.
+    pub(crate) fn request_center(&mut self, target: DeckRect) {
+        self.center_request = Some(target);
+    }
+
+    /// ¿Cambió el tamaño del área de dibujo desde el frame anterior? Sella
+    /// el nuevo tamaño de paso. El umbral de medio punto evita reajustar
+    /// por el temblor sub-píxel de `available_size` al arrastrar un panel.
+    fn note_size(&mut self, avail: egui::Vec2) -> bool {
+        let changed =
+            (self.last_avail.x - avail.x).abs() > 0.5 || (self.last_avail.y - avail.y).abs() > 0.5;
+        self.last_avail = avail;
+        changed
+    }
+
+    /// El usuario ha movido la vista a mano (zoom o paneo): deja de
+    /// reajustar solo al redimensionar la ventana, hasta que vuelva a pedir
+    /// un ajuste explícito (`Ctrl+0`/`Ctrl+Alt+0`).
+    fn manual_view_change(&mut self) {
+        self.auto_fit = AutoFit::Off;
     }
 }
 
@@ -178,6 +251,28 @@ pub struct EditorState {
     /// El usuario confirmó (diálogo nativo ya mostrado) borrar el archivo
     /// abierto.
     pub delete_requested: bool,
+    /// Petición de saltar a otro lienzo de la baraja (`PageUp`/`PageDown`/
+    /// `Home`/`End`); la app resuelve el destino contra `Deck` y pregunta si
+    /// hace falta por cambios sin guardar, igual que «Back to gallery».
+    pub deck_nav: Option<DeckNav>,
+    /// La pulsación primaria en curso empezó sobre un lienzo que NO era el
+    /// activo: pertenece a la baraja (activar ese lienzo), no a las capas
+    /// del documento activo. Vive aquí y no en una local de `canvas_ui`
+    /// porque tiene que sobrevivir a TODOS los frames del gesto — pulsar,
+    /// arrastrar y soltar — no solo al frame en que se detecta, y una local
+    /// no sobrevive entre frames. Deliberadamente FUERA de `is_idle()`: la
+    /// bandera existe justo para que `apply_jump` SÍ pueda saltar mientras
+    /// el botón sigue pulsado.
+    pub(crate) press_on_other_slot: bool,
+}
+
+/// Dirección de salto entre lienzos de la baraja, pedida por teclado.
+#[derive(Clone, Copy)]
+pub enum DeckNav {
+    Next,
+    Prev,
+    First,
+    Last,
 }
 
 impl EditorState {
@@ -227,6 +322,8 @@ impl EditorState {
             file_rename_edit: None,
             file_rename_requested: None,
             delete_requested: false,
+            deck_nav: None,
+            press_on_other_slot: false,
         }
     }
 
@@ -670,6 +767,29 @@ impl EditorState {
         if delete {
             crate::clipboard::delete_selected(self);
         }
+
+        // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un
+        // alias (memoria muscular de pestañas de navegador); las flechas se
+        // dejan libres a propósito para el futuro «mover capa con teclado».
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::PageDown))
+                || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown))
+        }) {
+            self.deck_nav = Some(DeckNav::Next);
+        } else if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::PageUp))
+                || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::PageUp))
+        }) {
+            self.deck_nav = Some(DeckNav::Prev);
+        } else if ctx
+            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::Home)))
+        {
+            self.deck_nav = Some(DeckNav::First);
+        } else if ctx
+            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::End)))
+        {
+            self.deck_nav = Some(DeckNav::Last);
+        }
     }
 
     /// Deshace el último comando (menú Edit o Ctrl+Z).
@@ -707,6 +827,76 @@ impl EditorState {
 
     pub fn is_dirty(&self) -> bool {
         self.history.is_dirty()
+    }
+
+    /// ¿Hay algún gesto o edición de panel a medias, o un guardado/
+    /// exportación en curso? Solo entonces es seguro cambiar de lienzo
+    /// activo (`deck::apply_jump`): gracias a esta guardia los temporales de
+    /// gesto no necesitan viajar en `SlotDoc`, porque siempre están vacíos
+    /// en el instante del intercambio. `saving`/`exporting` son igual de
+    /// importantes: un guardado en curso ya capturó su propio RGBA por
+    /// valor (cambiar de activo no le tocaría los píxeles escritos), pero
+    /// `AppMsg::Saved` opera sobre "lo que sea que esté activo cuando
+    /// llegue" — si eso cambiase a mitad de guardado, marcaría como
+    /// guardado el documento EQUIVOCADO.
+    pub(crate) fn is_idle(&self) -> bool {
+        matches!(self.gesture, Gesture::None)
+            && self.panel_edit.is_none()
+            && self.page_edit.is_none()
+            && self.blur_edit.is_none()
+            && self.color_edit.is_none()
+            && self.content_edit.is_none()
+            && self.shadow_edit.is_none()
+            && self.rename_edit.is_none()
+            && self.file_rename_edit.is_none()
+            && !self.saving
+            && !self.exporting
+    }
+
+    /// Extrae el lienzo activo a un `SlotDoc` para guardarlo en su ranura de
+    /// la baraja, dejando `self` con un documento de relleno. Solo se llama
+    /// con `is_idle() == true` (comprobado por el llamador, `deck::apply_jump`).
+    pub(crate) fn take_slot(&mut self) -> crate::deck::SlotDoc {
+        let bytes = self
+            .images
+            .values()
+            .map(|img| img.width as usize * img.height as usize * 4)
+            .sum();
+        crate::deck::SlotDoc {
+            doc: std::mem::replace(&mut self.doc, Document::new(1.0, 1.0)),
+            history: std::mem::take(&mut self.history),
+            images: std::mem::take(&mut self.images),
+            selection: std::mem::take(&mut self.selection),
+            background_layer: self.background_layer.take(),
+            sidecar_enabled: self.sidecar_enabled,
+            is_design: self.is_design,
+            source_metadata: self.source_metadata.take(),
+            saving: self.saving,
+            save_error: self.save_error.take(),
+            external_change: self.external_change,
+            bytes,
+        }
+    }
+
+    /// Instala un `SlotDoc` como lienzo activo (lo contrario de `take_slot`).
+    pub(crate) fn put_slot(&mut self, slot: crate::deck::SlotDoc) {
+        self.doc = slot.doc;
+        self.history = slot.history;
+        self.images = slot.images;
+        self.selection = slot.selection;
+        self.background_layer = slot.background_layer;
+        self.sidecar_enabled = slot.sidecar_enabled;
+        self.is_design = slot.is_design;
+        self.source_metadata = slot.source_metadata;
+        self.saving = slot.saving;
+        self.save_error = slot.save_error;
+        self.external_change = slot.external_change;
+        // Los gestos y ediciones de panel se quedan a sus valores por
+        // defecto (vacíos): `is_idle()` garantizaba que ya lo estaban antes
+        // del salto. La selección y el fondo desenfocado ya llegan del slot;
+        // el resto de campos "de sesión" (viewport, grid, crop_mode…) son
+        // intencionalmente compartidos por toda la baraja, no por lienzo.
+        self.forget_deleted_selection();
     }
 }
 
@@ -858,7 +1048,8 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         });
     }
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
-    ui.weak("Wheel: zoom · Space/middle button: pan · Ctrl+0: fit");
+    ui.weak("Wheel: pan · Shift+wheel: pan the other axis · Ctrl+wheel: zoom");
+    ui.weak("Space/middle button: pan · Ctrl+0: fit");
     ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
     ui.weak("Ctrl+C / Ctrl+V: copy layers, even between designs");
     ui.add_space(4.0);
@@ -1647,18 +1838,37 @@ fn layer_properties_ui(
     }
 }
 
-/// El lienzo: gestiona zoom/paneo, renderiza el documento con vello y lo pinta.
+/// Acción pedida desde la cabecera de un lienzo (área central) que necesita
+/// tocar disco (duplicar/borrar) o reconciliarse con el nombre real del
+/// archivo (renombrar) — `canvas_ui` la arma pero no la ejecuta; se resuelve
+/// en `main.rs`, mismo espíritu que `StripAction` desde la tira.
+pub enum CanvasAction {
+    Rename(u64, String),
+    Duplicate(u64),
+    Delete(u64),
+}
+
+/// El lienzo: gestiona zoom/paneo, carga perezosa/descarte de la baraja, y
+/// renderiza en una sola escena todos los lienzos visibles (el activo con
+/// `state.doc`/`state.images`; el resto con su propio `SlotDoc`).
 pub fn canvas_ui(
     state: &mut EditorState,
+    deck: &mut Deck,
     ui: &mut egui::Ui,
     rs: &RenderState,
     renderer: &mut CanvasRenderer,
     surface_slot: &mut Option<CanvasSurface>,
-) {
+    tx: &Sender<AppMsg>,
+) -> Option<CanvasAction> {
+    // Duplicar/borrar/renombrar tocan disco o el watcher: se arman aquí (en
+    // la cabecera de un lienzo, ver más abajo) pero se resuelven en
+    // `main.rs`, igual que `StripAction` desde la tira.
+    let mut action: Option<CanvasAction> = None;
+
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
     if rect.width() < 1.0 || rect.height() < 1.0 {
-        return;
+        return action;
     }
 
     let page_dims = match state.doc.page() {
@@ -1666,15 +1876,113 @@ pub fn canvas_ui(
         Err(_) => (1.0, 1.0),
     };
 
-    // Ajustar a ventana: Ctrl/Cmd+0 o primer frame.
-    let fit_requested = ui.ctx().input_mut(|i| {
+    // La ranura activa siempre conoce su tamaño real (es el documento que se
+    // está editando; no hace falta esperar a `DeckProbed`) — mantenerla al
+    // día aquí cubre tanto la primera carga como un cambio de tamaño de
+    // página desde el panel, sin ningún caso especial.
+    let mut sizes_changed = false;
+    if let Some(slot) = deck.slots.get_mut(deck.active) {
+        if slot.page != Some(page_dims) {
+            slot.page = Some(page_dims);
+            sizes_changed = true;
+        }
+    }
+    // Defensa en profundidad: cualquier ranura YA cargada (no solo la
+    // activa) conoce su tamaño real por su propio documento, sin depender
+    // de que `DeckProbed` haya llegado ni de que el sondeo funcione para su
+    // formato. Sin esto, un lienzo mayor que la estimación de `Slot::size()`
+    // se pinta fuera de su `rect` de layout y se come el hueco con el
+    // vecino. Acumulador local porque no se puede escribir
+    // `deck.layout_dirty` mientras `&mut deck.slots` sigue prestado por el
+    // bucle.
+    for slot in &mut deck.slots {
+        if let SlotContent::Ready(d) = &slot.content {
+            if let Ok(p) = d.doc.page() {
+                let real = (p.width, p.height);
+                if slot.page != Some(real) {
+                    slot.page = Some(real);
+                    sizes_changed = true;
+                }
+            }
+        }
+    }
+    deck.layout_dirty |= sizes_changed;
+    if deck.layout_dirty {
+        // Recolocar puede desplazar el origen del lienzo ACTIVO como efecto
+        // secundario (el centrado en el eje transversal usa el máximo
+        // ancho/alto de TODAS las ranuras: aprender el tamaño real de un
+        // vecino cambia ese máximo). Compensar el pan para que el lienzo
+        // activo se quede clavado en pantalla — el usuario no pidió mover
+        // nada. No aplica en el primer frame: `needs_fit`/`AutoFit` van a
+        // reescribir el pan entero de todos modos, y no-op con una sola
+        // ranura (su origen activo siempre es `(0,0)`).
+        let before = deck.active_origin();
+        deck.relayout();
+        if !state.viewport.needs_fit {
+            let after = deck.active_origin();
+            let (dx, dy) = (after.0 - before.0, after.1 - before.1);
+            if dx != 0.0 || dy != 0.0 {
+                state.viewport.pan -= egui::vec2(
+                    (dx * state.viewport.zoom) as f32,
+                    (dy * state.viewport.zoom) as f32,
+                );
+            }
+        }
+    }
+
+    // Salto pedido por la tira, el teclado, un clic directo sobre otro
+    // lienzo o "Añadir lienzo": centra sobre el nuevo lienzo activo sin
+    // tocar el zoom. También arma `AutoFit::Active` — sin esto, si el modo
+    // seguía en `All` (el usuario acababa de pulsar `Ctrl+Alt+0`), el
+    // primer redimensionado después de este centrado volvía a encajar TODA
+    // la baraja (`resized` más abajo) y deshacía el centrado, con el efecto
+    // de "vuelve a la vista de siempre" — el nuevo centrado puntual pasa a
+    // ser la referencia, no una excepción que el próximo resize revierta.
+    if let Some(target) = state.viewport.center_request.take() {
+        state.viewport.center_on(target, rect.size());
+        state.viewport.auto_fit = AutoFit::Active;
+    }
+
+    // Ajustar el lienzo activo: Ctrl/Cmd+0 o primer frame. Ajustar TODA la
+    // baraja: Ctrl+Alt+0 (más específico primero, mismo patrón que
+    // redo/undo en `handle_shortcuts`).
+    let fit_all = ui.ctx().input_mut(|i| {
+        i.consume_shortcut(&egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+            egui::Key::Num0,
+        ))
+    });
+    let fit_active = ui.ctx().input_mut(|i| {
         i.consume_shortcut(&egui::KeyboardShortcut::new(
             egui::Modifiers::COMMAND,
             egui::Key::Num0,
         ))
     });
-    if fit_requested || state.viewport.needs_fit {
-        state.viewport.fit(page_dims, rect.size());
+    // Reajuste automático si el área de dibujo cambió de tamaño desde el
+    // frame anterior (ventana maximizada/restaurada, panel lateral
+    // arrastrado): repite el último ajuste automático (`Ctrl+0`/
+    // `Ctrl+Alt+0`) mientras siga armado — se desarma en cuanto el usuario
+    // hace zoom o paneo a mano (`Viewport::manual_view_change`). SIEMPRE se
+    // sella el tamaño, no solo cuando cambia, para no quedar desincronizado.
+    let resized = state.viewport.note_size(rect.size());
+    if fit_all {
+        state.viewport.fit(deck.bounds(), rect.size(), AutoFit::All);
+    } else if fit_active || state.viewport.needs_fit {
+        state
+            .viewport
+            .fit(deck.active_rect(), rect.size(), AutoFit::Active);
+    } else if resized {
+        match state.viewport.auto_fit {
+            AutoFit::Active => {
+                state
+                    .viewport
+                    .fit(deck.active_rect(), rect.size(), AutoFit::Active);
+            }
+            AutoFit::All => {
+                state.viewport.fit(deck.bounds(), rect.size(), AutoFit::All);
+            }
+            AutoFit::Off => {}
+        }
     }
 
     // Zoom pedido desde el menú, anclado al centro del lienzo.
@@ -1682,22 +1990,49 @@ pub fn canvas_ui(
         state.viewport.zoom_at(rect.size() / 2.0, factor);
     }
 
-    // Zoom con rueda (y pellizco), anclado al cursor.
+    // Rueda: desplaza a lo largo del eje PRIMARIO de la baraja (Shift = eje
+    // transversal); Ctrl+rueda y el pellizco hacen zoom, anclados al cursor.
+    // Es uniforme también con un solo lienzo — una excepción "con un archivo
+    // hace zoom" se sentiría como un fallo, no como una regla.
     if response.hovered() {
-        let (scroll, pinch, pointer) = ui.ctx().input(|i| {
+        let (raw_scroll, pinch, pointer, ctrl, shift) = ui.ctx().input(|i| {
             (
-                i.smooth_scroll_delta.y,
+                i.smooth_scroll_delta,
                 i.zoom_delta(),
                 i.pointer.hover_pos(),
+                i.modifiers.command,
+                i.modifiers.shift,
             )
         });
-        let mut factor = f64::from(pinch);
-        if scroll != 0.0 {
-            factor *= (f64::from(scroll) * 0.0025).exp();
-        }
-        if (factor - 1.0).abs() > 1e-4 {
+        if ctrl && raw_scroll.y != 0.0 {
+            let factor = (f64::from(raw_scroll.y) * 0.0025).exp();
             let anchor = pointer.map_or(rect.size() / 2.0, |p| p - rect.min);
             state.viewport.zoom_at(anchor, factor);
+        } else if raw_scroll != egui::Vec2::ZERO {
+            // El ratón manda un solo eje de rueda (`raw_scroll.y`); a qué
+            // componente del pan va depende de cuál sea el eje primario de
+            // la baraja — Shift pide el transversal. Un trackpad que ya
+            // manda X (pellizco de dos dedos, Shift+rueda que el propio SO
+            // convierte) se respeta tal cual, sin remapear.
+            let is_horizontal = matches!(deck.axis, DeckAxis::Horizontal);
+            let swap = shift != is_horizontal;
+            let delta = if swap && raw_scroll.x == 0.0 {
+                egui::vec2(raw_scroll.y, 0.0)
+            } else {
+                raw_scroll
+            };
+            // `+=`, no `-=`: mismo signo que el paneo por arrastre de más
+            // abajo (`pan += drag_delta`) y que `egui::ScrollArea`
+            // (`offset -= scroll_delta`, con `offset` en el sentido
+            // contrario a `pan` — es la posición del contenido en pantalla,
+            // no cuánto se ha desplazado dentro de él). Con `-=` la rueda
+            // quedaba invertida respecto al resto de la propia app.
+            state.viewport.manual_view_change();
+            state.viewport.pan += delta;
+        }
+        if (pinch - 1.0).abs() > 1e-4 {
+            let anchor = pointer.map_or(rect.size() / 2.0, |p| p - rect.min);
+            state.viewport.zoom_at(anchor, f64::from(pinch));
         }
     }
 
@@ -1706,15 +2041,176 @@ pub fn canvas_ui(
     let panning = response.dragged_by(egui::PointerButton::Middle)
         || (space_down && response.dragged_by(egui::PointerButton::Primary));
     if panning {
+        state.viewport.manual_view_change();
         state.viewport.pan += response.drag_delta();
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if space_down && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
-    // Selección, arrastre y redimensionado (si no se está paneando).
-    if !panning && !space_down {
-        layer_interaction(state, ui, &response, rect);
+    // Origen del lienzo activo en el espacio de baraja, en puntos de
+    // pantalla. `slot_rect` es `rect` desplazado ese origen — pasado en vez
+    // de `rect` a `layer_interaction` y a los cuatro ayudantes de
+    // coordenadas (`page_to_screen` y compañía, más abajo), consigue que un
+    // lienzo que no esté en el origen de la baraja se seleccione/arrastre/
+    // redimensione igual que si fuera el único, sin tocar ni una línea de
+    // esa lógica.
+    let (origin_x, origin_y) = deck.active_origin();
+    let slot_offset = egui::vec2(
+        (origin_x * state.viewport.zoom) as f32,
+        (origin_y * state.viewport.zoom) as f32,
+    );
+    let slot_rect = egui::Rect::from_min_size(rect.min + slot_offset, rect.size());
+
+    // Qué ranuras están a la vista (con margen de precarga), y sella cuándo
+    // se vieron por última vez (política de descarte LRU). Calculado AQUÍ
+    // (antes de resolver la pulsación) porque el hit-test de la cabecera de
+    // cada lienzo, más abajo, solo tiene sentido sobre ranuras visibles —
+    // el resto del uso de `visible` (carga perezosa, descarte, escena,
+    // `draw_slot_chrome`) sigue más adelante sin cambios, solo reutiliza
+    // este mismo cálculo en vez de repetirlo.
+    let (x0, y0) = screen_to_page(&state.viewport, rect, rect.min);
+    let (x1, y1) = screen_to_page(&state.viewport, rect, rect.max);
+    let view_deck_rect = Deck::dilate(DeckRect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    });
+    let visible = deck.visible_indices(view_deck_rect);
+    deck.mark_visible(&visible);
+
+    // Pulsación sobre un lienzo que no es el activo: lo activa (el
+    // intercambio en sí lo aplica `deck::apply_jump`, fuera de este módulo,
+    // para no mutar el documento activo a mitad de este mismo frame). Se
+    // decide en el frame de la PULSACIÓN, no en el de soltar limpio
+    // (`response.clicked()`, que solo se cumple si el puntero no se movió
+    // más allá del umbral de arrastre de egui entre pulsar y soltar — un
+    // clic humano real casi nunca es tan quieto). Cuando egui clasifica esa
+    // pulsación como arrastre en vez de clic, `clicked()` no llega nunca, y
+    // `layer_interaction` SÍ corría: como usa `slot_rect` (siempre el
+    // espacio de la ranura ACTIVA), un clic con el más mínimo temblor sobre
+    // OTRO lienzo agarraba y movía una capa del documento activo — la
+    // «Position X» que cambiaba sola en el panel de propiedades sin que el
+    // usuario tocase ninguna capa.
+    if ui.input(|i| i.pointer.primary_pressed()) && !space_down && response.contains_pointer() {
+        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            // Cabecera de CUALQUIER lienzo visible (activo o no) se
+            // comprueba PRIMERO, en espacio de pantalla — antes del hit-test
+            // en espacio de página de más abajo, que solo conoce el cuerpo
+            // del lienzo, no su cabecera (que vive por encima, fuera de su
+            // `DeckRect`). Un acierto aquí consume la pulsación entera: no
+            // cae al hit-test de activación ni a `layer_interaction`.
+            let mut header_hit = false;
+            for &idx in &visible {
+                if header_hit {
+                    break;
+                }
+                let Some((id, is_placeholder, s_rect)) = deck
+                    .slots
+                    .get(idx)
+                    .map(|s| (s.id, s.is_placeholder, s.rect))
+                else {
+                    continue;
+                };
+                let top_left = page_to_screen(&state.viewport, rect, s_rect.x, s_rect.y);
+                let top_right =
+                    page_to_screen(&state.viewport, rect, s_rect.x + s_rect.w, s_rect.y);
+                let Some(header) = slot_header_layout(top_left.x, top_right.x, top_left.y) else {
+                    continue;
+                };
+                if !is_placeholder && header.name.contains(pos) {
+                    // Ver `draw_rename_overlay`: el propio cuadro de texto
+                    // se dibuja ahí, en un `egui::Area` de primer plano, no
+                    // aquí — aquí solo se arma el estado y se le pide el
+                    // foco.
+                    let stem = deck
+                        .slots
+                        .get(idx)
+                        .and_then(|s| s.path.file_stem())
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    deck.rename_edit = Some((id, stem));
+                    ui.memory_mut(|m| {
+                        m.request_focus(egui::Id::new(("canvas_slot_rename", id)));
+                    });
+                    header_hit = true;
+                } else if header.prev.contains(pos) {
+                    deck.move_slot(id, MoveDir::Prev);
+                    header_hit = true;
+                } else if header.next.contains(pos) {
+                    deck.move_slot(id, MoveDir::Next);
+                    header_hit = true;
+                } else if header.lock.contains(pos) {
+                    if let Some(s) = deck.slots.get_mut(idx) {
+                        s.locked = !s.locked;
+                    }
+                    header_hit = true;
+                } else if !is_placeholder && header.dup.contains(pos) {
+                    action = Some(CanvasAction::Duplicate(id));
+                    header_hit = true;
+                } else if !is_placeholder && header.del.contains(pos) {
+                    action = Some(CanvasAction::Delete(id));
+                    header_hit = true;
+                }
+            }
+            if header_hit {
+                state.press_on_other_slot = true;
+            } else {
+                let (dx, dy) = screen_to_page(&state.viewport, rect, pos);
+                let target = deck.slots.iter().position(|s| {
+                    dx >= s.rect.x
+                        && dx <= s.rect.x + s.rect.w
+                        && dy >= s.rect.y
+                        && dy <= s.rect.y + s.rect.h
+                });
+                if let Some(idx) = target {
+                    if idx != deck.active {
+                        deck.jump_to = Some(idx);
+                        // A petición del usuario: cambiar de activo desde el
+                        // área central SIEMPRE centra la vista sobre él, en
+                        // vez de dejarlo donde cayera (antes solo la tira o
+                        // el teclado pedían recentrado) — así no hace falta
+                        // ir a buscarlo tras el salto.
+                        deck.jump_center = true;
+                        state.press_on_other_slot = true;
+                    }
+                } else if deck.folder.is_some()
+                    && dx >= deck.add_zone.x
+                    && dx <= deck.add_zone.x + deck.add_zone.w
+                    && dy >= deck.add_zone.y
+                    && dy <= deck.add_zone.y + deck.add_zone.h
+                {
+                    // Pulsación sobre la zona "+" al final de la baraja: crea
+                    // y activa un lienzo en blanco, igual que
+                    // `App::add_canvas` (botón de la tira) pero resuelto
+                    // aquí mismo — es una operación puramente en memoria, no
+                    // toca disco ni el watcher, así que no hace falta pasar
+                    // por `main.rs`.
+                    if let Some(idx) = deck.push_placeholder((deck.add_zone.w, deck.add_zone.h)) {
+                        deck.jump_to = Some(idx);
+                        deck.jump_center = true;
+                        state.press_on_other_slot = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Selección, arrastre y redimensionado (si no se está paneando, el
+    // gesto en curso no pertenece a la baraja, y el diseño activo no está
+    // bloqueado — `Slot::locked`, cabecera del lienzo).
+    let active_locked = deck.slots.get(deck.active).is_some_and(|s| s.locked);
+    if !panning && !space_down && !state.press_on_other_slot && !active_locked {
+        layer_interaction(state, ui, &response, slot_rect);
+    }
+
+    // La marca dura el gesto entero (pulsar, arrastrar, soltar) y se limpia
+    // cuando el botón ya no está pulsado — DESPUÉS de la guardia de arriba,
+    // para que el frame en que se suelta (donde egui emite `clicked`/
+    // `drag_stopped`) siga protegido.
+    if !ui.input(|i| i.pointer.primary_down()) {
+        state.press_on_other_slot = false;
     }
 
     // Render vello → textura del tamaño físico del lienzo.
@@ -1723,23 +2219,53 @@ pub fn canvas_ui(
     let height = (rect.height() * ppp).round().max(1.0) as u32;
     let surface = CanvasSurface::ensure(surface_slot, rs, width, height);
 
-    // Sincroniza los efectos GPU de cada capa antes de montar la escena.
-    if let Ok(page) = state.doc.page() {
-        let fx_targets: Vec<(LayerId, canvas_core::Effects)> =
-            page.layers.iter().map(|l| (l.id, l.effects)).collect();
-        for (id, effects) in fx_targets {
-            if let Some(source) = state.images.get(&id) {
-                renderer.sync_layer_effects(&rs.device, &rs.queue, id, source, &effects);
-            }
-        }
-    }
-
-    let view = Affine::translate((
+    // Transformación del espacio de BARAJA a píxeles físicos del lienzo, sin
+    // desplazar por ninguna ranura en particular: cada lienzo visible añade
+    // su propio origen antes de renderizarse (más abajo).
+    let base_view = Affine::translate((
         f64::from(state.viewport.pan.x * ppp),
         f64::from(state.viewport.pan.y * ppp),
     )) * Affine::scale(state.viewport.zoom * f64::from(ppp));
-    let blurred = renderer.blur_overrides();
-    let scene = canvas_render::build_scene(&state.doc, &state.images, &blurred, view, true);
+
+    // Carga perezosa: pide las ranuras `Idle` visibles (o del radio de
+    // precarga alrededor de la activa) que quepan en el presupuesto de
+    // cargas en vuelo.
+    if let Some(folder) = deck.folder.clone() {
+        for path in deck.request_loads(&visible) {
+            loader::spawn_load_slot(folder.clone(), path, tx.clone(), ui.ctx().clone());
+        }
+    }
+    // Descarte: libera memoria de ranuras lejanas, limpias y sin guardado en
+    // curso, por encima del presupuesto.
+    for scope in deck.evict() {
+        renderer.forget_scope(scope);
+    }
+
+    // Una sola escena para todos los lienzos visibles ya cargados (activo o
+    // `Ready`); el resto se pinta encima como miniatura/placeholder, con el
+    // `Painter` normal de egui (más abajo, en `draw_slot_chrome`) — ya están
+    // en GPU desde la galería, no hace falta subirlas de nuevo a vello.
+    let mut scene = vello::Scene::new();
+    for &idx in &visible {
+        let Some(slot) = deck.slots.get(idx) else {
+            continue;
+        };
+        let scope = FxScope(slot.id);
+        let view = base_view * Affine::translate(slot.rect.origin());
+        if idx == deck.active {
+            sync_and_append(
+                &mut scene,
+                renderer,
+                rs,
+                &state.doc,
+                &state.images,
+                scope,
+                view,
+            );
+        } else if let SlotContent::Ready(doc) = &slot.content {
+            sync_and_append(&mut scene, renderer, rs, &doc.doc, &doc.images, scope, view);
+        }
+    }
     if let Err(e) = surface.render(rs, renderer, &scene) {
         tracing::error!("fallo renderizando el lienzo: {e}");
     }
@@ -1751,13 +2277,607 @@ pub fn canvas_ui(
         egui::Color32::WHITE,
     );
 
+    for &idx in &visible {
+        draw_slot_chrome(state, deck, idx, ui, rect);
+    }
+    draw_add_zone(state, deck, ui, rect);
+    draw_header_tooltips(deck, ui, rect, &state.viewport, &visible);
+
     if state.show_grid {
-        draw_grid(state, ui, rect, page_dims);
+        draw_grid(state, ui, slot_rect, rect, page_dims);
     }
-    draw_selection_overlay(state, ui, rect);
+    draw_selection_overlay(state, ui, slot_rect, rect);
     if state.show_rulers {
-        draw_rulers(state, ui, rect);
+        draw_rulers(state, ui, slot_rect, rect);
     }
+
+    // Renombrado en curso desde una cabecera (si lo hay): `egui::Area` de
+    // primer plano, PASO DE UI SEPARADO del `response` gigante de arriba —
+    // ver la doc de `draw_rename_overlay`.
+    if let Some(a) = draw_rename_overlay(state, deck, ui, rect) {
+        action = Some(a);
+    }
+    action
+}
+
+/// Sincroniza los efectos GPU de un documento y lo añade a `scene` con su
+/// propia transformación de vista. Un `fn` normal, no un cierre: dentro del
+/// bucle de `canvas_ui` se llama con `renderer`/`scene` prestados de forma
+/// disjunta en cada iteración, y un cierre que capturase ambos a la vez
+/// complicaría el préstamo sin necesidad.
+#[allow(clippy::too_many_arguments)]
+fn sync_and_append(
+    scene: &mut vello::Scene,
+    renderer: &mut CanvasRenderer,
+    rs: &RenderState,
+    doc: &Document,
+    images: &ImageMap,
+    scope: FxScope,
+    view: Affine,
+) {
+    if let Ok(page) = doc.page() {
+        let fx_targets: Vec<(LayerId, canvas_core::Effects)> =
+            page.layers.iter().map(|l| (l.id, l.effects)).collect();
+        for (id, effects) in fx_targets {
+            if let Some(source) = images.get(&id) {
+                renderer.sync_layer_effects(&rs.device, &rs.queue, scope, id, source, &effects);
+            }
+        }
+    }
+    let blurred = renderer.blur_overrides(scope);
+    canvas_render::append_document(scene, doc, images, &blurred, view, true);
+}
+
+/// Marco (acento en la activa, débil en las demás), nombre de archivo, y —
+/// si la ranura todavía no está cargada — su miniatura o un glifo de
+/// estado, encima del blit de vello.
+fn draw_slot_chrome(state: &EditorState, deck: &Deck, idx: usize, ui: &egui::Ui, rect: egui::Rect) {
+    let Some(slot) = deck.slots.get(idx) else {
+        return;
+    };
+    let is_active = idx == deck.active;
+    let tl = page_to_screen(&state.viewport, rect, slot.rect.x, slot.rect.y);
+    let br = page_to_screen(
+        &state.viewport,
+        rect,
+        slot.rect.x + slot.rect.w,
+        slot.rect.y + slot.rect.h,
+    );
+    let screen_rect = egui::Rect::from_min_max(tl, br);
+    let painter = ui.painter();
+
+    if !matches!(slot.content, SlotContent::Ready(_) | SlotContent::Active) {
+        if let Some(tex) = &slot.thumb {
+            painter.image(
+                tex.id(),
+                screen_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        } else {
+            painter.rect_filled(screen_rect, 0.0, ui.visuals().extreme_bg_color);
+        }
+        if let SlotContent::Failed(message) = &slot.content {
+            // Un fallo de carga de fondo SÍ se explica, aunque haya
+            // miniatura: es la única pista de por qué este lienzo no abre.
+            painter.text(
+                screen_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "⚠",
+                egui::FontId::proportional(28.0),
+                ui.visuals().error_fg_color,
+            );
+            let mut short = message.clone();
+            if short.chars().count() > 60 {
+                short = format!("{}…", short.chars().take(59).collect::<String>());
+            }
+            painter.text(
+                screen_rect.center() + egui::vec2(0.0, 22.0),
+                egui::Align2::CENTER_TOP,
+                short,
+                egui::FontId::proportional(10.0),
+                ui.visuals().error_fg_color,
+            );
+        } else if slot.thumb.is_none() {
+            let glyph = if slot.thumb_failed {
+                "⚠"
+            } else if slot.kind == ItemKind::Design {
+                "🖹"
+            } else {
+                "⏳"
+            };
+            painter.text(
+                screen_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph,
+                egui::FontId::proportional(28.0),
+                ui.visuals().weak_text_color(),
+            );
+        }
+    }
+
+    let stroke = if is_active {
+        egui::Stroke::new(2.0, ACCENT)
+    } else {
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6))
+    };
+    painter.rect_stroke(screen_rect, 0.0, stroke, egui::StrokeKind::Outside);
+
+    draw_slot_header(deck, slot, ui, screen_rect);
+}
+
+/// Cabecera de un lienzo, justo encima de su `screen_rect`: nombre a la
+/// izquierda (editable — ver `draw_rename_overlay`, que se encarga del
+/// cuadro de texto en sí) y, a la derecha, mover/bloquear/duplicar/borrar.
+/// Duplicar/borrar se ocultan en una ranura PROVISIONAL (`is_placeholder`):
+/// no tienen sentido sin archivo en disco. Pintada con el `Painter` normal
+/// de egui, no widgets — el hit-test vive en el bloque de pulsación de
+/// `canvas_ui`, sobre el mismo `slot_header_layout` que esta función usa
+/// para pintar, así que ambos nunca pueden desalinearse.
+///
+/// Los 5 botones son formas dibujadas a mano (triángulos, arco, rects),
+/// NO texto/emoji: un carácter Unicode como ▲/▼ puede simplemente no estar
+/// en la fuente que trae `egui` integrada — pasó de verdad (las flechas
+/// dejaron de verse, mientras que otros glifos ya usados en la app seguían
+/// bien) — y un dibujo a mano no depende de qué cubra ninguna fuente.
+fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_rect: egui::Rect) {
+    let Some(header) =
+        slot_header_layout(screen_rect.left(), screen_rect.right(), screen_rect.top())
+    else {
+        return;
+    };
+    let painter = ui.painter();
+    // Fondo propio con contraste real (antes era texto suelto directamente
+    // sobre el lienzo — "iconos grises sobre fondo gris" cuando la imagen de
+    // debajo también era clara/gris) + un borde débil para separarla del
+    // lienzo cuando el fondo coincide en tono.
+    painter.rect_filled(header.bar, 4.0, ui.visuals().extreme_bg_color);
+    painter.rect_stroke(
+        header.bar,
+        4.0,
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6)),
+        egui::StrokeKind::Outside,
+    );
+    let icon_color = ui.visuals().strong_text_color();
+
+    let renaming = deck
+        .rename_edit
+        .as_ref()
+        .is_some_and(|(id, _)| *id == slot.id);
+    if !renaming {
+        let mut name = slot.name.clone();
+        let max_chars = ((header.name.width() / 6.5) as usize).max(4);
+        if name.chars().count() > max_chars {
+            name = format!(
+                "{}…",
+                name.chars()
+                    .take(max_chars.saturating_sub(1))
+                    .collect::<String>()
+            );
+        }
+        painter.text(
+            header.name.left_center() + egui::vec2(4.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(11.0),
+            ui.visuals().text_color(),
+        );
+    }
+
+    // Flechas de mover en la dirección real de apilado: arriba/abajo con la
+    // baraja en vertical, izquierda/derecha en horizontal.
+    let (prev_dir, next_dir) = match deck.axis {
+        DeckAxis::Vertical => (IconDir::Up, IconDir::Down),
+        DeckAxis::Horizontal => (IconDir::Left, IconDir::Right),
+    };
+    draw_triangle_icon(painter, header.prev, prev_dir, icon_color);
+    draw_triangle_icon(painter, header.next, next_dir, icon_color);
+    draw_lock_icon(painter, header.lock, slot.locked, icon_color);
+    if !slot.is_placeholder {
+        draw_duplicate_icon(
+            painter,
+            header.dup,
+            icon_color,
+            ui.visuals().extreme_bg_color,
+        );
+        draw_delete_icon(painter, header.del, icon_color);
+    }
+}
+
+/// Dirección de `draw_triangle_icon`.
+#[derive(Clone, Copy)]
+enum IconDir {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Triángulo relleno apuntando en `dir`, centrado en `rect`.
+fn draw_triangle_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    dir: IconDir,
+    color: egui::Color32,
+) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height()) * 0.28;
+    let points = match dir {
+        IconDir::Up => vec![
+            c + egui::vec2(0.0, -s),
+            c + egui::vec2(-s, s * 0.8),
+            c + egui::vec2(s, s * 0.8),
+        ],
+        IconDir::Down => vec![
+            c + egui::vec2(0.0, s),
+            c + egui::vec2(-s, -s * 0.8),
+            c + egui::vec2(s, -s * 0.8),
+        ],
+        IconDir::Left => vec![
+            c + egui::vec2(-s, 0.0),
+            c + egui::vec2(s * 0.8, -s),
+            c + egui::vec2(s * 0.8, s),
+        ],
+        IconDir::Right => vec![
+            c + egui::vec2(s, 0.0),
+            c + egui::vec2(-s * 0.8, -s),
+            c + egui::vec2(-s * 0.8, s),
+        ],
+    };
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// Puntos a lo largo de un arco de circunferencia. Convención pensada para
+/// que `start = -FRAC_PI_2`/`end = FRAC_PI_2` trace un semicírculo superior
+/// de izquierda a derecha pasando por arriba (coordenadas de pantalla, eje Y
+/// hacia abajo) — el arco del candado.
+fn arc_points(
+    center: egui::Pos2,
+    radius: f32,
+    start: f32,
+    end: f32,
+    segments: usize,
+) -> Vec<egui::Pos2> {
+    (0..=segments)
+        .map(|i| {
+            let t = start + (end - start) * (i as f32 / segments as f32);
+            center + egui::vec2(t.sin(), -t.cos()) * radius
+        })
+        .collect()
+}
+
+/// Candado: cuerpo relleno (rect redondeado) + arco. Cerrado, el arco se
+/// apoya simétrico sobre el cuerpo; abierto, se desplaza hacia arriba y a
+/// la derecha, dejando el lado izquierdo suelto.
+fn draw_lock_icon(painter: &egui::Painter, rect: egui::Rect, locked: bool, color: egui::Color32) {
+    let half_pi = std::f32::consts::FRAC_PI_2;
+    let body_w = rect.width() * 0.5;
+    let body_h = rect.height() * 0.42;
+    let body = egui::Rect::from_center_size(
+        rect.center() + egui::vec2(0.0, body_h * 0.35),
+        egui::vec2(body_w, body_h),
+    );
+    painter.rect_filled(body, 1.0, color);
+    let shackle_r = body_w * 0.42;
+    let stroke = egui::Stroke::new(1.3, color);
+    let shackle_center = egui::pos2(body.center().x, body.top());
+    let center = if locked {
+        shackle_center
+    } else {
+        shackle_center + egui::vec2(shackle_r * 0.55, -shackle_r * 0.35)
+    };
+    let pts = arc_points(center, shackle_r, -half_pi, half_pi, 10);
+    painter.add(egui::Shape::line(pts, stroke));
+}
+
+/// Duplicar: dos rects redondeados solapados (icono estándar de "copiar").
+/// `bg` es el fondo de la propia cabecera — rellena el rect de delante para
+/// que de verdad tape la esquina del de detrás, en vez de dejar ambos
+/// contornos cruzándose sin más.
+fn draw_duplicate_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    color: egui::Color32,
+    bg: egui::Color32,
+) {
+    let s = rect.width().min(rect.height()) * 0.36;
+    let stroke = egui::Stroke::new(1.2, color);
+    let back = egui::Rect::from_center_size(
+        rect.center() + egui::vec2(-s * 0.28, -s * 0.28),
+        egui::vec2(s, s),
+    );
+    let front = egui::Rect::from_center_size(
+        rect.center() + egui::vec2(s * 0.28, s * 0.28),
+        egui::vec2(s, s),
+    );
+    painter.rect_stroke(back, 1.0, stroke, egui::StrokeKind::Outside);
+    painter.rect_filled(front, 1.0, bg);
+    painter.rect_stroke(front, 1.0, stroke, egui::StrokeKind::Outside);
+}
+
+/// Borrar: cubo de basura simple — cuerpo, tapa y un par de ranuras.
+fn draw_delete_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.2, color);
+    let w = rect.width() * 0.42;
+    let h = rect.height() * 0.4;
+    let body =
+        egui::Rect::from_center_size(rect.center() + egui::vec2(0.0, h * 0.2), egui::vec2(w, h));
+    painter.rect_stroke(body, 0.5, stroke, egui::StrokeKind::Outside);
+    painter.line_segment(
+        [
+            egui::pos2(body.left() - w * 0.15, body.top()),
+            egui::pos2(body.right() + w * 0.15, body.top()),
+        ],
+        stroke,
+    );
+    for i in [-1.0_f32, 1.0] {
+        let x = rect.center().x + i * w * 0.22;
+        painter.line_segment(
+            [
+                egui::pos2(x, body.top() + h * 0.18),
+                egui::pos2(x, body.bottom() - h * 0.12),
+            ],
+            stroke,
+        );
+    }
+}
+
+/// Alto de la cabecera de un lienzo (nombre + botones), en px de pantalla —
+/// constante frente al zoom, como el resto del texto de `draw_slot_chrome`.
+const HEADER_H: f32 = 20.0;
+/// Ancho de cada botón cuadrado de la cabecera cuando hay sitio de sobra.
+const HEADER_BTN_W: f32 = 20.0;
+/// Suelo: por debajo de esto un botón deja de ser legible/pulsable con
+/// precisión — mejor que se quede aquí a que seis encimen sin límite.
+const HEADER_BTN_MIN: f32 = 12.0;
+/// Ancho de cabecera por debajo del cual ni se pinta ni se comprueba el
+/// clic: con 5 botones al suelo (`HEADER_BTN_MIN * 5`) más algo de nombre,
+/// menos que esto es un lienzo tan alejado que la cabecera sería ruido
+/// ilegible superpuesto a otra cosa — mismo criterio que usan las
+/// miniaturas de la tira, que a partir de cierto tamaño mínimo dejan de
+/// intentar mostrar detalle y muestran solo un glifo.
+const HEADER_MIN_VISIBLE_W: f32 = 70.0;
+
+/// Rects (en espacio de PANTALLA) de la cabecera de un lienzo: la barra
+/// entera (para el fondo), el nombre y los 5 botones, calculados a partir
+/// del borde superior de su `screen_rect`. Una sola fuente de verdad
+/// compartida por pintado (`draw_slot_header`, `draw_rename_overlay`,
+/// `draw_header_tooltips`) y hit-test (`canvas_ui`) — así nunca se
+/// desalinean entre sí.
+struct SlotHeader {
+    bar: egui::Rect,
+    name: egui::Rect,
+    prev: egui::Rect,
+    next: egui::Rect,
+    lock: egui::Rect,
+    dup: egui::Rect,
+    del: egui::Rect,
+}
+
+/// `None` si la cabecera es demasiado angosta en pantalla para pintarse o
+/// pulsarse con sentido (ver `HEADER_MIN_VISIBLE_W`) — el llamador la omite
+/// entera en vez de intentar encajarla.
+fn slot_header_layout(left: f32, right: f32, top: f32) -> Option<SlotHeader> {
+    let bar = egui::Rect::from_min_max(egui::pos2(left, top - HEADER_H), egui::pos2(right, top));
+    if bar.width() < HEADER_MIN_VISIBLE_W {
+        return None;
+    }
+    // Ancho de botón bien definido: se encoge en proporción al ancho real
+    // del lienzo en pantalla (con suelo `HEADER_BTN_MIN`) en vez de quedar
+    // fijo — así los 5 botones SIEMPRE caben dentro de la propia cabecera,
+    // nunca se salen sobre el lienzo vecino, y en cuanto hay sitio de sobra
+    // (zoom normal o mayor) se quedan clavados en `HEADER_BTN_W` sin seguir
+    // creciendo ni encogiendo con el zoom.
+    let btn_w = (bar.width() / 5.0).clamp(HEADER_BTN_MIN, HEADER_BTN_W);
+    let buttons_w = btn_w * 5.0;
+    let name_right = (bar.right() - buttons_w).max(bar.left());
+    let name = egui::Rect::from_min_max(bar.left_top(), egui::pos2(name_right, bar.bottom()));
+    let btn = |i: f32| {
+        let x0 = name_right + btn_w * i;
+        egui::Rect::from_min_max(
+            egui::pos2(x0, bar.top()),
+            egui::pos2(x0 + btn_w, bar.bottom()),
+        )
+    };
+    Some(SlotHeader {
+        bar,
+        name,
+        prev: btn(0.0),
+        next: btn(1.0),
+        lock: btn(2.0),
+        dup: btn(3.0),
+        del: btn(4.0),
+    })
+}
+
+/// Tooltip de un botón de cabecera al pasar el ratón por encima. Los rects
+/// de la cabecera son pintados a mano (`Painter`, ver la doc de
+/// `draw_slot_header`), no widgets egui — no hay `Response` del que colgar
+/// `on_hover_text`, así que el propio tooltip se pinta a mano también,
+/// sobre los MISMOS rects que ya usa el hit-test de clic en `canvas_ui`
+/// (nunca puede desalinearse de lo que en verdad es pulsable).
+fn draw_header_tooltips(
+    deck: &Deck,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    viewport: &Viewport,
+    visible: &[usize],
+) {
+    let Some(pos) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    if !rect.contains(pos) {
+        return;
+    }
+    let (move_prev, move_next) = match deck.axis {
+        DeckAxis::Vertical => ("Move up", "Move down"),
+        DeckAxis::Horizontal => ("Move left", "Move right"),
+    };
+    for &idx in visible {
+        let Some(slot) = deck.slots.get(idx) else {
+            continue;
+        };
+        let s_rect = slot.rect;
+        let top_left = page_to_screen(viewport, rect, s_rect.x, s_rect.y);
+        let top_right = page_to_screen(viewport, rect, s_rect.x + s_rect.w, s_rect.y);
+        let Some(header) = slot_header_layout(top_left.x, top_right.x, top_left.y) else {
+            continue;
+        };
+        let label = if header.prev.contains(pos) {
+            Some(move_prev)
+        } else if header.next.contains(pos) {
+            Some(move_next)
+        } else if header.lock.contains(pos) {
+            Some(if slot.locked { "Unlock" } else { "Lock" })
+        } else if !slot.is_placeholder && header.dup.contains(pos) {
+            Some("Duplicate")
+        } else if !slot.is_placeholder && header.del.contains(pos) {
+            Some("Delete")
+        } else if !slot.is_placeholder && header.name.contains(pos) {
+            Some("Rename")
+        } else {
+            None
+        };
+        if let Some(text) = label {
+            paint_tooltip(ui, pos, text);
+            return;
+        }
+    }
+}
+
+/// Etiqueta pegada al cursor, mismo estilo (fondo + borde) que la cabecera
+/// que la disparó.
+fn paint_tooltip(ui: &egui::Ui, pos: egui::Pos2, text: &str) {
+    let painter = ui.painter();
+    let font = egui::FontId::proportional(11.0);
+    let galley = painter.layout_no_wrap(text.to_owned(), font, ui.visuals().text_color());
+    let pad = egui::vec2(6.0, 4.0);
+    let box_rect =
+        egui::Rect::from_min_size(pos + egui::vec2(12.0, 16.0), galley.size() + pad * 2.0);
+    painter.rect_filled(box_rect, 4.0, ui.visuals().extreme_bg_color);
+    painter.rect_stroke(
+        box_rect,
+        4.0,
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Outside,
+    );
+    painter.galley(box_rect.min + pad, galley, ui.visuals().text_color());
+}
+
+/// Si hay un renombrado en curso (`deck.rename_edit`, pulsado desde la
+/// cabecera de un lienzo), dibuja su cuadro de texto en un `egui::Area` de
+/// primer plano anclado a esa cabecera — un paso de UI SEPARADO del
+/// `response` gigante del lienzo (como ya hacen los modales existentes de
+/// esta app), para que arrastrar dentro del cuadro (seleccionar texto) no
+/// compita con el arrastre de capa por el mismo puntero. Mismo patrón
+/// Escape-antes-que-`lost_focus()` que `gallery.rs::gallery_cell` y
+/// `layers_panel.rs::rename_edit_ui`.
+fn draw_rename_overlay(
+    state: &EditorState,
+    deck: &mut Deck,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+) -> Option<CanvasAction> {
+    let id = deck.rename_edit.as_ref()?.0;
+    let idx = deck.find_by_id(id)?;
+    let s_rect = deck.slots[idx].rect;
+    let top_left = page_to_screen(&state.viewport, rect, s_rect.x, s_rect.y);
+    let top_right = page_to_screen(&state.viewport, rect, s_rect.x + s_rect.w, s_rect.y);
+    // Si el zoom cambió mientras se renombraba y la cabecera ya no cabe
+    // (`HEADER_MIN_VISIBLE_W`), cancela en vez de dejar el cuadro de texto
+    // colgado sin dónde anclarse.
+    let Some(header) = slot_header_layout(top_left.x, top_right.x, top_left.y) else {
+        deck.rename_edit = None;
+        return None;
+    };
+
+    let mut cancel = false;
+    let mut commit = false;
+    let text_id = egui::Id::new(("canvas_slot_rename", id));
+    egui::Area::new(text_id.with("area"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(header.name.left_top())
+        .show(ui.ctx(), |ui| {
+            if let Some((_, text)) = deck.rename_edit.as_mut() {
+                let resp = ui.add_sized(
+                    header.name.size(),
+                    egui::TextEdit::singleline(text).id(text_id),
+                );
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    cancel = true;
+                } else if resp.lost_focus() {
+                    commit = true;
+                }
+            }
+        });
+
+    if cancel {
+        deck.rename_edit = None;
+        return None;
+    }
+    if commit {
+        if let Some((id, text)) = deck.rename_edit.take() {
+            let new_stem = text.trim().to_owned();
+            let original_stem = deck
+                .find_by_id(id)
+                .and_then(|idx| deck.slots[idx].path.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !new_stem.is_empty() && new_stem != original_stem {
+                return Some(CanvasAction::Rename(id, new_stem));
+            }
+        }
+    }
+    None
+}
+
+/// Zona "+" al final de la baraja, en el área central: mismo estilo que
+/// `deck_strip::strip_add_cell` (borde discontinuo, glifo "✚", etiqueta) pero
+/// en coordenadas de pantalla del propio lienzo, no de celda de tira. Solo
+/// se pinta si hay una carpeta detrás de la baraja (un archivo suelto no
+/// tiene dónde materializar el nuevo diseño) y si `deck.add_zone` cae dentro
+/// de lo visible.
+fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rect: egui::Rect) {
+    if deck.folder.is_none() {
+        return;
+    }
+    let tl = page_to_screen(&state.viewport, rect, deck.add_zone.x, deck.add_zone.y);
+    let br = page_to_screen(
+        &state.viewport,
+        rect,
+        deck.add_zone.x + deck.add_zone.w,
+        deck.add_zone.y + deck.add_zone.h,
+    );
+    let screen_rect = egui::Rect::from_min_max(tl, br);
+    if !ui.is_rect_visible(screen_rect) {
+        return;
+    }
+    let painter = ui.painter();
+    painter.rect_stroke(
+        screen_rect.shrink(4.0),
+        6.0,
+        egui::Stroke::new(1.5, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Inside,
+    );
+    let glyph_size = (screen_rect.width().min(screen_rect.height()) * 0.15).clamp(18.0, 56.0);
+    painter.text(
+        screen_rect.center() - egui::vec2(0.0, glyph_size * 0.4),
+        egui::Align2::CENTER_CENTER,
+        "✚",
+        egui::FontId::proportional(glyph_size),
+        ui.visuals().weak_text_color(),
+    );
+    painter.text(
+        screen_rect.center() + egui::vec2(0.0, glyph_size * 0.6),
+        egui::Align2::CENTER_CENTER,
+        "Add canvas",
+        egui::FontId::proportional(13.0),
+        ui.visuals().weak_text_color(),
+    );
 }
 
 const HANDLE_SIZE: f32 = 9.0;
@@ -2338,22 +3458,27 @@ fn show_drag_tag(ui: &egui::Ui, pos: egui::Pos2, text: String) {
 
 /// Recuadro de selección (rotado), manejadores, manejador de rotación y guías
 /// magnéticas, pintados por encima del lienzo.
-fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
-    let painter = ui.painter_at(rect);
+/// `coord`: origen de coordenadas página→pantalla (el lienzo activo puede no
+/// estar en el origen de la baraja, ver `canvas_ui`). `clip`: rect real del
+/// viewport en pantalla — recorte del `Painter` y extremos de las guías/
+/// manejadores que deben llegar de borde a borde del lienzo visible, no del
+/// lienzo activo si estuviera desplazado.
+fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, coord: egui::Rect, clip: egui::Rect) {
+    let painter = ui.painter_at(clip);
 
     // Guías magnéticas activas (líneas que cruzan todo el lienzo).
     let guide_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 64, 129));
     for &gx in &state.snap_guides.0 {
-        let x = page_to_screen(&state.viewport, rect, gx, 0.0).x;
+        let x = page_to_screen(&state.viewport, coord, gx, 0.0).x;
         painter.line_segment(
-            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            [egui::pos2(x, clip.top()), egui::pos2(x, clip.bottom())],
             guide_stroke,
         );
     }
     for &gy in &state.snap_guides.1 {
-        let y = page_to_screen(&state.viewport, rect, 0.0, gy).y;
+        let y = page_to_screen(&state.viewport, coord, 0.0, gy).y;
         painter.line_segment(
-            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            [egui::pos2(clip.left(), y), egui::pos2(clip.right(), y)],
             guide_stroke,
         );
     }
@@ -2368,7 +3493,7 @@ fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) 
         let Ok(layer) = state.doc.layer(id) else {
             continue;
         };
-        let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, rect, &layer.transform);
+        let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, coord, &layer.transform);
         painter.add(egui::Shape::closed_line(
             vec![tl, tr, br, bl],
             egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(0, 122, 255, 140)),
@@ -2389,7 +3514,7 @@ fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) 
     };
 
     // Contorno rotado: sup-izq → sup-der → inf-der → inf-izq.
-    let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, rect, t);
+    let [tl, tr, bl, br] = layer_corners_screen(&state.viewport, coord, t);
     painter.add(egui::Shape::closed_line(
         vec![tl, tr, br, bl],
         egui::Stroke::new(1.5, accent),
@@ -2398,7 +3523,7 @@ fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) 
     // Manejador de rotación: línea + círculo (no en modo recorte).
     if !state.crop_mode {
         let top_center = egui::pos2((tl.x + tr.x) / 2.0, (tl.y + tr.y) / 2.0);
-        let handle = rotation_handle_screen(&state.viewport, rect, t);
+        let handle = rotation_handle_screen(&state.viewport, coord, t);
         painter.line_segment([top_center, handle], egui::Stroke::new(1.0, accent));
         painter.circle_filled(handle, HANDLE_SIZE / 2.0, egui::Color32::WHITE);
         painter.circle_stroke(handle, HANDLE_SIZE / 2.0, egui::Stroke::new(1.5, accent));
@@ -2427,58 +3552,67 @@ fn draw_selection_overlay(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) 
 
 /// Cuadrícula adaptativa sobre la página (paso elegido para ~24 px de
 /// pantalla como mínimo entre líneas).
-fn draw_grid(state: &EditorState, ui: &egui::Ui, rect: egui::Rect, page: (f64, f64)) {
+fn draw_grid(
+    state: &EditorState,
+    ui: &egui::Ui,
+    coord: egui::Rect,
+    clip: egui::Rect,
+    page: (f64, f64),
+) {
     const STEPS: [f64; 10] = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
     let zoom = state.viewport.zoom;
     let Some(step) = STEPS.iter().copied().find(|s| s * zoom >= 24.0) else {
         return;
     };
-    let painter = ui.painter_at(rect);
+    let painter = ui.painter_at(clip);
     let stroke = egui::Stroke::new(1.0, ui.visuals().text_color().gamma_multiply(0.15));
     let (pw, ph) = page;
 
     let mut x = 0.0;
     while x <= pw {
-        let a = page_to_screen(&state.viewport, rect, x, 0.0);
-        let b = page_to_screen(&state.viewport, rect, x, ph);
+        let a = page_to_screen(&state.viewport, coord, x, 0.0);
+        let b = page_to_screen(&state.viewport, coord, x, ph);
         painter.line_segment([a, b], stroke);
         x += step;
     }
     let mut y = 0.0;
     while y <= ph {
-        let a = page_to_screen(&state.viewport, rect, 0.0, y);
-        let b = page_to_screen(&state.viewport, rect, pw, y);
+        let a = page_to_screen(&state.viewport, coord, 0.0, y);
+        let b = page_to_screen(&state.viewport, coord, pw, y);
         painter.line_segment([a, b], stroke);
         y += step;
     }
 }
 
 /// Reglas superior e izquierda con marcas y números en píxeles de página.
-fn draw_rulers(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
+/// `coord`/`clip`: ver `draw_selection_overlay`. Las barras de las reglas y
+/// el rango visible que miden son siempre del viewport real (`clip`); solo
+/// las marcas y números usan `coord` para traducir a píxeles de página.
+fn draw_rulers(state: &EditorState, ui: &egui::Ui, coord: egui::Rect, clip: egui::Rect) {
     const THICKNESS: f32 = 18.0;
     const STEPS: [f64; 10] = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0];
     let zoom = state.viewport.zoom;
     let Some(step) = STEPS.iter().copied().find(|s| s * zoom >= 56.0) else {
         return;
     };
-    let painter = ui.painter_at(rect);
+    let painter = ui.painter_at(clip);
     let bg = ui.visuals().extreme_bg_color.gamma_multiply(0.9);
     let fg = ui.visuals().text_color().gamma_multiply(0.75);
     let tick_stroke = egui::Stroke::new(1.0, fg);
     let font = egui::FontId::proportional(9.5);
 
-    let top = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.min.y + THICKNESS));
-    let left = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + THICKNESS, rect.max.y));
+    let top = egui::Rect::from_min_max(clip.min, egui::pos2(clip.max.x, clip.min.y + THICKNESS));
+    let left = egui::Rect::from_min_max(clip.min, egui::pos2(clip.min.x + THICKNESS, clip.max.y));
     painter.rect_filled(top, 0.0, bg);
     painter.rect_filled(left, 0.0, bg);
 
     // Rango de página visible en el lienzo.
-    let (x0, y0) = screen_to_page(&state.viewport, rect, rect.min);
-    let (x1, y1) = screen_to_page(&state.viewport, rect, rect.max);
+    let (x0, y0) = screen_to_page(&state.viewport, coord, clip.min);
+    let (x1, y1) = screen_to_page(&state.viewport, coord, clip.max);
 
     let mut x = (x0 / step).floor() * step;
     while x <= x1 {
-        let sx = page_to_screen(&state.viewport, rect, x, 0.0).x;
+        let sx = page_to_screen(&state.viewport, coord, x, 0.0).x;
         painter.line_segment(
             [
                 egui::pos2(sx, top.bottom() - 6.0),
@@ -2497,7 +3631,7 @@ fn draw_rulers(state: &EditorState, ui: &egui::Ui, rect: egui::Rect) {
     }
     let mut y = (y0 / step).floor() * step;
     while y <= y1 {
-        let sy = page_to_screen(&state.viewport, rect, 0.0, y).y;
+        let sy = page_to_screen(&state.viewport, coord, 0.0, y).y;
         painter.line_segment(
             [
                 egui::pos2(left.right() - 6.0, sy),

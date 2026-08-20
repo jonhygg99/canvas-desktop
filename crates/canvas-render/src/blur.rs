@@ -12,6 +12,16 @@ use vello::wgpu;
 /// Radio máximo del kernel (taps por lado). El slider de la UI llega a 100.
 const MAX_RADIUS: i32 = 100;
 
+/// Identifica a QUÉ documento pertenece una capa, para la caché de efectos
+/// GPU. Los `LayerId` empiezan en 1 en cada `Document`, así que sin este
+/// prefijo la capa 1 del lienzo A y la capa 1 del lienzo B compartirían
+/// entrada de caché y se pisarían la textura procesada — un caso real en
+/// cuanto haya más de un documento cargado a la vez (baraja del editor).
+/// `Default` es la ranura de un único documento (guardado, exportación,
+/// ejemplos headless): no necesitan distinguir ámbitos.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct FxScope(pub u64);
+
 /// Parámetros del filtro de color (0 = neutro en todos).
 #[derive(Clone, Copy, PartialEq, Default)]
 pub struct ColorParams {
@@ -99,7 +109,7 @@ pub struct BlurEngine {
     color_pipeline: wgpu::RenderPipeline,
     bind_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    cache: HashMap<LayerId, LayerFx>,
+    cache: HashMap<(FxScope, LayerId), LayerFx>,
 }
 
 impl BlurEngine {
@@ -190,16 +200,37 @@ impl BlurEngine {
         }
     }
 
-    /// Imágenes sustitutas (procesadas) por capa, para la escena.
-    pub fn overrides(&self) -> HashMap<LayerId, ImageData> {
+    /// Imágenes sustitutas (procesadas) por capa de `scope`, para la escena.
+    /// La clave devuelta es el `LayerId` pelado (sin el scope): así
+    /// `append_document`/`ImageMap` no necesitan saber que la caché de
+    /// efectos distingue documentos.
+    pub fn overrides(&self, scope: FxScope) -> HashMap<LayerId, ImageData> {
         self.cache
             .iter()
-            .map(|(id, b)| (*id, b.image.clone()))
+            .filter(|((s, _), _)| *s == scope)
+            .map(|((_, id), b)| (*id, b.image.clone()))
             .collect()
     }
 
-    /// Sincroniza los efectos GPU de una capa. Devuelve el handle a
-    /// des-registrar de vello cuando ya no queda ningún efecto activo.
+    /// Retira de la caché todas las capas de `scope` (un lienzo descargado
+    /// de la baraja) y devuelve sus handles para des-registrarlos de vello:
+    /// sin esto, sus texturas de efectos quedarían vivas en GPU
+    /// indefinidamente aunque el documento ya no esté cargado.
+    pub fn forget_scope(&mut self, scope: FxScope) -> Vec<ImageData> {
+        let mut removed = Vec::new();
+        self.cache.retain(|(s, _), entry| {
+            if *s == scope {
+                removed.push(entry.image.clone());
+                false
+            } else {
+                true
+            }
+        });
+        removed
+    }
+
+    /// Sincroniza los efectos GPU de una capa de `scope`. Devuelve el handle
+    /// a des-registrar de vello cuando ya no queda ningún efecto activo.
     ///
     /// `register` registra la textura de salida en vello y devuelve su handle
     /// (se inyecta para no acoplar este módulo al `Renderer`).
@@ -208,6 +239,7 @@ impl BlurEngine {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        scope: FxScope,
         layer: LayerId,
         source: &ImageData,
         color: ColorParams,
@@ -215,12 +247,13 @@ impl BlurEngine {
         register: &mut dyn FnMut(wgpu::Texture) -> ImageData,
     ) -> Option<ImageData> {
         let blur_active = radius > 0.0;
+        let key = (scope, layer);
         if !blur_active && color.is_identity() {
             // Devuelve el handle a des-registrar, si lo había.
-            return self.cache.remove(&layer).map(|b| b.image);
+            return self.cache.remove(&key).map(|b| b.image);
         }
 
-        let entry = self.cache.entry(layer).or_insert_with(|| {
+        let entry = self.cache.entry(key).or_insert_with(|| {
             let (w, h) = (source.width, source.height);
             let size = wgpu::Extent3d {
                 width: w,

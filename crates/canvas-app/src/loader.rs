@@ -53,6 +53,39 @@ pub enum AppMsg {
         path: PathBuf,
         result: Result<LoadedImage, String>,
     },
+    /// Tamaños de página sondeados de toda una carpeta, en UN solo mensaje
+    /// (la sonda es de cabecera: la carpeta entera son decenas de ms) para
+    /// que la baraja del editor haga un único `relayout`, no uno por
+    /// archivo. `None` por archivo si `probe_page_size` falló para ese uno.
+    DeckProbed {
+        folder: PathBuf,
+        sizes: Vec<(PathBuf, Option<(f64, f64)>)>,
+    },
+    /// Un lienzo de la baraja terminó de cargar en segundo plano (scroll,
+    /// tira, `PageUp`/`PageDown`). Deliberadamente NO es `ImageLoaded`: esa
+    /// rama puede abrir un `rfd::MessageDialog` modal ("Image changed
+    /// outside Canvas Desktop"), inaceptable para una carga disparada solo
+    /// por hacer scroll — aquí un hash que no coincide se guarda como
+    /// `external_change` en silencio y se muestra como el banner normal en
+    /// cuanto la ranura se activa.
+    SlotLoaded {
+        folder: PathBuf,
+        path: PathBuf,
+        result: Result<LoadOutcome, String>,
+        metadata: ImageMetadata,
+    },
+    /// Nombre reservado en disco para una ranura PROVISIONAL de la baraja
+    /// que el usuario acaba de empezar a editar. Solo reserva: el archivo se
+    /// escribe después, por el camino de guardado de siempre
+    /// (`start_save_design`), que es el único que tiene la GPU para hornear
+    /// la miniatura embebida. `slot` es el id ESTABLE, no el índice — entre
+    /// la petición y la respuesta la baraja puede haberse reordenado (mismo
+    /// criterio que `save_all_queue`).
+    CanvasPathReserved {
+        folder: PathBuf,
+        slot: u64,
+        result: Result<PathBuf, String>,
+    },
     /// Ruta llegada desde una segunda instancia (por el socket local).
     OpenPathExternal(PathBuf),
     /// Una segunda instancia sin rutas pide traer la ventana al frente.
@@ -341,6 +374,108 @@ pub fn spawn_load_design(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) 
     });
 }
 
+/// Carga un lienzo de la baraja del editor en segundo plano (no la primera
+/// apertura: eso sigue siendo `spawn_load_image`/`spawn_load_design` vía
+/// `ImageLoaded`). Misma bifurcación que `App::open_path`: un `.canvas` ES
+/// el documento; una imagen restaura su sidecar si lo tiene.
+pub fn spawn_load_slot(folder: PathBuf, path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        let is_canvas = canvas_io::is_canvas_file(&path);
+        let result = if is_canvas {
+            canvas_io::read_design(&path)
+                .map(LoadOutcome::Design)
+                .map_err(|e| e.to_string())
+        } else {
+            match canvas_io::read_sidecar(&path) {
+                Ok(Some(restored)) => Ok(LoadOutcome::Restored(restored)),
+                Ok(None) => canvas_io::load_image(&path)
+                    .map(LoadOutcome::Flat)
+                    .map_err(|e| e.to_string()),
+                Err(e) => {
+                    tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada");
+                    canvas_io::load_image(&path)
+                        .map(LoadOutcome::Flat)
+                        .map_err(|e| e.to_string())
+                }
+            }
+        };
+        let metadata = if is_canvas {
+            ImageMetadata::default()
+        } else {
+            canvas_io::extract_metadata_from_file(&path)
+        };
+        let _ = tx.send(AppMsg::SlotLoaded {
+            folder,
+            path,
+            result,
+            metadata,
+        });
+        ctx.request_repaint();
+    });
+}
+
+/// Sondeo de tamaños de página en paralelo (rayon), solo cabecera: una
+/// carpeta entera son decenas de ms, sin decodificar un solo píxel. Factor
+/// común entre `spawn_gallery_scan` (sondea al escanear una carpeta) y
+/// `spawn_deck_probe` (sondea las ranuras de una baraja ya construida).
+fn probe_page_sizes(paths: Vec<PathBuf>) -> Vec<(PathBuf, Option<(f64, f64)>)> {
+    use rayon::prelude::*;
+    paths
+        .into_par_iter()
+        .map(|path| {
+            let size = canvas_io::probe_page_size(&path).ok();
+            (path, size)
+        })
+        .collect()
+}
+
+/// Sondea los tamaños de página de las ranuras de una baraja YA construida y
+/// los entrega en un solo mensaje `DeckProbed`. Existe además del sondeo de
+/// `spawn_gallery_scan` porque aquel se lanza desde la GALERÍA, cuando
+/// todavía no hay baraja para esa carpeta: el guardia de carpeta del
+/// manejador de `DeckProbed` tira ese lote entero, y las ranuras se quedan
+/// con el tamaño ESTIMADO de `Slot::size()` — que no coincide con los
+/// píxeles que de verdad se pintan, y se come el hueco entre lienzos hasta
+/// que cada uno se activa por turno. Este sondeo se lanza DESPUÉS de
+/// construir la baraja (`App::resolve_deck`), así que su `folder` ya
+/// coincide y el guardia lo deja pasar.
+pub fn spawn_deck_probe(
+    folder: PathBuf,
+    paths: Vec<PathBuf>,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let sizes = probe_page_sizes(paths);
+        let _ = tx.send(AppMsg::DeckProbed { folder, sizes });
+        ctx.request_repaint();
+    });
+}
+
+/// Reserva atómicamente (`create_new`, vía `canvas_io::reserve_unique_path`)
+/// un nombre libre en `folder` para una ranura provisional que el usuario
+/// acaba de empezar a editar. En un hilo por disciplina: en una unidad de
+/// red con cientos de "Untitled N" ya creados, el bucle de reserva sí se
+/// nota, y la UI no espera nunca al disco.
+pub fn spawn_reserve_canvas_path(
+    folder: PathBuf,
+    slot: u64,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result =
+            canvas_io::reserve_unique_path(&folder, "Untitled", canvas_io::CANVAS_EXTENSION)
+                .map_err(|e| e.to_string());
+        let _ = tx.send(AppMsg::CanvasPathReserved {
+            folder,
+            slot,
+            result,
+        });
+        ctx.request_repaint();
+    });
+}
+
 /// Reescribe (atómico) un diseño autónomo en `path`, sin rasterizar nada.
 pub fn spawn_save_design(
     path: PathBuf,
@@ -512,6 +647,24 @@ pub fn spawn_gallery_scan(
         ctx.request_repaint();
 
         use rayon::prelude::*;
+
+        // Sondeo de tamaños (cabecera, sin decodificar): antes que las
+        // miniaturas porque es mucho más barato y la baraja del editor lo
+        // necesita para apilar sus lienzos. Un solo mensaje con todos los
+        // tamaños, no uno por archivo, para que haga falta un único
+        // `relayout`. Este sondeo llega DESDE LA GALERÍA, antes de que la
+        // `Deck` de esta carpeta exista todavía (se construye después, al
+        // terminar de cargar la imagen en la que se hizo clic) — el guardia
+        // de carpeta del manejador de `DeckProbed` en `main.rs` lo descarta
+        // en ese caso. No pasa nada: `spawn_deck_probe`, más abajo, repite
+        // el sondeo una vez que la baraja ya existe con la carpeta puesta.
+        let sizes = probe_page_sizes(files.iter().map(|(p, _)| p.clone()).collect());
+        let _ = tx.send(AppMsg::DeckProbed {
+            folder: folder.clone(),
+            sizes,
+        });
+        ctx.request_repaint();
+
         files.par_iter().for_each_with(tx, |tx, (path, _mtime)| {
             let result =
                 canvas_io::thumbnail(path, 256, cache_dir.as_deref()).map_err(|e| e.to_string());

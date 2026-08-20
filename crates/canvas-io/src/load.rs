@@ -69,6 +69,27 @@ pub fn reserve_unique_path(folder: &Path, stem: &str, ext: &str) -> Result<PathB
     })
 }
 
+/// Primer nombre LIBRE en `folder` (`{stem}.{ext}`, `{stem} 2.{ext}`…) SIN
+/// reservarlo: solo un vistazo, para poder enseñar un nombre plausible en la
+/// interfaz antes de que el archivo exista. A diferencia de
+/// `reserve_unique_path`, NO crea nada. Quien vaya a ESCRIBIR debe llamar de
+/// todas formas a `reserve_unique_path`: entre este vistazo y la escritura
+/// hay una ventana TOCTOU que solo `create_new` cierra.
+pub fn peek_unique_path(folder: &Path, stem: &str, ext: &str) -> PathBuf {
+    for n in 0..10_000u32 {
+        let name = if n == 0 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem} {}.{ext}", n + 1)
+        };
+        let candidate = folder.join(&name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    folder.join(format!("{stem}.{ext}"))
+}
+
 /// ¿`Ctrl+S` puede sobrescribir este archivo? Un SVG es vectorial (un lienzo
 /// raster no puede reescribirlo) y un GIF puede ser animado (sobrescribirlo
 /// lo aplanaría a un fotograma): ambos se abren pero solo admiten «Save as…».
@@ -129,8 +150,10 @@ pub fn load_image(path: &Path) -> Result<LoadedImage, IoError> {
 }
 
 /// Lee el tag de orientación EXIF (1..=8). Un fallo aquí nunca es fatal: la
-/// mayoría de formatos ni siquiera llevan EXIF.
-fn exif_orientation(path: &Path) -> Option<u32> {
+/// mayoría de formatos ni siquiera llevan EXIF. `pub(crate)`: también la usa
+/// `probe::probe_page_size` para saber si hay que intercambiar ancho/alto sin
+/// decodificar la imagen entera.
+pub(crate) fn exif_orientation(path: &Path) -> Option<u32> {
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     let exif = exif::Reader::new().read_from_container(&mut reader).ok()?;
@@ -239,6 +262,24 @@ mod tests {
         assert!(p1.is_file());
         assert!(p2.is_file());
         assert!(p3.is_file());
+    }
+
+    #[test]
+    fn peek_unique_path_does_not_create_anything() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let peeked = peek_unique_path(dir.path(), "Untitled", "canvas");
+        assert_eq!(peeked, dir.path().join("Untitled.canvas"));
+        assert!(!peeked.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn peek_unique_path_skips_taken_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("Untitled.canvas"), b"").expect("crear archivo");
+        let peeked = peek_unique_path(dir.path(), "Untitled", "canvas");
+        assert_eq!(peeked, dir.path().join("Untitled 2.canvas"));
+        assert!(!peeked.exists());
     }
 
     #[test]

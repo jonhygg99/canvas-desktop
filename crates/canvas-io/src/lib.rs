@@ -6,6 +6,7 @@ mod export;
 mod load;
 mod metadata;
 mod png_codec;
+mod probe;
 mod save;
 mod sidecar;
 mod svg;
@@ -17,12 +18,13 @@ pub use clipboard::{
 pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
 pub use load::{
     can_overwrite, is_canvas_file, is_image_file, is_standalone_design, load_image,
-    reserve_unique_path, LoadedImage, CANVAS_EXTENSION, IMAGE_EXTENSIONS,
+    peek_unique_path, reserve_unique_path, LoadedImage, CANVAS_EXTENSION, IMAGE_EXTENSIONS,
 };
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
     ImageMetadata,
 };
+pub use probe::probe_page_size;
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
     blank_design, delete_sidecar, make_preview, preview_scale, read_design, read_preview,

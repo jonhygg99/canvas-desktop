@@ -7,6 +7,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod clipboard;
+mod deck;
+mod deck_strip;
 mod editor;
 mod export;
 mod gallery;
@@ -19,7 +21,7 @@ mod surface;
 mod watcher;
 mod welcome;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::{anyhow, Context, Result};
@@ -195,8 +197,14 @@ struct App {
     allow_close: bool,
     /// Directorio de caché de miniaturas (si se pudo crear).
     thumb_cache: Option<PathBuf>,
-    /// Carpeta de galería de la que procede lo que está abierto.
-    gallery_origin: Option<PathBuf>,
+    /// Baraja de lienzos del editor abierto: todos los archivos de su
+    /// carpeta de origen, para saltar entre ellos sin volver a la galería.
+    /// Sobrevive al cambio de vista (a diferencia de `GalleryState`, que se
+    /// destruye), así que también sirve para sembrar la rejilla al volver.
+    deck: deck::Deck,
+    /// Semilla capturada de la galería justo antes de navegar a un lienzo
+    /// suyo; `resolve_deck` la consume en cuanto la carga termina.
+    pending_deck: Option<deck::DeckSeed>,
     /// Navegación pendiente para cuando termine el guardado en curso.
     after_save: Option<Nav>,
     /// Ajustes persistidos del usuario.
@@ -233,6 +241,29 @@ struct App {
     pending_export_settings: Option<export::ExportSettings>,
     /// Ruta y ajustes de exportación, pendiente de hornear (necesita la GPU).
     pending_export: Option<(PathBuf, export::ExportSettings)>,
+    /// «Save all»: ids (estables) de las ranuras sucias que faltan por
+    /// guardar, el activo excluido — ese se guarda aparte, sin saltar,
+    /// nada más pulsar. Se procesa una por frame: salta a ella (si no es ya
+    /// la activa) y pulsa "Guardar" por su cuenta, reutilizando EXACTAMENTE
+    /// el camino de Ctrl+S (mismo aviso de sobrescritura, que gracias a
+    /// `overwrite_confirmed` solo pregunta una vez por lote).
+    save_all_queue: Vec<u64>,
+    /// Ya se pulsó "Guardar" para la ranura al frente de `save_all_queue`.
+    /// Si sigue sucia y no hay un guardado en curso la próxima vez que se
+    /// mira, ese intento falló — se usa para abortar el lote en vez de
+    /// reintentar sin fin (no se puede usar `save_error` para esto: es un
+    /// campo de propósito general, podría traer un error de otra cosa).
+    save_all_attempted: bool,
+    /// Id de la ranura provisional cuya reserva de nombre está en vuelo.
+    /// Cerrojo de un solo disparo: la detección de «el usuario la ha
+    /// editado» se cumple en TODOS los frames a partir del primero, y sin
+    /// esto lanzaría un hilo de reserva por frame.
+    materializing: Option<u64>,
+    /// Id de una ranura provisional cuya reserva FALLÓ (carpeta de solo
+    /// lectura, disco lleno). Sigue estando sucia, así que la detección
+    /// volvería a cumplirse cada frame: se abandona en vez de reintentar sin
+    /// fin, mismo criterio que `save_all_attempted` con un lote fallido.
+    materialize_blocked: Option<u64>,
 }
 
 impl App {
@@ -289,7 +320,8 @@ impl App {
             close_after_save: false,
             allow_close: false,
             thumb_cache: thumbnail_cache_dir(),
-            gallery_origin: None,
+            deck: deck::Deck::default(),
+            pending_deck: None,
             after_save: None,
             settings: settings::AppSettings::load(),
             overwrite_confirmed: false,
@@ -307,6 +339,10 @@ impl App {
             export_dialog: None,
             pending_export_settings: None,
             pending_export: None,
+            save_all_queue: Vec::new(),
+            save_all_attempted: false,
+            materializing: None,
+            materialize_blocked: None,
         };
         if let Some(m) = app.menus.as_mut() {
             m.set_recents(&app.settings.recent_files);
@@ -324,7 +360,12 @@ impl App {
         // (que a su vez restaura las capas del sidecar automáticamente).
         let path = resolve_canvas_sidecar(path);
         if path.is_dir() {
-            self.gallery_origin = Some(path.clone());
+            // Si la baraja ya tenía esta misma carpeta (se volvió del
+            // editor), siembra la rejilla con sus miniaturas ya en GPU: el
+            // reescaneo que sigue solo detecta cambios en disco, no repuebla
+            // desde ⏳.
+            let gallery_state =
+                seed_gallery_from_deck(&self.deck, path.clone(), self.settings.gallery_sort);
             loader::spawn_gallery_scan(
                 path.clone(),
                 self.thumb_cache.clone(),
@@ -332,21 +373,15 @@ impl App {
                 ctx.clone(),
             );
             self.push_recent(&path);
-            self.view = View::Gallery(gallery::GalleryState::new(path, self.settings.gallery_sort));
+            self.view = View::Gallery(gallery_state);
         } else if canvas_io::is_canvas_file(&path) {
-            // Diseño autónomo: el `.canvas` ES el documento.
-            if self.gallery_origin.as_deref() != path.parent() {
-                self.gallery_origin = None;
-            }
+            // Diseño autónomo: el `.canvas` ES el documento. Qué baraja usar
+            // (semilla de galería, la ya activa, o una degenerada de una
+            // ranura) se decide en `resolve_deck` cuando la carga termine.
             loader::spawn_load_design(path.clone(), self.tx.clone(), ctx.clone());
             self.push_recent(&path);
             self.view = View::Loading { path };
         } else if canvas_io::is_image_file(&path) {
-            // Abrir un archivo que no viene de la galería actual rompe el
-            // vínculo con ella (el botón «volver» desaparece).
-            if self.gallery_origin.as_deref() != path.parent() {
-                self.gallery_origin = None;
-            }
             loader::spawn_load_image(path.clone(), true, self.tx.clone(), ctx.clone());
             self.push_recent(&path);
             self.view = View::Loading { path };
@@ -408,12 +443,97 @@ impl App {
     /// Documento nuevo en blanco (desde la bienvenida o el menú File):
     /// hereda el tamaño de página del último documento abierto o creado.
     fn new_design(&mut self, ctx: &egui::Context) {
-        self.gallery_origin = None;
+        self.deck = deck::Deck::default();
+        self.apply_deck_prefs();
         let (w, h) = self.settings.last_page_size;
         let mut state = editor::EditorState::new_blank(w, h);
         state.sidecar_enabled = self.settings.sidecar_default;
         self.view = View::Editor(Box::new(state));
         self.sync_title(ctx);
+    }
+
+    /// Decide qué baraja usar al terminar de cargar `path` en el editor: la
+    /// semilla que dejó un clic de galería (`pending_deck`), la baraja ya
+    /// activa si `path` es uno de sus lienzos (navegación por la tira o el
+    /// teclado dentro del propio editor, que no toca `pending_deck`), o una
+    /// baraja degenerada de una sola ranura en cualquier otro caso (CLI,
+    /// recientes, arrastrar y soltar, segunda instancia).
+    fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
+        if let Some(seed) = self.pending_deck.take() {
+            self.deck = deck::Deck::from_seed(seed, path);
+            self.apply_deck_prefs();
+            // La baraja acaba de nacer con `folder` ya puesto: a diferencia
+            // del sondeo que lanza la galería (demasiado pronto, antes de
+            // que esta `Deck` existiera), este llega a tiempo.
+            self.spawn_deck_probe(ctx);
+        } else if let Some(idx) = self.deck.find_by_path(path) {
+            self.deck.active = idx;
+        } else {
+            self.deck = deck::Deck::single(path.to_path_buf());
+            self.apply_deck_prefs();
+        }
+    }
+
+    /// Siembra una `Deck` recién construida con las preferencias persistidas
+    /// (eje de apilado, visibilidad de la tira) — `Deck::single`/`from_seed`
+    /// no conocen `AppSettings`, así que el llamador las aplica justo
+    /// después de construirla, antes del primer `relayout`.
+    fn apply_deck_prefs(&mut self) {
+        self.deck.axis = self.settings.deck_axis;
+        self.deck.strip_visible = self.settings.deck_strip_visible;
+        self.deck.strip_side = self.settings.deck_strip_side;
+    }
+
+    /// Sondea el tamaño real de las ranuras cuyo tamaño aún se desconoce.
+    /// No hace nada con una baraja degenerada (`Deck::single`: sin carpeta,
+    /// sin hermanos que necesiten sondeo) ni cuando ya se conocen todos.
+    fn spawn_deck_probe(&self, ctx: &egui::Context) {
+        let Some(folder) = self.deck.folder.clone() else {
+            return;
+        };
+        let paths: Vec<PathBuf> = self
+            .deck
+            .slots
+            .iter()
+            .filter(|s| s.page.is_none())
+            .map(|s| s.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        loader::spawn_deck_probe(folder, paths, self.tx.clone(), ctx.clone());
+    }
+
+    /// Alterna el eje de apilado de la baraja activa y lo persiste — la tira
+    /// (botón ⇅/⇆) y el menú View (Fase 14e) comparten este único camino.
+    fn toggle_deck_axis(&mut self) {
+        self.deck.axis = self.deck.axis.toggled();
+        self.deck.layout_dirty = true;
+        self.settings.deck_axis = self.deck.axis;
+        self.settings.save_in_background();
+    }
+
+    /// Mueve la tira al siguiente lado y lo persiste — el botón de la propia
+    /// tira y el menú View comparten este único camino.
+    fn cycle_strip_side(&mut self) {
+        self.deck.strip_side = self.deck.strip_side.cycled();
+        self.settings.deck_strip_side = self.deck.strip_side;
+        self.settings.save_in_background();
+    }
+
+    /// Añade un lienzo en blanco al final de la baraja y salta a él. No hace
+    /// nada con una baraja degenerada (`Deck::single`: un archivo suelto no
+    /// tiene carpeta donde crear un hermano) — es el único camino a esta
+    /// función cuando la tira está oculta (un solo archivo en la carpeta,
+    /// donde la celda "+" todavía no existe).
+    fn add_canvas(&mut self) {
+        match self.deck.push_placeholder(self.settings.last_page_size) {
+            Some(idx) => {
+                self.deck.jump_to = Some(idx);
+                self.deck.jump_center = true;
+            }
+            None => tracing::info!("«Add canvas» sin efecto: la baraja no tiene carpeta"),
+        }
     }
 
     fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
@@ -423,17 +543,41 @@ impl App {
         }
     }
 
-    /// Navega, pero si hay un editor con cambios sin guardar delante pregunta
-    /// primero (Save / Discard / Cancel).
-    fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
-        let dirty_name = match &self.view {
-            View::Editor(state) if state.is_dirty() => Some(state.file_name()),
-            _ => None,
+    /// Nombres de todos los lienzos con cambios sin guardar — la activa
+    /// primero, si lo está, luego el resto de la baraja — para los diálogos
+    /// de «cambios sin guardar». Desde que hay N lienzos cargados a la vez
+    /// (Fase 14c), un solo `state.is_dirty()` ya no cuenta la historia
+    /// entera: una ranura de fondo puede estar sucia sin que el documento
+    /// activo lo esté.
+    fn dirty_canvas_names(&self) -> Vec<String> {
+        let View::Editor(state) = &self.view else {
+            return Vec::new();
         };
-        let Some(name) = dirty_name else {
+        let mut names = Vec::new();
+        if state.is_dirty() {
+            names.push(state.file_name());
+        }
+        for slot in &self.deck.slots {
+            if matches!(&slot.content, deck::SlotContent::Ready(d) if d.history.is_dirty()) {
+                names.push(slot.name.clone());
+            }
+        }
+        names
+    }
+
+    /// Navega, pero si hay algún lienzo con cambios sin guardar delante
+    /// pregunta primero (Save / Discard / Cancel). «Save» solo guarda el
+    /// documento ACTIVO — sigue siendo el único camino de guardado que
+    /// funciona fuera del editor (`Ctrl+Alt+S`/«Save all» es una acción del
+    /// editor, no de esta navegación); el texto lo dice explícitamente
+    /// cuando hay más de un lienzo sucio, para que abrir algo distinto
+    /// nunca pierda trabajo en silencio.
+    fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
+        let names = self.dirty_canvas_names();
+        if names.is_empty() {
             self.navigate(nav, ctx);
             return;
-        };
+        }
         let target = match &nav {
             Nav::Open(p) => format!(
                 "\"{}\"",
@@ -443,12 +587,24 @@ impl App {
             ),
             Nav::NewDesign => "a new design".to_owned(),
         };
+        let description = if names.len() == 1 {
+            format!(
+                "\"{}\" has unsaved changes.\nSave them before opening {target}? (\"No\" discards them.)",
+                names[0]
+            )
+        } else {
+            format!(
+                "{} canvases have unsaved changes:\n\u{2022} {}\n\nOpening {target} only saves \
+                 the active one — the rest will be lost. Cancel and switch to them first if you \
+                 want to keep their changes.",
+                names.len(),
+                names.join("\n\u{2022} ")
+            )
+        };
         let choice = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Warning)
             .set_title("Unsaved changes")
-            .set_description(format!(
-                "\"{name}\" has unsaved changes.\nSave them before opening {target}? (\"No\" discards them.)"
-            ))
+            .set_description(description)
             .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
                 "Save".to_owned(),
                 "Discard".to_owned(),
@@ -468,6 +624,44 @@ impl App {
             rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(nav, ctx),
             _ => {}
         }
+    }
+
+    /// «Save all»: encola las ranuras de fondo sucias (id estable, no
+    /// índice — el orden puede cambiar entre frames). El documento ACTIVO,
+    /// si está sucio, se guarda aparte y de inmediato (no necesita saltar);
+    /// la cola solo lleva lo demás. Deja fuera SVG/GIF: no se pueden
+    /// sobrescribir y un lote no tiene un destino automático razonable para
+    /// ellos sin preguntar archivo por archivo — el usuario los guarda
+    /// individualmente activándolos, donde `Ctrl+S` ya redirige a «Save as…».
+    fn start_save_all(&mut self) {
+        let View::Editor(state) = &mut self.view else {
+            return;
+        };
+        if state.is_dirty()
+            && state
+                .doc
+                .source_path
+                .as_deref()
+                .is_some_and(canvas_io::can_overwrite)
+        {
+            state.save_clicked = true;
+        }
+        self.save_all_queue = self
+            .deck
+            .slots
+            .iter()
+            .filter(|s| {
+                // Una provisional sucia la escribe su propio camino de
+                // materialización (que además le reserva un nombre antes de
+                // guardar); dejarla entrar aquí sería una segunda escritura
+                // sobre una ruta solo «asomada», nunca reservada.
+                !s.is_placeholder
+                    && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
+                    && canvas_io::can_overwrite(&s.path)
+            })
+            .map(|s| s.id)
+            .collect();
+        self.save_all_attempted = false;
     }
 
     /// Traduce un clic de menú a la acción correspondiente.
@@ -504,6 +698,7 @@ impl App {
                     state.save_as_clicked = true;
                 }
             }
+            A::SaveAll => self.start_save_all(),
             A::Export => {
                 if let View::Editor(_) = &self.view {
                     self.export_dialog = Some(export::ExportDialog::default());
@@ -545,6 +740,24 @@ impl App {
                     state.show_rulers = !state.show_rulers;
                 }
             }
+            A::NextCanvas => {
+                if let View::Editor(state) = &mut self.view {
+                    state.deck_nav = Some(editor::DeckNav::Next);
+                }
+            }
+            A::PrevCanvas => {
+                if let View::Editor(state) = &mut self.view {
+                    state.deck_nav = Some(editor::DeckNav::Prev);
+                }
+            }
+            A::ToggleCanvasesPanel => {
+                self.deck.strip_visible = !self.deck.strip_visible;
+                self.settings.deck_strip_visible = self.deck.strip_visible;
+                self.settings.save_in_background();
+            }
+            A::ToggleCanvasesAxis => self.toggle_deck_axis(),
+            A::CycleCanvasesSide => self.cycle_strip_side(),
+            A::AddCanvas => self.add_canvas(),
             A::FullScreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
@@ -629,6 +842,16 @@ impl App {
                                 if new_source {
                                     state.doc.source_path = Some(path);
                                 }
+                                // «Save all»: si lo que se acaba de guardar
+                                // era el frente de la cola, avanza. Se
+                                // comprueba por id de ranura, no por ruta:
+                                // más robusto ante un renombrado en vuelo.
+                                if self.save_all_queue.first().is_some_and(|&id| {
+                                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                                }) {
+                                    self.save_all_queue.remove(0);
+                                    self.save_all_attempted = false;
+                                }
                                 if self.close_after_save {
                                     self.allow_close = true;
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -639,6 +862,16 @@ impl App {
                             Err(e) => {
                                 self.close_after_save = false;
                                 self.after_save = None;
+                                // No hace falta esperar al frame siguiente
+                                // para que el chequeo de la cola detecte el
+                                // fallo: se aborta el lote aquí mismo si era
+                                // su frente el que acaba de fallar.
+                                if self.save_all_queue.first().is_some_and(|&id| {
+                                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                                }) {
+                                    self.save_all_queue.clear();
+                                    self.save_all_attempted = false;
+                                }
                                 state.save_error = Some(e);
                             }
                         }
@@ -682,10 +915,33 @@ impl App {
                     }
                 }
                 AppMsg::GalleryScanned { folder, files } => {
-                    if let View::Gallery(g) = &mut self.view {
-                        if g.folder == folder {
-                            g.merge_files(files);
+                    // La baraja del editor (si es la misma carpeta) y la
+                    // rejilla (si está abierta ahí) pueden querer el mismo
+                    // reescaneo a la vez — típicamente al volver de un
+                    // editor recién abierto desde esa galería.
+                    let want_deck = self.deck.folder.as_deref() == Some(folder.as_path());
+                    let want_gallery = matches!(&self.view, View::Gallery(g) if g.folder == folder);
+                    match (want_deck, want_gallery) {
+                        (true, true) => {
+                            self.deck.merge_scan(files.clone());
+                            if let View::Gallery(g) = &mut self.view {
+                                g.merge_files(files);
+                            }
                         }
+                        (true, false) => self.deck.merge_scan(files),
+                        (false, true) => {
+                            if let View::Gallery(g) = &mut self.view {
+                                g.merge_files(files);
+                            }
+                        }
+                        (false, false) => {}
+                    }
+                    // Archivos nuevos en `merge_scan` nacen con `page: None`
+                    // (`idle_slot`): sondearlos cubre el caso de añadir
+                    // archivos a la carpeta mientras el editor ya está
+                    // abierto en ella, no solo la apertura inicial.
+                    if want_deck {
+                        self.spawn_deck_probe(ctx);
                     }
                 }
                 AppMsg::GalleryThumb {
@@ -693,25 +949,179 @@ impl App {
                     path,
                     result,
                 } => {
-                    if let View::Gallery(g) = &mut self.view {
-                        if g.folder == folder {
-                            match result {
-                                Ok(img) => {
-                                    let color = egui::ColorImage::from_rgba_unmultiplied(
-                                        [img.width as usize, img.height as usize],
-                                        &img.rgba,
-                                    );
-                                    let tex = ctx.load_texture(
-                                        path.to_string_lossy().into_owned(),
-                                        color,
-                                        egui::TextureOptions::LINEAR,
-                                    );
-                                    g.set_thumb(&path, Some(tex));
+                    // Igual que arriba: se sube la textura UNA vez y se
+                    // reparte el handle (barato de clonar) a quien la quiera,
+                    // para no duplicar la subida a GPU cuando ambas coinciden.
+                    let want_deck = self.deck.folder.as_deref() == Some(folder.as_path());
+                    let want_gallery = matches!(&self.view, View::Gallery(g) if g.folder == folder);
+                    if want_deck || want_gallery {
+                        match result {
+                            Ok(img) => {
+                                let color = egui::ColorImage::from_rgba_unmultiplied(
+                                    [img.width as usize, img.height as usize],
+                                    &img.rgba,
+                                );
+                                let tex = ctx.load_texture(
+                                    path.to_string_lossy().into_owned(),
+                                    color,
+                                    egui::TextureOptions::LINEAR,
+                                );
+                                if want_deck {
+                                    self.deck.set_thumb(&path, Some(tex.clone()));
                                 }
-                                Err(e) => {
-                                    tracing::warn!("miniatura de {} falló: {e}", path.display());
-                                    g.set_thumb(&path, None);
+                                if want_gallery {
+                                    if let View::Gallery(g) = &mut self.view {
+                                        g.set_thumb(&path, Some(tex));
+                                    }
                                 }
+                            }
+                            Err(e) => {
+                                tracing::warn!("miniatura de {} falló: {e}", path.display());
+                                if want_deck {
+                                    self.deck.set_thumb(&path, None);
+                                }
+                                if want_gallery {
+                                    if let View::Gallery(g) = &mut self.view {
+                                        g.set_thumb(&path, None);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                AppMsg::DeckProbed { folder, sizes } => {
+                    if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                        self.deck.set_probes(sizes);
+                    }
+                }
+                AppMsg::SlotLoaded {
+                    folder,
+                    path,
+                    result,
+                    metadata,
+                } => {
+                    // Guarda de obsolescencia: si la baraja ya no es esta
+                    // carpeta (el usuario abrió otra cosa mientras cargaba),
+                    // el mensaje se descarta entero — el `inflight` de la
+                    // baraja NUEVA no tiene nada que ver con esta carga.
+                    if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                        self.deck.loading_finished();
+                        if let Some(idx) = self.deck.find_by_path(&path) {
+                            // Si mientras tanto la ranura dejó de estar
+                            // `Loading` (se activó por otra vía, o ya se
+                            // descartó), no se pisa: esta carga ya no pinta
+                            // nada.
+                            let still_loading =
+                                self.deck.slots.get(idx).is_some_and(|s| {
+                                    matches!(s.content, deck::SlotContent::Loading)
+                                });
+                            if still_loading {
+                                let metadata = (!metadata.is_empty()).then_some(metadata);
+                                let new_content = match result {
+                                    Ok(outcome) => build_slot_doc(
+                                        path.clone(),
+                                        outcome,
+                                        metadata,
+                                        self.settings.sidecar_default,
+                                    )
+                                    .map_or_else(
+                                        || {
+                                            deck::SlotContent::Failed(
+                                                "could not build the document".to_owned(),
+                                            )
+                                        },
+                                        |doc| deck::SlotContent::Ready(Box::new(doc)),
+                                    ),
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "carga de fondo de {} falló: {e}",
+                                            path.display()
+                                        );
+                                        deck::SlotContent::Failed(e)
+                                    }
+                                };
+                                if let Some(slot) = self.deck.slots.get_mut(idx) {
+                                    slot.content = new_content;
+                                }
+                            }
+                        }
+                    }
+                }
+                AppMsg::CanvasPathReserved {
+                    folder,
+                    slot,
+                    result,
+                } => {
+                    // Libera el cerrojo PRIMERO y siempre, para que un
+                    // guardián de carpeta obsoleta (más abajo) no lo deje
+                    // atascado.
+                    if self.materializing == Some(slot) {
+                        self.materializing = None;
+                    }
+                    // Guarda de obsolescencia, igual que `SlotLoaded`: si la
+                    // baraja ya no es esta carpeta, el archivo reservado (0
+                    // bytes) queda huérfano — se registra, no se limpia
+                    // (borrarlo de fondo podría chocar con un usuario que
+                    // reabrió justo esa carpeta).
+                    if self.deck.folder.as_deref() != Some(folder.as_path()) {
+                        tracing::warn!(
+                            "baraja: reserva de nombre para «{}» llegó tras cambiar de carpeta; \
+                             el archivo reservado queda huérfano",
+                            folder.display()
+                        );
+                        continue;
+                    }
+                    match result {
+                        Ok(path) => {
+                            let Some(idx) = self.deck.find_by_id(slot) else {
+                                tracing::warn!(
+                                    "baraja: la ranura provisional ya no existe al reservar su nombre"
+                                );
+                                continue;
+                            };
+                            // Mismo patrón que `DocumentRenamed`: la tira lee
+                            // ruta y nombre de la RANURA, no del documento.
+                            if let Some(s) = self.deck.slots.get_mut(idx) {
+                                s.name = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                s.path = path.clone();
+                                s.is_placeholder = false;
+                            }
+                            if idx == self.deck.active {
+                                if let View::Editor(state) = &mut self.view {
+                                    state.doc.source_path = Some(path);
+                                    state.is_design = true;
+                                    // El bloque de guardado normal, más abajo
+                                    // en este mismo frame, toma la rama de
+                                    // diseño y llama a `start_save_design`
+                                    // con horneado de miniatura, ventana de
+                                    // gracia y `mark_saved()` de siempre —
+                                    // gratis, sin duplicar nada de eso aquí.
+                                    state.save_clicked = true;
+                                }
+                            } else if let deck::SlotContent::Ready(d) =
+                                &mut self.deck.slots[idx].content
+                            {
+                                // El usuario saltó a otro lienzo mientras la
+                                // reserva estaba en vuelo: se deja lista para
+                                // guardarse la próxima vez (Ctrl+S al volver
+                                // a ella, o Save All), sin forzarlo ahora.
+                                d.doc.source_path = Some(path);
+                            }
+                            // Relleno automático: siempre queda una
+                            // provisional lista al final, con o sin éxito
+                            // arriba.
+                            self.deck.push_placeholder(self.settings.last_page_size);
+                        }
+                        Err(e) => {
+                            self.materialize_blocked = Some(slot);
+                            tracing::warn!("no se pudo crear el archivo del nuevo lienzo: {e}");
+                            if let View::Editor(state) = &mut self.view {
+                                state.save_error = Some(format!(
+                                    "Could not create a file for the new canvas: {e}"
+                                ));
                             }
                         }
                     }
@@ -747,6 +1157,21 @@ impl App {
                                 }
                                 self.rescan_gallery(ctx);
                             }
+                            // Igual, pero para la baraja del editor (p.ej. el
+                            // botón «⧉» de la cabecera de un lienzo, que
+                            // dispara esta misma operación aunque la vista
+                            // actual sea el editor, no la galería) — la
+                            // reconciliación (`merge_scan`, incluido
+                            // `order_hint`) llega sola al recibir
+                            // `GalleryScanned`, aquí solo hace falta pedirla.
+                            if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                                loader::spawn_gallery_scan(
+                                    folder.clone(),
+                                    self.thumb_cache.clone(),
+                                    self.tx.clone(),
+                                    ctx.clone(),
+                                );
+                            }
                         }
                         Err(e) => {
                             // No hay nada destructivo que deshacer (la copia
@@ -764,14 +1189,56 @@ impl App {
                     }
                 }
                 AppMsg::DocumentRenamed { old_path, result } => {
-                    if let View::Editor(state) = &mut self.view {
-                        if state.doc.source_path.as_deref() == Some(old_path.as_path()) {
+                    let is_active = matches!(&self.view, View::Editor(state)
+                        if state.doc.source_path.as_deref() == Some(old_path.as_path()));
+                    if is_active {
+                        if let View::Editor(state) = &mut self.view {
                             match result {
-                                Ok(new_path) => state.doc.source_path = Some(new_path),
+                                Ok(new_path) => {
+                                    // La ranura activa de la baraja lleva su
+                                    // propia copia de la ruta/nombre (la
+                                    // tira los lee de ahí, no del documento):
+                                    // sin esto, renombrar dejaría la tira con
+                                    // el nombre viejo hasta el próximo
+                                    // reescaneo.
+                                    if let Some(slot) = self.deck.slots.get_mut(self.deck.active) {
+                                        slot.path = new_path.clone();
+                                        slot.name = new_path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().into_owned())
+                                            .unwrap_or_default();
+                                    }
+                                    state.doc.source_path = Some(new_path);
+                                }
                                 // Reutiliza el banner de error que ya existe
                                 // en el panel: no hace falta un campo nuevo.
                                 Err(e) => state.save_error = Some(e),
                             }
+                        }
+                    } else {
+                        // Ranura de FONDO (cabecera del lienzo en el área
+                        // central, no la activa): sin `state.doc` que
+                        // actualizar, solo la propia ranura de la baraja —
+                        // mismo campo que arriba, generalizado por ruta en
+                        // vez de "la activa". Sin banner de error propio
+                        // para una ranura que no se está mirando: se
+                        // registra y ya.
+                        match result {
+                            Ok(new_path) => {
+                                if let Some(slot) =
+                                    self.deck.slots.iter_mut().find(|s| s.path == old_path)
+                                {
+                                    slot.path = new_path.clone();
+                                    slot.name = new_path
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().into_owned())
+                                        .unwrap_or_default();
+                                }
+                            }
+                            Err(e) => tracing::warn!(
+                                "no se pudo renombrar {} en segundo plano: {e}",
+                                old_path.display()
+                            ),
                         }
                     }
                 }
@@ -781,18 +1248,72 @@ impl App {
                     // decisión se guarda en una variable local y se aplica
                     // después de que el préstamo termine.
                     let mut go_to_welcome = false;
-                    if let View::Editor(state) = &mut self.view {
-                        if state.doc.source_path.as_deref() == Some(path.as_path()) {
+                    let is_active = matches!(&self.view, View::Editor(state)
+                        if state.doc.source_path.as_deref() == Some(path.as_path()));
+                    if is_active {
+                        if let View::Editor(state) = &mut self.view {
                             match result {
-                                // El archivo ya no existe: no tiene sentido
-                                // preguntar por cambios sin guardar, se
-                                // navega directo.
-                                Ok(()) => match state.from_gallery.clone() {
-                                    Some(folder) => open_after = Some(Nav::Open(folder)),
-                                    None => go_to_welcome = true,
-                                },
+                                Ok(()) => {
+                                    // El archivo ya no existe: no tiene
+                                    // sentido preguntar por cambios sin
+                                    // guardar (no hay dónde guardarlos). Si
+                                    // la baraja tiene más ranuras y la
+                                    // vecina ya está cargada, se salta a
+                                    // ella en vez de salir del editor entero
+                                    // — el archivo desapareció, pero el
+                                    // resto de la carpeta sigue teniendo
+                                    // sentido en pantalla.
+                                    let mut jumped = false;
+                                    if self.deck.slots.len() > 1 {
+                                        let removed = self.deck.active;
+                                        self.deck.slots.remove(removed);
+                                        let neighbor =
+                                            removed.min(self.deck.slots.len().saturating_sub(1));
+                                        if let Some(slot) = self.deck.slots.get_mut(neighbor) {
+                                            if matches!(slot.content, deck::SlotContent::Ready(_)) {
+                                                let deck::SlotContent::Ready(incoming) =
+                                                    std::mem::replace(
+                                                        &mut slot.content,
+                                                        deck::SlotContent::Active,
+                                                    )
+                                                else {
+                                                    unreachable!("comprobado justo arriba");
+                                                };
+                                                state.put_slot(*incoming);
+                                                self.deck.active = neighbor;
+                                                jumped = true;
+                                            }
+                                        }
+                                    }
+                                    if !jumped {
+                                        match state.from_gallery.clone() {
+                                            Some(folder) => open_after = Some(Nav::Open(folder)),
+                                            None => go_to_welcome = true,
+                                        }
+                                    }
+                                }
                                 Err(e) => state.save_error = Some(e),
                             }
+                        }
+                    } else {
+                        // Ranura de FONDO (cabecera del lienzo en el área
+                        // central, no la activa): borrar generaliza el mismo
+                        // bloque de arriba que YA quita la ranura activa de
+                        // `self.deck.slots` — sin salto ni pantalla de
+                        // bienvenida, porque el usuario no estaba mirando
+                        // este lienzo.
+                        match result {
+                            Ok(()) => {
+                                if let Some(idx) =
+                                    self.deck.slots.iter().position(|s| s.path == path)
+                                {
+                                    self.deck.slots.remove(idx);
+                                }
+                            }
+                            Err(e) => tracing::warn!(
+                                "no se pudo borrar {} en segundo plano: {e}",
+                                path.display()
+                            ),
                         }
                     }
                     if go_to_welcome {
@@ -854,9 +1375,10 @@ impl App {
                                     matches!(choice, rfd::MessageDialogResult::Yes)
                                 };
                             if use_layers {
+                                self.resolve_deck(&path, ctx);
                                 let mut state =
                                     editor::EditorState::from_restored(path.clone(), restored);
-                                state.from_gallery = self.gallery_origin.clone();
+                                state.from_gallery = self.deck.folder.clone();
                                 state.sidecar_enabled = self.settings.sidecar_default;
                                 state.source_metadata = metadata;
                                 self.remember_page_size(&state.doc);
@@ -876,16 +1398,18 @@ impl App {
                             // Diseño autónomo: `hash_matches` siempre es
                             // `true` (no hay nada que contrastar), así que no
                             // hace falta el diálogo de «cambió por fuera».
+                            self.resolve_deck(&path, ctx);
                             let mut state =
                                 editor::EditorState::from_design(path.clone(), restored);
-                            state.from_gallery = self.gallery_origin.clone();
+                            state.from_gallery = self.deck.folder.clone();
                             self.remember_page_size(&state.doc);
                             self.view = View::Editor(Box::new(state));
                         }
                         Ok(loader::LoadOutcome::Flat(img)) => {
                             match editor::EditorState::from_image(path.clone(), img) {
                                 Ok(mut state) => {
-                                    state.from_gallery = self.gallery_origin.clone();
+                                    self.resolve_deck(&path, ctx);
+                                    state.from_gallery = self.deck.folder.clone();
                                     state.sidecar_enabled = self.settings.sidecar_default;
                                     state.source_metadata = metadata;
                                     self.remember_page_size(&state.doc);
@@ -944,20 +1468,38 @@ impl App {
         if self.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
-        let View::Editor(state) = &mut self.view else {
+        if !matches!(self.view, View::Editor(_)) {
             return;
-        };
-        if !state.is_dirty() {
+        }
+        // Otras ranuras de la baraja pueden tener cambios sin guardar aunque
+        // la activa esté limpia: cerrar la app las perdería en silencio si
+        // no se avisa aquí también. «Save» aquí solo guarda la activa —
+        // «Save all» es una acción del editor (`Ctrl+Alt+S`), no de este
+        // diálogo — así que con más de un lienzo sucio el texto lo dice
+        // explícitamente en vez de fingir que un único «Save» los cubre.
+        let names = self.dirty_canvas_names();
+        if names.is_empty() {
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        let description = if names.len() == 1 {
+            format!(
+                "\"{}\" has unsaved changes.\nSave them before closing? (\"No\" discards them.)",
+                names[0]
+            )
+        } else {
+            format!(
+                "{} canvases have unsaved changes:\n\u{2022} {}\n\n\"Save\" only saves the \
+                 active one — the rest will be lost when you close. Cancel and switch to them \
+                 first if you want to keep their changes.",
+                names.len(),
+                names.join("\n\u{2022} ")
+            )
+        };
         let choice = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Warning)
             .set_title("Unsaved changes")
-            .set_description(format!(
-                "\"{}\" has unsaved changes.\nSave them before closing? (\"No\" discards them.)",
-                state.file_name()
-            ))
+            .set_description(description)
             .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
                 "Save".to_owned(),
                 "Discard".to_owned(),
@@ -994,7 +1536,12 @@ impl App {
         let title = match &self.view {
             View::Editor(state) => {
                 let dirty = if state.is_dirty() { "*" } else { "" };
-                format!("{dirty}{} — Canvas Desktop", state.file_name())
+                let position = if self.deck.slots.len() > 1 {
+                    format!(" ({}/{})", self.deck.active + 1, self.deck.slots.len())
+                } else {
+                    String::new()
+                };
+                format!("{dirty}{}{position} — Canvas Desktop", state.file_name())
             }
             View::Loading { path } => format!(
                 "Loading {}… — Canvas Desktop",
@@ -1031,6 +1578,86 @@ fn thumbnail_cache_dir() -> Option<PathBuf> {
     }
 }
 
+/// Al volver a la galería desde el editor, siembra la rejilla con lo que ya
+/// tenía la baraja (miniaturas ya subidas a GPU): evita el parpadeo de ⏳ que
+/// antes hacía falta esperar a que el reescaneo (que se lanza de todas
+/// formas, para detectar archivos nuevos o borrados por fuera) volviera a
+/// decodificarlo todo. Si la baraja pertenece a otra carpeta, la rejilla
+/// arranca vacía como siempre.
+fn seed_gallery_from_deck(
+    deck: &deck::Deck,
+    folder: PathBuf,
+    sort: settings::GallerySort,
+) -> gallery::GalleryState {
+    let mut g = gallery::GalleryState::new(folder.clone(), sort);
+    if deck.folder.as_deref() == Some(folder.as_path()) {
+        g.items = deck
+            .slots
+            .iter()
+            // Una ranura provisional no tiene archivo detrás todavía: una
+            // miniatura suya en la rejilla sería una casilla que nunca
+            // termina de cargar y que no se puede abrir.
+            .filter(|s| !s.is_placeholder)
+            .map(|s| gallery::GalleryItem {
+                path: s.path.clone(),
+                name: s.name.clone(),
+                mtime: s.mtime,
+                kind: s.kind,
+                tex: s.thumb.clone(),
+                failed: s.thumb_failed,
+            })
+            .collect();
+        g.scanned = !g.items.is_empty();
+        g.apply_sort();
+    }
+    g
+}
+
+/// Construye el `SlotDoc` de una carga de fondo de la baraja, reutilizando
+/// los constructores de `EditorState` (evita duplicar la lógica de
+/// restaurar capas desde el sidecar): se arma un `EditorState` efímero y se
+/// cosecha con `take_slot()` — sus campos de sesión (viewport, gestos…) se
+/// tiran, solo interesaban los del documento. `None` si el documento no
+/// pudo construirse (p. ej. una imagen sin píxeles válidos).
+///
+/// A diferencia de `AppMsg::ImageLoaded`, un sidecar cuyo hash no coincide
+/// con la imagen NUNCA abre el diálogo interactivo aquí (sería un modal
+/// disparado por hacer scroll): las capas restauradas se usan de todas
+/// formas y `external_change` queda encendido, para que el banner normal de
+/// «cambió por fuera» aparezca en cuanto el usuario active esa ranura.
+fn build_slot_doc(
+    path: PathBuf,
+    outcome: loader::LoadOutcome,
+    metadata: Option<canvas_io::ImageMetadata>,
+    sidecar_default: bool,
+) -> Option<deck::SlotDoc> {
+    match outcome {
+        loader::LoadOutcome::Restored(restored) => {
+            let external_change = !restored.hash_matches;
+            let mut state = editor::EditorState::from_restored(path, restored);
+            state.sidecar_enabled = sidecar_default;
+            state.source_metadata = metadata;
+            state.external_change = external_change;
+            Some(state.take_slot())
+        }
+        loader::LoadOutcome::Design(restored) => {
+            let mut state = editor::EditorState::from_design(path, restored);
+            Some(state.take_slot())
+        }
+        loader::LoadOutcome::Flat(img) => match editor::EditorState::from_image(path, img) {
+            Ok(mut state) => {
+                state.sidecar_enabled = sidecar_default;
+                state.source_metadata = metadata;
+                Some(state.take_slot())
+            }
+            Err(e) => {
+                tracing::warn!("carga de fondo: no se pudo construir el documento: {e}");
+                None
+            }
+        },
+    }
+}
+
 /// Hornea la página en la GPU (hilo de UI) y delega codificar+escribir a un
 /// hilo de trabajo. Si el horneado falla, el error queda visible en el panel
 /// y el documento intacto.
@@ -1044,15 +1671,31 @@ fn start_save(
     path: PathBuf,
     new_source: bool,
     jpeg_quality: u8,
+    ignore_fs_events_until: &mut Option<std::time::Instant>,
 ) {
     if state.saving {
         return;
     }
     tracing::info!("guardando en {}", path.display());
-    match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, 1.0) {
+    match renderer.bake_page(
+        &rs.device,
+        &rs.queue,
+        canvas_render::FxScope::default(),
+        &state.doc,
+        &state.images,
+        1.0,
+    ) {
         Ok((rgba, width, height)) => {
             state.saving = true;
             state.save_error = None;
+            // Arranca la ventana de gracia YA, no cuando llegue `Saved`: el
+            // watcher corre en otro hilo y puede notificar el cambio en disco
+            // (la escritura empieza aquí mismo, en `spawn_save`) antes de que
+            // el hilo de guardado termine y mande `Saved` — si la ventana se
+            // abriera solo al recibir ese mensaje, ese evento adelantado
+            // llegaría sin filtro y dispararía el banner de "cambió en disco".
+            *ignore_fs_events_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
             let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
             loader::spawn_save(
                 path,
@@ -1087,6 +1730,7 @@ fn start_save_design(
     ctx: &egui::Context,
     path: PathBuf,
     new_source: bool,
+    ignore_fs_events_until: &mut Option<std::time::Instant>,
 ) {
     if state.saving {
         return;
@@ -1100,12 +1744,22 @@ fn start_save_design(
         .map(|p| (p.width, p.height))
         .unwrap_or((0.0, 0.0));
     let scale = canvas_io::preview_scale(pw, ph);
-    match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, scale) {
+    match renderer.bake_page(
+        &rs.device,
+        &rs.queue,
+        canvas_render::FxScope::default(),
+        &state.doc,
+        &state.images,
+        scale,
+    ) {
         Ok((rgba, w, h)) => payload.preview = canvas_io::make_preview(&rgba, w, h),
         Err(e) => tracing::warn!("miniatura del diseño no horneada: {e}"),
     }
     state.saving = true;
     state.save_error = None;
+    // Ver el comentario en `start_save`: la ventana de gracia debe abrirse
+    // antes de lanzar la escritura, no al recibir `Saved`.
+    *ignore_fs_events_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
     loader::spawn_save_design(path, payload, new_source, tx.clone(), ctx.clone());
 }
 
@@ -1131,7 +1785,14 @@ fn start_export(
     let scale = f64::from(settings.scale);
 
     if settings.format.needs_bake() {
-        match renderer.bake_page(&rs.device, &rs.queue, &state.doc, &state.images, scale) {
+        match renderer.bake_page(
+            &rs.device,
+            &rs.queue,
+            canvas_render::FxScope::default(),
+            &state.doc,
+            &state.images,
+            scale,
+        ) {
             Ok((rgba, width, height)) => {
                 state.exporting = true;
                 state.save_error = None;
@@ -1159,6 +1820,7 @@ fn start_export(
                 renderer.sync_layer_effects(
                     &rs.device,
                     &rs.queue,
+                    canvas_render::FxScope::default(),
                     layer.id,
                     source,
                     &layer.effects,
@@ -1166,7 +1828,7 @@ fn start_export(
             }
         }
     }
-    let blurred = renderer.blur_overrides();
+    let blurred = renderer.blur_overrides(canvas_render::FxScope::default());
     let mut images: Vec<canvas_io::LayerPixels> = Vec::new();
     if let Ok(page) = state.doc.page() {
         for layer in &page.layers {
@@ -1308,6 +1970,11 @@ impl eframe::App for App {
             }
             View::Gallery(g) => match gallery::show(g, ui) {
                 Some(gallery::GalleryAction::Open(path)) => {
+                    // Se lleva las miniaturas ya cargadas al editor: si el
+                    // archivo resulta tener hermanos, la tira arranca sin
+                    // parpadeo de ⏳ (`resolve_deck` la consume al terminar
+                    // de cargar).
+                    self.pending_deck = Some(deck::DeckSeed::from_gallery(g));
                     open_next = Some(Nav::Open(path));
                 }
                 Some(gallery::GalleryAction::SortChanged(sort)) => {
@@ -1448,6 +2115,38 @@ impl eframe::App for App {
                     }
                 }
 
+                // Ranura PROVISIONAL que se convierte en archivo de verdad
+                // en cuanto el usuario la edita — sin diálogo. El usuario
+                // pidió «un lienzo nuevo», no «guardar como»; preguntarle un
+                // nombre justo después de su primer trazo rompería el
+                // flujo. Va DESPUÉS de `handle_messages` (una respuesta de
+                // este mismo frame ya está aplicada) y ANTES del bloque de
+                // guardado (el `save_clicked` que la respuesta deja
+                // preparado se consume ese mismo frame, más abajo).
+                let placeholder_id = self
+                    .deck
+                    .slots
+                    .get(self.deck.active)
+                    .filter(|s| s.is_placeholder)
+                    .map(|s| s.id);
+                if let Some(id) = placeholder_id {
+                    if state.is_dirty()
+                        && !state.saving
+                        && self.materializing.is_none()
+                        && self.materialize_blocked != Some(id)
+                    {
+                        if let Some(folder) = self.deck.folder.clone() {
+                            self.materializing = Some(id);
+                            loader::spawn_reserve_canvas_path(
+                                folder,
+                                id,
+                                self.tx.clone(),
+                                ctx.clone(),
+                            );
+                        }
+                    }
+                }
+
                 // Guardar / Guardar como: botones del panel o atajos de
                 // teclado (el orden importa: Ctrl+Shift+S primero).
                 let save_as = std::mem::take(&mut state.save_as_clicked)
@@ -1508,6 +2207,7 @@ impl eframe::App for App {
                                 &ctx,
                                 path,
                                 false,
+                                &mut self.ignore_fs_events_until,
                             ),
                             None => loader::spawn_pick_design_path(
                                 Some(state.file_name()),
@@ -1541,6 +2241,7 @@ impl eframe::App for App {
                                         path,
                                         false,
                                         self.settings.jpeg_quality,
+                                        &mut self.ignore_fs_events_until,
                                     );
                                 }
                             }
@@ -1566,6 +2267,7 @@ impl eframe::App for App {
                             &ctx,
                             path,
                             true,
+                            &mut self.ignore_fs_events_until,
                         );
                     } else {
                         start_save(
@@ -1577,6 +2279,7 @@ impl eframe::App for App {
                             path,
                             true,
                             self.settings.jpeg_quality,
+                            &mut self.ignore_fs_events_until,
                         );
                     }
                 }
@@ -1646,6 +2349,7 @@ impl eframe::App for App {
                                 path,
                                 false,
                                 self.settings.jpeg_quality,
+                                &mut self.ignore_fs_events_until,
                             );
                         }
                         Choice::SaveAs => {
@@ -1771,17 +2475,308 @@ impl eframe::App for App {
                     );
                 }
 
+                // Tira de lienzos de la baraja: solo con más de un archivo en
+                // la carpeta de origen. Va antes que "layers" para quedar
+                // pegada al borde exterior de la ventana.
+                let mut strip_action = None;
+                // Acción pedida desde la cabecera de un lienzo del área
+                // central (renombrar/duplicar/borrar) — se llena dentro del
+                // `CentralPanel` de más abajo, se resuelve junto a
+                // `strip_action`.
+                let mut canvas_action = None;
+                if self.deck.is_visible() {
+                    let active_dirty = state.is_dirty();
+                    // Ids DISTINTOS por lado (no el mismo panel reetiquetado):
+                    // así el tamaño recordado de la tira a la izquierda
+                    // (ancho) no se aplica como alto al moverla arriba, y
+                    // viceversa — mismo criterio que ya separa "layers" de
+                    // "properties". `.resizable(true)` es obligatorio en
+                    // Top/Bottom (egui los crea con `resizable(false)` por
+                    // defecto) e inofensivo-pero-explícito en Left/Right.
+                    // Orden importa: `.default_size` ENSANCHA el rango si se
+                    // llama después de `.size_range`, así que va primero.
+                    match self.deck.strip_side {
+                        deck::StripSide::Left => {
+                            egui::Panel::left("deck_strip_left")
+                                .default_size(120.0)
+                                .size_range(96.0..=280.0)
+                                .resizable(true)
+                                .show(ui, |ui| {
+                                    strip_action =
+                                        deck_strip::deck_strip_ui(&mut self.deck, active_dirty, ui);
+                                });
+                        }
+                        deck::StripSide::Right => {
+                            egui::Panel::right("deck_strip_right")
+                                .default_size(120.0)
+                                .size_range(96.0..=280.0)
+                                .resizable(true)
+                                .show(ui, |ui| {
+                                    strip_action =
+                                        deck_strip::deck_strip_ui(&mut self.deck, active_dirty, ui);
+                                });
+                        }
+                        deck::StripSide::Top => {
+                            egui::Panel::top("deck_strip_top")
+                                .default_size(140.0)
+                                .size_range(120.0..=280.0)
+                                .resizable(true)
+                                .show(ui, |ui| {
+                                    strip_action =
+                                        deck_strip::deck_strip_ui(&mut self.deck, active_dirty, ui);
+                                });
+                        }
+                        deck::StripSide::Bottom => {
+                            egui::Panel::bottom("deck_strip_bottom")
+                                .default_size(140.0)
+                                .size_range(120.0..=280.0)
+                                .resizable(true)
+                                .show(ui, |ui| {
+                                    strip_action =
+                                        deck_strip::deck_strip_ui(&mut self.deck, active_dirty, ui);
+                                });
+                        }
+                    }
+                }
+                // Diseño bloqueado (`Slot::locked`, cabecera del lienzo en el
+                // área central): deshabilita también los paneles, no solo
+                // los gestos sobre el propio lienzo — "no se puede editar"
+                // sin matizar por qué vía.
+                let locked = self
+                    .deck
+                    .slots
+                    .get(self.deck.active)
+                    .is_some_and(|s| s.locked);
                 egui::Panel::left("layers")
                     .default_size(220.0)
-                    .show(ui, |ui| layers_panel::layers_panel_ui(state, ui));
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!locked, |ui| layers_panel::layers_panel_ui(state, ui));
+                    });
                 egui::Panel::right("properties")
                     .default_size(260.0)
-                    .show(ui, |ui| editor::properties_ui(state, ui));
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!locked, |ui| editor::properties_ui(state, ui));
+                    });
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE)
                     .show(ui, |ui| {
-                        editor::canvas_ui(state, ui, &rs, &mut self.renderer, &mut self.surface);
+                        canvas_action = editor::canvas_ui(
+                            state,
+                            &mut self.deck,
+                            ui,
+                            &rs,
+                            &mut self.renderer,
+                            &mut self.surface,
+                            &self.tx,
+                        );
                     });
+
+                // Saltar a otro lienzo de la baraja: clic en el propio
+                // lienzo (ya deja `self.deck.jump_to` listo, dentro de
+                // `canvas_ui`), tira lateral, o teclado (PageUp/PageDown/
+                // Home/End). El intercambio es SIN PÉRDIDA — el lienzo
+                // saliente queda guardado en su propia ranura con su
+                // historial de deshacer intacto — así que, a diferencia de
+                // «Back to gallery» (que sí sale del editor), no hace falta
+                // preguntar por cambios sin guardar para saltar aquí dentro.
+                let mut deck_target = state.deck_nav.take().and_then(|nav| match nav {
+                    editor::DeckNav::Next => self.deck.next_path(),
+                    editor::DeckNav::Prev => self.deck.prev_path(),
+                    editor::DeckNav::First => self.deck.first_path(),
+                    editor::DeckNav::Last => self.deck.last_path(),
+                });
+                match strip_action {
+                    Some(deck_strip::StripAction::Open(path)) => {
+                        deck_target = deck_target.or(Some(path));
+                    }
+                    // Inline, no `self.toggle_deck_axis()`: `state` de arriba
+                    // ya tiene prestado `self.view` mutable (y sigue vivo más
+                    // abajo), y el borrow checker no ve que ese método solo
+                    // toca `self.deck`/`self.settings` — campos disjuntos.
+                    Some(deck_strip::StripAction::ToggleAxis) => {
+                        self.deck.axis = self.deck.axis.toggled();
+                        self.deck.layout_dirty = true;
+                        self.settings.deck_axis = self.deck.axis;
+                        self.settings.save_in_background();
+                    }
+                    Some(deck_strip::StripAction::CycleSide) => {
+                        self.deck.strip_side = self.deck.strip_side.cycled();
+                        self.settings.deck_strip_side = self.deck.strip_side;
+                        self.settings.save_in_background();
+                        // Sin `layout_dirty = true`: mover el panel no
+                        // cambia la geometría de la baraja, solo el rect del
+                        // panel central — que `Viewport::note_size` ya
+                        // detecta y reajusta.
+                    }
+                    Some(deck_strip::StripAction::AddCanvas) => {
+                        if let Some(idx) = self.deck.push_placeholder(self.settings.last_page_size)
+                        {
+                            self.deck.jump_to = Some(idx);
+                            self.deck.jump_center = true;
+                        }
+                    }
+                    None => {}
+                }
+                // Renombrar/duplicar/borrar desde la cabecera de un lienzo
+                // (activo o de fondo) en el área central — mismas
+                // operaciones que ya existían para la ranura activa (lápiz
+                // junto al nombre, botón «Delete» del panel) o desde la
+                // galería (duplicar), generalizadas por id/ruta en vez de
+                // asumir "la activa".
+                match canvas_action {
+                    Some(editor::CanvasAction::Rename(id, new_stem)) => {
+                        let is_active =
+                            self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id);
+                        if is_active {
+                            // Reutiliza el camino ya existente (lápiz junto
+                            // al nombre): se recoge y se lanza más arriba,
+                            // en el próximo frame.
+                            state.file_rename_requested = Some(new_stem);
+                        } else if let Some(path) = self
+                            .deck
+                            .find_by_id(id)
+                            .and_then(|i| self.deck.slots.get(i))
+                            .map(|s| s.path.clone())
+                        {
+                            self.ignore_fs_events_until =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                            self.watcher = None;
+                            loader::spawn_document_rename(
+                                path,
+                                new_stem,
+                                self.tx.clone(),
+                                ctx.clone(),
+                            );
+                        }
+                    }
+                    Some(editor::CanvasAction::Duplicate(id)) => {
+                        if let Some(path) = self
+                            .deck
+                            .find_by_id(id)
+                            .and_then(|i| self.deck.slots.get(i))
+                            .map(|s| s.path.clone())
+                        {
+                            loader::spawn_gallery_op(
+                                loader::GalleryOp::Duplicate { path },
+                                false,
+                                self.tx.clone(),
+                                ctx.clone(),
+                            );
+                        }
+                    }
+                    Some(editor::CanvasAction::Delete(id)) => {
+                        let is_active =
+                            self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id);
+                        if is_active {
+                            // Reutiliza el camino ya existente (botón
+                            // «Delete» del panel de propiedades).
+                            state.delete_requested = true;
+                        } else if let Some(path) = self
+                            .deck
+                            .find_by_id(id)
+                            .and_then(|i| self.deck.slots.get(i))
+                            .map(|s| s.path.clone())
+                        {
+                            self.ignore_fs_events_until =
+                                Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                            self.watcher = None;
+                            loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
+                        }
+                    }
+                    None => {}
+                }
+                if let Some(target) = deck_target {
+                    if let Some(idx) = self.deck.find_by_path(&target) {
+                        self.deck.jump_to = Some(idx);
+                        // Por la tira o el teclado: el destino puede no
+                        // estar a la vista, así que sí hace falta recentrar
+                        // (a diferencia de un clic directo sobre el propio
+                        // lienzo, que ya deja `jump_to` sin esto).
+                        self.deck.jump_center = true;
+                    }
+                } else if let Some(&next_id) = self.save_all_queue.first() {
+                    // «Save all»: sin una navegación más prioritaria este
+                    // frame, salta a la próxima ranura pendiente de la cola.
+                    if self.deck.slots.get(self.deck.active).map(|s| s.id) != Some(next_id) {
+                        match self.deck.find_by_id(next_id) {
+                            Some(idx) => {
+                                self.deck.jump_to = Some(idx);
+                                self.deck.jump_center = true;
+                            }
+                            // Desapareció (renombrada/borrada) mientras
+                            // esperaba turno: se salta sin más.
+                            None => {
+                                self.save_all_queue.remove(0);
+                            }
+                        }
+                    }
+                }
+                // Aplica el salto si el destino ya está listo y el editor
+                // está ocioso; si no, la petición queda pendiente y se
+                // reintenta en los próximos frames — llamar aquí siempre,
+                // no solo cuando `deck_target` trae algo nuevo, es lo que
+                // reintenta un salto que aún esperaba a que su carga
+                // terminase. Recentra la vista SOLO si quien pidió el salto
+                // lo marcó (`jump_center`): un clic directo sobre el propio
+                // lienzo ya se ve, recentrar ahí sería mover la cámara sin
+                // que el usuario lo pidiera.
+                //
+                // NUNCA mientras haya un modal de guardado pendiente
+                // (`overwrite_prompt`/`readonly_prompt`): `is_idle()` ya
+                // cubre `saving`, pero esos modales aparecen ANTES de que
+                // `start_save` los ponga a `true` — sin este freno, saltar
+                // en ese hueco dejaría el modal hablando de un archivo
+                // mientras `state` pasa a ser otro documento, y al
+                // confirmarlo se guardarían los píxeles del documento
+                // EQUIVOCADO en la ruta del modal. Igual con
+                // `materializing`: la reserva de nombre de una provisional
+                // tampoco pone `saving` a `true` todavía, y saltar a mitad
+                // de esa reserva dejaría la respuesta actuando sobre el
+                // lienzo equivocado.
+                let save_modal_pending = self.overwrite_prompt.is_some()
+                    || self.readonly_prompt.is_some()
+                    || self.materializing.is_some();
+                if !save_modal_pending
+                    && deck::apply_jump(&mut self.deck, state)
+                    && std::mem::take(&mut self.deck.jump_center)
+                {
+                    state.viewport.request_center(self.deck.active_rect());
+                }
+                // «Save all»: si la activa ya es la ranura que tocaba,
+                // dispara su guardado — mismo camino que Ctrl+S, un frame
+                // más tarde (el bloque de guardado de este frame ya corrió
+                // antes de que se dibujaran los paneles).
+                if let Some(&next_id) = self.save_all_queue.first() {
+                    if self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(next_id) {
+                        // El aviso de sobrescritura (primer lienzo raster del
+                        // lote) o el redirect de SVG/GIF cuentan como "en
+                        // curso", no como fallo: sin este freno, el intento
+                        // ya marcado se leería como fallido mientras el
+                        // usuario todavía no ha respondido al modal.
+                        let waiting_on_modal =
+                            self.overwrite_prompt.is_some() || self.readonly_prompt.is_some();
+                        if !state.is_dirty() {
+                            // Ya se guardó (`AppMsg::Saved` la sacó de la
+                            // cola) o nunca hizo falta: nada que hacer aquí.
+                        } else if state.saving || waiting_on_modal {
+                            // En curso, o esperando la respuesta del usuario.
+                        } else if self.save_all_attempted {
+                            // Se pulsó "Guardar", no hay guardado en curso ni
+                            // modal pendiente, y sigue sucia: ese intento
+                            // falló de verdad (o el usuario canceló el
+                            // modal). Se aborta el lote en vez de reintentar
+                            // sin fin sobre el mismo lienzo.
+                            tracing::warn!(
+                                "Save all: se detiene en un lienzo de fondo (guardado fallido o cancelado)"
+                            );
+                            self.save_all_queue.clear();
+                            self.save_all_attempted = false;
+                        } else {
+                            self.save_all_attempted = true;
+                            state.save_clicked = true;
+                        }
+                    }
+                }
 
                 if std::mem::take(&mut state.settings_clicked) {
                     self.show_settings = true;

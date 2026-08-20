@@ -59,8 +59,22 @@ fn main() -> Result<()> {
     // los bytes (criterio de PLAN.md: "Export PNG 2x produce exactamente el
     // doble de píxeles").
     let control_doc = doc_with_plain_shape(w, h)?;
-    let (rgba1, w1, h1) = renderer.bake_page(device, queue, &control_doc, &images, 1.0)?;
-    let (rgba2, w2, h2) = renderer.bake_page(device, queue, &control_doc, &images, 2.0)?;
+    let (rgba1, w1, h1) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &control_doc,
+        &images,
+        1.0,
+    )?;
+    let (rgba2, w2, h2) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &control_doc,
+        &images,
+        2.0,
+    )?;
     anyhow::ensure!(
         w2 == w1 * 2 && h2 == h1 * 2,
         "2x debería duplicar cada dimensión exactamente, dio {w1}x{h1} -> {w2}x{h2}"
@@ -80,7 +94,14 @@ fn main() -> Result<()> {
         "el control (sin grupo) debería dar alpha 255, dio {control_alpha}"
     );
     let grouped_doc = doc_with_grouped_shape(w, h)?;
-    let (grouped_rgba, gw, gh) = renderer.bake_page(device, queue, &grouped_doc, &images, 1.0)?;
+    let (grouped_rgba, gw, gh) = renderer.bake_page(
+        device,
+        queue,
+        canvas_render::FxScope::default(),
+        &grouped_doc,
+        &images,
+        1.0,
+    )?;
     let gcenter = (((gh / 2) * gw + gw / 2) * 4) as usize;
     let grouped_alpha = grouped_rgba[gcenter + 3];
     anyhow::ensure!(

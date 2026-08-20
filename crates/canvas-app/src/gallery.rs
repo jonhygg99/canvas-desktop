@@ -92,15 +92,25 @@ impl GalleryState {
     /// Reordena en memoria (sin reescanear el disco).
     pub fn apply_sort(&mut self) {
         match self.sort {
-            GallerySort::Name => self.items.sort_by_key(|i| i.name.to_ascii_lowercase()),
+            // Natural/numérico — ver la doc de `natural_cmp` (settings.rs).
+            // Mismo criterio que `Deck::apply_sort`, para que la rejilla y
+            // la tira de la baraja siempre coincidan en el orden.
+            GallerySort::Name => self
+                .items
+                .sort_by(|a, b| crate::settings::natural_cmp(&a.name, &b.name)),
             // Más recientes primero; sin fecha, al final.
             GallerySort::DateModified => self.items.sort_by(|a, b| {
-                b.mtime.cmp(&a.mtime).then_with(|| {
-                    a.name
-                        .to_ascii_lowercase()
-                        .cmp(&b.name.to_ascii_lowercase())
-                })
+                b.mtime
+                    .cmp(&a.mtime)
+                    .then_with(|| crate::settings::natural_cmp(&a.name, &b.name))
             }),
+            // `Manual` es un estado de `Deck::sort` (flechas del panel del
+            // lienzo, `deck.rs`): la galería nunca lo ofrece ni lo hereda, no
+            // tiene un `order_hint` por ítem. Si llegara aquí (no debería),
+            // cae al orden natural en vez de dejar la rejilla sin ordenar.
+            GallerySort::Manual => self
+                .items
+                .sort_by(|a, b| crate::settings::natural_cmp(&a.name, &b.name)),
         }
     }
 

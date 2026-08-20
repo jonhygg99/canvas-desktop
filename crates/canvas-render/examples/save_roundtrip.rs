@@ -46,7 +46,14 @@ fn main() -> Result<()> {
     let handle = &ctx.devices[device_id];
 
     let mut renderer = CanvasRenderer::new(&handle.device)?;
-    let (rgba, bw, bh) = renderer.bake_page(&handle.device, &handle.queue, &doc, &images, 1.0)?;
+    let (rgba, bw, bh) = renderer.bake_page(
+        &handle.device,
+        &handle.queue,
+        canvas_render::FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    )?;
 
     // Guardado atómico sobre el destino (que ya existe: es una sustitución).
     let before = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);

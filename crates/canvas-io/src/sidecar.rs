@@ -52,6 +52,27 @@ struct PreviewProbe {
     preview_png: Option<String>,
 }
 
+/// Como `PreviewProbe`, pero para el tamaño de página: se queda solo con
+/// `document.pages[0].{width,height}`, sin decodificar ni la miniatura ni
+/// los píxeles de ninguna capa. `serde_json` sigue tokenizando el archivo
+/// entero (no hay forma de saltar directamente a un campo en JSON), pero
+/// ignora — sin asignar — todo lo que esta forma no declara.
+#[derive(Debug, Deserialize)]
+struct PageProbe {
+    document: DocumentPageProbe,
+}
+
+#[derive(Debug, Deserialize)]
+struct DocumentPageProbe {
+    pages: Vec<PageSizeProbe>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PageSizeProbe {
+    width: f64,
+    height: f64,
+}
+
 /// Píxeles de una capa a embeber: (id crudo, RGBA, ancho, alto).
 pub type LayerPixels = (u64, Vec<u8>, u32, u32);
 
@@ -352,6 +373,29 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
         }
         None => Ok(None),
     }
+}
+
+/// Tamaño de la primera página de un `.canvas`, sin decodificar miniatura ni
+/// píxeles. Usado por `canvas_io::probe_page_size` para apilar la baraja del
+/// editor antes de cargar ningún documento entero.
+pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
+    let json = std::fs::read(path).map_err(|source| IoError::Open {
+        path: path.to_owned(),
+        source,
+    })?;
+    let probe: PageProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
+        path: path.to_owned(),
+        source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
+    })?;
+    let page = probe
+        .document
+        .pages
+        .first()
+        .ok_or_else(|| IoError::Decode {
+            path: path.to_owned(),
+            source: image::ImageError::IoError(std::io::Error::other("sidecar has no pages")),
+        })?;
+    Ok((page.width, page.height))
 }
 
 /// Borra el sidecar si existe (guardado con el sidecar desactivado).

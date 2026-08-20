@@ -4,8 +4,8 @@
 mod blur;
 mod scene;
 
-pub use blur::ColorParams;
-pub use scene::{build_scene, image_data_from_rgba, text_lines, ImageMap};
+pub use blur::{ColorParams, FxScope};
+pub use scene::{append_document, build_scene, image_data_from_rgba, text_lines, ImageMap};
 
 use blur::BlurEngine;
 use canvas_core::LayerId;
@@ -43,11 +43,14 @@ impl CanvasRenderer {
 
     /// Sincroniza los efectos GPU (no destructivos) de una capa de imagen:
     /// filtro de color + desenfoque, encadenados. Sin efectos activos retira
-    /// la textura procesada y vuelve a la original.
+    /// la textura procesada y vuelve a la original. `scope` distingue a qué
+    /// documento pertenece la capa (ver `FxScope`); un solo documento cargado
+    /// puede usar `FxScope::default()`.
     pub fn sync_layer_effects(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        scope: FxScope,
         layer: LayerId,
         source: &ImageData,
         effects: &canvas_core::Effects,
@@ -56,6 +59,7 @@ impl CanvasRenderer {
         let removed = self.blur.sync_layer(
             device,
             queue,
+            scope,
             layer,
             source,
             ColorParams::from(effects),
@@ -67,9 +71,19 @@ impl CanvasRenderer {
         }
     }
 
-    /// Imágenes sustitutas (procesadas) por capa, para `build_scene`.
-    pub fn blur_overrides(&self) -> std::collections::HashMap<LayerId, ImageData> {
-        self.blur.overrides()
+    /// Imágenes sustitutas (procesadas) por capa de `scope`, para `build_scene`.
+    pub fn blur_overrides(&self, scope: FxScope) -> std::collections::HashMap<LayerId, ImageData> {
+        self.blur.overrides(scope)
+    }
+
+    /// Libera las texturas de efectos de `scope` (un lienzo descargado de la
+    /// baraja): las retira de la caché Y las des-registra de vello. Sin lo
+    /// segundo, el atlas de imágenes las mantendría vivas en GPU
+    /// indefinidamente aunque el documento ya no esté cargado.
+    pub fn forget_scope(&mut self, scope: FxScope) {
+        for image in self.blur.forget_scope(scope) {
+            self.renderer.override_image(&image, None);
+        }
     }
 
     /// Crea una textura destino compatible con vello (`Rgba8Unorm` +
@@ -140,11 +154,15 @@ impl CanvasRenderer {
 
     /// Hornea la página a un mapa de bits RGBA8 (aplana capas y efectos).
     /// Es la ruta de guardado/exportación; el desenfoque no destructivo se
-    /// aplica aquí de verdad. Devuelve `(rgba, ancho, alto)`.
+    /// aplica aquí de verdad. Devuelve `(rgba, ancho, alto)`. `scope`
+    /// distingue a qué documento pertenecen las capas (ver `FxScope`): sin
+    /// él, hornear un lienzo de la baraja distinto del activo contaminaría
+    /// los efectos de este último.
     pub fn bake_page(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        scope: FxScope,
         doc: &canvas_core::Document,
         images: &ImageMap,
         scale: f64,
@@ -156,11 +174,11 @@ impl CanvasRenderer {
         // Asegura las texturas de efectos de todas las capas.
         for layer in &page.layers {
             if let Some(source) = images.get(&layer.id) {
-                self.sync_layer_effects(device, queue, layer.id, source, &layer.effects);
+                self.sync_layer_effects(device, queue, scope, layer.id, source, &layer.effects);
             }
         }
 
-        let blurred = self.blur_overrides();
+        let blurred = self.blur_overrides(scope);
         let scene = build_scene(
             doc,
             images,
