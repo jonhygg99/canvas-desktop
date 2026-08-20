@@ -25,8 +25,35 @@ pub struct GalleryItem {
     pub failed: bool,
 }
 
+fn sibling_folders(folder: &Path) -> Vec<PathBuf> {
+    let Some(parent) = folder.parent() else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    folders.sort_by(|a, b| {
+        crate::settings::natural_cmp(
+            &a.file_name().unwrap_or_default().to_string_lossy(),
+            &b.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    });
+    folders
+}
 pub struct GalleryState {
     pub folder: PathBuf,
+    folder_scroll: f32,
+    navigation: FolderNavigation,
+    sibling_folders: Vec<PathBuf>,
     pub items: Vec<GalleryItem>,
     pub scanned: bool,
     pub sort: GallerySort,
@@ -40,9 +67,50 @@ pub struct GalleryState {
     pub op_error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct FolderNavigation {
+    history: Vec<PathBuf>,
+    current: usize,
+}
+impl FolderNavigation {
+    fn new(folder: PathBuf) -> Self {
+        Self {
+            history: vec![folder],
+            current: 0,
+        }
+    }
+    fn push(&mut self, folder: PathBuf) {
+        if self.history.get(self.current) != Some(&folder) {
+            self.history.truncate(self.current + 1);
+            self.history.push(folder);
+            self.current = self.history.len() - 1;
+        }
+    }
+    fn back(&mut self) -> Option<PathBuf> {
+        self.current.checked_sub(1).map(|current| {
+            self.current = current;
+            self.history[current].clone()
+        })
+    }
+    fn forward(&mut self) -> Option<PathBuf> {
+        (self.current + 1 < self.history.len()).then(|| {
+            self.current += 1;
+            self.history[self.current].clone()
+        })
+    }
+    pub fn can_back(&self) -> bool {
+        self.current > 0
+    }
+    pub fn can_forward(&self) -> bool {
+        self.current + 1 < self.history.len()
+    }
+}
 impl GalleryState {
     pub fn new(folder: PathBuf, sort: GallerySort) -> Self {
         Self {
+            folder_scroll: 0.0,
+            navigation: FolderNavigation::new(folder.clone()),
+            sibling_folders: sibling_folders(&folder),
             folder,
             items: Vec::new(),
             scanned: false,
@@ -53,6 +121,38 @@ impl GalleryState {
         }
     }
 
+    pub fn with_navigation(
+        folder: PathBuf,
+        sort: GallerySort,
+        navigation: FolderNavigation,
+    ) -> Self {
+        Self {
+            folder: folder.clone(),
+            folder_scroll: 0.0,
+            navigation,
+            sibling_folders: sibling_folders(&folder),
+            items: Vec::new(),
+            scanned: false,
+            sort,
+            selected: None,
+            rename_edit: None,
+            op_error: None,
+        }
+    }
+    pub fn navigation_to_folder(&mut self, folder: PathBuf) -> (PathBuf, FolderNavigation) {
+        self.navigation.push(folder.clone());
+        (folder, self.navigation.clone())
+    }
+    pub fn navigation_back(&mut self) -> Option<(PathBuf, FolderNavigation)> {
+        self.navigation
+            .back()
+            .map(|folder| (folder, self.navigation.clone()))
+    }
+    pub fn navigation_forward(&mut self) -> Option<(PathBuf, FolderNavigation)> {
+        self.navigation
+            .forward()
+            .map(|folder| (folder, self.navigation.clone()))
+    }
     /// Sustituye la lista de archivos conservando las miniaturas ya
     /// cargadas (por ruta) y descartando los ítems que hayan desaparecido
     /// del disco: un rescaneo tras crear/duplicar/pegar no hace parpadear
@@ -128,6 +228,9 @@ impl GalleryState {
 
 pub enum GalleryAction {
     Open(PathBuf),
+    OpenFolder(PathBuf),
+    Back,
+    Forward,
     SortChanged(GallerySort),
     /// Botón «✚ New design» de la cabecera.
     NewDesign,
@@ -183,6 +286,25 @@ const THUMB: f32 = 156.0;
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
 
+    if !ui.ctx().text_edit_focused() {
+        let (back, forward, parent) = ui.ctx().input(|i| {
+            (
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft),
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight),
+                i.modifiers.alt && i.key_pressed(egui::Key::ArrowUp),
+            )
+        });
+        if back && state.navigation.can_back() {
+            action = Some(GalleryAction::Back);
+        } else if forward && state.navigation.can_forward() {
+            action = Some(GalleryAction::Forward);
+        } else if parent {
+            if let Some(folder) = state.folder.parent() {
+                action = Some(GalleryAction::OpenFolder(folder.to_owned()));
+            }
+        }
+    }
+
     // Ctrl+C / Ctrl+V: copiar/pegar un diseño entre carpetas. winit no deja
     // pasar Ctrl+C/V como pulsaciones normales de tecla — los intercepta
     // para la integración con el portapapeles del SO y en su lugar egui los
@@ -219,6 +341,29 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     egui::CentralPanel::default().show(ui, |ui| {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
+            if ui
+                .add_enabled(state.navigation.can_back(), egui::Button::new("<"))
+                .on_hover_text("Back to previous folder (Alt+Left)")
+                .clicked()
+            {
+                action = Some(GalleryAction::Back);
+            }
+            if ui
+                .add_enabled(state.navigation.can_forward(), egui::Button::new(">"))
+                .on_hover_text("Forward to next folder (Alt+Right)")
+                .clicked()
+            {
+                action = Some(GalleryAction::Forward);
+            }
+            if let Some(parent) = state.folder.parent() {
+                if ui
+                    .button("Up")
+                    .on_hover_text("Open parent folder (Alt+Up)")
+                    .clicked()
+                {
+                    action = Some(GalleryAction::OpenFolder(parent.to_owned()));
+                }
+            }
             ui.heading(
                 state
                     .folder
@@ -256,9 +401,79 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                 }
             });
         });
-        ui.weak(
-            "Right-click a tile for Duplicate · Ctrl+C / Ctrl+V to copy designs between folders",
-        );
+        if !state.sibling_folders.is_empty() {
+            ui.horizontal(|ui| {
+                ui.weak("Folders:");
+                ui.vertical(|ui| {
+                    let output = egui::ScrollArea::horizontal()
+                        .id_salt("gallery_folders")
+                        .scroll_bar_visibility(
+                            egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                        )
+                        .scroll_source(egui::containers::scroll_area::ScrollSource {
+                            scroll_bar: false,
+                            drag: egui::containers::scroll_area::DragScroll::Always,
+                            mouse_wheel: true,
+                        })
+                        .horizontal_scroll_offset(state.folder_scroll)
+                        .max_height(24.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                for folder in &state.sibling_folders {
+                                    let name = folder
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| folder.display().to_string());
+                                    if folder == &state.folder {
+                                        ui.strong(name);
+                                    } else if ui.button(name).clicked() {
+                                        action = Some(GalleryAction::OpenFolder(folder.clone()));
+                                    }
+                                }
+                            });
+                        });
+                    let max_scroll = (output.content_size.x - output.inner_rect.width()).max(0.0);
+                    if max_scroll > 0.0 {
+                        state.folder_scroll = state.folder_scroll.clamp(0.0, max_scroll);
+                        let track_size = egui::vec2(ui.available_width(), 8.0);
+                        let (track, response) =
+                            ui.allocate_exact_size(track_size, egui::Sense::click_and_drag());
+                        let viewport_ratio =
+                            (output.inner_rect.width() / output.content_size.x).clamp(0.08, 1.0);
+                        let thumb_width = (track.width() * viewport_ratio).max(18.0);
+                        let travel = (track.width() - thumb_width).max(1.0);
+
+                        if response.dragged() || response.clicked() {
+                            if let Some(pointer) = response.interact_pointer_pos() {
+                                let target = (pointer.x - track.left() - thumb_width / 2.0)
+                                    .clamp(0.0, travel);
+                                state.folder_scroll = target / travel * max_scroll;
+                            }
+                        }
+
+                        let thumb_left = track.left() + travel * state.folder_scroll / max_scroll;
+                        let thumb = egui::Rect::from_min_size(
+                            egui::pos2(thumb_left, track.top()),
+                            egui::vec2(thumb_width, track.height()),
+                        );
+                        let visuals = ui.visuals();
+                        ui.painter()
+                            .rect_filled(track, 3.0, visuals.extreme_bg_color);
+                        ui.painter().rect_filled(
+                            thumb,
+                            3.0,
+                            if response.hovered() || response.dragged() {
+                                visuals.widgets.active.bg_fill
+                            } else {
+                                visuals.widgets.inactive.bg_fill
+                            },
+                        );
+                    } else {
+                        state.folder_scroll = 0.0;
+                    }
+                });
+            });
+        }
         if let Some(error) = state.op_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
@@ -501,4 +716,24 @@ fn gallery_cell(
     }
 
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FolderNavigation;
+    use std::path::PathBuf;
+
+    #[test]
+    fn folder_navigation_discards_forward_branch_after_new_visit() {
+        let a = PathBuf::from("a");
+        let b = PathBuf::from("b");
+        let mut navigation = FolderNavigation::new(a.clone());
+        navigation.push(b.clone());
+        navigation.push(PathBuf::from("c"));
+        assert_eq!(navigation.back(), Some(b.clone()));
+        navigation.push(PathBuf::from("d"));
+        assert!(!navigation.can_forward());
+        assert_eq!(navigation.back(), Some(b.clone()));
+        assert_eq!(navigation.back(), Some(a));
+    }
 }

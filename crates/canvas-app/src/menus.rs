@@ -18,6 +18,7 @@ pub enum MenuAction {
     NewDesign,
     OpenFile,
     OpenFolder,
+    CloseProject,
     Save,
     SaveAs,
     /// Guarda todas las ranuras sucias de la baraja, no solo la activa.
@@ -113,6 +114,8 @@ mod native {
                 true,
                 accel(ctrl_shift, Code::KeyO),
             );
+            let close_project_item =
+                MenuItem::with_id("close_project", "Close Project", true, None);
             let save_item = MenuItem::with_id("save", "Save", false, accel(ctrl, Code::KeyS));
             let save_as_item =
                 MenuItem::with_id("save_as", "Save As…", false, accel(ctrl_shift, Code::KeyS));
@@ -130,6 +133,7 @@ mod native {
                     &new_item,
                     &open_item,
                     &open_folder_item,
+                    &close_project_item,
                     &PredefinedMenuItem::separator(),
                     &save_item,
                     &save_as_item,
@@ -279,6 +283,7 @@ mod native {
                 "new" => Some(MenuAction::NewDesign),
                 "open" => Some(MenuAction::OpenFile),
                 "open_folder" => Some(MenuAction::OpenFolder),
+                "close_project" => Some(MenuAction::CloseProject),
                 "save" => Some(MenuAction::Save),
                 "save_as" => Some(MenuAction::SaveAs),
                 "save_all" => Some(MenuAction::SaveAll),
@@ -390,6 +395,9 @@ pub fn menu_bar_ui(
             }
             if ui.button("Open Folder…").clicked() {
                 action = Some(MenuAction::OpenFolder);
+            }
+            if ui.button("Close Project").clicked() {
+                action = Some(MenuAction::CloseProject);
             }
             ui.separator();
             if ui

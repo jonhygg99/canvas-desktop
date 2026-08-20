@@ -177,6 +177,11 @@ enum View {
 #[derive(Clone)]
 enum Nav {
     Open(PathBuf),
+    OpenGallery {
+        path: PathBuf,
+        navigation: gallery::FolderNavigation,
+    },
+    CloseProject,
     NewDesign,
 }
 
@@ -560,6 +565,29 @@ impl App {
     fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
         match nav {
             Nav::Open(path) => self.open_path(path, ctx),
+            Nav::OpenGallery { path, navigation } => {
+                let gallery_state = gallery::GalleryState::with_navigation(
+                    path.clone(),
+                    self.settings.gallery_sort,
+                    navigation,
+                );
+                loader::spawn_gallery_scan(
+                    path.clone(),
+                    self.thumb_cache.clone(),
+                    self.tx.clone(),
+                    ctx.clone(),
+                );
+                self.push_recent(&path);
+                self.view = View::Gallery(gallery_state);
+                self.sync_title(ctx);
+            }
+            Nav::CloseProject => {
+                self.deck = deck::Deck::default();
+                self.pending_deck = None;
+                self.watcher = None;
+                self.view = View::Welcome { error: None };
+                self.sync_title(ctx);
+            }
             Nav::NewDesign => self.new_design(ctx),
         }
     }
@@ -600,12 +628,13 @@ impl App {
             return;
         }
         let target = match &nav {
-            Nav::Open(p) => format!(
+            Nav::Open(p) | Nav::OpenGallery { path: p, .. } => format!(
                 "\"{}\"",
                 p.file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| p.display().to_string())
             ),
+            Nav::CloseProject => "the Welcome screen".to_owned(),
             Nav::NewDesign => "a new design".to_owned(),
         };
         let description = if names.len() == 1 {
@@ -711,6 +740,7 @@ impl App {
             A::OpenFile => loader::spawn_pick_file(self.tx.clone(), ctx.clone()),
             A::OpenFolder => loader::spawn_pick_folder(self.tx.clone(), ctx.clone()),
             A::OpenRecent(path) => self.request_nav(Nav::Open(path), ctx),
+            A::CloseProject => self.request_nav(Nav::CloseProject, ctx),
             A::Save => {
                 if let View::Editor(state) = &mut self.view {
                     state.save_clicked = true;
@@ -838,7 +868,7 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 AppMsg::FilePicked(Some(path)) | AppMsg::FolderPicked(Some(path)) => {
-                    self.open_path(path, ctx);
+                    self.request_nav(Nav::Open(path), ctx);
                 }
                 AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
                 AppMsg::SaveAsPicked(path) => {
@@ -2117,6 +2147,20 @@ impl eframe::App for App {
                     // de cargar).
                     self.pending_deck = Some(deck::DeckSeed::from_gallery(g));
                     open_next = Some(Nav::Open(path));
+                }
+                Some(gallery::GalleryAction::OpenFolder(folder)) => {
+                    let (path, navigation) = g.navigation_to_folder(folder);
+                    open_next = Some(Nav::OpenGallery { path, navigation });
+                }
+                Some(gallery::GalleryAction::Back) => {
+                    if let Some((path, navigation)) = g.navigation_back() {
+                        open_next = Some(Nav::OpenGallery { path, navigation });
+                    }
+                }
+                Some(gallery::GalleryAction::Forward) => {
+                    if let Some((path, navigation)) = g.navigation_forward() {
+                        open_next = Some(Nav::OpenGallery { path, navigation });
+                    }
                 }
                 Some(gallery::GalleryAction::SortChanged(sort)) => {
                     self.settings.gallery_sort = sort;
