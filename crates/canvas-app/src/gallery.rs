@@ -282,8 +282,32 @@ fn reveal_in_explorer(path: &Path) {
 #[cfg(not(windows))]
 fn reveal_in_explorer(_path: &Path) {}
 
-const CELL: egui::Vec2 = egui::vec2(172.0, 200.0);
-const THUMB: f32 = 156.0;
+const MIN_CELL_WIDTH: f32 = 140.0;
+const PREFERRED_CELL_WIDTH: f32 = 156.0;
+const CELL_GAP: f32 = 8.0;
+const ROW_GAP: f32 = 4.0;
+const THUMB_INSET: f32 = 8.0;
+const THUMB_ASPECT_RATIO: f32 = 16.0 / 9.0;
+const TITLE_HEIGHT: f32 = 20.0;
+const TITLE_TO_THUMB_GAP: f32 = 2.0;
+const CARD_BOTTOM_PADDING: f32 = 6.0;
+
+fn gallery_column_count(available_width: f32) -> usize {
+    ((available_width + CELL_GAP) / (PREFERRED_CELL_WIDTH + CELL_GAP))
+        .floor()
+        .max(1.0) as usize
+}
+
+fn gallery_cell_size(available_width: f32, columns: usize) -> egui::Vec2 {
+    let width = ((available_width - CELL_GAP * (columns.saturating_sub(1) as f32))
+        / columns as f32)
+        .max(MIN_CELL_WIDTH);
+    let thumbnail_height = (width - THUMB_INSET * 2.0) / THUMB_ASPECT_RATIO;
+    egui::vec2(
+        width,
+        TITLE_HEIGHT + TITLE_TO_THUMB_GAP + thumbnail_height + CARD_BOTTOM_PADDING,
+    )
+}
 
 pub fn next_folder_panel_side(side: StripSide) -> StripSide {
     match side {
@@ -529,42 +553,75 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for item in &state.items {
-                    if let Some(cell_action) =
-                        gallery_cell(ui, item, &mut state.selected, &mut state.rename_edit)
-                    {
-                        action = Some(cell_action);
+            let columns = gallery_column_count(ui.available_width());
+            let cell_size = gallery_cell_size(ui.available_width(), columns);
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            for row in state.items.chunks(columns) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = CELL_GAP;
+                    for item in row {
+                        if let Some(cell_action) = gallery_cell(
+                            ui,
+                            item,
+                            cell_size,
+                            &mut state.selected,
+                            &mut state.rename_edit,
+                        ) {
+                            action = Some(cell_action);
+                        }
                     }
-                }
-            });
+                });
+                ui.add_space(CELL_GAP);
+            }
         });
     });
     action
 }
 
+fn begin_rename(
+    item: &GalleryItem,
+    rename_edit: &mut Option<(PathBuf, String)>,
+    ctx: &egui::Context,
+) {
+    let stem = item
+        .path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    *rename_edit = Some((item.path.clone(), stem));
+    ctx.memory_mut(|memory| {
+        memory.request_focus(egui::Id::new(("gallery_rename", item.path.clone())))
+    });
+}
+
 fn gallery_cell(
     ui: &mut egui::Ui,
     item: &GalleryItem,
+    cell_size: egui::Vec2,
     selected: &mut Option<PathBuf>,
     rename_edit: &mut Option<(PathBuf, String)>,
 ) -> Option<GalleryAction> {
-    let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
     let is_selected = selected.as_deref() == Some(item.path.as_path());
-    let renaming = rename_edit.as_ref().is_some_and(|(p, _)| p == &item.path);
-    // Posición del nombre bajo la miniatura: la necesita tanto el pintado
-    // (fuera del scroll no se pinta) como el campo de renombrado (que si
-    // hace falta se coloca aunque la celda esté al borde del scroll).
-    let name_pos = egui::pos2(rect.center().x, rect.bottom() - 18.0);
-    // Fuera del scroll: no pintamos nada (la cuadrícula sigue fluida aunque
-    // haya cientos de ítems), pero SÍ devolvemos `response` — un menú
-    // contextual enganchado a ella no debe morir al hacer scroll.
+    let renaming = rename_edit
+        .as_ref()
+        .is_some_and(|(path, _)| path == &item.path);
+    let name_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(8.0, 4.0),
+        egui::vec2(rect.width() - 16.0, TITLE_HEIGHT - 4.0),
+    );
+    let name_response = (!renaming).then(|| {
+        ui.interact(
+            name_rect,
+            egui::Id::new(("gallery_name", item.path.clone())),
+            egui::Sense::click(),
+        )
+    });
+
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-
         if response.hovered() {
             painter.rect_filled(rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if is_selected {
             painter.rect_stroke(
@@ -575,15 +632,16 @@ fn gallery_cell(
             );
         }
 
-        let thumb_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.top() + 8.0 + THUMB / 2.0),
-            egui::Vec2::splat(THUMB),
+        let thumbnail_width = rect.width() - THUMB_INSET * 2.0;
+        let thumbnail_height = thumbnail_width / THUMB_ASPECT_RATIO;
+        let thumb_rect = egui::Rect::from_min_size(
+            rect.left_top() + egui::vec2(THUMB_INSET, TITLE_HEIGHT + TITLE_TO_THUMB_GAP),
+            egui::vec2(thumbnail_width, thumbnail_height),
         );
         match (&item.tex, item.failed) {
             (Some(tex), _) => {
-                // Encaja la miniatura en su celda conservando la proporción.
                 let size = tex.size_vec2();
-                let scale = (THUMB / size.x).min(THUMB / size.y).min(1.0);
+                let scale = (thumbnail_width / size.x).max(thumbnail_height / size.y);
                 let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
                 painter.image(
                     tex.id(),
@@ -592,15 +650,12 @@ fn gallery_cell(
                     egui::Color32::WHITE,
                 );
             }
-            // Un diseño sin miniatura (recién creado, o ilegible) se marca
-            // con el icono de documento, no el ⚠ alarmante de una imagen
-            // que no cargó: no es un error del usuario.
             (None, _) if item.kind == ItemKind::Design => {
                 painter.text(
                     thumb_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "🖹",
-                    egui::FontId::proportional(28.0),
+                    "Document",
+                    egui::FontId::proportional(14.0),
                     ui.visuals().weak_text_color(),
                 );
             }
@@ -608,8 +663,8 @@ fn gallery_cell(
                 painter.text(
                     thumb_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "⚠",
-                    egui::FontId::proportional(28.0),
+                    "Failed to load",
+                    egui::FontId::proportional(14.0),
                     ui.visuals().error_fg_color,
                 );
             }
@@ -617,63 +672,63 @@ fn gallery_cell(
                 painter.text(
                     thumb_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "⏳",
-                    egui::FontId::proportional(24.0),
+                    "Loading",
+                    egui::FontId::proportional(14.0),
                     ui.visuals().weak_text_color(),
                 );
             }
         }
 
-        // Distintivo de esquina: un diseño se lee distinto de una foto
-        // incluso cuando su miniatura ya cargó.
         if item.kind == ItemKind::Design {
             painter.text(
                 thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
                 egui::Align2::RIGHT_TOP,
-                "🖹",
-                egui::FontId::proportional(13.0),
+                "Design",
+                egui::FontId::proportional(11.0),
                 ui.visuals().weak_text_color(),
             );
         }
 
-        // Nombre truncado bajo la miniatura — o el campo de renombrado si
-        // esta celda está en edición.
         if !renaming {
-            let font = egui::FontId::proportional(12.5);
             let mut name = item.name.clone();
-            if name.chars().count() > 24 {
-                name = format!("{}…", name.chars().take(23).collect::<String>());
+            if name.chars().count() > 30 {
+                name = format!("{}...", name.chars().take(27).collect::<String>());
             }
             painter.text(
-                name_pos,
-                egui::Align2::CENTER_CENTER,
+                name_rect.left_center(),
+                egui::Align2::LEFT_CENTER,
                 name,
-                font,
+                egui::FontId::proportional(12.5),
                 ui.visuals().text_color(),
             );
         }
     }
 
     let mut action = None;
+    let name_clicked = name_response.as_ref().is_some_and(|name| name.clicked());
+    if let Some(name_response) = &name_response {
+        if name_response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+        }
+        if name_response.clicked() {
+            begin_rename(item, rename_edit, ui.ctx());
+        }
+    }
 
     if renaming {
-        // Mismo patrón que `layers_panel.rs::rename_edit_ui`: Escape
-        // cancela, perder el foco confirma (comprobado antes que
-        // `lost_focus` para que el propio Escape no dispare un commit).
         let text_id = egui::Id::new(("gallery_rename", item.path.clone()));
-        let name_rect = egui::Rect::from_center_size(name_pos, egui::vec2(CELL.x - 8.0, 20.0));
         let mut cancel = false;
         let mut commit = false;
         if let Some((_, text)) = rename_edit.as_mut() {
-            let resp = ui.put(
+            let edit_response = ui.put(
                 name_rect,
                 egui::TextEdit::singleline(text)
                     .id(text_id)
-                    .horizontal_align(egui::Align::Center),
+                    .horizontal_align(egui::Align::LEFT),
             );
-            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 cancel = true;
-            } else if resp.lost_focus() {
+            } else if edit_response.lost_focus() {
                 commit = true;
             }
         }
@@ -684,7 +739,7 @@ fn gallery_cell(
                 let new_stem = text.trim().to_owned();
                 let original_stem = path
                     .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
+                    .map(|stem| stem.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 if !new_stem.is_empty() && new_stem != original_stem {
                     action = Some(GalleryAction::Rename(path, new_stem));
@@ -692,10 +747,9 @@ fn gallery_cell(
             }
         }
     } else {
-        action = response
-            .clicked()
-            .then(|| GalleryAction::Open(item.path.clone()));
-
+        if !name_clicked && response.clicked() {
+            action = Some(GalleryAction::Open(item.path.clone()));
+        }
         if response.secondary_clicked() {
             *selected = Some(item.path.clone());
         }
@@ -705,15 +759,7 @@ fn gallery_cell(
                 ui.close();
             }
             if ui.button("Rename").clicked() {
-                let stem = item
-                    .path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                *rename_edit = Some((item.path.clone(), stem));
-                ui.memory_mut(|m| {
-                    m.request_focus(egui::Id::new(("gallery_rename", item.path.clone())))
-                });
+                begin_rename(item, rename_edit, ui.ctx());
                 ui.close();
             }
             if ui.button("Duplicate").clicked() {
@@ -730,9 +776,6 @@ fn gallery_cell(
                 ui.close();
             }
             ui.separator();
-            // Va a la Papelera de reciclaje (`trash::delete`), no borrado
-            // permanente: recuperable si el usuario se equivoca, así que
-            // no hace falta pedir confirmación aparte.
             let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
             if ui.button(delete_label).clicked() {
                 action = Some(GalleryAction::Delete(item.path.clone()));
@@ -743,10 +786,11 @@ fn gallery_cell(
 
     action
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{next_folder_panel_side, FolderNavigation};
+    use super::{
+        gallery_cell_size, gallery_column_count, next_folder_panel_side, FolderNavigation,
+    };
     use crate::deck::StripSide;
     use std::path::PathBuf;
 
@@ -758,6 +802,14 @@ mod tests {
         assert_eq!(next_folder_panel_side(StripSide::Top), StripSide::Left);
     }
 
+    #[test]
+    fn responsive_grid_fills_the_available_width() {
+        let columns = gallery_column_count(900.0);
+        let size = gallery_cell_size(900.0, columns);
+        assert_eq!(columns, 5);
+        assert!((size.x - 173.6).abs() < f32::EPSILON);
+        assert!(size.y < size.x);
+    }
     #[test]
     fn folder_navigation_discards_forward_branch_after_new_visit() {
         let a = PathBuf::from("a");
