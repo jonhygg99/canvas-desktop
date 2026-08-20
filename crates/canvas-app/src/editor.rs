@@ -188,6 +188,11 @@ pub struct EditorState {
     /// Edición en curso del tamaño de página (campos An/Al de la sección
     /// Página): dimensiones originales, para consolidar al terminar.
     page_edit: Option<(f64, f64)>,
+    /// Ventanita flotante "Size" del menú contextual del lienzo: `Some((w,h))`
+    /// mientras está abierta, con los valores en edición (no confirmados
+    /// hasta pulsar Apply — no participa en `is_idle()`, mismo criterio que
+    /// `Deck::rename_edit`, que tampoco bloquea saltar de lienzo).
+    size_popup: Option<(f64, f64)>,
     /// Capa de «fondo desenfocado» activa, si la hay. `pub(crate)` porque el
     /// panel de capas (otro módulo) necesita fijarla como fila no arrastrable
     /// y excluirla de "Agrupar".
@@ -295,6 +300,7 @@ impl EditorState {
             gesture: Gesture::None,
             panel_edit: None,
             page_edit: None,
+            size_popup: None,
             background_layer,
             blur_edit: None,
             color_edit: None,
@@ -1232,6 +1238,82 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     }
 }
 
+/// Ventanita flotante "Size" pedida desde el menú contextual del lienzo
+/// (`canvas_ui`, botón "Size"): un formulario aparte con W/H en vez de
+/// arrastrar el `DragValue` del panel — mismo commit que `page_ui` (un solo
+/// paso de deshacer, con el fondo desenfocado recolocado si lo hay). Apply
+/// confirma, Cancel (o la X) cierra sin tocar el documento.
+fn size_popup_ui(state: &mut EditorState, ctx: &egui::Context) {
+    let Some((mut w, mut h)) = state.size_popup else {
+        return;
+    };
+    let mut open = true;
+    let mut apply = false;
+    let mut cancel = false;
+    egui::Window::new("Page size")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("W");
+                ui.add(
+                    egui::DragValue::new(&mut w)
+                        .speed(2.0)
+                        .range(16.0..=16384.0)
+                        .max_decimals(0),
+                );
+                ui.label("H");
+                ui.add(
+                    egui::DragValue::new(&mut h)
+                        .speed(2.0)
+                        .range(16.0..=16384.0)
+                        .max_decimals(0),
+                );
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Apply").clicked() {
+                    apply = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    state.size_popup = if open && !cancel { Some((w, h)) } else { None };
+    if !apply {
+        return;
+    }
+    state.size_popup = None;
+    let original = state
+        .doc
+        .page()
+        .map(|p| (p.width, p.height))
+        .unwrap_or((w, h));
+    let (w, h) = (w.max(16.0), h.max(16.0));
+    if (w, h) == original {
+        return;
+    }
+    if let Ok(page) = state.doc.page_mut() {
+        page.width = w;
+        page.height = h;
+    }
+    let mut commands: Vec<Box<dyn canvas_core::Command>> = vec![Box::new(SetPageSize {
+        before: original,
+        after: (w, h),
+    })];
+    if let Some(cmd) = state.resync_background_cover() {
+        commands.push(cmd);
+    }
+    state
+        .history
+        .push_applied(Box::new(canvas_core::Composite::new(
+            "Resize page",
+            commands,
+        )));
+}
+
 /// Slider de desenfoque (no destructivo) de una capa, con consolidación en un
 /// solo paso de deshacer al soltar. Se usa tanto en la sección de la capa
 /// seleccionada como junto al checkbox del fondo desenfocado.
@@ -1846,6 +1928,10 @@ pub enum CanvasAction {
     Rename(u64, String),
     Duplicate(u64),
     Delete(u64),
+    /// Elegido en el menú contextual (clic derecho) del propio lienzo —
+    /// reutiliza el mismo `MenuAction` que ya resuelve la barra de menú
+    /// nativa/de respaldo, sin duplicar esa lógica.
+    Menu(crate::menus::MenuAction),
 }
 
 /// El lienzo: gestiona zoom/paneo, carga perezosa/descarte de la baraja, y
@@ -1867,6 +1953,64 @@ pub fn canvas_ui(
 
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
+
+    // Menú contextual (clic derecho): antes no había ninguno en el área de
+    // edición. Solo las acciones que de verdad se usan desde un clic
+    // derecho — no una copia entera del menú Edit (eso ya está a un atajo
+    // de teclado o al menú superior de distancia).
+    response.context_menu(|ui| {
+        use crate::menus::MenuAction;
+        let mut item = |ui: &mut egui::Ui, label: &str, a: MenuAction| {
+            if ui.button(label).clicked() {
+                action = Some(CanvasAction::Menu(a));
+                ui.close();
+            }
+        };
+        item(ui, "Cut", MenuAction::Cut);
+        item(ui, "Copy", MenuAction::Copy);
+        item(ui, "Paste", MenuAction::Paste);
+        item(ui, "Duplicate", MenuAction::Duplicate);
+        item(ui, "Delete", MenuAction::Delete);
+        ui.separator();
+        item(ui, "Select All", MenuAction::SelectAll);
+        item(ui, "Group", MenuAction::Group);
+        item(ui, "Ungroup", MenuAction::Ungroup);
+        ui.separator();
+        // Estos tres, a diferencia de los de arriba, se resuelven AQUÍ
+        // MISMO con `state` directamente — no tocan disco ni el resto de
+        // `App`, así que no hace falta pasarlos por `CanvasAction`/`main.rs`.
+        let bg_active = state.background_active();
+        let bg_can_toggle = bg_active || state.background_source().is_some();
+        let mut bg_on = bg_active;
+        if ui
+            .add_enabled(
+                bg_can_toggle,
+                egui::Checkbox::new(&mut bg_on, "Blurred background"),
+            )
+            .clicked()
+        {
+            state.set_blurred_background(bg_on);
+            ui.close();
+        }
+        let crop_eligible = state
+            .selection
+            .primary()
+            .and_then(|id| state.doc.layer(id).ok())
+            .is_some_and(|l| matches!(l.content, LayerContent::Image(_)));
+        let mut crop_on = state.crop_mode;
+        if ui
+            .add_enabled(crop_eligible, egui::Checkbox::new(&mut crop_on, "Crop"))
+            .clicked()
+        {
+            state.crop_mode = crop_on;
+            ui.close();
+        }
+        if ui.button("Size").clicked() {
+            state.size_popup = state.doc.page().ok().map(|p| (p.width, p.height));
+            ui.close();
+        }
+    });
+
     if rect.width() < 1.0 || rect.height() < 1.0 {
         return action;
     }
@@ -2297,6 +2441,7 @@ pub fn canvas_ui(
     if let Some(a) = draw_rename_overlay(state, deck, ui, rect) {
         action = Some(a);
     }
+    size_popup_ui(state, ui.ctx());
     action
 }
 

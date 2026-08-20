@@ -1950,6 +1950,13 @@ impl eframe::App for App {
 
         // Navegación diferida (clic en galería, volver desde el editor).
         let mut open_next: Option<Nav> = None;
+        // Acción del menú contextual del lienzo (clic derecho): `state`
+        // pide prestado `self.view` mutable durante toda la rama
+        // `View::Editor` de más abajo, así que `self.handle_menu_action`
+        // (que necesita `&mut self` entero) no se puede llamar ahí dentro
+        // — se captura aquí y se resuelve DESPUÉS de este `match`, una vez
+        // liberado el préstamo.
+        let mut pending_menu_action: Option<menus::MenuAction> = None;
 
         match &mut self.view {
             View::Welcome { error } => {
@@ -2707,6 +2714,9 @@ impl eframe::App for App {
                             loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                         }
                     }
+                    Some(editor::CanvasAction::Menu(action)) => {
+                        pending_menu_action = Some(action);
+                    }
                     None => {}
                 }
                 if let Some(target) = deck_target {
@@ -2813,6 +2823,14 @@ impl eframe::App for App {
                     self.settings.save_in_background();
                 }
             }
+        }
+
+        // Resuelve la acción del menú contextual del lienzo capturada más
+        // arriba (ver el porqué del aplazamiento en su declaración):
+        // reutiliza el mismo camino que ya usa la barra de menú, sin
+        // duplicar ninguna lógica.
+        if let Some(action) = pending_menu_action {
+            self.handle_menu_action(action, &ctx);
         }
 
         // Ventana de ajustes (accesible desde la bienvenida y el editor).
