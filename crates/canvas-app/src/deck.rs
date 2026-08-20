@@ -187,6 +187,9 @@ pub struct SlotDoc {
     /// como el banner normal de «cambió por fuera» en cuanto la ranura se
     /// active.
     pub external_change: bool,
+    /// Nació en blanco y no se ha guardado ni una vez — ver
+    /// `EditorState::born_blank`.
+    pub born_blank: bool,
     /// Bytes aproximados en RAM (Σ ancho·alto·4 de `images`), para el
     /// presupuesto de descarte.
     pub bytes: usize,
@@ -460,21 +463,28 @@ impl Deck {
     }
 
     /// Añade AL FINAL una ranura provisional: un lienzo en blanco del tamaño
-    /// de página heredado, sin archivo detrás todavía. Devuelve su índice
-    /// para que el llamador salte a ella. `None` si la baraja no tiene
-    /// carpeta (`Deck::single`: un archivo suelto no tiene dónde escribir un
-    /// hermano).
+    /// de página heredado, sin archivo detrás todavía. `ext` es la extensión
+    /// elegida en Ajustes (`settings.new_canvas_format`) — `"canvas"` sigue
+    /// siendo un diseño autónomo, cualquier otra cosa es un raster real con
+    /// su sidecar. Devuelve su índice para que el llamador salte a ella.
+    /// `None` si la baraja no tiene carpeta (`Deck::single`: un archivo
+    /// suelto no tiene dónde escribir un hermano).
     ///
     /// IDEMPOTENTE: nunca hay más de una provisional a la vez. Si ya existe
     /// una, no crea otra — devuelve la que hay, que es exactamente a donde
     /// el usuario quería ir al pulsar «+» por segunda vez.
-    pub fn push_placeholder(&mut self, page: (f64, f64)) -> Option<usize> {
+    pub fn push_placeholder(&mut self, page: (f64, f64), ext: &str) -> Option<usize> {
         let folder = self.folder.clone()?;
         if let Some(i) = self.slots.iter().position(|s| s.is_placeholder) {
             return Some(i);
         }
-        let path = canvas_io::peek_unique_path(&folder, "Untitled", canvas_io::CANVAS_EXTENSION);
-        let mut state = crate::editor::EditorState::new_blank(page.0, page.1);
+        let is_design = ext == canvas_io::CANVAS_EXTENSION;
+        let path = canvas_io::peek_unique_path(&folder, "Untitled", ext);
+        let mut state = if is_design {
+            crate::editor::EditorState::new_blank(page.0, page.1)
+        } else {
+            crate::editor::EditorState::new_blank_image(page.0, page.1)
+        };
         let mut doc = state.take_slot();
         // Un `History::default()` arranca con `saved_depth: None`, o sea
         // `is_dirty() == true`: un lienzo recién creado se leería como «el
@@ -490,7 +500,11 @@ impl Deck {
             id,
             name: file_name(&path),
             path,
-            kind: ItemKind::Design,
+            kind: if is_design {
+                ItemKind::Design
+            } else {
+                ItemKind::Image
+            },
             mtime: None,
             thumb: None,
             thumb_failed: false,
@@ -1099,6 +1113,7 @@ mod tests {
             saving: false,
             save_error: None,
             external_change: false,
+            born_blank: false,
             bytes: 0,
         }
     }
@@ -1408,7 +1423,9 @@ mod tests {
     #[test]
     fn push_placeholder_appends_a_clean_ready_slot_at_the_end() {
         let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
-        let idx = deck.push_placeholder((800.0, 600.0)).expect("con carpeta");
+        let idx = deck
+            .push_placeholder((800.0, 600.0), "canvas")
+            .expect("con carpeta");
         assert_eq!(idx, 2);
         let slot = &deck.slots[idx];
         assert!(slot.is_placeholder);
@@ -1425,10 +1442,31 @@ mod tests {
     }
 
     #[test]
+    fn push_placeholder_png_makes_a_real_image_slot() {
+        let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+        let idx = deck
+            .push_placeholder((800.0, 600.0), "png")
+            .expect("con carpeta");
+        let slot = &deck.slots[idx];
+        assert_eq!(slot.kind, ItemKind::Image);
+        assert!(slot.path.extension().is_some_and(|e| e == "png"));
+        match &slot.content {
+            SlotContent::Ready(d) => {
+                assert!(!d.is_design, "un raster nuevo no es un diseño autónomo");
+                assert!(
+                    d.sidecar_enabled,
+                    "sin sidecar, un raster en blanco perdería sus capas al guardar"
+                );
+            }
+            _ => panic!("se esperaba SlotContent::Ready"),
+        }
+    }
+
+    #[test]
     fn push_placeholder_never_makes_a_second_one() {
         let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
-        let first = deck.push_placeholder((800.0, 600.0));
-        let second = deck.push_placeholder((800.0, 600.0));
+        let first = deck.push_placeholder((800.0, 600.0), "canvas");
+        let second = deck.push_placeholder((800.0, 600.0), "canvas");
         assert_eq!(first, second);
         assert_eq!(deck.slots.len(), 2);
     }
@@ -1436,14 +1474,14 @@ mod tests {
     #[test]
     fn push_placeholder_needs_a_folder() {
         let mut deck = Deck::single(PathBuf::from("a.png"));
-        assert_eq!(deck.push_placeholder((800.0, 600.0)), None);
+        assert_eq!(deck.push_placeholder((800.0, 600.0), "canvas"), None);
         assert_eq!(deck.slots.len(), 1);
     }
 
     #[test]
     fn merge_scan_keeps_the_placeholder_and_leaves_it_last() {
         let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
-        let placeholder_idx = deck.push_placeholder((800.0, 600.0)).unwrap();
+        let placeholder_idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
         let placeholder_id = deck.slots[placeholder_idx].id;
         // Reescaneo que reordena y añade un archivo nuevo: la provisional no
         // aparece en ningún listado real.
@@ -1461,7 +1499,7 @@ mod tests {
     #[test]
     fn merge_scan_follows_an_active_placeholder() {
         let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
-        let placeholder_idx = deck.push_placeholder((800.0, 600.0)).unwrap();
+        let placeholder_idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
         // Simula que la provisional pasó a ser la activa (como haría
         // `apply_jump` al saltar a ella).
         deck.slots[deck.active].content = SlotContent::Ready(Box::new(blank_slot_doc(1.0, 1.0)));
@@ -1484,7 +1522,7 @@ mod tests {
             seed(&["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"]),
             Path::new("a.png"),
         );
-        let placeholder_idx = deck.push_placeholder((10.0, 10.0)).unwrap();
+        let placeholder_idx = deck.push_placeholder((10.0, 10.0), "canvas").unwrap();
         // Otra ranura limpia y lejana, también sobre el presupuesto: debe
         // descartarse ella y no la provisional.
         let mut doc = blank_slot_doc(10.0, 10.0);
@@ -1511,7 +1549,7 @@ mod tests {
     #[test]
     fn request_loads_never_asks_for_a_placeholder() {
         let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
-        let placeholder_idx = deck.push_placeholder((10.0, 10.0)).unwrap();
+        let placeholder_idx = deck.push_placeholder((10.0, 10.0), "canvas").unwrap();
         // Forzar `Idle` a mano: no debería llegar a pasar en la práctica
         // (evict la protege), pero `request_loads` tiene que ser robusta
         // igualmente.

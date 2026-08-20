@@ -441,13 +441,25 @@ impl App {
     }
 
     /// Documento nuevo en blanco (desde la bienvenida o el menú File):
-    /// hereda el tamaño de página del último documento abierto o creado.
+    /// hereda el tamaño de página del último documento abierto o creado, y
+    /// nace en el formato elegido en Ajustes (`new_canvas_format`).
     fn new_design(&mut self, ctx: &egui::Context) {
         self.deck = deck::Deck::default();
         self.apply_deck_prefs();
         let (w, h) = self.settings.last_page_size;
-        let mut state = editor::EditorState::new_blank(w, h);
-        state.sidecar_enabled = self.settings.sidecar_default;
+        let state = if self.settings.new_canvas_format == settings::NewCanvasFormat::Canvas {
+            let mut state = editor::EditorState::new_blank(w, h);
+            // Sin efecto real (`is_design` ignora `sidecar_enabled`), pero
+            // deja el checkbox del panel en el valor que el usuario espera
+            // si en algún momento deja de ser un diseño autónomo.
+            state.sidecar_enabled = self.settings.sidecar_default;
+            state
+        } else {
+            // `new_blank_image` fuerza `sidecar_enabled = true` — NO se
+            // sobrescribe con `sidecar_default` aquí: un raster en blanco sin
+            // sidecar perdería sus capas en el primer guardado.
+            editor::EditorState::new_blank_image(w, h)
+        };
         self.view = View::Editor(Box::new(state));
         self.sync_title(ctx);
     }
@@ -527,7 +539,11 @@ impl App {
     /// función cuando la tira está oculta (un solo archivo en la carpeta,
     /// donde la celda "+" todavía no existe).
     fn add_canvas(&mut self) {
-        match self.deck.push_placeholder(self.settings.last_page_size) {
+        let ext = self.settings.new_canvas_format.extension();
+        match self
+            .deck
+            .push_placeholder(self.settings.last_page_size, ext)
+        {
             Some(idx) => {
                 self.deck.jump_to = Some(idx);
                 self.deck.jump_center = true;
@@ -676,6 +692,8 @@ impl App {
                         loader::GalleryOp::NewDesign {
                             folder: g.folder.clone(),
                             page: self.settings.last_page_size,
+                            ext: self.settings.new_canvas_format.extension().to_owned(),
+                            jpeg_quality: self.settings.jpeg_quality,
                         },
                         true,
                         self.tx.clone(),
@@ -832,6 +850,10 @@ impl App {
                             Ok(()) => {
                                 tracing::info!("guardado OK: {}", path.display());
                                 state.history.mark_saved();
+                                // A partir de este guardado ya hay píxeles
+                                // del usuario en disco: el próximo `Ctrl+S`
+                                // vuelve a pedir confirmación si sobrescribe.
+                                state.born_blank = false;
                                 // Los eventos de disco inminentes son de este
                                 // guardado: ventana de gracia y watcher nuevo
                                 // (la sustitución atómica puede invalidarlo).
@@ -1091,8 +1113,13 @@ impl App {
                             }
                             if idx == self.deck.active {
                                 if let View::Editor(state) = &mut self.view {
+                                    // `state.is_design` refleja la extensión
+                                    // REAL reservada (`settings.new_canvas_format`
+                                    // en el momento de crear la ranura), no un
+                                    // `true` fijo: la mayoría de lienzos nuevos
+                                    // hoy son un raster, no un diseño autónomo.
+                                    state.is_design = canvas_io::is_canvas_file(&path);
                                     state.doc.source_path = Some(path);
-                                    state.is_design = true;
                                     // El bloque de guardado normal, más abajo
                                     // en este mismo frame, toma la rama de
                                     // diseño y llama a `start_save_design`
@@ -1113,7 +1140,10 @@ impl App {
                             // Relleno automático: siempre queda una
                             // provisional lista al final, con o sin éxito
                             // arriba.
-                            self.deck.push_placeholder(self.settings.last_page_size);
+                            self.deck.push_placeholder(
+                                self.settings.last_page_size,
+                                self.settings.new_canvas_format.extension(),
+                            );
                         }
                         Err(e) => {
                             self.materialize_blocked = Some(slot);
@@ -1890,21 +1920,79 @@ fn is_jpeg_path(path: &std::path::Path) -> bool {
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
 }
 
-/// `foto.png.canvas` → `foto.png` si esa imagen existe; cualquier otra ruta
-/// se devuelve tal cual. El guard exige que `inner` sea además una imagen
-/// (no solo un archivo cualquiera) para que un diseño autónomo con nombre
-/// `Untitled.canvas` (cuyo `inner` es `Untitled`, sin extensión) nunca se
-/// confunda con el sidecar de otra cosa.
+/// `foto.png.canvas` (hermano legacy) o `.canvas/foto.png.canvas` (ubicación
+/// actual) → `foto.png` si esa imagen existe; cualquier otra ruta se
+/// devuelve tal cual. Punto de entrada para abrir un sidecar directamente
+/// desde el Explorador (doble clic, "Abrir con"). El guard exige que `inner`
+/// sea además una imagen (no solo un archivo cualquiera) para que un diseño
+/// autónomo con nombre `Untitled.canvas` (cuyo `inner` es `Untitled`, sin
+/// extensión) nunca se confunda con el sidecar de otra cosa.
 fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
-    let is_canvas = canvas_io::is_canvas_file(&path);
-    if is_canvas {
-        // `with_extension("")` quita solo la última extensión: .canvas.
-        let inner = path.with_extension("");
-        if canvas_io::is_image_file(&inner) && inner.is_file() {
-            return inner;
+    if !canvas_io::is_canvas_file(&path) {
+        return path;
+    }
+    // Ubicación actual: `<carpeta>/.canvas/foto.png.canvas`. `file_stem()`
+    // quita solo la extensión `.canvas` y deja `foto.png`; el abuelo de
+    // `path` es la carpeta real de la imagen.
+    let in_sidecar_dir = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == canvas_io::SIDECAR_DIR);
+    if in_sidecar_dir {
+        if let Some(grandparent) = path.parent().and_then(|p| p.parent()) {
+            if let Some(stem) = path.file_stem() {
+                let inner = grandparent.join(stem);
+                if canvas_io::is_image_file(&inner) && inner.is_file() {
+                    return inner;
+                }
+            }
         }
+        return path;
+    }
+    // Hermano legacy: `with_extension("")` quita solo la última extensión.
+    let inner = path.with_extension("");
+    if canvas_io::is_image_file(&inner) && inner.is_file() {
+        return inner;
     }
     path
+}
+
+#[cfg(test)]
+mod resolve_canvas_sidecar_tests {
+    use super::resolve_canvas_sidecar;
+
+    #[test]
+    fn resolves_a_sidecar_inside_the_dot_canvas_folder_to_its_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = dir.path().join("foto.png");
+        std::fs::write(&image, b"x").unwrap();
+        let sidecar_dir = dir.path().join(canvas_io::SIDECAR_DIR);
+        std::fs::create_dir_all(&sidecar_dir).unwrap();
+        let sidecar = sidecar_dir.join("foto.png.canvas");
+        std::fs::write(&sidecar, b"{}").unwrap();
+
+        assert_eq!(resolve_canvas_sidecar(sidecar), image);
+    }
+
+    #[test]
+    fn resolves_a_legacy_sibling_sidecar_to_its_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = dir.path().join("foto.png");
+        std::fs::write(&image, b"x").unwrap();
+        let sidecar = dir.path().join("foto.png.canvas");
+        std::fs::write(&sidecar, b"{}").unwrap();
+
+        assert_eq!(resolve_canvas_sidecar(sidecar), image);
+    }
+
+    #[test]
+    fn a_standalone_design_is_returned_as_is() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let design = dir.path().join("Untitled.canvas");
+        std::fs::write(&design, b"{}").unwrap();
+
+        assert_eq!(resolve_canvas_sidecar(design.clone()), design);
+    }
 }
 
 impl eframe::App for App {
@@ -2017,6 +2105,8 @@ impl eframe::App for App {
                         loader::GalleryOp::NewDesign {
                             folder: g.folder.clone(),
                             page: self.settings.last_page_size,
+                            ext: self.settings.new_canvas_format.extension().to_owned(),
+                            jpeg_quality: self.settings.jpeg_quality,
                         },
                         true,
                         self.tx.clone(),
@@ -2154,13 +2244,27 @@ impl eframe::App for App {
                 // este mismo frame ya está aplicada) y ANTES del bloque de
                 // guardado (el `save_clicked` que la respuesta deja
                 // preparado se consume ese mismo frame, más abajo).
-                let placeholder_id = self
+                // La extensión a reservar es la del nombre YA asomado en la
+                // ranura (`push_placeholder` la fijó al crearla), no la del
+                // ajuste actual: si el usuario cambió `new_canvas_format`
+                // mientras esta provisional seguía sin editar, el nombre que
+                // se ve en la tira («Untitled.png») y el que se reserva de
+                // verdad deben seguir siendo el mismo.
+                let placeholder = self
                     .deck
                     .slots
                     .get(self.deck.active)
                     .filter(|s| s.is_placeholder)
-                    .map(|s| s.id);
-                if let Some(id) = placeholder_id {
+                    .map(|s| {
+                        (
+                            s.id,
+                            s.path
+                                .extension()
+                                .map(|e| e.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        )
+                    });
+                if let Some((id, ext)) = placeholder {
                     if state.is_dirty()
                         && !state.saving
                         && self.materializing.is_none()
@@ -2171,6 +2275,7 @@ impl eframe::App for App {
                             loader::spawn_reserve_canvas_path(
                                 folder,
                                 id,
+                                ext,
                                 self.tx.clone(),
                                 ctx.clone(),
                             );
@@ -2256,8 +2361,13 @@ impl eframe::App for App {
                             Some(path) => {
                                 // Aviso de sobrescritura destructiva: la
                                 // primera vez de cada sesión (salvo que el
-                                // usuario pidiera no volver a preguntar).
-                                if !self.settings.skip_overwrite_warning
+                                // usuario pidiera no volver a preguntar), y
+                                // NUNCA para un lienzo `born_blank` — lo creó
+                                // la propia app en blanco, no hay píxeles del
+                                // usuario que este primer guardado pudiera
+                                // destruir.
+                                if !state.born_blank
+                                    && !self.settings.skip_overwrite_warning
                                     && !self.overwrite_confirmed
                                 {
                                     self.overwrite_dont_ask = false;
@@ -2599,6 +2709,7 @@ impl eframe::App for App {
                             &mut self.renderer,
                             &mut self.surface,
                             &self.tx,
+                            self.settings.new_canvas_format.extension(),
                         );
                     });
 
@@ -2640,8 +2751,10 @@ impl eframe::App for App {
                         // detecta y reajusta.
                     }
                     Some(deck_strip::StripAction::AddCanvas) => {
-                        if let Some(idx) = self.deck.push_placeholder(self.settings.last_page_size)
-                        {
+                        if let Some(idx) = self.deck.push_placeholder(
+                            self.settings.last_page_size,
+                            self.settings.new_canvas_format.extension(),
+                        ) {
                             self.deck.jump_to = Some(idx);
                             self.deck.jump_center = true;
                         }

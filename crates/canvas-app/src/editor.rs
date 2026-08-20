@@ -256,6 +256,13 @@ pub struct EditorState {
     /// El usuario confirmó (diálogo nativo ya mostrado) borrar el archivo
     /// abierto.
     pub delete_requested: bool,
+    /// Nació en blanco (`new_blank`/`new_blank_image`) y todavía no se ha
+    /// guardado ni una vez: el archivo en disco (si lo hay — la reserva de
+    /// nombre de una ranura provisional deja uno de 0 bytes) no tiene
+    /// píxeles del usuario que un primer `Ctrl+S` pudiera destruir, así que
+    /// ese primer guardado se salta el modal de aviso de sobrescritura. Se
+    /// apaga al recibir `Saved`.
+    pub born_blank: bool,
     /// Petición de saltar a otro lienzo de la baraja (`PageUp`/`PageDown`/
     /// `Home`/`End`); la app resuelve el destino contra `Deck` y pregunta si
     /// hace falta por cambios sin guardar, igual que «Back to gallery».
@@ -328,6 +335,7 @@ impl EditorState {
             file_rename_edit: None,
             file_rename_requested: None,
             delete_requested: false,
+            born_blank: false,
             deck_nav: None,
             press_on_other_slot: false,
         }
@@ -358,8 +366,8 @@ impl EditorState {
         Ok(Self::base(doc, images, Selection::single(id), None))
     }
 
-    /// Proyecto nuevo en blanco (página blanca, sin capas). Es un diseño: el
-    /// primer guardado ofrece un `.canvas`, no un raster.
+    /// Proyecto nuevo en blanco, como diseño autónomo `.canvas`: el primer
+    /// guardado no rasteriza nada, sigue siendo un `.canvas` de pleno derecho.
     pub fn new_blank(width: f64, height: f64) -> Self {
         let mut doc = Document::new(width, height);
         if let Ok(page) = doc.page_mut() {
@@ -367,6 +375,25 @@ impl EditorState {
         }
         let mut state = Self::base(doc, ImageMap::new(), Selection::default(), None);
         state.is_design = true;
+        state.born_blank = true;
+        state
+    }
+
+    /// Proyecto nuevo en blanco respaldado por un raster real (PNG/JPEG/
+    /// WebP): el primer guardado hornea la página y escribe el archivo más
+    /// su sidecar, por el mismo camino (`start_save`) que cualquier imagen
+    /// editada. `sidecar_enabled` se fuerza a `true` — sin él, ese primer
+    /// guardado escribiría un raster en blanco y perdería silenciosamente
+    /// las capas que el usuario acabe de dibujar, aunque el ajuste global de
+    /// sidecar estuviera desactivado.
+    pub fn new_blank_image(width: f64, height: f64) -> Self {
+        let mut doc = Document::new(width, height);
+        if let Ok(page) = doc.page_mut() {
+            page.background = Some([255, 255, 255, 255]);
+        }
+        let mut state = Self::base(doc, ImageMap::new(), Selection::default(), None);
+        state.sidecar_enabled = true;
+        state.born_blank = true;
         state
     }
 
@@ -880,6 +907,7 @@ impl EditorState {
             saving: self.saving,
             save_error: self.save_error.take(),
             external_change: self.external_change,
+            born_blank: self.born_blank,
             bytes,
         }
     }
@@ -897,6 +925,7 @@ impl EditorState {
         self.saving = slot.saving;
         self.save_error = slot.save_error;
         self.external_change = slot.external_change;
+        self.born_blank = slot.born_blank;
         // Los gestos y ediciones de panel se quedan a sus valores por
         // defecto (vacíos): `is_idle()` garantizaba que ya lo estaban antes
         // del salto. La selección y el fondo desenfocado ya llegan del slot;
@@ -2005,6 +2034,7 @@ pub enum CanvasAction {
 /// El lienzo: gestiona zoom/paneo, carga perezosa/descarte de la baraja, y
 /// renderiza en una sola escena todos los lienzos visibles (el activo con
 /// `state.doc`/`state.images`; el resto con su propio `SlotDoc`).
+#[allow(clippy::too_many_arguments)]
 pub fn canvas_ui(
     state: &mut EditorState,
     deck: &mut Deck,
@@ -2013,6 +2043,9 @@ pub fn canvas_ui(
     renderer: &mut CanvasRenderer,
     surface_slot: &mut Option<CanvasSurface>,
     tx: &Sender<AppMsg>,
+    // Extensión de `settings.new_canvas_format` — qué crea la zona "+" al
+    // final de la baraja cuando se pulsa directamente sobre el lienzo.
+    new_canvas_ext: &str,
 ) -> Option<CanvasAction> {
     // Duplicar/borrar/renombrar tocan disco o el watcher: se arman aquí (en
     // la cabecera de un lienzo, ver más abajo) pero se resuelven en
@@ -2491,7 +2524,9 @@ pub fn canvas_ui(
                     // aquí mismo — es una operación puramente en memoria, no
                     // toca disco ni el watcher, así que no hace falta pasar
                     // por `main.rs`.
-                    if let Some(idx) = deck.push_placeholder((deck.add_zone.w, deck.add_zone.h)) {
+                    if let Some(idx) =
+                        deck.push_placeholder((deck.add_zone.w, deck.add_zone.h), new_canvas_ext)
+                    {
                         deck.jump_to = Some(idx);
                         deck.jump_center = true;
                         state.press_on_other_slot = true;

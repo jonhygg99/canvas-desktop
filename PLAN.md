@@ -217,6 +217,27 @@ Estado global: **170 tests**, `clippy -D warnings` y `fmt --check` limpios (Wind
   deja una ventana TOCTOU en la que `write_atomic`/`fs::copy` podrían
   sobrescribir en silencio un archivo creado por otra ventana o proceso justo
   entre la comprobación y la escritura.
+- **Los sidecar de una imagen viven en `<carpeta>/.canvas/`, oculta con
+  `FILE_ATTRIBUTE_HIDDEN` en Windows** (el prefijo `.` del nombre NO oculta
+  nada ahí, a diferencia de Unix — hay que marcar el atributo explícitamente,
+  `sidecar::ensure_sidecar_dir`). Lectura con fallback al hermano legacy
+  (`foto.png.canvas`, `sidecar::find_sidecar`) para carpetas de antes de este
+  cambio; escritura siempre en la carpeta nueva, y el hermano legacy se borra
+  en cuanto se guarda una vez (migración perezosa, un archivo a la vez, nunca
+  un movimiento masivo). Un diseño autónomo (`Untitled.canvas`) NO se mueve
+  ahí: es el documento en sí, no un sidecar — meterlo en la carpeta oculta lo
+  borraría de la galería.
+- **Un lienzo nuevo nace como imagen real (`new_canvas_format`, PNG por
+  defecto), no como diseño autónomo**: «✚ New design», la zona «+» de la
+  baraja y Ctrl+N escriben un raster (con su sidecar, `sidecar_enabled`
+  forzado a `true` para no perder capas en el primer guardado) salvo que el
+  ajuste esté en `Canvas`, que conserva el comportamiento clásico. El primer
+  guardado de un lienzo `born_blank` se salta el modal de sobrescritura: lo
+  creó la propia app, no hay píxeles del usuario que destruir.
+- **`preview_png` solo se embebe en un diseño autónomo**, nunca en el sidecar
+  de una imagen: ese sidecar nadie lo mira para la miniatura de la galería
+  (`thumbs::thumbnail` lee el PNG/JPEG directamente), así que embeberlo ahí
+  era peso muerto en cada guardado.
 - **El portapapeles de archivos de la galería es una ranura de proceso
   (`OnceLock<Mutex<Option<PathBuf>>>`)**, igual que el portapapeles interno de
   capas de la Fase 11, y a propósito no toca el portapapeles del SO: `arboard`

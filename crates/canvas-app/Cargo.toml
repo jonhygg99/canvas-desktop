@@ -78,3 +78,6 @@ windows = { workspace = true, features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_DataExchange",
 ] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

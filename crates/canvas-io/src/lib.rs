@@ -24,12 +24,13 @@ pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
     ImageMetadata,
 };
-pub use probe::probe_page_size;
+pub use probe::{probe_page_size, probe_page_size_with};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
-    blank_design, delete_sidecar, make_preview, preview_scale, read_design, read_preview,
-    read_sidecar, sidecar_path, write_design, write_sidecar, CanvasPayload, LayerPixels,
-    RestoredDocument, PREVIEW_MAX_DIM,
+    blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, make_preview, preview_scale,
+    read_design, read_preview, read_sidecar, sidecar_dir, sidecar_path, write_blank_canvas,
+    write_design, write_sidecar, CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM,
+    SIDECAR_DIR,
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;

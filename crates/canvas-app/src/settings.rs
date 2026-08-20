@@ -37,6 +37,43 @@ impl ThemeChoice {
     }
 }
 
+/// Formato en el que nace un lienzo en blanco («✚ New design» de la galería,
+/// zona «+» de la baraja). Un raster real (Png/Jpeg/WebP) queda respaldado
+/// por un sidecar `.canvas` con sus capas, igual que cualquier otra imagen
+/// editada — visible en el Explorador y en cualquier visor. `Canvas` es el
+/// comportamiento de antes de este ajuste: un diseño autónomo, sin ningún
+/// archivo de imagen detrás.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum NewCanvasFormat {
+    #[default]
+    Png,
+    Jpeg,
+    WebP,
+    Canvas,
+}
+
+impl NewCanvasFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            NewCanvasFormat::Png => "PNG image",
+            NewCanvasFormat::Jpeg => "JPEG image",
+            NewCanvasFormat::WebP => "WebP image",
+            NewCanvasFormat::Canvas => "Canvas design (.canvas)",
+        }
+    }
+
+    /// Extensión de archivo (sin el punto), lista para
+    /// `canvas_io::reserve_unique_path`.
+    pub fn extension(self) -> &'static str {
+        match self {
+            NewCanvasFormat::Png => "png",
+            NewCanvasFormat::Jpeg => "jpg",
+            NewCanvasFormat::WebP => "webp",
+            NewCanvasFormat::Canvas => canvas_io::CANVAS_EXTENSION,
+        }
+    }
+}
+
 /// Criterio de orden de la galería de carpetas.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
 pub enum GallerySort {
@@ -182,6 +219,9 @@ pub struct AppSettings {
     /// Lado de la ventana donde se ancla la tira de la baraja. Independiente
     /// de `deck_axis` — ver la doc de `StripSide`.
     pub deck_strip_side: StripSide,
+    /// Formato en el que nace un lienzo en blanco nuevo. PNG por defecto: un
+    /// raster real y visible, no el diseño autónomo `.canvas` de antes.
+    pub new_canvas_format: NewCanvasFormat,
 }
 
 impl Default for AppSettings {
@@ -197,6 +237,7 @@ impl Default for AppSettings {
             deck_axis: DeckAxis::default(),
             deck_strip_visible: true,
             deck_strip_side: StripSide::default(),
+            new_canvas_format: NewCanvasFormat::default(),
         }
     }
 }
@@ -276,6 +317,29 @@ pub fn settings_window(
                     ui.selectable_value(&mut settings.theme, choice, choice.label());
                 }
             });
+            ui.add_space(10.0);
+
+            ui.label("New canvas format");
+            egui::ComboBox::from_id_salt("new_canvas_format")
+                .selected_text(settings.new_canvas_format.label())
+                .show_ui(ui, |ui| {
+                    for choice in [
+                        NewCanvasFormat::Png,
+                        NewCanvasFormat::Jpeg,
+                        NewCanvasFormat::WebP,
+                        NewCanvasFormat::Canvas,
+                    ] {
+                        ui.selectable_value(
+                            &mut settings.new_canvas_format,
+                            choice,
+                            choice.label(),
+                        );
+                    }
+                });
+            ui.weak(
+                "What \"✚ New design\" and the \"+\" canvas create: a real image file \
+                 (with its layers kept editable in a sidecar) or a standalone .canvas design.",
+            );
             ui.add_space(10.0);
 
             ui.label("JPEG quality when saving");

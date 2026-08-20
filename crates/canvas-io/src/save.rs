@@ -26,7 +26,10 @@ pub fn save_format_from_path(path: &Path) -> Option<ImageFormat> {
 /// Codifica el RGBA horneado y lo escribe atómicamente en `path`, en el
 /// formato que dicta la extensión del propio `path`. `jpeg_quality` (1–100)
 /// solo aplica si el destino es JPEG. `metadata` (ICC/EXIF del original) se
-/// reinserta tal cual si el contenedor destino lo soporta.
+/// reinserta tal cual si el contenedor destino lo soporta. Devuelve los bytes
+/// EXACTOS escritos en disco (ya con metadatos reinsertados): quien necesite
+/// el hash del archivo recién guardado (`write_sidecar`) lo calcula sobre
+/// esto, sin releerlo de disco.
 pub fn save_rgba(
     path: &Path,
     rgba: Vec<u8>,
@@ -34,7 +37,7 @@ pub fn save_rgba(
     height: u32,
     jpeg_quality: u8,
     metadata: Option<&crate::ImageMetadata>,
-) -> Result<(), IoError> {
+) -> Result<Vec<u8>, IoError> {
     let format = save_format_from_path(path).ok_or_else(|| IoError::UnsupportedFormat {
         path: path.to_owned(),
     })?;
@@ -42,7 +45,8 @@ pub fn save_rgba(
     if let Some(meta) = metadata {
         bytes = crate::reinject_metadata(path, bytes, meta);
     }
-    write_atomic(path, &bytes)
+    write_atomic(path, &bytes)?;
+    Ok(bytes)
 }
 
 fn encode(
@@ -230,6 +234,23 @@ mod tests {
         assert!(
             p[0] > 240 && p[1] > 240 && p[2] > 240,
             "esperaba blanco, fue {p:?}"
+        );
+    }
+
+    #[test]
+    fn returned_bytes_match_the_file_on_disk_exactly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.png");
+        let meta = crate::ImageMetadata {
+            icc: Some(vec![3u8; 16]),
+            exif: None,
+        };
+        let returned = save_rgba(&path, checkered(6, 6), 6, 6, 92, Some(&meta)).expect("guardar");
+        let on_disk = std::fs::read(&path).expect("releer");
+        assert_eq!(
+            returned, on_disk,
+            "los bytes devueltos deben ser IDÉNTICOS a los del archivo: \
+             quien hashea el sidecar confía en esto para no releer"
         );
     }
 

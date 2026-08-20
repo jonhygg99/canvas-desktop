@@ -10,7 +10,7 @@ use eframe::egui;
 
 use crate::settings::GallerySort;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ItemKind {
     Image,
     Design,

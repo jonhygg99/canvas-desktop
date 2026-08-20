@@ -124,8 +124,16 @@ pub enum AppMsg {
 /// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:
 /// copiar un PNG grande no puede bloquear la UI.
 pub enum GalleryOp {
-    /// Crea un `.canvas` en blanco en `folder` con un nombre libre.
-    NewDesign { folder: PathBuf, page: (f64, f64) },
+    /// Crea un lienzo en blanco en `folder` con un nombre libre. `ext` es la
+    /// extensión elegida en Ajustes (`settings.new_canvas_format`): un
+    /// raster real (con su sidecar) salvo que sea `canvas`, que sigue siendo
+    /// un diseño autónomo. `jpeg_quality` solo importa si `ext == "jpg"`.
+    NewDesign {
+        folder: PathBuf,
+        page: (f64, f64),
+        ext: String,
+        jpeg_quality: u8,
+    },
     /// Duplica `path` (y su sidecar, si es una imagen que tiene uno) dentro
     /// de la misma carpeta, con sufijo « copy».
     Duplicate { path: PathBuf },
@@ -178,8 +186,14 @@ fn duplicate_into(
         return Err(e.to_string());
     }
     if canvas_io::is_image_file(src) {
-        let src_sidecar = canvas_io::sidecar_path(src);
-        if src_sidecar.is_file() {
+        if let Some(src_sidecar) = canvas_io::find_sidecar(src) {
+            // El destino de sidecar cae en la carpeta oculta de `folder`
+            // (que puede no ser la de `src` — copiar entre carpetas): hay
+            // que asegurarla antes de copiar, no solo antes de reservar `dst`.
+            if let Err(e) = canvas_io::ensure_sidecar_dir(folder) {
+                let _ = std::fs::remove_file(&dst);
+                return Err(e.to_string());
+            }
             let dst_sidecar = canvas_io::sidecar_path(&dst);
             if let Err(e) = std::fs::copy(&src_sidecar, &dst_sidecar) {
                 let _ = std::fs::remove_file(&dst);
@@ -211,11 +225,14 @@ fn rename_with_sidecar(path: &std::path::Path, new_stem: &str) -> Result<PathBuf
     }
     std::fs::rename(path, &dst).map_err(|e| e.to_string())?;
     if canvas_io::is_image_file(path) {
-        let src_sidecar = canvas_io::sidecar_path(path);
-        if src_sidecar.is_file() {
-            let dst_sidecar = canvas_io::sidecar_path(&dst);
-            if let Err(e) = std::fs::rename(&src_sidecar, &dst_sidecar) {
-                tracing::warn!("no se pudo renombrar el sidecar: {e}");
+        if let Some(src_sidecar) = canvas_io::find_sidecar(path) {
+            if let Err(e) = canvas_io::ensure_sidecar_dir(&folder) {
+                tracing::warn!("no se pudo preparar la carpeta de sidecars: {e}");
+            } else {
+                let dst_sidecar = canvas_io::sidecar_path(&dst);
+                if let Err(e) = std::fs::rename(&src_sidecar, &dst_sidecar) {
+                    tracing::warn!("no se pudo renombrar el sidecar: {e}");
+                }
             }
         }
     }
@@ -228,8 +245,7 @@ fn rename_with_sidecar(path: &std::path::Path, new_stem: &str) -> Result<PathBuf
 fn trash_with_sidecar(path: &std::path::Path) -> Result<(), String> {
     trash::delete(path).map_err(|e| e.to_string())?;
     if canvas_io::is_image_file(path) {
-        let sidecar = canvas_io::sidecar_path(path);
-        if sidecar.is_file() {
+        if let Some(sidecar) = canvas_io::find_sidecar(path) {
             if let Err(e) = trash::delete(&sidecar) {
                 tracing::warn!("no se pudo borrar el sidecar: {e}");
             }
@@ -243,18 +259,19 @@ fn trash_with_sidecar(path: &std::path::Path) -> Result<(), String> {
 pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
         let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), String>) = match op {
-            GalleryOp::NewDesign { folder, page } => {
-                let outcome = canvas_io::reserve_unique_path(
-                    &folder,
-                    "Untitled",
-                    canvas_io::CANVAS_EXTENSION,
-                )
-                .map_err(|e| e.to_string())
-                .and_then(|path| {
-                    canvas_io::write_design(&path, &canvas_io::blank_design(page.0, page.1))
-                        .map(|()| path)
-                        .map_err(|e| e.to_string())
-                });
+            GalleryOp::NewDesign {
+                folder,
+                page,
+                ext,
+                jpeg_quality,
+            } => {
+                let outcome = canvas_io::reserve_unique_path(&folder, "Untitled", &ext)
+                    .map_err(|e| e.to_string())
+                    .and_then(|path| {
+                        canvas_io::write_blank_canvas(&path, page.0, page.1, jpeg_quality)
+                            .map(|()| path)
+                            .map_err(|e| e.to_string())
+                    });
                 match outcome {
                     Ok(path) => (folder, Some(path), Ok(())),
                     Err(e) => (folder, None, Err(e)),
@@ -418,12 +435,45 @@ pub fn spawn_load_slot(folder: PathBuf, path: PathBuf, tx: Sender<AppMsg>, ctx: 
 /// carpeta entera son decenas de ms, sin decodificar un solo píxel. Factor
 /// común entre `spawn_gallery_scan` (sondea al escanear una carpeta) y
 /// `spawn_deck_probe` (sondea las ranuras de una baraja ya construida).
-fn probe_page_sizes(paths: Vec<PathBuf>) -> Vec<(PathBuf, Option<(f64, f64)>)> {
+///
+/// Todos los sidecar de `folder` viven en una única carpeta (`.canvas/`), así
+/// que se listan UNA vez aquí en vez de que cada tarea del `par_iter` haga su
+/// propio `is_file()`: un `read_dir` para la carpeta entera en vez de uno por
+/// archivo. A diferencia de `canvas_io::probe_page_size` (que sí cae al
+/// hermano legacy vía `find_sidecar`), esta versión en lote solo mira
+/// `.canvas/`: una carpeta migrada solo a medias puede sondear con el tamaño
+/// del raster en vez del de un sidecar legacy que aún no se ha guardado con
+/// esta versión — inocuo, es solo la disposición de la baraja hasta que se
+/// guarde una vez; abrir el archivo sigue restaurando sus capas igual
+/// (`find_sidecar` sí mira el legacy).
+fn probe_page_sizes(
+    folder: &std::path::Path,
+    paths: Vec<PathBuf>,
+) -> Vec<(PathBuf, Option<(f64, f64)>)> {
     use rayon::prelude::*;
+    let sidecar_dir = canvas_io::sidecar_dir(folder);
+    let sidecars: std::collections::HashSet<std::ffi::OsString> = std::fs::read_dir(&sidecar_dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .collect()
+        })
+        .unwrap_or_default();
     paths
         .into_par_iter()
         .map(|path| {
-            let size = canvas_io::probe_page_size(&path).ok();
+            let sidecar = path
+                .file_name()
+                .map(|n| {
+                    let mut n = n.to_owned();
+                    n.push(".");
+                    n.push(canvas_io::CANVAS_EXTENSION);
+                    n
+                })
+                .filter(|name| sidecars.contains(name))
+                .map(|name| sidecar_dir.join(name));
+            let size = canvas_io::probe_page_size_with(&path, sidecar.as_deref()).ok();
             (path, size)
         })
         .collect()
@@ -446,7 +496,7 @@ pub fn spawn_deck_probe(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let sizes = probe_page_sizes(paths);
+        let sizes = probe_page_sizes(&folder, paths);
         let _ = tx.send(AppMsg::DeckProbed { folder, sizes });
         ctx.request_repaint();
     });
@@ -460,13 +510,13 @@ pub fn spawn_deck_probe(
 pub fn spawn_reserve_canvas_path(
     folder: PathBuf,
     slot: u64,
+    ext: String,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
         let result =
-            canvas_io::reserve_unique_path(&folder, "Untitled", canvas_io::CANVAS_EXTENSION)
-                .map_err(|e| e.to_string());
+            canvas_io::reserve_unique_path(&folder, "Untitled", &ext).map_err(|e| e.to_string());
         let _ = tx.send(AppMsg::CanvasPathReserved {
             folder,
             slot,
@@ -574,31 +624,29 @@ pub fn spawn_save(
             .is_some()
             .then(|| canvas_io::make_preview(&rgba, width, height))
             .flatten();
-        let result =
-            canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, metadata.as_ref())
-                .map_err(|e| e.to_string());
-        if result.is_ok() {
-            match sidecar {
-                Some(mut payload) => {
-                    payload.preview = preview;
-                    // El hash del sidecar debe ser el del archivo tal y como
-                    // quedó en disco: se relee tras la escritura atómica.
-                    match std::fs::read(&path) {
-                        Ok(bytes) => {
-                            if let Err(e) = canvas_io::write_sidecar(&path, &bytes, &payload) {
-                                tracing::warn!("no se pudo escribir el sidecar: {e}");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("no se pudo releer la imagen para el sidecar: {e}")
+        // `save_rgba` devuelve los bytes EXACTOS que quedaron en disco (ya
+        // con metadatos reinsertados): el hash del sidecar se calcula sobre
+        // eso directamente, sin releer el archivo — en un PNG de 30 MP eso
+        // ahorra decenas de MB de I/O en cada `Ctrl+S`.
+        let save_result =
+            canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, metadata.as_ref());
+        let result = match save_result {
+            Ok(bytes) => {
+                match sidecar {
+                    Some(mut payload) => {
+                        payload.preview = preview;
+                        if let Err(e) = canvas_io::write_sidecar(&path, &bytes, &payload) {
+                            tracing::warn!("no se pudo escribir el sidecar: {e}");
                         }
                     }
+                    // Sidecar desactivado: retira el que hubiera para no
+                    // dejar uno obsoleto que luego avise de hash cambiado.
+                    None => canvas_io::delete_sidecar(&path),
                 }
-                // Sidecar desactivado: retira el que hubiera para no dejar
-                // uno obsoleto que luego avise de hash cambiado.
-                None => canvas_io::delete_sidecar(&path),
+                Ok(())
             }
-        }
+            Err(e) => Err(e.to_string()),
+        };
         let _ = tx.send(AppMsg::Saved {
             path,
             result,
@@ -620,14 +668,18 @@ pub fn spawn_gallery_scan(
     std::thread::spawn(move || {
         // Solo el primer nivel, imágenes y diseños, sin archivos ocultos.
         // `is_standalone_design` deja fuera el sidecar de una imagen que ya
-        // sale por sí sola en la cuadrícula.
+        // sale por sí sola en la cuadrícula. `p.is_file()` ya excluye la
+        // carpeta `.canvas/` (es un directorio) — el chequeo por nombre es
+        // cinturón y tirantes: no depende de que siga siendo un directorio ni
+        // de que el usuario le haya quitado el atributo oculto.
         let mut files: Vec<(PathBuf, Option<std::time::SystemTime>)> = std::fs::read_dir(&folder)
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
                     .filter(|p| {
-                        p.is_file()
+                        p.file_name() != Some(std::ffi::OsStr::new(canvas_io::SIDECAR_DIR))
+                            && p.is_file()
                             && (canvas_io::is_image_file(p) || canvas_io::is_standalone_design(p))
                             && !canvas_shell::is_hidden(p)
                     })
@@ -658,7 +710,7 @@ pub fn spawn_gallery_scan(
         // de carpeta del manejador de `DeckProbed` en `main.rs` lo descarta
         // en ese caso. No pasa nada: `spawn_deck_probe`, más abajo, repite
         // el sondeo una vez que la baraja ya existe con la carpeta puesta.
-        let sizes = probe_page_sizes(files.iter().map(|(p, _)| p.clone()).collect());
+        let sizes = probe_page_sizes(&folder, files.iter().map(|(p, _)| p.clone()).collect());
         let _ = tx.send(AppMsg::DeckProbed {
             folder: folder.clone(),
             sizes,
@@ -738,6 +790,7 @@ pub fn spawn_export_raster(
 ) {
     std::thread::spawn(move || {
         let result = canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, None)
+            .map(|_bytes| ())
             .map_err(|e| e.to_string());
         let _ = tx.send(AppMsg::Exported { path, result });
         ctx.request_repaint();

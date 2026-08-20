@@ -1,18 +1,29 @@
 //! Diseños `.canvas`: sidecar de una imagen o diseño autónomo.
 //!
 //! El mismo formato de archivo sirve para dos papeles, discriminados por un
-//! único campo: junto a `foto.png` se escribe `foto.png.canvas` con
-//! `image_hash: Some(..)` (preserva la editabilidad — el PNG/JPEG se
-//! sobrescribe al guardar, así que sus capas no se pueden recuperar de
-//! disco); un diseño nacido en la galería es un `.canvas` autónomo con
-//! `image_hash: None`, sin ningún archivo de imagen del que depender. En
-//! ambos casos los píxeles de cada capa van embebidos como PNG en base64, y
-//! también una miniatura de la página (`preview_png`) para que la galería
-//! pinte algo sin tener GPU en su hilo de miniaturas.
+//! único campo: junto a `foto.png` se escribe (hoy en `.canvas/foto.png.canvas`,
+//! ver más abajo) un sidecar con `image_hash: Some(..)` (preserva la
+//! editabilidad — el PNG/JPEG se sobrescribe al guardar, así que sus capas no
+//! se pueden recuperar de disco); un diseño nacido en la galería es un
+//! `.canvas` autónomo con `image_hash: None`, sin ningún archivo de imagen
+//! del que depender. En ambos casos los píxeles de cada capa van embebidos
+//! como PNG en base64, y también una miniatura de la página (`preview_png`,
+//! solo en diseños autónomos — ver su doc) para que la galería pinte algo
+//! sin tener GPU en su hilo de miniaturas.
 //!
 //! Al reabrir un sidecar de imagen, si el hash coincide se restauran las
 //! capas editables; si no (alguien la editó por fuera), el llamador avisa y
 //! deja elegir. Un diseño autónomo no tiene nada que contrastar.
+//!
+//! **Ubicación del sidecar de una imagen** (no aplica a un diseño autónomo,
+//! que es un archivo cualquiera con el nombre que el usuario le dio): vive en
+//! `<carpeta>/.canvas/foto.png.canvas`, no como hermano directo de la imagen.
+//! `.canvas/` se crea oculta (`FILE_ATTRIBUTE_HIDDEN` en Windows; el prefijo
+//! `.` no oculta nada ahí, a diferencia de Unix) la primera vez que hace
+//! falta. `find_sidecar` sigue leyendo el hermano clásico
+//! (`foto.png.canvas`) de una carpeta migrada solo a medias: cualquier
+//! sidecar escrito por esta versión aterriza en `.canvas/`, y el próximo
+//! guardado de uno legacy lo borra de su sitio antiguo.
 
 use std::path::{Path, PathBuf};
 
@@ -76,13 +87,94 @@ struct PageSizeProbe {
 /// Píxeles de una capa a embeber: (id crudo, RGBA, ancho, alto).
 pub type LayerPixels = (u64, Vec<u8>, u32, u32);
 
-/// Ruta del sidecar/diseño de una imagen: nombre completo + `.canvas`
-/// (`foto.png` → `foto.png.canvas`, sin colisiones entre extensiones).
+/// Nombre de la carpeta oculta donde viven los sidecar de una carpeta de
+/// imágenes.
+pub const SIDECAR_DIR: &str = ".canvas";
+
+/// Carpeta de sidecars de `folder` (no crea nada: solo compone la ruta).
+pub fn sidecar_dir(folder: &Path) -> PathBuf {
+    folder.join(SIDECAR_DIR)
+}
+
+/// Ruta ACTUAL del sidecar de una imagen — dentro de `.canvas/`, no como
+/// hermano directo. Es la única ruta que usan los llamadores que van a
+/// ESCRIBIR (`write_sidecar`, y quien vaya a copiar/renombrar un sidecar ya
+/// migrado); para LEER, usar `find_sidecar`, que también contempla el
+/// hermano legacy.
 pub fn sidecar_path(image_path: &Path) -> PathBuf {
+    let folder = image_path.parent().unwrap_or_else(|| Path::new(""));
+    sidecar_dir(folder).join(sidecar_file_name(image_path))
+}
+
+/// Ruta LEGACY del sidecar (hermano directo: `foto.png` → `foto.png.canvas`),
+/// de antes de que los sidecar se escondieran en `.canvas/`. Solo para lectura
+/// de compatibilidad — nunca se escribe un sidecar nuevo aquí.
+fn legacy_sidecar_path(image_path: &Path) -> PathBuf {
     let mut name = image_path.as_os_str().to_owned();
     name.push(".");
     name.push(crate::CANVAS_EXTENSION);
     PathBuf::from(name)
+}
+
+fn sidecar_file_name(image_path: &Path) -> String {
+    let mut name = image_path
+        .file_name()
+        .map(|n| n.to_owned())
+        .unwrap_or_default();
+    name.push(".");
+    name.push(crate::CANVAS_EXTENSION);
+    name.to_string_lossy().into_owned()
+}
+
+/// Sidecar existente de `image_path`, si lo hay: primero la ubicación actual
+/// (`.canvas/foto.png.canvas`), luego el hermano legacy
+/// (`foto.png.canvas`) para no perder de vista lo que una versión anterior ya
+/// había escrito. `None` si ninguno de los dos existe.
+pub fn find_sidecar(image_path: &Path) -> Option<PathBuf> {
+    let current = sidecar_path(image_path);
+    if current.is_file() {
+        return Some(current);
+    }
+    let legacy = legacy_sidecar_path(image_path);
+    legacy.is_file().then_some(legacy)
+}
+
+/// Crea `<folder>/.canvas` si no existe y, en Windows, la marca oculta con
+/// `FILE_ATTRIBUTE_HIDDEN` — el prefijo `.` del nombre no oculta nada ahí, a
+/// diferencia de Unix. Solo marca el atributo justo cuando ACABA de crear la
+/// carpeta: si el usuario la hizo visible a mano después, esta función no se
+/// lo revierte en cada guardado.
+pub fn ensure_sidecar_dir(folder: &Path) -> Result<PathBuf, IoError> {
+    let dir = sidecar_dir(folder);
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {
+            hide_dir(&dir);
+            Ok(dir)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(dir),
+        Err(source) => Err(IoError::Write {
+            path: dir,
+            message: format!("creando la carpeta de diseños: {source}"),
+        }),
+    }
+}
+
+/// Mejor esfuerzo: no ocultar la carpeta nunca es motivo para fallar el
+/// guardado, solo un fastidio visual.
+#[cfg(windows)]
+fn hide_dir(dir: &Path) {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
+    let result =
+        unsafe { SetFileAttributesW(&HSTRING::from(dir.as_os_str()), FILE_ATTRIBUTE_HIDDEN) };
+    if let Err(e) = result {
+        tracing::warn!("no se pudo ocultar {}: {e}", dir.display());
+    }
+}
+
+#[cfg(not(windows))]
+fn hide_dir(_dir: &Path) {
+    // El prefijo `.` del nombre ya la oculta por convención Unix.
 }
 
 /// FNV-1a de 64 bits: determinista entre ejecuciones y versiones de Rust
@@ -203,11 +295,15 @@ fn encode_payload(
             png_base64,
         });
     }
-    let preview_png = match &payload.preview {
-        Some(p) => Some(crate::png_codec::encode_layer_png(
+    // Solo un diseño autónomo (sin imagen que lo acompañe) necesita su propia
+    // miniatura embebida: el hilo de miniaturas de la galería no tiene GPU
+    // para hornear la página él mismo (`thumbs::thumbnail`). El sidecar de
+    // una imagen es peso muerto aquí — su miniatura sale del propio raster.
+    let preview_png = match (&payload.preview, image_hash.is_none()) {
+        (Some(p), true) => Some(crate::png_codec::encode_layer_png(
             &p.rgba, p.width, p.height, path,
         )?),
-        None => None,
+        _ => None,
     };
     let file = SidecarFile {
         version: SIDECAR_VERSION,
@@ -223,17 +319,32 @@ fn encode_payload(
     })
 }
 
-/// Escribe (atómico) el sidecar de `image_path`. `image_bytes` son los bytes
-/// codificados de la imagen recién guardada (para el hash).
+/// Escribe (atómico) el sidecar de `image_path`, en `.canvas/`. `image_bytes`
+/// son los bytes codificados de la imagen recién guardada (para el hash). Si
+/// había un hermano legacy (`foto.png.canvas`, de antes de que los sidecar se
+/// escondieran), se borra tras escribir el nuevo con éxito — así es como se
+/// migra una carpeta, un guardado a la vez.
 pub fn write_sidecar(
     image_path: &Path,
     image_bytes: &[u8],
     payload: &CanvasPayload,
 ) -> Result<(), IoError> {
+    let folder = image_path.parent().unwrap_or_else(|| Path::new(""));
+    ensure_sidecar_dir(folder)?;
     let path = sidecar_path(image_path);
     let hash = Some(format!("{:016x}", fnv1a64(image_bytes)));
     let json = encode_payload(&path, hash, payload)?;
-    write_atomic(&path, &json)
+    write_atomic(&path, &json)?;
+    let legacy = legacy_sidecar_path(image_path);
+    if legacy.is_file() {
+        if let Err(e) = std::fs::remove_file(&legacy) {
+            tracing::warn!(
+                "no se pudo borrar el sidecar legacy {}: {e}",
+                legacy.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Escribe (atómico) un diseño autónomo en `path`: sin imagen que contrastar.
@@ -302,12 +413,15 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
     Ok(Some((file, images)))
 }
 
-/// Lee el sidecar de `image_path`, si existe. Devuelve `Ok(None)` si no hay
-/// sidecar; error solo si existe pero está corrupto o es de versión futura.
-/// Si la imagen que acompañaba ya no está en disco, no hay nada que
-/// contrastar y `hash_matches` sale en `true`.
+/// Lee el sidecar de `image_path`, si existe (en `.canvas/` o, si esa carpeta
+/// nunca se creó, el hermano legacy). Devuelve `Ok(None)` si no hay sidecar;
+/// error solo si existe pero está corrupto o es de versión futura. Si la
+/// imagen que acompañaba ya no está en disco, no hay nada que contrastar y
+/// `hash_matches` sale en `true`.
 pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoError> {
-    let path = sidecar_path(image_path);
+    let Some(path) = find_sidecar(image_path) else {
+        return Ok(None);
+    };
     let Some((file, images)) = read_canvas_file(&path)? else {
         return Ok(None);
     };
@@ -398,14 +512,41 @@ pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
     Ok((page.width, page.height))
 }
 
-/// Borra el sidecar si existe (guardado con el sidecar desactivado).
+/// Borra el sidecar de `image_path` si existe (guardado con el sidecar
+/// desactivado) — en cualquiera de sus dos posibles ubicaciones, para que un
+/// hermano legacy no sobreviva y vuelva a avisar de "hash cambiado" más tarde.
 pub fn delete_sidecar(image_path: &Path) {
-    let path = sidecar_path(image_path);
-    if path.exists() {
-        if let Err(e) = std::fs::remove_file(&path) {
-            tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
+    for path in [sidecar_path(image_path), legacy_sidecar_path(image_path)] {
+        if path.is_file() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
+            }
         }
     }
+}
+
+/// Escribe un lienzo nuevo en blanco: si `path` es `.canvas`, un diseño
+/// autónomo (comportamiento clásico); si no, la imagen raster en blanco más
+/// su sidecar — un lienzo nuevo respaldado por un archivo de verdad, visible
+/// en el Explorador y en cualquier visor. Sin acceso a GPU: pensado para un
+/// hilo de trabajo (`spawn_gallery_op`), no para el camino de guardado normal
+/// (que hornea en GPU y por tanto conoce el contenido real de las capas —
+/// aquí no hay ninguna).
+pub fn write_blank_canvas(
+    path: &Path,
+    width: f64,
+    height: f64,
+    jpeg_quality: u8,
+) -> Result<(), IoError> {
+    let payload = blank_design(width, height);
+    if crate::is_canvas_file(path) {
+        return write_design(path, &payload);
+    }
+    let w = width.round().max(1.0) as u32;
+    let h = height.round().max(1.0) as u32;
+    let rgba = vec![255u8; w as usize * h as usize * 4];
+    let bytes = crate::save_rgba(path, rgba, w, h, jpeg_quality, None)?;
+    write_sidecar(path, &bytes, &payload)
 }
 
 #[cfg(test)]
@@ -536,6 +677,7 @@ mod tests {
             "algo_que_no_existe_todavia": { "esto": "no es un Document" },
         });
         let path = sidecar_path(&image_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, serde_json::to_vec(&fake_future).unwrap()).unwrap();
 
         match read_sidecar(&image_path) {
@@ -642,11 +784,9 @@ mod tests {
             "document": doc,
             "images": encoded_images,
         });
-        std::fs::write(
-            sidecar_path(&image_path),
-            serde_json::to_vec(&v3_json).unwrap(),
-        )
-        .unwrap();
+        let path = sidecar_path(&image_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&v3_json).unwrap()).unwrap();
 
         let restored = read_sidecar(&image_path)
             .expect("leer sidecar v3")
@@ -686,12 +826,148 @@ mod tests {
         // como diseño autónomo (sin `image_hash`).
         let (doc, images) = sample_doc();
         let payload = sample_payload(&doc, &images, None);
-        write_design(&sidecar_path(&image_path), &payload).expect("escribir diseño");
+        let path = sidecar_path(&image_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_design(&path, &payload).expect("escribir diseño");
 
         let restored = read_sidecar(&image_path)
             .expect("leer")
             .expect("hay archivo en la ruta del sidecar");
         assert!(restored.standalone);
         assert!(restored.hash_matches);
+    }
+
+    #[test]
+    fn write_sidecar_hides_the_dot_canvas_folder_and_never_leaves_it_next_to_the_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("foto.png");
+        let fake_image = b"bytes de la imagen guardada";
+        std::fs::write(&image_path, fake_image).unwrap();
+
+        let (doc, images) = sample_doc();
+        let payload = sample_payload(&doc, &images, None);
+        write_sidecar(&image_path, fake_image, &payload).expect("escribir");
+
+        assert!(sidecar_path(&image_path).exists());
+        assert_eq!(
+            sidecar_path(&image_path).parent().unwrap(),
+            sidecar_dir(dir.path())
+        );
+        assert!(!legacy_sidecar_path(&image_path).exists());
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+            let attrs = std::fs::metadata(sidecar_dir(dir.path()))
+                .unwrap()
+                .file_attributes();
+            assert!(
+                attrs & FILE_ATTRIBUTE_HIDDEN != 0,
+                "la carpeta debe quedar oculta"
+            );
+        }
+    }
+
+    #[test]
+    fn find_sidecar_falls_back_to_the_legacy_sibling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("foto.png");
+        std::fs::write(&image_path, b"x").unwrap();
+
+        // Sidecar escrito a la manera antigua (hermano directo), sin pasar
+        // por `write_sidecar`: simula una carpeta de antes de este cambio.
+        let (doc, images) = sample_doc();
+        let payload = sample_payload(&doc, &images, None);
+        let legacy = legacy_sidecar_path(&image_path);
+        let hash = format!("{:016x}", fnv1a64(b"x"));
+        let json = encode_payload(&legacy, Some(hash), &payload).unwrap();
+        std::fs::write(&legacy, json).unwrap();
+
+        assert_eq!(find_sidecar(&image_path), Some(legacy.clone()));
+        let restored = read_sidecar(&image_path)
+            .expect("leer")
+            .expect("se encuentra el sidecar legacy");
+        assert_eq!(restored.document, doc);
+
+        // Guardar de nuevo migra: el legacy desaparece, el nuevo existe.
+        write_sidecar(&image_path, b"x", &payload).expect("escribir");
+        assert!(
+            !legacy.exists(),
+            "el sidecar legacy debe borrarse al migrar"
+        );
+        assert!(sidecar_path(&image_path).exists());
+        assert_eq!(find_sidecar(&image_path), Some(sidecar_path(&image_path)));
+    }
+
+    #[test]
+    fn delete_sidecar_removes_both_locations() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("foto.png");
+        std::fs::write(&image_path, b"x").unwrap();
+
+        std::fs::create_dir_all(sidecar_dir(dir.path())).unwrap();
+        std::fs::write(sidecar_path(&image_path), b"{}").unwrap();
+        std::fs::write(legacy_sidecar_path(&image_path), b"{}").unwrap();
+
+        delete_sidecar(&image_path);
+        assert!(!sidecar_path(&image_path).exists());
+        assert!(!legacy_sidecar_path(&image_path).exists());
+    }
+
+    #[test]
+    fn preview_png_is_only_embedded_for_a_standalone_design() {
+        let (doc, images) = sample_doc();
+        let mut payload = sample_payload(&doc, &images, None);
+        payload.preview = Some(LoadedImage {
+            rgba: vec![255u8; 4 * 2 * 4],
+            width: 4,
+            height: 2,
+        });
+
+        // Sidecar de imagen (`image_hash: Some(..)`): sin miniatura embebida.
+        let with_hash = encode_payload(
+            Path::new("test.canvas"),
+            Some("deadbeef".to_owned()),
+            &payload,
+        )
+        .unwrap();
+        let file: SidecarFile = serde_json::from_slice(&with_hash).unwrap();
+        assert!(file.preview_png.is_none());
+
+        // Diseño autónomo (`image_hash: None`): miniatura embebida.
+        let standalone = encode_payload(Path::new("test.canvas"), None, &payload).unwrap();
+        let file: SidecarFile = serde_json::from_slice(&standalone).unwrap();
+        assert!(file.preview_png.is_some());
+    }
+
+    #[test]
+    fn write_blank_canvas_png_produces_a_real_image_and_its_sidecar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Untitled.png");
+        write_blank_canvas(&path, 40.0, 20.0, 92).expect("crear lienzo en blanco");
+
+        let decoded = image::open(&path).expect("el PNG debe ser decodificable");
+        assert_eq!((decoded.width(), decoded.height()), (40, 20));
+
+        let restored = read_sidecar(&path)
+            .expect("leer sidecar")
+            .expect("hay sidecar");
+        assert!(!restored.standalone);
+        assert!(restored.hash_matches);
+        assert_eq!(restored.document.page().unwrap().layers.len(), 0);
+    }
+
+    #[test]
+    fn write_blank_canvas_dot_canvas_still_makes_a_standalone_design() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Untitled.canvas");
+        write_blank_canvas(&path, 40.0, 20.0, 92).expect("crear diseño en blanco");
+
+        let restored = read_design(&path).expect("leer diseño");
+        assert!(restored.standalone);
+        assert!(
+            !path.with_extension("").is_file(),
+            "no debe crear ninguna imagen"
+        );
     }
 }

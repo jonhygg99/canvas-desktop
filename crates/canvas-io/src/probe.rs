@@ -11,21 +11,30 @@ use crate::{is_canvas_file, IoError};
 /// Tamaño de página de `path`, sin decodificar el archivo entero. En este
 /// orden:
 /// 1. `.canvas` → tamaño de `document.pages[0]` (`sidecar::read_page_size`).
-/// 2. Imagen con sidecar (`foto.png.canvas`) → el sidecar manda: su página
-///    puede no coincidir con los píxeles del archivo (`from_restored` usa su
-///    documento, no la imagen).
+/// 2. Imagen con sidecar → el sidecar manda: su página puede no coincidir con
+///    los píxeles del archivo (`from_restored` usa su documento, no la
+///    imagen). Resuelve el sidecar con `find_sidecar` (uno por archivo); para
+///    sondear una carpeta entera, usar `probe_page_size_with` con un sidecar
+///    ya resuelto de un solo listado (evita N `is_file()`).
 /// 3. Imagen rasterizada → solo la cabecera (`image::image_dimensions`), con
 ///    el intercambio ancho/alto que corresponda a su orientación EXIF — sin
 ///    esto, una foto de móvil en vertical (`Orientation: 6`) probaría un
 ///    tamaño apaisado, la mitad al revés de como `load_image` la carga.
 /// 4. SVG → tamaño del árbol `usvg` (viewBox/width/height), sin rasterizar.
 pub fn probe_page_size(path: &Path) -> Result<(f64, f64), IoError> {
+    probe_page_size_with(path, crate::find_sidecar(path).as_deref())
+}
+
+/// Como `probe_page_size`, pero con el sidecar (si lo hay) YA resuelto por el
+/// llamador. Pensado para sondear una carpeta entera en paralelo: listar
+/// `.canvas/` una vez fuera del bucle es muchísimo más barato que un
+/// `is_file()` por archivo.
+pub fn probe_page_size_with(path: &Path, sidecar: Option<&Path>) -> Result<(f64, f64), IoError> {
     if is_canvas_file(path) {
         return crate::sidecar::read_page_size(path);
     }
-    let sidecar = crate::sidecar_path(path);
-    if sidecar.is_file() {
-        return crate::sidecar::read_page_size(&sidecar);
+    if let Some(sidecar) = sidecar {
+        return crate::sidecar::read_page_size(sidecar);
     }
     let is_svg = path
         .extension()

@@ -24,11 +24,23 @@ pub fn is_canvas_file(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case(CANVAS_EXTENSION))
 }
 
-/// ¿Este `.canvas` es un diseño de pleno derecho? Un `foto.png.canvas` con
-/// `foto.png` al lado es el sidecar de esa imagen, que ya sale por sí sola
-/// en la galería: no debe listarse dos veces.
+/// ¿Este `.canvas` es un diseño de pleno derecho? Un sidecar (dentro de
+/// `.canvas/`, o — legado — un `foto.png.canvas` hermano de `foto.png`) no lo
+/// es: ya sale por sí solo en la galería como la imagen que acompaña, listarlo
+/// también sería duplicarlo.
 pub fn is_standalone_design(path: &Path) -> bool {
     if !is_canvas_file(path) {
+        return false;
+    }
+    // Cualquier `.canvas` dentro de la carpeta oculta de sidecars es, por
+    // definición, un sidecar — nunca un diseño autónomo, aunque su nombre
+    // interno (`foto.png.canvas`) no tenga imagen hermana a la vista (podría
+    // haberse borrado, o vivir en otra ubicación).
+    let in_sidecar_dir = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|n| n == crate::sidecar::SIDECAR_DIR);
+    if in_sidecar_dir {
         return false;
     }
     let inner = path.with_extension("");
