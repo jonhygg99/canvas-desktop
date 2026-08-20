@@ -5,9 +5,9 @@ use std::sync::mpsc::Sender;
 
 use canvas_core::{
     contain_transform, cover_transform, resize_rotated_from_corner, snap_translation,
-    trim_crop_from_corner, uncrop_transform, CoreError, Corner, CropRect, Document, History,
-    ImageContent, InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, Selection, SetCrop,
-    SetPageSize, SetTransform, Transform,
+    trim_crop_from_corner, uncrop_transform, Command, CoreError, Corner, CropRect, Document,
+    History, ImageContent, InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, Reorder,
+    Selection, SetCrop, SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, FxScope, ImageMap};
@@ -1920,6 +1920,74 @@ fn layer_properties_ui(
     }
 }
 
+/// Destino de `reorder_layer` — el submenú "Layers" del menú contextual.
+enum ZOrder {
+    Front,
+    Forward,
+    Backward,
+    Back,
+}
+
+/// Posición de `id` entre sus hermanos: (padre, índice actual, último
+/// índice). Compartida por `reorder_layer` (para calcular el destino) y el
+/// submenú "Layers" (para deshabilitar los botones que ya no tendrían
+/// efecto — Bring to Front/Move Forward en el extremo del frente, Move
+/// Backward/Send to Back en el del fondo).
+fn sibling_position(state: &EditorState, id: LayerId) -> Option<(Option<LayerId>, usize, usize)> {
+    let page = state.doc.page().ok()?;
+    let parent = page.layer(id)?.parent_id;
+    let siblings = page.children_of(parent);
+    let current = siblings.iter().position(|&s| s == id)?;
+    Some((parent, current, siblings.len() - 1))
+}
+
+/// Mueve `id` dentro de su grupo de hermanos, un paso o hasta el extremo.
+/// Mismo comando (`Reorder`) y convención de índice que ya usa
+/// `layers_panel::apply_reorder` para el arrastre en el panel de capas:
+/// índice 0 = fondo de la pila, el último = frente.
+fn reorder_layer(state: &mut EditorState, id: LayerId, to: ZOrder) {
+    let Some((parent, current, last)) = sibling_position(state, id) else {
+        return;
+    };
+    let target = match to {
+        ZOrder::Front => last,
+        ZOrder::Forward => (current + 1).min(last),
+        ZOrder::Backward => current.saturating_sub(1),
+        ZOrder::Back => 0,
+    };
+    if target == current {
+        return;
+    }
+    let mut cmd = Reorder::new(id, parent, target);
+    if cmd.apply(&mut state.doc).is_ok() {
+        state.history.push_applied(Box::new(cmd));
+    }
+}
+
+/// Aplica un `Transform` ya calculado (los botones de "Align to Page" del
+/// menú contextual) como un commit inmediato contra el transform ACTUAL de
+/// la capa — más simple que la reconciliación con `panel_edit` que usa el
+/// panel de propiedades, porque un clic de menú no es una edición en curso
+/// a medias que consolidar.
+fn apply_alignment(state: &mut EditorState, sel: LayerId, after: Transform) {
+    let Ok(before) = state.doc.layer(sel).map(|l| l.transform) else {
+        return;
+    };
+    if after == before {
+        return;
+    }
+    if let Err(e) = state.history.apply(
+        &mut state.doc,
+        Box::new(SetTransform {
+            layer: sel,
+            before,
+            after,
+        }),
+    ) {
+        tracing::error!("alinear falló: {e}");
+    }
+}
+
 /// Acción pedida desde la cabecera de un lienzo (área central) que necesita
 /// tocar disco (duplicar/borrar) o reconciliarse con el nombre real del
 /// archivo (renombrar) — `canvas_ui` la arma pero no la ejecuta; se resuelve
@@ -1975,6 +2043,98 @@ pub fn canvas_ui(
         item(ui, "Select All", MenuAction::SelectAll);
         item(ui, "Group", MenuAction::Group);
         item(ui, "Ungroup", MenuAction::Ungroup);
+        ui.separator();
+        // Orden y alineación de la capa PRIMARIA seleccionada — deshabilitados
+        // enteros (el propio botón del submenú) sin selección, en vez de
+        // mostrar el submenú vacío o con todo gris dentro.
+        let sel = state.selection.primary();
+        ui.add_enabled_ui(sel.is_some(), |ui| {
+            ui.menu_button("Layers", |ui| {
+                let Some(id) = sel else {
+                    return;
+                };
+                // Bring to Front/Move Forward no tendrían efecto si ya está
+                // en el extremo del frente (`current == last`); Move
+                // Backward/Send to Back igual en el del fondo (`current ==
+                // 0`) — se deshabilitan en vez de dejarlos ahí sin más,
+                // para que el diseño lo demuestre en vez de solo no-opear.
+                let range = sibling_position(state, id);
+                let can_go_forward = range.is_some_and(|(_, current, last)| current < last);
+                let can_go_backward = range.is_some_and(|(_, current, _)| current > 0);
+                let mut z = |ui: &mut egui::Ui, label: &str, enabled: bool, to: ZOrder| {
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                        reorder_layer(state, id, to);
+                        ui.close();
+                    }
+                };
+                z(ui, "Bring to Front", can_go_forward, ZOrder::Front);
+                z(ui, "Move Forward", can_go_forward, ZOrder::Forward);
+                z(ui, "Move Backward", can_go_backward, ZOrder::Backward);
+                z(ui, "Send to Back", can_go_backward, ZOrder::Back);
+            });
+        });
+        ui.add_enabled_ui(sel.is_some(), |ui| {
+            ui.menu_button("Align to Page", |ui| {
+                let Some(id) = sel else {
+                    return;
+                };
+                let Ok(page) = state.doc.page() else {
+                    return;
+                };
+                let (page_w, page_h) = (page.width, page.height);
+                let Some(t) = state.doc.layer(id).ok().map(|l| l.transform) else {
+                    return;
+                };
+                // `selectable_label`, no `button`: resalta la opción que YA
+                // coincide con la posición actual de la capa — mismo widget
+                // que ya usa este archivo para "elegido entre varias
+                // opciones" (alineación de texto, más abajo en este mismo
+                // módulo).
+                let mut a = |ui: &mut egui::Ui, label: &str, after: Transform| {
+                    if ui.selectable_label(after == t, label).clicked() {
+                        apply_alignment(state, id, after);
+                        ui.close();
+                    }
+                };
+                a(
+                    ui,
+                    "Left",
+                    canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Left),
+                );
+                a(
+                    ui,
+                    "Center",
+                    canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center),
+                );
+                a(
+                    ui,
+                    "Right",
+                    canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Right),
+                );
+                ui.separator();
+                a(
+                    ui,
+                    "Top",
+                    canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Top),
+                );
+                a(
+                    ui,
+                    "Middle",
+                    canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Middle),
+                );
+                a(
+                    ui,
+                    "Bottom",
+                    canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Bottom),
+                );
+                ui.separator();
+                let centered_h =
+                    canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center);
+                let centered =
+                    canvas_core::align_vertical(&centered_h, page_h, canvas_core::VAlign::Middle);
+                a(ui, "Center on page", centered);
+            });
+        });
         ui.separator();
         // Estos tres, a diferencia de los de arriba, se resuelven AQUÍ
         // MISMO con `state` directamente — no tocan disco ni el resto de
