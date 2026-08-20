@@ -709,27 +709,50 @@ impl EditorState {
     /// traga esa combinación sin emitir `Event::Paste` cuando el
     /// portapapeles solo tiene un bitmap (ver `paste_hook.rs`), así que en
     /// esa plataforma es la única señal fiable.
-    pub fn handle_shortcuts(&mut self, ctx: &egui::Context, paste_requested: bool) {
+    pub fn handle_shortcuts(
+        &mut self,
+        ctx: &egui::Context,
+        paste_requested: bool,
+        deck_renaming: bool,
+    ) {
         use egui::{Event, Key, KeyboardShortcut, Modifiers};
-        // Un TextEdit con el foco (renombrar en el panel de capas, editar el
-        // texto de una capa) manda: Ctrl+C/V/X/Z, Supr y Ctrl+A son suyos,
-        // no del lienzo.
+        // Deshacer/rehacer se evalúan primero y con su propia guarda: un
+        // `TextEdit` con foco propio (renombrar una capa, editar su texto, o
+        // renombrar una ranura de la baraja) debe quedarse con Ctrl+Z para su
+        // propio undo, no el del documento. `ctx.text_edit_focused()` es
+        // DEMASIADO ancho para eso — en egui 0.35 también es `true` mientras
+        // se edita un `DragValue` del panel de propiedades por teclado (usa
+        // un `TextEdit` interno con el mismo id), lo que dejaba Ctrl+Z muerto
+        // tras tocar X/Y/W/H/Scale hasta hacer clic en otro sitio. Por eso
+        // aquí se miran las banderas propias del editor en vez de esa guarda
+        // global.
+        let editing_own_text = self.rename_edit.is_some()
+            || self.file_rename_edit.is_some()
+            || self.content_edit.is_some()
+            || deck_renaming;
+        if !editing_own_text {
+            // El orden importa: Ctrl+Shift+Z debe consumirse antes que Ctrl+Z.
+            let redo = ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::Z,
+                )) || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Y))
+            });
+            let undo = ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z))
+            });
+            if redo {
+                self.redo();
+            } else if undo {
+                self.undo();
+            }
+        }
+
+        // El resto de atajos (portapapeles, Supr, navegación de baraja…) sí
+        // le siguen cediendo el paso a cualquier `TextEdit` con foco — ese es
+        // el caso general que `text_edit_focused()` describe bien.
         if ctx.text_edit_focused() {
             return;
-        }
-        // El orden importa: Ctrl+Shift+Z debe consumirse antes que Ctrl+Z.
-        let redo = ctx.input_mut(|i| {
-            i.consume_shortcut(&KeyboardShortcut::new(
-                Modifiers::COMMAND | Modifiers::SHIFT,
-                Key::Z,
-            )) || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Y))
-        });
-        let undo = ctx
-            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)));
-        if redo {
-            self.redo();
-        } else if undo {
-            self.undo();
         }
 
         // Ctrl+Shift+G (desagrupar) antes que Ctrl+G (agrupar): mismo patrón
@@ -825,18 +848,28 @@ impl EditorState {
         }
     }
 
-    /// Deshace el último comando (menú Edit o Ctrl+Z).
+    /// Deshace el último comando (menú Edit, clic derecho o Ctrl+Z).
     pub fn undo(&mut self) {
-        if let Err(e) = self.history.undo(&mut self.doc) {
-            tracing::error!("deshacer falló: {e}");
+        match self.history.undo(&mut self.doc) {
+            Ok(true) => tracing::info!("deshacer OK"),
+            Ok(false) => tracing::info!("deshacer: nada que deshacer"),
+            Err(e) => {
+                tracing::error!("deshacer falló: {e}");
+                self.save_error = Some(format!("Undo failed: {e}"));
+            }
         }
         self.forget_deleted_selection();
     }
 
-    /// Rehace el último comando deshecho (menú Edit o Ctrl+Y).
+    /// Rehace el último comando deshecho (menú Edit, clic derecho o Ctrl+Y).
     pub fn redo(&mut self) {
-        if let Err(e) = self.history.redo(&mut self.doc) {
-            tracing::error!("rehacer falló: {e}");
+        match self.history.redo(&mut self.doc) {
+            Ok(true) => tracing::info!("rehacer OK"),
+            Ok(false) => tracing::info!("rehacer: nada que rehacer"),
+            Err(e) => {
+                tracing::error!("rehacer falló: {e}");
+                self.save_error = Some(format!("Redo failed: {e}"));
+            }
         }
         self.forget_deleted_selection();
     }
@@ -2061,21 +2094,24 @@ pub fn canvas_ui(
     // de teclado o al menú superior de distancia).
     response.context_menu(|ui| {
         use crate::menus::MenuAction;
-        let mut item = |ui: &mut egui::Ui, label: &str, a: MenuAction| {
-            if ui.button(label).clicked() {
+        let mut item = |ui: &mut egui::Ui, label: &str, enabled: bool, a: MenuAction| {
+            if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                 action = Some(CanvasAction::Menu(a));
                 ui.close();
             }
         };
-        item(ui, "Cut", MenuAction::Cut);
-        item(ui, "Copy", MenuAction::Copy);
-        item(ui, "Paste", MenuAction::Paste);
-        item(ui, "Duplicate", MenuAction::Duplicate);
-        item(ui, "Delete", MenuAction::Delete);
+        item(ui, "Undo", state.history.can_undo(), MenuAction::Undo);
+        item(ui, "Redo", state.history.can_redo(), MenuAction::Redo);
         ui.separator();
-        item(ui, "Select All", MenuAction::SelectAll);
-        item(ui, "Group", MenuAction::Group);
-        item(ui, "Ungroup", MenuAction::Ungroup);
+        item(ui, "Cut", true, MenuAction::Cut);
+        item(ui, "Copy", true, MenuAction::Copy);
+        item(ui, "Paste", true, MenuAction::Paste);
+        item(ui, "Duplicate", true, MenuAction::Duplicate);
+        item(ui, "Delete", true, MenuAction::Delete);
+        ui.separator();
+        item(ui, "Select All", true, MenuAction::SelectAll);
+        item(ui, "Group", true, MenuAction::Group);
+        item(ui, "Ungroup", true, MenuAction::Ungroup);
         ui.separator();
         // Orden y alineación de la capa PRIMARIA seleccionada — deshabilitados
         // enteros (el propio botón del submenú) sin selección, en vez de

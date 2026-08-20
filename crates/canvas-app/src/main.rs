@@ -230,6 +230,9 @@ struct App {
     applied_theme: Option<settings::ThemeChoice>,
     /// Último estado «hay editor abierto» comunicado al menú.
     menus_editor_open: bool,
+    /// Último estado de `History::can_undo`/`can_redo` comunicado al menú.
+    menus_can_undo: bool,
+    menus_can_redo: bool,
     /// Watcher `notify` del archivo abierto en el editor, si lo hay.
     watcher: Option<watcher::DocWatcher>,
     /// Ventana de gracia tras un guardado propio: los eventos del watcher
@@ -334,6 +337,8 @@ impl App {
             show_about: false,
             applied_theme: None,
             menus_editor_open: false,
+            menus_can_undo: false,
+            menus_can_redo: false,
             watcher: None,
             ignore_fs_events_until: None,
             export_dialog: None,
@@ -2019,13 +2024,30 @@ impl eframe::App for App {
                 m.set_editor_enabled(editor_open);
             }
         }
+        // Estado real del historial del editor activo (`false` en cualquier
+        // otra vista): sincroniza los ítems Undo/Redo del menú, tanto el
+        // nativo como el de respaldo — mismo criterio de "solo llamar al
+        // menú nativo cuando cambia" que `menus_editor_open` de arriba.
+        let (can_undo, can_redo) = match &self.view {
+            View::Editor(state) => (state.history.can_undo(), state.history.can_redo()),
+            _ => (false, false),
+        };
+        if (can_undo, can_redo) != (self.menus_can_undo, self.menus_can_redo) {
+            self.menus_can_undo = can_undo;
+            self.menus_can_redo = can_redo;
+            if let Some(m) = self.menus.as_mut() {
+                m.set_undo_redo(can_undo, can_redo);
+            }
+        }
 
         // Fallback sin menú nativo (macOS/Linux): barra de menús egui.
         #[cfg(not(windows))]
         {
             let recents = self.settings.recent_files.clone();
             let action = egui::Panel::top("menu_bar")
-                .show(ui, |ui| menus::menu_bar_ui(ui, editor_open, &recents))
+                .show(ui, |ui| {
+                    menus::menu_bar_ui(ui, editor_open, can_undo, can_redo, &recents)
+                })
                 .inner;
             if let Some(action) = action {
                 self.handle_menu_action(action, &ctx);
@@ -2154,7 +2176,7 @@ impl eframe::App for App {
                 let Some(rs) = frame.wgpu_render_state().cloned() else {
                     return;
                 };
-                state.handle_shortcuts(&ctx, paste_requested);
+                state.handle_shortcuts(&ctx, paste_requested, self.deck.rename_edit.is_some());
 
                 // Recarga pedida desde el banner de «cambió en disco».
                 if std::mem::take(&mut state.reload_requested) {

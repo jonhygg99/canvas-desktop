@@ -76,6 +76,11 @@ mod native {
         /// Ítems que solo tienen sentido con un documento abierto.
         editor_items: Vec<MenuItem>,
         editor_enabled: bool,
+        /// Guardados aparte (además de en `editor_items`) para poder
+        /// habilitarlos/deshabilitarlos según el estado real del historial,
+        /// no solo según si hay editor abierto.
+        undo_item: MenuItem,
+        redo_item: MenuItem,
     }
 
     fn accel(mods: Modifiers, code: Code) -> Option<Accelerator> {
@@ -226,8 +231,8 @@ mod native {
                 save_as_item,
                 save_all_item,
                 export_item,
-                undo_item,
-                redo_item,
+                undo_item.clone(),
+                redo_item.clone(),
                 zoom_in_item,
                 zoom_out_item,
                 fit_item,
@@ -255,6 +260,8 @@ mod native {
                 recent_items: Vec::new(),
                 editor_items,
                 editor_enabled: false,
+                undo_item,
+                redo_item,
             })
         }
 
@@ -316,6 +323,15 @@ mod native {
             }
         }
 
+        /// Habilita/deshabilita Undo/Redo según lo que de verdad haya en el
+        /// historial del editor activo (llamado cada vez que cambia, no solo
+        /// al abrir/cerrar el editor). `editor_enabled` sigue ganando: sin
+        /// editor abierto ambos quedan deshabilitados pase lo que pase aquí.
+        pub fn set_undo_redo(&mut self, can_undo: bool, can_redo: bool) {
+            self.undo_item.set_enabled(self.editor_enabled && can_undo);
+            self.redo_item.set_enabled(self.editor_enabled && can_redo);
+        }
+
         /// Reconstruye el submenú «Open Recent».
         pub fn set_recents(&mut self, recents: &[PathBuf]) {
             for (item, _) in self.recent_items.drain(..) {
@@ -349,6 +365,7 @@ impl AppMenus {
         None
     }
     pub fn set_editor_enabled(&mut self, _enabled: bool) {}
+    pub fn set_undo_redo(&mut self, _can_undo: bool, _can_redo: bool) {}
     pub fn set_recents(&mut self, _recents: &[PathBuf]) {}
 }
 
@@ -357,6 +374,8 @@ impl AppMenus {
 pub fn menu_bar_ui(
     ui: &mut eframe::egui::Ui,
     editor_open: bool,
+    can_undo: bool,
+    can_redo: bool,
     recents: &[PathBuf],
 ) -> Option<MenuAction> {
     use eframe::egui;
@@ -416,13 +435,13 @@ pub fn menu_bar_ui(
         });
         ui.menu_button("Edit", |ui| {
             if ui
-                .add_enabled(editor_open, egui::Button::new("Undo"))
+                .add_enabled(editor_open && can_undo, egui::Button::new("Undo"))
                 .clicked()
             {
                 action = Some(MenuAction::Undo);
             }
             if ui
-                .add_enabled(editor_open, egui::Button::new("Redo"))
+                .add_enabled(editor_open && can_redo, egui::Button::new("Redo"))
                 .clicked()
             {
                 action = Some(MenuAction::Redo);

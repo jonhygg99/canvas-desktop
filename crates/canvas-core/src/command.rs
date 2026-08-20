@@ -675,25 +675,34 @@ impl History {
 
     /// Deshace el último comando. Devuelve `false` si no había nada que
     /// deshacer.
+    ///
+    /// El comando se saca de la pila ANTES de invocar `revert`: si falla, se
+    /// descarta en vez de quedarse arriba del todo. La alternativa (sacarlo
+    /// después) deja el historial atascado para siempre — cada Ctrl+Z
+    /// posterior reintentaría el mismo revert fallido en silencio. El precio
+    /// es que un `Composite` cuyo revert falle a medias puede perder el resto
+    /// de sus pasos sin deshacer; preferible a un historial muerto.
     pub fn undo(&mut self, doc: &mut Document) -> Result<bool, CoreError> {
-        let Some(cmd) = self.undo.last_mut() else {
+        let Some(mut cmd) = self.undo.pop() else {
             return Ok(false);
         };
-        cmd.revert(doc)?;
-        let cmd = self.undo.pop().unwrap_or_else(|| unreachable!());
-        self.redo.push(cmd);
-        Ok(true)
+        let result = cmd.revert(doc);
+        if result.is_ok() {
+            self.redo.push(cmd);
+        }
+        result.map(|()| true)
     }
 
     /// Rehace el último comando deshecho. Devuelve `false` si no había nada.
     pub fn redo(&mut self, doc: &mut Document) -> Result<bool, CoreError> {
-        let Some(cmd) = self.redo.last_mut() else {
+        let Some(mut cmd) = self.redo.pop() else {
             return Ok(false);
         };
-        cmd.apply(doc)?;
-        let cmd = self.redo.pop().unwrap_or_else(|| unreachable!());
-        self.undo.push(cmd);
-        Ok(true)
+        let result = cmd.apply(doc);
+        if result.is_ok() {
+            self.undo.push(cmd);
+        }
+        result.map(|()| true)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -793,6 +802,66 @@ mod tests {
         let mut history = History::default();
         assert!(!history.undo(&mut doc).unwrap());
         assert!(!history.redo(&mut doc).unwrap());
+    }
+
+    /// Comando de prueba cuyo `revert`/`apply` fallan siempre — simula un
+    /// comando cuyo destino (p. ej. una capa) ya no existe en el documento.
+    #[derive(Debug)]
+    struct AlwaysFails;
+
+    impl Command for AlwaysFails {
+        fn label(&self) -> &str {
+            "siempre falla"
+        }
+
+        fn apply(&mut self, _doc: &mut Document) -> Result<(), CoreError> {
+            Err(CoreError::NoPages)
+        }
+
+        fn revert(&mut self, _doc: &mut Document) -> Result<(), CoreError> {
+            Err(CoreError::NoPages)
+        }
+    }
+
+    #[test]
+    fn undo_failure_discards_the_command_instead_of_wedging_history() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+            .unwrap();
+        history.push_applied(Box::new(AlwaysFails));
+
+        // El revert que falla se propaga...
+        assert!(history.undo(&mut doc).is_err());
+        // ...pero no deja el comando atascado arriba de la pila: el paso
+        // anterior sigue siendo deshacible.
+        assert!(history.undo(&mut doc).unwrap());
+        assert_eq!(doc.layer(id).unwrap().transform, before);
+        assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn redo_failure_discards_the_command_instead_of_wedging_history() {
+        let (mut doc, id) = doc_with_layer();
+        let before = doc.layer(id).unwrap().transform;
+        let mut history = History::default();
+
+        history
+            .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+            .unwrap();
+        history.undo(&mut doc).unwrap();
+        // Un `AlwaysFails` deshecho a mano, empujado directamente a la pila
+        // de redo (sin pasar por `push_applied`, que la vaciaría).
+        history.redo.push(Box::new(AlwaysFails));
+
+        assert!(history.redo(&mut doc).is_err());
+        // El siguiente redo es el paso real, que sí debe funcionar.
+        assert!(history.redo(&mut doc).unwrap());
+        assert_eq!(doc.layer(id).unwrap().transform.x, 200.0);
+        assert!(!history.can_redo());
     }
 
     #[test]
