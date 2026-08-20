@@ -374,8 +374,12 @@ impl App {
             // editor), siembra la rejilla con sus miniaturas ya en GPU: el
             // reescaneo que sigue solo detecta cambios en disco, no repuebla
             // desde ⏳.
-            let gallery_state =
-                seed_gallery_from_deck(&self.deck, path.clone(), self.settings.gallery_sort);
+            let gallery_state = seed_gallery_from_deck(
+                &self.deck,
+                path.clone(),
+                self.settings.gallery_sort,
+                self.settings.gallery_folder_panel_side,
+            );
             loader::spawn_gallery_scan(
                 path.clone(),
                 self.thumb_cache.clone(),
@@ -570,6 +574,7 @@ impl App {
                     path.clone(),
                     self.settings.gallery_sort,
                     navigation,
+                    self.settings.gallery_folder_panel_side,
                 );
                 loader::spawn_gallery_scan(
                     path.clone(),
@@ -1677,8 +1682,9 @@ fn seed_gallery_from_deck(
     deck: &deck::Deck,
     folder: PathBuf,
     sort: settings::GallerySort,
+    folder_panel_side: deck::StripSide,
 ) -> gallery::GalleryState {
-    let mut g = gallery::GalleryState::new(folder.clone(), sort);
+    let mut g = gallery::GalleryState::new(folder.clone(), sort, folder_panel_side);
     if deck.folder.as_deref() == Some(folder.as_path()) {
         g.items = deck
             .slots
@@ -2140,6 +2146,11 @@ impl eframe::App for App {
                 });
             }
             View::Gallery(g) => match gallery::show(g, ui) {
+                Some(gallery::GalleryAction::CycleFolderPanelSide) => {
+                    g.folder_panel_side = gallery::next_folder_panel_side(g.folder_panel_side);
+                    self.settings.gallery_folder_panel_side = g.folder_panel_side;
+                    self.settings.save_in_background();
+                }
                 Some(gallery::GalleryAction::Open(path)) => {
                     // Se lleva las miniaturas ya cargadas al editor: si el
                     // archivo resulta tener hermanos, la tira arranca sin

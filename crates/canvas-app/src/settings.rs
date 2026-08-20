@@ -204,6 +204,8 @@ pub struct AppSettings {
     pub sidecar_default: bool,
     /// Orden de la galería de carpetas.
     pub gallery_sort: GallerySort,
+    /// Lado donde se ancla el navegador de carpetas de Gallery.
+    pub gallery_folder_panel_side: StripSide,
     /// Archivos y carpetas abiertos recientemente (el más nuevo primero).
     pub recent_files: Vec<PathBuf>,
     /// Tema de la interfaz.
@@ -231,6 +233,7 @@ impl Default for AppSettings {
             skip_overwrite_warning: false,
             sidecar_default: true,
             gallery_sort: GallerySort::default(),
+            gallery_folder_panel_side: StripSide::default(),
             recent_files: Vec::new(),
             theme: ThemeChoice::default(),
             last_page_size: (1920.0, 1080.0),

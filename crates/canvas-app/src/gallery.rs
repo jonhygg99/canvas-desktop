@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use eframe::egui;
 
-use crate::settings::GallerySort;
+use crate::{deck::StripSide, settings::GallerySort};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ItemKind {
@@ -51,7 +51,7 @@ fn sibling_folders(folder: &Path) -> Vec<PathBuf> {
 }
 pub struct GalleryState {
     pub folder: PathBuf,
-    folder_scroll: f32,
+    pub folder_panel_side: StripSide,
     navigation: FolderNavigation,
     sibling_folders: Vec<PathBuf>,
     pub items: Vec<GalleryItem>,
@@ -106,9 +106,9 @@ impl FolderNavigation {
     }
 }
 impl GalleryState {
-    pub fn new(folder: PathBuf, sort: GallerySort) -> Self {
+    pub fn new(folder: PathBuf, sort: GallerySort, folder_panel_side: StripSide) -> Self {
         Self {
-            folder_scroll: 0.0,
+            folder_panel_side,
             navigation: FolderNavigation::new(folder.clone()),
             sibling_folders: sibling_folders(&folder),
             folder,
@@ -125,10 +125,11 @@ impl GalleryState {
         folder: PathBuf,
         sort: GallerySort,
         navigation: FolderNavigation,
+        folder_panel_side: StripSide,
     ) -> Self {
         Self {
             folder: folder.clone(),
-            folder_scroll: 0.0,
+            folder_panel_side,
             navigation,
             sibling_folders: sibling_folders(&folder),
             items: Vec::new(),
@@ -228,6 +229,7 @@ impl GalleryState {
 
 pub enum GalleryAction {
     Open(PathBuf),
+    CycleFolderPanelSide,
     OpenFolder(PathBuf),
     Back,
     Forward,
@@ -283,6 +285,122 @@ fn reveal_in_explorer(_path: &Path) {}
 const CELL: egui::Vec2 = egui::vec2(172.0, 200.0);
 const THUMB: f32 = 156.0;
 
+pub fn next_folder_panel_side(side: StripSide) -> StripSide {
+    match side {
+        StripSide::Left => StripSide::Bottom,
+        StripSide::Bottom => StripSide::Right,
+        StripSide::Right => StripSide::Top,
+        StripSide::Top => StripSide::Left,
+    }
+}
+
+fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+    let mut action = None;
+    ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Folders");
+        if ui
+            .small_button("Change View")
+            .on_hover_text(format!(
+                "Change folders view to {}",
+                next_folder_panel_side(state.folder_panel_side).label()
+            ))
+            .clicked()
+        {
+            action = Some(GalleryAction::CycleFolderPanelSide);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(state.navigation.can_back(), egui::Button::new("<"))
+            .on_hover_text("Back to previous folder (Alt+Left)")
+            .clicked()
+        {
+            action = Some(GalleryAction::Back);
+        }
+        if ui
+            .add_enabled(state.navigation.can_forward(), egui::Button::new(">"))
+            .on_hover_text("Forward to next folder (Alt+Right)")
+            .clicked()
+        {
+            action = Some(GalleryAction::Forward);
+        }
+        if let Some(parent) = state.folder.parent() {
+            if ui
+                .small_button("Parent")
+                .on_hover_text("Open parent folder (Alt+Up)")
+                .clicked()
+            {
+                action = Some(GalleryAction::OpenFolder(parent.to_owned()));
+            }
+        }
+    });
+    ui.separator();
+
+    let vertical = state.folder_panel_side.is_vertical_flow();
+    let mut show_folders = |ui: &mut egui::Ui| {
+        for folder in &state.sibling_folders {
+            let name = folder
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| folder.display().to_string());
+            if folder == &state.folder {
+                ui.strong(name);
+            } else if ui.button(name).clicked() {
+                action = Some(GalleryAction::OpenFolder(folder.clone()));
+            }
+        }
+    };
+    if vertical {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.vertical(|ui| show_folders(ui));
+            });
+    } else {
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| show_folders(ui));
+            });
+    }
+    action
+}
+
+fn show_folder_panel(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+    let mut action = None;
+    match state.folder_panel_side {
+        StripSide::Left => {
+            egui::Panel::left("gallery_folders_left")
+                .default_size(180.0)
+                .size_range(140.0..=320.0)
+                .resizable(true)
+                .show(ui, |ui| action = folder_panel_contents(state, ui));
+        }
+        StripSide::Right => {
+            egui::Panel::right("gallery_folders_right")
+                .default_size(180.0)
+                .size_range(140.0..=320.0)
+                .resizable(true)
+                .show(ui, |ui| action = folder_panel_contents(state, ui));
+        }
+        StripSide::Top => {
+            egui::Panel::top("gallery_folders_top")
+                .default_size(112.0)
+                .size_range(78.0..=220.0)
+                .resizable(true)
+                .show(ui, |ui| action = folder_panel_contents(state, ui));
+        }
+        StripSide::Bottom => {
+            egui::Panel::bottom("gallery_folders_bottom")
+                .default_size(112.0)
+                .size_range(78.0..=220.0)
+                .resizable(true)
+                .show(ui, |ui| action = folder_panel_contents(state, ui));
+        }
+    }
+    action
+}
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
 
@@ -338,32 +456,13 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         }
     }
 
+    if let Some(panel_action) = show_folder_panel(state, ui) {
+        action = Some(panel_action);
+    }
+
     egui::CentralPanel::default().show(ui, |ui| {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(state.navigation.can_back(), egui::Button::new("<"))
-                .on_hover_text("Back to previous folder (Alt+Left)")
-                .clicked()
-            {
-                action = Some(GalleryAction::Back);
-            }
-            if ui
-                .add_enabled(state.navigation.can_forward(), egui::Button::new(">"))
-                .on_hover_text("Forward to next folder (Alt+Right)")
-                .clicked()
-            {
-                action = Some(GalleryAction::Forward);
-            }
-            if let Some(parent) = state.folder.parent() {
-                if ui
-                    .button("Up")
-                    .on_hover_text("Open parent folder (Alt+Up)")
-                    .clicked()
-                {
-                    action = Some(GalleryAction::OpenFolder(parent.to_owned()));
-                }
-            }
             ui.heading(
                 state
                     .folder
@@ -401,79 +500,6 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                 }
             });
         });
-        if !state.sibling_folders.is_empty() {
-            ui.horizontal(|ui| {
-                ui.weak("Folders:");
-                ui.vertical(|ui| {
-                    let output = egui::ScrollArea::horizontal()
-                        .id_salt("gallery_folders")
-                        .scroll_bar_visibility(
-                            egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                        )
-                        .scroll_source(egui::containers::scroll_area::ScrollSource {
-                            scroll_bar: false,
-                            drag: egui::containers::scroll_area::DragScroll::Always,
-                            mouse_wheel: true,
-                        })
-                        .horizontal_scroll_offset(state.folder_scroll)
-                        .max_height(24.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                for folder in &state.sibling_folders {
-                                    let name = folder
-                                        .file_name()
-                                        .map(|name| name.to_string_lossy().into_owned())
-                                        .unwrap_or_else(|| folder.display().to_string());
-                                    if folder == &state.folder {
-                                        ui.strong(name);
-                                    } else if ui.button(name).clicked() {
-                                        action = Some(GalleryAction::OpenFolder(folder.clone()));
-                                    }
-                                }
-                            });
-                        });
-                    let max_scroll = (output.content_size.x - output.inner_rect.width()).max(0.0);
-                    if max_scroll > 0.0 {
-                        state.folder_scroll = state.folder_scroll.clamp(0.0, max_scroll);
-                        let track_size = egui::vec2(ui.available_width(), 8.0);
-                        let (track, response) =
-                            ui.allocate_exact_size(track_size, egui::Sense::click_and_drag());
-                        let viewport_ratio =
-                            (output.inner_rect.width() / output.content_size.x).clamp(0.08, 1.0);
-                        let thumb_width = (track.width() * viewport_ratio).max(18.0);
-                        let travel = (track.width() - thumb_width).max(1.0);
-
-                        if response.dragged() || response.clicked() {
-                            if let Some(pointer) = response.interact_pointer_pos() {
-                                let target = (pointer.x - track.left() - thumb_width / 2.0)
-                                    .clamp(0.0, travel);
-                                state.folder_scroll = target / travel * max_scroll;
-                            }
-                        }
-
-                        let thumb_left = track.left() + travel * state.folder_scroll / max_scroll;
-                        let thumb = egui::Rect::from_min_size(
-                            egui::pos2(thumb_left, track.top()),
-                            egui::vec2(thumb_width, track.height()),
-                        );
-                        let visuals = ui.visuals();
-                        ui.painter()
-                            .rect_filled(track, 3.0, visuals.extreme_bg_color);
-                        ui.painter().rect_filled(
-                            thumb,
-                            3.0,
-                            if response.hovered() || response.dragged() {
-                                visuals.widgets.active.bg_fill
-                            } else {
-                                visuals.widgets.inactive.bg_fill
-                            },
-                        );
-                    } else {
-                        state.folder_scroll = 0.0;
-                    }
-                });
-            });
-        }
         if let Some(error) = state.op_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
@@ -720,8 +746,17 @@ fn gallery_cell(
 
 #[cfg(test)]
 mod tests {
-    use super::FolderNavigation;
+    use super::{next_folder_panel_side, FolderNavigation};
+    use crate::deck::StripSide;
     use std::path::PathBuf;
+
+    #[test]
+    fn folder_panel_cycles_clockwise_from_left_to_bottom() {
+        assert_eq!(next_folder_panel_side(StripSide::Left), StripSide::Bottom);
+        assert_eq!(next_folder_panel_side(StripSide::Bottom), StripSide::Right);
+        assert_eq!(next_folder_panel_side(StripSide::Right), StripSide::Top);
+        assert_eq!(next_folder_panel_side(StripSide::Top), StripSide::Left);
+    }
 
     #[test]
     fn folder_navigation_discards_forward_branch_after_new_visit() {
