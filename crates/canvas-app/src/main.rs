@@ -976,6 +976,27 @@ impl App {
                         }
                     }
                 }
+                AppMsg::ImageLoadedForReplace {
+                    layer,
+                    label,
+                    source_path,
+                    result,
+                } => {
+                    if let View::Editor(state) = &mut self.view {
+                        match result {
+                            Ok(img) => {
+                                if let Err(e) = state.replace_image_layer(layer, source_path, img) {
+                                    state.save_error =
+                                        Some(format!("Could not replace image: {e}"));
+                                }
+                            }
+                            Err(e) => {
+                                state.save_error =
+                                    Some(format!("Could not replace with {label}: {e}"));
+                            }
+                        }
+                    }
+                }
                 AppMsg::GalleryScanned { folder, files } => {
                     // La baraja del editor (si es la misma carpeta) y la
                     // rejilla (si está abierta ahí) pueden querer el mismo
@@ -2936,6 +2957,23 @@ impl eframe::App for App {
                             self.watcher = None;
                             loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                         }
+                    }
+                    Some(editor::CanvasAction::ReplaceFromLocal(layer)) => {
+                        loader::spawn_pick_replacement_image(
+                            layer,
+                            None,
+                            self.tx.clone(),
+                            ctx.clone(),
+                        );
+                    }
+
+                    Some(editor::CanvasAction::ReplaceFromUrl(layer, url)) => {
+                        loader::spawn_load_replacement_image_from_url(
+                            layer,
+                            url,
+                            self.tx.clone(),
+                            ctx.clone(),
+                        );
                     }
                     Some(editor::CanvasAction::Menu(action)) => {
                         pending_menu_action = Some(action);

@@ -193,6 +193,8 @@ pub struct EditorState {
     /// hasta pulsar Apply — no participa en `is_idle()`, mismo criterio que
     /// `Deck::rename_edit`, que tampoco bloquea saltar de lienzo).
     size_popup: Option<(f64, f64)>,
+    /// Ventana para pegar una URL y reemplazar la imagen seleccionada.
+    replace_url_popup: Option<(LayerId, String)>,
     /// Capa de «fondo desenfocado» activa, si la hay. `pub(crate)` porque el
     /// panel de capas (otro módulo) necesita fijarla como fila no arrastrable
     /// y excluirla de "Agrupar".
@@ -308,6 +310,7 @@ impl EditorState {
             panel_edit: None,
             page_edit: None,
             size_popup: None,
+            replace_url_popup: None,
             background_layer,
             blur_edit: None,
             color_edit: None,
@@ -535,6 +538,85 @@ impl EditorState {
         self.selection = Selection::single(id);
     }
 
+    fn replace_image_content(
+        &mut self,
+        target: LayerId,
+        content: ImageContent,
+        pixels: vello::peniko::ImageData,
+    ) -> Result<(), String> {
+        let (index, old_layer) = {
+            let page = self.doc.page().map_err(|e| e.to_string())?;
+            let index = page
+                .index_of(target)
+                .ok_or_else(|| "Selected image was not found".to_owned())?;
+            let layer = page.layers[index].clone();
+            if !matches!(layer.content, LayerContent::Image(_)) {
+                return Err("Selected layer is not an image".to_owned());
+            }
+            (index, layer)
+        };
+
+        let new_id = self.doc.allocate_layer_id();
+        let mut new_layer = old_layer;
+        new_layer.id = new_id;
+        new_layer.content = LayerContent::Image(content);
+
+        self.history
+            .apply(
+                &mut self.doc,
+                Box::new(canvas_core::Composite::new(
+                    "Replace image",
+                    vec![
+                        Box::new(RemoveLayer::new(target)),
+                        Box::new(InsertLayer {
+                            index,
+                            layer: new_layer,
+                        }),
+                    ],
+                )),
+            )
+            .map_err(|e| e.to_string())?;
+
+        self.images.insert(new_id, pixels);
+        if self.background_layer == Some(target) {
+            self.background_layer = Some(new_id);
+        }
+        self.selection = Selection::single(new_id);
+        self.crop_mode = false;
+        Ok(())
+    }
+
+    pub fn replace_image_layer(
+        &mut self,
+        target: LayerId,
+        source: Option<PathBuf>,
+        img: LoadedImage,
+    ) -> Result<(), String> {
+        let content = ImageContent {
+            source_path: source,
+            natural_width: img.width,
+            natural_height: img.height,
+            crop: None,
+        };
+        let pixels = image_data_from_rgba(img.rgba, img.width, img.height);
+        self.replace_image_content(target, content, pixels)
+    }
+
+    fn replace_image_from_layer(&mut self, target: LayerId, source: LayerId) -> Result<(), String> {
+        let (content, pixels) = {
+            let layer = self.doc.layer(source).map_err(|e| e.to_string())?;
+            let LayerContent::Image(content) = &layer.content else {
+                return Err("Source layer is not an image".to_owned());
+            };
+            let pixels = self
+                .images
+                .get(&source)
+                .cloned()
+                .ok_or_else(|| "Source image pixels are not loaded".to_owned())?;
+            (content.clone(), pixels)
+        };
+        self.replace_image_content(target, content, pixels)
+    }
     /// Inserta una capa nueva (texto o forma) centrada en la página,
     /// deshacible, y la selecciona.
     pub fn insert_layer_centered(&mut self, name: &str, w: f64, h: f64, content: LayerContent) {
@@ -2113,12 +2195,53 @@ pub enum CanvasAction {
     Rename(u64, String),
     Duplicate(u64),
     Delete(u64),
+    ReplaceFromLocal(LayerId),
+    ReplaceFromUrl(LayerId, String),
     /// Elegido en el menú contextual (clic derecho) del propio lienzo —
     /// reutiliza el mismo `MenuAction` que ya resuelve la barra de menú
     /// nativa/de respaldo, sin duplicar esa lógica.
     Menu(crate::menus::MenuAction),
 }
 
+fn replace_url_popup_ui(state: &mut EditorState, ctx: &egui::Context) -> Option<CanvasAction> {
+    let (layer, mut url) = state.replace_url_popup.take()?;
+    let mut open = true;
+    let mut replace = false;
+    let mut cancel = false;
+    egui::Window::new("Replace from URL")
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut url)
+                    .hint_text("https://example.com/image.jpg")
+                    .desired_width(360.0),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!url.trim().is_empty(), egui::Button::new("Replace"))
+                    .clicked()
+                {
+                    replace = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+
+    if replace {
+        Some(CanvasAction::ReplaceFromUrl(layer, url.trim().to_owned()))
+    } else {
+        if open && !cancel {
+            state.replace_url_popup = Some((layer, url));
+        }
+        None
+    }
+}
 /// El lienzo: gestiona zoom/paneo, carga perezosa/descarte de la baraja, y
 /// renderiza en una sola escena todos los lienzos visibles (el activo con
 /// `state.doc`/`state.images`; el resto con su propio `SlotDoc`).
@@ -2167,6 +2290,58 @@ pub fn canvas_ui(
         item(ui, "Select All", true, MenuAction::SelectAll);
         item(ui, "Group", true, MenuAction::Group);
         item(ui, "Ungroup", true, MenuAction::Ungroup);
+        let selected_image = state.selection.primary().filter(|id| {
+            state
+                .doc
+                .layer(*id)
+                .ok()
+                .is_some_and(|l| matches!(l.content, LayerContent::Image(_)))
+        });
+        let design_sources: Vec<(LayerId, String)> = selected_image
+            .and_then(|target| {
+                state.doc.page().ok().map(|page| {
+                    page.layers
+                        .iter()
+                        .filter(|layer| {
+                            layer.id != target
+                                && matches!(layer.content, LayerContent::Image(_))
+                                && state.images.contains_key(&layer.id)
+                        })
+                        .map(|layer| (layer.id, layer.name.clone()))
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        ui.add_enabled_ui(selected_image.is_some(), |ui| {
+            ui.menu_button("Replace", |ui| {
+                let Some(target) = selected_image else {
+                    return;
+                };
+
+                ui.menu_button("From this design", |ui| {
+                    if design_sources.is_empty() {
+                        ui.add_enabled(false, egui::Button::new("No other images"));
+                    }
+                    for (source, name) in &design_sources {
+                        if ui.button(name).clicked() {
+                            if let Err(e) = state.replace_image_from_layer(target, *source) {
+                                state.save_error = Some(e);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+
+                if ui.button("From local file").clicked() {
+                    action = Some(CanvasAction::ReplaceFromLocal(target));
+                    ui.close();
+                }
+                if ui.button("From internet URL").clicked() {
+                    state.replace_url_popup = Some((target, String::new()));
+                    ui.close();
+                }
+            });
+        });
         ui.separator();
         // Orden y alineación de la capa PRIMARIA seleccionada — deshabilitados
         // enteros (el propio botón del submenú) sin selección, en vez de
@@ -2294,6 +2469,10 @@ pub fn canvas_ui(
             ui.close();
         }
     });
+
+    if action.is_none() {
+        action = replace_url_popup_ui(state, ui.ctx());
+    }
 
     if rect.width() < 1.0 || rect.height() < 1.0 {
         return action;
@@ -4133,6 +4312,46 @@ mod tests {
         assert_eq!((fg.transform.width, fg.transform.height), (1000.0, 1000.0));
     }
 
+    #[test]
+    fn replacing_image_preserves_transform_and_undo_restores_the_old_layer() {
+        let mut state = EditorState::new_blank(1000.0, 1000.0);
+        state.add_image_layer("Original", None, loaded_image(500, 500));
+        let original_layer = state.doc.page().unwrap().layers[0].clone();
+
+        state
+            .replace_image_layer(original_layer.id, None, loaded_image(250, 500))
+            .unwrap();
+
+        let page = state.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 1);
+        let replaced = &page.layers[0];
+        assert_ne!(replaced.id, original_layer.id);
+        assert_eq!(replaced.name, original_layer.name);
+        assert_eq!(replaced.transform, original_layer.transform);
+        assert_eq!(state.selection.primary(), Some(replaced.id));
+        match &replaced.content {
+            LayerContent::Image(content) => {
+                assert_eq!((content.natural_width, content.natural_height), (250, 500));
+                assert_eq!(content.crop, None);
+            }
+            _ => panic!("replacement must stay an image layer"),
+        }
+
+        state.undo();
+
+        let page = state.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 1);
+        let restored = &page.layers[0];
+        assert_eq!(restored.id, original_layer.id);
+        assert_eq!(restored.transform, original_layer.transform);
+        match &restored.content {
+            LayerContent::Image(content) => {
+                assert_eq!((content.natural_width, content.natural_height), (500, 500));
+            }
+            _ => panic!("undo must restore the original image layer"),
+        }
+        assert!(state.images.contains_key(&original_layer.id));
+    }
     #[test]
     fn pasting_into_a_non_empty_canvas_keeps_the_old_contain_behavior() {
         let mut state = EditorState::new_blank(1080.0, 1080.0);
