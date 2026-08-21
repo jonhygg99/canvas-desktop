@@ -2366,8 +2366,8 @@ impl eframe::App for App {
                 // ranura (`push_placeholder` la fijó al crearla), no la del
                 // ajuste actual: si el usuario cambió `new_canvas_format`
                 // mientras esta provisional seguía sin editar, el nombre que
-                // se ve en la tira («Untitled.png») y el que se reserva de
-                // verdad deben seguir siendo el mismo.
+                // se ve en la tira («1.png») y el que se reserva de verdad
+                // deben seguir siendo el mismo.
                 let placeholder = self
                     .deck
                     .slots

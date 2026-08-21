@@ -275,7 +275,7 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                 ext,
                 jpeg_quality,
             } => {
-                let outcome = canvas_io::reserve_unique_path(&folder, "Untitled", &ext)
+                let outcome = canvas_io::reserve_numbered_path(&folder, &ext)
                     .map_err(|e| e.to_string())
                     .and_then(|path| {
                         canvas_io::write_blank_canvas(&path, page.0, page.1, jpeg_quality)
@@ -512,11 +512,11 @@ pub fn spawn_deck_probe(
     });
 }
 
-/// Reserva atómicamente (`create_new`, vía `canvas_io::reserve_unique_path`)
+/// Reserva atómicamente (`create_new`, vía `canvas_io::reserve_numbered_path`)
 /// un nombre libre en `folder` para una ranura provisional que el usuario
 /// acaba de empezar a editar. En un hilo por disciplina: en una unidad de
-/// red con cientos de "Untitled N" ya creados, el bucle de reserva sí se
-/// nota, y la UI no espera nunca al disco.
+/// red con cientos de lienzos numerados ya creados, el bucle de reserva sí
+/// se nota, y la UI no espera nunca al disco.
 pub fn spawn_reserve_canvas_path(
     folder: PathBuf,
     slot: u64,
@@ -525,8 +525,7 @@ pub fn spawn_reserve_canvas_path(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result =
-            canvas_io::reserve_unique_path(&folder, "Untitled", &ext).map_err(|e| e.to_string());
+        let result = canvas_io::reserve_numbered_path(&folder, &ext).map_err(|e| e.to_string());
         let _ = tx.send(AppMsg::CanvasPathReserved {
             folder,
             slot,

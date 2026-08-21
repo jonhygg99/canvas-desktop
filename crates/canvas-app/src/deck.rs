@@ -232,7 +232,7 @@ pub struct Slot {
     pub locked: bool,
     /// Ranura PROVISIONAL: un lienzo en blanco que el usuario pidió pero que
     /// todavía no existe en disco. Su `path` es un nombre «asomado»
-    /// (`canvas_io::peek_unique_path`) que aún nadie ha reservado. Se
+    /// (`canvas_io::peek_numbered_path`) que aún nadie ha reservado. Se
     /// materializa — nombre reservado de verdad y archivo escrito — en
     /// cuanto el usuario la edita. Mientras tanto queda FUERA de la
     /// reconciliación con el disco (`merge_scan`), del descarte por
@@ -475,7 +475,7 @@ impl Deck {
     pub fn push_placeholder(&mut self, page: (f64, f64), ext: &str) -> Option<usize> {
         let folder = self.folder.clone()?;
         let is_design = ext == canvas_io::CANVAS_EXTENSION;
-        let path = canvas_io::peek_unique_path(&folder, &format!("Untitled {}", self.next_id), ext);
+        let path = canvas_io::peek_numbered_path(&folder, ext, self.next_id);
         let mut state = if is_design {
             crate::editor::EditorState::new_blank(page.0, page.1)
         } else {

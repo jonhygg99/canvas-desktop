@@ -47,7 +47,9 @@ fn bake(
     if forget_first {
         renderer.forget_scope(scope);
     }
-    let (rgba, _, _) = renderer.bake_page(device, queue, scope, doc, images, 1.0).unwrap();
+    let (rgba, _, _) = renderer
+        .bake_page(device, queue, scope, doc, images, 1.0)
+        .unwrap();
     (rgba[0], rgba[1], rgba[2])
 }
 
@@ -63,14 +65,46 @@ fn main() -> Result<()> {
 
     // Caso SIN el fix (bug reproducido): mismo scope, sin vaciar la caché entre horneados.
     let mut buggy = CanvasRenderer::new(device)?;
-    let a1 = bake(&mut buggy, device, queue, FxScope::default(), &doc_a, &images_a, false);
-    let b1 = bake(&mut buggy, device, queue, FxScope::default(), &doc_b, &images_b, false);
+    let a1 = bake(
+        &mut buggy,
+        device,
+        queue,
+        FxScope::default(),
+        &doc_a,
+        &images_a,
+        false,
+    );
+    let b1 = bake(
+        &mut buggy,
+        device,
+        queue,
+        FxScope::default(),
+        &doc_b,
+        &images_b,
+        false,
+    );
     println!("SIN fix -> foto A: {a1:?}, foto B: {b1:?} (B debería ser azul, no rojo)");
 
     // Caso CON el fix: forget_scope antes de cada horneado (lo que ahora hace start_save/start_export).
     let mut fixed = CanvasRenderer::new(device)?;
-    let a2 = bake(&mut fixed, device, queue, FxScope::default(), &doc_a, &images_a, true);
-    let b2 = bake(&mut fixed, device, queue, FxScope::default(), &doc_b, &images_b, true);
+    let a2 = bake(
+        &mut fixed,
+        device,
+        queue,
+        FxScope::default(),
+        &doc_a,
+        &images_a,
+        true,
+    );
+    let b2 = bake(
+        &mut fixed,
+        device,
+        queue,
+        FxScope::default(),
+        &doc_b,
+        &images_b,
+        true,
+    );
     println!("CON fix -> foto A: {a2:?}, foto B: {b2:?}");
 
     let bug_reproduced = b1.2 < 100; // sin fix, B sale rojo (canal azul bajo) en vez de azul

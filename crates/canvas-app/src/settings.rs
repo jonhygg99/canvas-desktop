@@ -63,7 +63,7 @@ impl NewCanvasFormat {
     }
 
     /// Extensión de archivo (sin el punto), lista para
-    /// `canvas_io::reserve_unique_path`.
+    /// `canvas_io::reserve_numbered_path`.
     pub fn extension(self) -> &'static str {
         match self {
             NewCanvasFormat::Png => "png",

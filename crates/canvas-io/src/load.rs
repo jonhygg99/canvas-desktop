@@ -102,6 +102,48 @@ pub fn peek_unique_path(folder: &Path, stem: &str, ext: &str) -> PathBuf {
     folder.join(format!("{stem}.{ext}"))
 }
 
+/// Como `reserve_unique_path`, pero para lienzos nuevos sin nombre: en vez
+/// de `Untitled.ext`/`Untitled 2.ext`, reserva el primer NÚMERO libre
+/// (`1.ext`, `2.ext`…).
+pub fn reserve_numbered_path(folder: &Path, ext: &str) -> Result<PathBuf, IoError> {
+    for n in 1..=10_000u64 {
+        let candidate = folder.join(format!("{n}.{ext}"));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(_) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(IoError::Write {
+                    path: candidate,
+                    message: source.to_string(),
+                })
+            }
+        }
+    }
+    Err(IoError::Write {
+        path: folder.join(format!("1.{ext}")),
+        message: "too many name collisions".to_owned(),
+    })
+}
+
+/// Como `peek_unique_path`, pero numerado (ver `reserve_numbered_path`). La
+/// búsqueda arranca en `hint` (normalmente el `next_id` de la baraja) en vez
+/// de en 1: así, si el usuario crea varias ranuras provisionales seguidas
+/// antes de que ninguna se reserve de verdad en disco, cada una se enseña
+/// con un número distinto en vez de todas mostrando el mismo "1".
+pub fn peek_numbered_path(folder: &Path, ext: &str, hint: u64) -> PathBuf {
+    for n in 0..10_000u64 {
+        let candidate = folder.join(format!("{}.{ext}", hint + n));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    folder.join(format!("{hint}.{ext}"))
+}
+
 /// ¿`Ctrl+S` puede sobrescribir este archivo? Un SVG es vectorial (un lienzo
 /// raster no puede reescribirlo) y un GIF puede ser animado (sobrescribirlo
 /// lo aplanaría a un fotograma): ambos se abren pero solo admiten «Save as…».
@@ -291,6 +333,38 @@ mod tests {
         std::fs::write(dir.path().join("Untitled.canvas"), b"").expect("crear archivo");
         let peeked = peek_unique_path(dir.path(), "Untitled", "canvas");
         assert_eq!(peeked, dir.path().join("Untitled 2.canvas"));
+        assert!(!peeked.exists());
+    }
+
+    #[test]
+    fn numbered_path_walks_past_collisions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p1 = reserve_numbered_path(dir.path(), "png").expect("primero");
+        assert_eq!(p1, dir.path().join("1.png"));
+        let p2 = reserve_numbered_path(dir.path(), "png").expect("segundo");
+        assert_eq!(p2, dir.path().join("2.png"));
+        let p3 = reserve_numbered_path(dir.path(), "png").expect("tercero");
+        assert_eq!(p3, dir.path().join("3.png"));
+        assert!(p1.is_file());
+        assert!(p2.is_file());
+        assert!(p3.is_file());
+    }
+
+    #[test]
+    fn peek_numbered_path_does_not_create_anything() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let peeked = peek_numbered_path(dir.path(), "png", 1);
+        assert_eq!(peeked, dir.path().join("1.png"));
+        assert!(!peeked.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn peek_numbered_path_skips_taken_names_from_the_hint_up() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("5.png"), b"").expect("crear archivo");
+        let peeked = peek_numbered_path(dir.path(), "png", 5);
+        assert_eq!(peeked, dir.path().join("6.png"));
         assert!(!peeked.exists());
     }
 
