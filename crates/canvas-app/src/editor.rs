@@ -1222,25 +1222,10 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 _ => None,
             })
         });
-        egui::ComboBox::from_id_salt("page_presets")
-            .selected_text("Presets")
-            .width(72.0)
-            .show_ui(ui, |ui| {
-                let mut preset = |ui: &mut egui::Ui, label: String, pw: f64, ph: f64| {
-                    if ui.selectable_label(false, label).clicked() {
-                        w = pw;
-                        h = ph;
-                        changed = true;
-                        commit = true;
-                    }
-                };
-                preset(ui, "1920 × 1080".into(), 1920.0, 1080.0);
-                preset(ui, "1080 × 1920".into(), 1080.0, 1920.0);
-                preset(ui, "1080 × 1080".into(), 1080.0, 1080.0);
-                if let Some((iw, ih)) = image_size {
-                    preset(ui, format!("Image ({} × {})", iw as i64, ih as i64), iw, ih);
-                }
-            });
+        if page_size_presets_ui(ui, &mut w, &mut h, image_size) {
+            changed = true;
+            commit = true;
+        }
     });
 
     if changed
@@ -1302,6 +1287,71 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     }
 }
 
+/// Selector compartido para la página y el cuadro contextual Size.
+/// Devuelve `true` cuando el usuario eligió un tamaño.
+fn page_size_presets_ui(
+    ui: &mut egui::Ui,
+    w: &mut f64,
+    h: &mut f64,
+    image_size: Option<(f64, f64)>,
+) -> bool {
+    let mut selected = false;
+    egui::ComboBox::from_id_salt("page_presets")
+        .selected_text("Presets")
+        .width(72.0)
+        .show_ui(ui, |ui| {
+            let mut preset = |ui: &mut egui::Ui, label: &str, pw: f64, ph: f64| {
+                if ui.selectable_label(false, label).clicked() {
+                    *w = pw;
+                    *h = ph;
+                    selected = true;
+                }
+            };
+
+            ui.strong("Social");
+            preset(
+                ui,
+                "Vertical / Reels / Shorts (1080 × 1920)",
+                1080.0,
+                1920.0,
+            );
+            preset(ui, "Square / Facebook 1:1 (1080 × 1080)", 1080.0, 1080.0);
+            preset(
+                ui,
+                "Instagram portrait / Facebook feed (1080 × 1350)",
+                1080.0,
+                1350.0,
+            );
+            preset(
+                ui,
+                "LinkedIn / Facebook landscape (1200 × 628)",
+                1200.0,
+                628.0,
+            );
+            preset(ui, "Pinterest vertical (1000 × 1500)", 1000.0, 1500.0);
+
+            ui.separator();
+            ui.strong("Branding");
+            preset(ui, "YouTube channel logo (800 × 800)", 800.0, 800.0);
+            preset(ui, "Facebook page profile (320 × 320)", 320.0, 320.0);
+            preset(ui, "Facebook page cover (851 × 315)", 851.0, 315.0);
+
+            ui.separator();
+            ui.strong("Video");
+            preset(ui, "Video Full HD (1920 × 1080)", 1920.0, 1080.0);
+            preset(ui, "Video 4K (3840 × 2160)", 3840.0, 2160.0);
+            preset(ui, "YouTube thumbnail (1280 × 720)", 1280.0, 720.0);
+            preset(ui, "YouTube banner (2560 × 1440)", 2560.0, 1440.0);
+
+            if let Some((iw, ih)) = image_size {
+                ui.separator();
+                ui.strong("Source");
+                let label = format!("Image ({} × {})", iw as i64, ih as i64);
+                preset(ui, &label, iw, ih);
+            }
+        });
+    selected
+}
 /// Ventanita flotante "Size" pedida desde el menú contextual del lienzo
 /// (`canvas_ui`, botón "Size"): un formulario aparte con W/H en vez de
 /// arrastrar el `DragValue` del panel — mismo commit que `page_ui` (un solo
@@ -1335,7 +1385,10 @@ fn size_popup_ui(state: &mut EditorState, ctx: &egui::Context) {
                         .range(16.0..=16384.0)
                         .max_decimals(0),
                 );
+                ui.add_space(8.0);
+                page_size_presets_ui(ui, &mut w, &mut h, None);
             });
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
                     apply = true;
