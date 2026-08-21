@@ -1793,6 +1793,12 @@ fn start_save(
         return;
     }
     tracing::info!("guardando en {}", path.display());
+    // Este scope es compartido entre TODOS los guardados/exportaciones (no
+    // hay uno por lienzo aquí, a diferencia del renderizado en vivo de la
+    // baraja): sin vaciarlo antes de hornear, la caché de efectos GPU podría
+    // reutilizar la textura de un lienzo distinto guardado previamente si
+    // sus `LayerId` coinciden (empiezan en 1 en cada `Document`).
+    renderer.forget_scope(canvas_render::FxScope::default());
     match renderer.bake_page(
         &rs.device,
         &rs.queue,
@@ -1860,6 +1866,9 @@ fn start_save_design(
         .map(|p| (p.width, p.height))
         .unwrap_or((0.0, 0.0));
     let scale = canvas_io::preview_scale(pw, ph);
+    // Ver el comentario en `start_save`: vaciar el scope compartido antes de
+    // hornear evita reutilizar la textura de efectos de otro lienzo.
+    renderer.forget_scope(canvas_render::FxScope::default());
     match renderer.bake_page(
         &rs.device,
         &rs.queue,
@@ -1899,6 +1908,10 @@ fn start_export(
     }
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
+    // Ver el comentario en `start_save`: vaciar el scope compartido antes de
+    // sincronizar efectos evita reutilizar la textura de otro lienzo (cubre
+    // ambas ramas de abajo, con y sin `bake_page`).
+    renderer.forget_scope(canvas_render::FxScope::default());
 
     if settings.format.needs_bake() {
         match renderer.bake_page(
