@@ -1083,8 +1083,10 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         // hace falta pedir confirmación aparte.
         if ui
             .add_enabled(
-                !state.saving && state.doc.source_path.is_some(),
-                egui::Button::new("Delete"),
+                !state.saving,
+                egui::Button::new(
+                    egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 70, 70)),
+                ),
             )
             .clicked()
         {
@@ -2519,10 +2521,10 @@ pub fn canvas_ui(
                         s.locked = !s.locked;
                     }
                     header_hit = true;
-                } else if !is_placeholder && header.dup.contains(pos) {
+                } else if header.dup.contains(pos) {
                     action = Some(CanvasAction::Duplicate(id));
                     header_hit = true;
-                } else if !is_placeholder && header.del.contains(pos) {
+                } else if header.del.contains(pos) {
                     action = Some(CanvasAction::Delete(id));
                     header_hit = true;
                 }
@@ -2849,15 +2851,13 @@ fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_rect: egui::
     draw_triangle_icon(painter, header.prev, prev_dir, icon_color);
     draw_triangle_icon(painter, header.next, next_dir, icon_color);
     draw_lock_icon(painter, header.lock, slot.locked, icon_color);
-    if !slot.is_placeholder {
-        draw_duplicate_icon(
-            painter,
-            header.dup,
-            icon_color,
-            ui.visuals().extreme_bg_color,
-        );
-        draw_delete_icon(painter, header.del, icon_color);
-    }
+    draw_duplicate_icon(
+        painter,
+        header.dup,
+        icon_color,
+        ui.visuals().extreme_bg_color,
+    );
+    draw_delete_icon(painter, header.del, egui::Color32::from_rgb(220, 70, 70));
 }
 
 /// Dirección de `draw_triangle_icon`.
@@ -3109,9 +3109,9 @@ fn draw_header_tooltips(
             Some(move_next)
         } else if header.lock.contains(pos) {
             Some(if slot.locked { "Unlock" } else { "Lock" })
-        } else if !slot.is_placeholder && header.dup.contains(pos) {
+        } else if header.dup.contains(pos) {
             Some("Duplicate")
-        } else if !slot.is_placeholder && header.del.contains(pos) {
+        } else if header.del.contains(pos) {
             Some("Delete")
         } else if !slot.is_placeholder && header.name.contains(pos) {
             Some("Rename")

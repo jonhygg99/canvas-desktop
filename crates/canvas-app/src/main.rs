@@ -2305,14 +2305,21 @@ impl eframe::App for App {
                     }
                 }
                 if std::mem::take(&mut state.delete_requested) {
-                    if let Some(path) = state.doc.source_path.clone() {
+                    let placeholder_id = self
+                        .deck
+                        .slots
+                        .get(self.deck.active)
+                        .filter(|slot| slot.is_placeholder)
+                        .map(|slot| slot.id);
+                    if let Some(id) = placeholder_id {
+                        self.deck.discard_placeholder(id, state);
+                    } else if let Some(path) = state.doc.source_path.clone() {
                         self.ignore_fs_events_until =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                         self.watcher = None;
                         loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                     }
                 }
-
                 // Ranura PROVISIONAL que se convierte en archivo de verdad
                 // en cuanto el usuario la edita — sin diálogo. El usuario
                 // pidió «un lienzo nuevo», no «guardar como»; preguntarle un
@@ -2342,7 +2349,10 @@ impl eframe::App for App {
                         )
                     });
                 if let Some((id, ext)) = placeholder {
-                    if state.is_dirty()
+                    let has_canvas_content =
+                        state.doc.page().is_ok_and(|page| !page.layers.is_empty());
+                    if has_canvas_content
+                        && state.is_dirty()
                         && !state.saving
                         && self.materializing.is_none()
                         && self.materialize_blocked != Some(id)
@@ -2848,7 +2858,14 @@ impl eframe::App for App {
                     Some(editor::CanvasAction::Rename(id, new_stem)) => {
                         let is_active =
                             self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id);
-                        if is_active {
+                        let is_placeholder = self
+                            .deck
+                            .find_by_id(id)
+                            .and_then(|index| self.deck.slots.get(index))
+                            .is_some_and(|slot| slot.is_placeholder);
+                        if is_placeholder {
+                            self.deck.discard_placeholder(id, state);
+                        } else if is_active {
                             // Reutiliza el camino ya existente (lápiz junto
                             // al nombre): se recoge y se lanza más arriba,
                             // en el próximo frame.
@@ -2871,12 +2888,21 @@ impl eframe::App for App {
                         }
                     }
                     Some(editor::CanvasAction::Duplicate(id)) => {
-                        if let Some(path) = self
+                        let source = self
                             .deck
                             .find_by_id(id)
                             .and_then(|i| self.deck.slots.get(i))
-                            .map(|s| s.path.clone())
-                        {
+                            .map(|slot| (slot.is_placeholder, slot.page, slot.path.clone()));
+                        if let Some((true, page, path)) = source {
+                            let ext = path
+                                .extension()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or(self.settings.new_canvas_format.extension());
+                            self.deck.push_placeholder(
+                                page.unwrap_or(self.settings.last_page_size),
+                                ext,
+                            );
+                        } else if let Some((false, _, path)) = source {
                             loader::spawn_gallery_op(
                                 loader::GalleryOp::Duplicate { path },
                                 false,
@@ -2888,7 +2914,14 @@ impl eframe::App for App {
                     Some(editor::CanvasAction::Delete(id)) => {
                         let is_active =
                             self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id);
-                        if is_active {
+                        let is_placeholder = self
+                            .deck
+                            .find_by_id(id)
+                            .and_then(|index| self.deck.slots.get(index))
+                            .is_some_and(|slot| slot.is_placeholder);
+                        if is_placeholder {
+                            self.deck.discard_placeholder(id, state);
+                        } else if is_active {
                             // Reutiliza el camino ya existente (botón
                             // «Delete» del panel de propiedades).
                             state.delete_requested = true;

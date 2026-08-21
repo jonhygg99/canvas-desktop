@@ -469,17 +469,13 @@ impl Deck {
     /// su sidecar. Devuelve su índice para que el llamador salte a ella.
     /// `None` si la baraja no tiene carpeta (`Deck::single`: un archivo
     /// suelto no tiene dónde escribir un hermano).
-    ///
-    /// IDEMPOTENTE: nunca hay más de una provisional a la vez. Si ya existe
-    /// una, no crea otra — devuelve la que hay, que es exactamente a donde
-    /// el usuario quería ir al pulsar «+» por segunda vez.
+    /// Cada llamada crea una ranura provisional independiente. Sus nombres
+    /// visibles se derivan del id de la ranura para no colisionar antes de
+    /// que ninguna de ellas exista en disco.
     pub fn push_placeholder(&mut self, page: (f64, f64), ext: &str) -> Option<usize> {
         let folder = self.folder.clone()?;
-        if let Some(i) = self.slots.iter().position(|s| s.is_placeholder) {
-            return Some(i);
-        }
         let is_design = ext == canvas_io::CANVAS_EXTENSION;
-        let path = canvas_io::peek_unique_path(&folder, "Untitled", ext);
+        let path = canvas_io::peek_unique_path(&folder, &format!("Untitled {}", self.next_id), ext);
         let mut state = if is_design {
             crate::editor::EditorState::new_blank(page.0, page.1)
         } else {
@@ -540,6 +536,48 @@ impl Deck {
         Some(self.slots.len() - 1)
     }
 
+    /// Descarta una provisional que no tiene archivo en disco. Si es la
+    /// activa, instala la ranura lista más cercana como nueva activa.
+    pub fn discard_placeholder(&mut self, id: u64, state: &mut crate::editor::EditorState) -> bool {
+        let Some(index) = self.find_by_id(id) else {
+            return false;
+        };
+        if !self.slots[index].is_placeholder {
+            return false;
+        }
+        if index != self.active {
+            self.slots.remove(index);
+            if index < self.active {
+                self.active -= 1;
+            }
+            self.layout_dirty = true;
+            return true;
+        }
+
+        let Some(target) = self
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(i, slot)| *i != index && matches!(slot.content, SlotContent::Ready(_)))
+            .min_by_key(|(i, _)| i.abs_diff(index))
+            .map(|(i, _)| i)
+        else {
+            return false;
+        };
+        self.slots.remove(index);
+        let target = if target > index { target - 1 } else { target };
+        let SlotContent::Ready(incoming) =
+            std::mem::replace(&mut self.slots[target].content, SlotContent::Active)
+        else {
+            unreachable!("ready target checked before removing placeholder");
+        };
+        state.put_slot(*incoming);
+        self.active = target;
+        self.jump_to = None;
+        self.jump_center = true;
+        self.layout_dirty = true;
+        true
+    }
     /// La tira solo tiene sentido con más de un lienzo.
     pub fn is_visible(&self) -> bool {
         self.strip_visible && self.slots.len() > 1
@@ -1463,12 +1501,16 @@ mod tests {
     }
 
     #[test]
-    fn push_placeholder_never_makes_a_second_one() {
+    fn push_placeholder_allows_multiple_empty_canvases() {
         let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
         let first = deck.push_placeholder((800.0, 600.0), "canvas");
         let second = deck.push_placeholder((800.0, 600.0), "canvas");
-        assert_eq!(first, second);
-        assert_eq!(deck.slots.len(), 2);
+        assert_ne!(first, second);
+        assert_eq!(deck.slots.len(), 3);
+        assert_ne!(
+            deck.slots[first.unwrap()].path,
+            deck.slots[second.unwrap()].path
+        );
     }
 
     #[test]
