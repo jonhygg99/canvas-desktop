@@ -49,11 +49,36 @@ fn sibling_folders(folder: &Path) -> Vec<PathBuf> {
     });
     folders
 }
+fn child_folders(folder: &Path) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = std::fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    folders.sort_by(|a, b| {
+        crate::settings::natural_cmp(
+            &a.file_name().unwrap_or_default().to_string_lossy(),
+            &b.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    });
+    folders
+}
+struct FolderLists {
+    siblings: Vec<PathBuf>,
+    children: Vec<PathBuf>,
+}
 pub struct GalleryState {
     pub folder: PathBuf,
     pub folder_panel_side: StripSide,
     navigation: FolderNavigation,
-    sibling_folders: Vec<PathBuf>,
+    folders: Box<FolderLists>,
     pub items: Vec<GalleryItem>,
     pub scanned: bool,
     pub sort: GallerySort,
@@ -110,7 +135,10 @@ impl GalleryState {
         Self {
             folder_panel_side,
             navigation: FolderNavigation::new(folder.clone()),
-            sibling_folders: sibling_folders(&folder),
+            folders: Box::new(FolderLists {
+                siblings: sibling_folders(&folder),
+                children: child_folders(&folder),
+            }),
             folder,
             items: Vec::new(),
             scanned: false,
@@ -131,7 +159,10 @@ impl GalleryState {
             folder: folder.clone(),
             folder_panel_side,
             navigation,
-            sibling_folders: sibling_folders(&folder),
+            folders: Box::new(FolderLists {
+                siblings: sibling_folders(&folder),
+                children: child_folders(&folder),
+            }),
             items: Vec::new(),
             scanned: false,
             sort,
@@ -318,6 +349,29 @@ pub fn next_folder_panel_side(side: StripSide) -> StripSide {
     }
 }
 
+fn folder_name(folder: &Path) -> String {
+    folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.display().to_string())
+}
+
+fn folder_button_list(
+    ui: &mut egui::Ui,
+    folders: &[PathBuf],
+    current: Option<&Path>,
+    action: &mut Option<GalleryAction>,
+) {
+    for folder in folders {
+        let name = folder_name(folder);
+        if current == Some(folder.as_path()) {
+            ui.strong(name);
+        } else if ui.button(name).clicked() {
+            *action = Some(GalleryAction::OpenFolder(folder.clone()));
+        }
+    }
+}
+
 fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
     ui.add_space(6.0);
@@ -361,36 +415,60 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
     });
     ui.separator();
 
-    let vertical = state.folder_panel_side.is_vertical_flow();
-    let mut show_folders = |ui: &mut egui::Ui| {
-        for folder in &state.sibling_folders {
-            let name = folder
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| folder.display().to_string());
-            if folder == &state.folder {
-                ui.strong(name);
-            } else if ui.button(name).clicked() {
-                action = Some(GalleryAction::OpenFolder(folder.clone()));
-            }
-        }
-    };
-    if vertical {
+    let current_name = folder_name(&state.folder);
+    if state.folder_panel_side.is_vertical_flow() {
         egui::ScrollArea::vertical()
+            .id_salt("gallery_folder_tree_vertical")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.vertical(|ui| show_folders(ui));
+                ui.strong(format!("Inside {current_name}"));
+                if state.folders.children.is_empty() {
+                    ui.weak("No subfolders");
+                } else {
+                    folder_button_list(ui, &state.folders.children, None, &mut action);
+                }
+                ui.add_space(8.0);
+                ui.separator();
+                ui.strong("Siblings");
+                folder_button_list(
+                    ui,
+                    &state.folders.siblings,
+                    Some(state.folder.as_path()),
+                    &mut action,
+                );
             });
     } else {
+        ui.strong(format!("Inside {current_name}"));
         egui::ScrollArea::horizontal()
+            .id_salt("gallery_child_folders_horizontal")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal(|ui| show_folders(ui));
+                ui.horizontal(|ui| {
+                    if state.folders.children.is_empty() {
+                        ui.weak("No subfolders");
+                    } else {
+                        folder_button_list(ui, &state.folders.children, None, &mut action);
+                    }
+                });
+            });
+        ui.separator();
+        ui.strong("Siblings");
+        egui::ScrollArea::horizontal()
+            .id_salt("gallery_sibling_folders_horizontal")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    folder_button_list(
+                        ui,
+                        &state.folders.siblings,
+                        Some(state.folder.as_path()),
+                        &mut action,
+                    );
+                });
             });
     }
     action
 }
-
 fn show_folder_panel(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
     match state.folder_panel_side {
