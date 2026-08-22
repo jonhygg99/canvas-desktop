@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 3 completada**
+**Estado: En curso — Fase 4 completada**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -121,8 +121,12 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
    `canvas_view.rs`, en ese orden (menos acoplado primero). `mod.rs` bajó de
    4825 a 1729 líneas — solo queda el panel de propiedades (Fase 4). Build,
    tests, clippy y fmt limpios en cada sub-paso.
-5. **Fase 4 — Extraer panel de propiedades.** `properties_panel.rs`. Bajo
-   riesgo funcional, alto volumen de líneas.
+5. ✅ **Fase 4 — Extraer panel de propiedades.** Todo lo que quedaba en
+   `mod.rs` (1729 líneas) → `editor/properties_panel.rs`, tests incluidos.
+   `mod.rs` quedó en 28 líneas, puro hub de `mod`/`pub use`. `HANDLE_SIZE`/
+   `ACCENT` volvieron a `mod.rs` (las necesitan `interaction`/`overlay`/
+   `slot_chrome`, no `properties_panel`). Build real (app cerrada), 56
+   tests, clippy y fmt limpios.
 6. **Fase 5 — Repetir el proceso en `main.rs`.** `messages.rs` primero (más
    fácil de partir por variante de `AppMsg`), luego `navigation.rs`,
    `persistence.rs`, `menu_actions.rs`, `window.rs`.
