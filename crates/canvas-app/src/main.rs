@@ -1,10 +1,15 @@
 //! Binario de Canvas Desktop: ventana eframe/egui con el lienzo vello.
 
-// Subsistema GUI solo en release: evita la consola negra que Windows abre
-// detrás de la ventana al lanzar la app instalada desde el Explorador. En
-// debug se mantiene la consola para seguir viendo los logs de `tracing`
-// con `cargo run`.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Subsistema GUI siempre (debug y release): evita la consola negra que
+// Windows abre al lanzar la app desde el Explorador (doble clic, "Open
+// with", menú contextual de carpeta) o al invocar
+// `--register-shell`/`--unregister-shell` (instalador NSIS, botón
+// Register/Unregister de Ajustes). No afecta a `cargo run` desde una
+// terminal: los logs de `tracing` se siguen viendo porque Windows hereda
+// el handle de stdout/stderr de la consola padre independientemente del
+// subsistema — el subsistema solo decide si se CREA una consola nueva
+// cuando no hay ninguna (el caso de Explorador).
+#![windows_subsystem = "windows"]
 
 mod app;
 mod clipboard;

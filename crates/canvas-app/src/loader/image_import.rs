@@ -132,6 +132,11 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
     // PowerShell — a diferencia de comillas dobles, no interpola variables.
     #[cfg(windows)]
     let output = {
+        use std::os::windows::process::CommandExt;
+        // `CREATE_NO_WINDOW`: sin esto, `powershell.exe` (subsistema de
+        // consola) abre y parpadea su propia ventana un instante aunque
+        // este binario sea GUI.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let escaped_url = trimmed.replace('\'', "''");
         let escaped_out = out.replace('\'', "''");
         Command::new("powershell")
@@ -140,6 +145,7 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
             .arg(format!(
                 "Invoke-WebRequest -Uri '{escaped_url}' -OutFile '{escaped_out}'"
             ))
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
     };
 
