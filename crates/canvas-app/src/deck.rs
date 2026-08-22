@@ -55,16 +55,16 @@ pub enum StripSide {
 }
 
 impl StripSide {
-    /// Siguiente lado en sentido horario: Left → Top → Right → Bottom →
+    /// Siguiente lado en sentido antihorario: Left → Bottom → Right → Top →
     /// Left. Cuatro estados, así que un `toggled()` estilo `DeckAxis` no
     /// vale: un solo botón que cicla es lo que cabe en una cabecera de
     /// 96 px.
     pub fn cycled(self) -> Self {
         match self {
-            StripSide::Left => StripSide::Top,
-            StripSide::Top => StripSide::Right,
-            StripSide::Right => StripSide::Bottom,
-            StripSide::Bottom => StripSide::Left,
+            StripSide::Left => StripSide::Bottom,
+            StripSide::Bottom => StripSide::Right,
+            StripSide::Right => StripSide::Top,
+            StripSide::Top => StripSide::Left,
         }
     }
 
