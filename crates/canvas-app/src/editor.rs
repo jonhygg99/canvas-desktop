@@ -265,6 +265,16 @@ pub struct EditorState {
     /// ese primer guardado se salta el modal de aviso de sobrescritura. Se
     /// apaga al recibir `Saved`.
     pub born_blank: bool,
+    /// Nació en blanco (`new_blank`/`new_blank_image`) y su creación
+    /// TODAVÍA no se ha registrado en el deshacer global. Se consume (pasa a
+    /// `false`) en la primera llamada real a `push_undo_step`/
+    /// `apply_undo_step` de este lienzo, que antepone un
+    /// `GlobalStep::Create` — así el paso "esto se creó" aparece en el
+    /// momento exacto de la primera edición, sin importar cuántas ranuras
+    /// "+" fantasma haya de por medio (relleno automático de la baraja que
+    /// el usuario nunca llega a tocar no genera ningún paso). Viaja con la
+    /// ranura vía `SlotDoc`/`take_slot`/`put_slot`, igual que `born_blank`.
+    pub(crate) pending_creation: bool,
     /// Petición de saltar a otro lienzo de la baraja (`PageUp`/`PageDown`/
     /// `Home`/`End`); la app resuelve el destino contra `Deck` y pregunta si
     /// hace falta por cambios sin guardar, igual que «Back to gallery».
@@ -284,22 +294,83 @@ pub struct EditorState {
     /// Sirve para etiquetar cada paso de deshacer en `global_undo`/
     /// `global_redo` con su diseño de origen.
     pub(crate) active_slot_id: u64,
-    /// Pila global de deshacer: un id de ranura por paso, en el mismo orden
-    /// cronológico en que ocurrieron los pasos SIN IMPORTAR de qué diseño
-    /// eran — a diferencia de `history` (local, solo el diseño activo). El
-    /// comando en sí sigue viviendo en el `History` local de esa ranura;
+    /// Pila global de deshacer: un paso por entrada, en el mismo orden
+    /// cronológico en que ocurrieron SIN IMPORTAR de qué diseño eran — a
+    /// diferencia de `history` (local, solo el diseño activo). El comando en
+    /// sí (para `Edit`) sigue viviendo en el `History` local de esa ranura;
     /// esto solo registra el ORDEN cruzado para que `Ctrl+Z` sepa cuál
     /// deshacer a continuación y en qué diseño.
-    global_undo: Vec<u64>,
+    global_undo: Vec<GlobalStep>,
     /// Simétrico de `global_undo` para `Ctrl+Y`/rehacer.
-    global_redo: Vec<u64>,
-    /// Deshacer global pedido cuyo diseño destino NO es el activo: `undo()`
-    /// deja esto en vez de tocar el documento, y `main.rs` pide el salto de
-    /// baraja; en cuanto ese diseño pasa a ser el activo llama a
-    /// `finish_pending_global_undo`, que hace el deshacer de verdad.
-    pub pending_global_undo: Option<u64>,
+    global_redo: Vec<GlobalStep>,
+    /// Paso global pedido cuyo diseño destino NO es el activo: `undo()`/
+    /// `redo()` dejan esto en vez de tocar nada, y `main.rs` pide el salto
+    /// de baraja; en cuanto ese diseño pasa a ser el activo llama a
+    /// `finish_pending_global_undo`/`_redo`, que hace el paso de verdad.
+    pub pending_global_undo: Option<GlobalStep>,
     /// Simétrico de `pending_global_undo` para rehacer.
-    pub pending_global_redo: Option<u64>,
+    pub pending_global_redo: Option<GlobalStep>,
+    /// Deshacer un `GlobalStep::Delete` deja aquí qué restaurar de la
+    /// papelera de reciclaje — `main.rs` lo recoge cada frame, lanza el
+    /// hilo de restauración y lo limpia. No pertenece a ninguna ranura (el
+    /// archivo ya no existía en la baraja), así que no hace falta esperar
+    /// ningún salto, a diferencia de `pending_global_undo`.
+    pub pending_restore: Option<DeleteRecord>,
+    /// El `delete_requested` actual es consecuencia de deshacer un
+    /// `GlobalStep::Create` (ver `finish_pending_global_undo`), no un clic
+    /// directo del usuario en «Delete»: `main.rs` lo lee para NO apilar un
+    /// `GlobalStep::Delete` por ese borrado — si lo hiciera, un `Ctrl+Z`
+    /// más adelante podría "deshacer el deshacer" y restaurar un lienzo que
+    /// el propio usuario decidió descartar.
+    pub(crate) pending_delete_from_undo: bool,
+}
+
+/// Un paso del deshacer/rehacer GLOBAL (`EditorState::global_undo`/
+/// `global_redo`), con el id de ranura al que pertenece (o, para `Delete`,
+/// la ruta borrada). `Clone` en vez de `Copy`: `Delete` carga rutas.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum GlobalStep {
+    /// Un comando normal, ya apilado en el `History` local de esa ranura —
+    /// deshacerlo/rehacerlo es `History::undo`/`redo` sobre ese diseño.
+    Edit(u64),
+    /// La ranura se creó en este punto de la sesión (botón "+", zona "+" del
+    /// lienzo, duplicar una provisional). Deshacerlo BORRA la ranura entera
+    /// (vía el mismo camino que el botón «Delete»: papelera de reciclaje si
+    /// ya tenía archivo, descarte en memoria si seguía siendo provisional).
+    /// Sin simétrico en `global_redo`: crear no se "rehace" borrando otra vez.
+    Create(u64),
+    /// Se borró un archivo real (botón «Delete»/cabecera de un lienzo de
+    /// fondo — nunca el borrado que ya ocurre al deshacer un `Create`, ver
+    /// `EditorState::pending_delete_from_undo`). Deshacerlo restaura el
+    /// archivo desde la papelera de reciclaje — no pertenece a ninguna
+    /// ranura de la baraja (esa ya no existe), así que no hace falta saltar
+    /// a ningún sitio primero. Sin simétrico en `global_redo`: tampoco se
+    /// "rehace" volviendo a borrar.
+    Delete(DeleteRecord),
+}
+
+/// Lo necesario para restaurar desde la papelera de reciclaje un archivo
+/// borrado por el usuario — ver `GlobalStep::Delete`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct DeleteRecord {
+    pub path: PathBuf,
+    /// El sidecar `.canvas` que se borró junto al archivo, si tenía uno.
+    pub sidecar: Option<PathBuf>,
+}
+
+impl GlobalStep {
+    /// Solo válido para `Edit`/`Create` (los únicos que participan en el
+    /// salto de baraja `pending_global_undo`/`_redo` resuelve en
+    /// `main.rs`): `Delete` se resuelve de inmediato en `undo()`, sin pasar
+    /// nunca por ese campo.
+    pub(crate) fn slot_id(&self) -> u64 {
+        match self {
+            GlobalStep::Edit(id) | GlobalStep::Create(id) => *id,
+            GlobalStep::Delete(_) => {
+                unreachable!("Delete nunca se deja en pending_global_undo/_redo")
+            }
+        }
+    }
 }
 
 /// Dirección de salto entre lienzos de la baraja, pedida por teclado.
@@ -361,6 +432,7 @@ impl EditorState {
             file_rename_requested: None,
             delete_requested: false,
             born_blank: false,
+            pending_creation: false,
             deck_nav: None,
             press_on_other_slot: false,
             active_slot_id: 0,
@@ -368,6 +440,8 @@ impl EditorState {
             global_redo: Vec::new(),
             pending_global_undo: None,
             pending_global_redo: None,
+            pending_restore: None,
+            pending_delete_from_undo: false,
         }
     }
 
@@ -406,6 +480,7 @@ impl EditorState {
         let mut state = Self::base(doc, ImageMap::new(), Selection::default(), None);
         state.is_design = true;
         state.born_blank = true;
+        state.pending_creation = true;
         state
     }
 
@@ -424,6 +499,7 @@ impl EditorState {
         let mut state = Self::base(doc, ImageMap::new(), Selection::default(), None);
         state.sidecar_enabled = true;
         state.born_blank = true;
+        state.pending_creation = true;
         state
     }
 
@@ -955,8 +1031,7 @@ impl EditorState {
     /// paso quedaría invisible para el `Ctrl+Z` global.
     pub(crate) fn apply_undo_step(&mut self, cmd: Box<dyn Command>) -> Result<(), CoreError> {
         self.history.apply(&mut self.doc, cmd)?;
-        self.global_undo.push(self.active_slot_id);
-        self.global_redo.clear();
+        self.record_edit_step();
         Ok(())
     }
 
@@ -964,7 +1039,33 @@ impl EditorState {
     /// de un gesto continuo) — ver `apply_undo_step`.
     pub(crate) fn push_undo_step(&mut self, cmd: Box<dyn Command>) {
         self.history.push_applied(cmd);
-        self.global_undo.push(self.active_slot_id);
+        self.record_edit_step();
+    }
+
+    /// Apila un borrado de archivo real como paso deshacible
+    /// (`GlobalStep::Delete`) — llamado por `main.rs` tras un
+    /// `spawn_document_delete` que el usuario pidió directamente (nunca el
+    /// que ya ocurre como consecuencia de deshacer un `Create`, ver
+    /// `pending_delete_from_undo`).
+    pub(crate) fn record_delete(&mut self, record: DeleteRecord) {
+        self.global_undo.push(GlobalStep::Delete(record));
+        self.global_redo.clear();
+    }
+
+    /// Registra en la pila global el paso que `apply_undo_step`/
+    /// `push_undo_step` ya reflejaron en el `History` local. Si este lienzo
+    /// nació esta sesión y su creación aún no se había anotado
+    /// (`pending_creation`), antepone un `GlobalStep::Create` — así "crear
+    /// este lienzo" aparece como paso deshacible en el momento EXACTO de su
+    /// primera edición real, sin importar cuántas ranuras "+" de relleno
+    /// automático haya habido de por medio que el usuario nunca llegó a
+    /// tocar (esas no generan ningún paso: nadie las editó).
+    fn record_edit_step(&mut self) {
+        if std::mem::take(&mut self.pending_creation) {
+            self.global_undo
+                .push(GlobalStep::Create(self.active_slot_id));
+        }
+        self.global_undo.push(GlobalStep::Edit(self.active_slot_id));
         self.global_redo.clear();
     }
 
@@ -978,33 +1079,48 @@ impl EditorState {
     }
 
     /// Deshace la acción más reciente de TODA la sesión (menú Edit, clic
-    /// derecho o Ctrl+Z) — no solo del diseño activo. Si le toca a OTRO
-    /// diseño de la baraja, no toca el documento: dejar `pending_global_undo`
-    /// es la señal para que `main.rs` pida el salto de baraja y, en cuanto
-    /// ese diseño pase a ser el activo, llame a `finish_pending_global_undo`.
+    /// derecho o Ctrl+Z) — no solo del diseño activo. Un `Edit` del diseño
+    /// activo se deshace en el sitio; un `Create` SIEMPRE pasa por
+    /// `pending_global_undo` (incluso si su ranura ya es la activa, para
+    /// compartir un único camino con «otro diseño») como señal para que
+    /// `main.rs` pida el salto de baraja y, en cuanto toque, llame a
+    /// `finish_pending_global_undo`. Un `Delete` no pertenece a ninguna
+    /// ranura (el archivo ya no existe): se resuelve de inmediato, sin
+    /// esperar ningún salto.
     pub fn undo(&mut self) {
-        let Some(&slot_id) = self.global_undo.last() else {
+        let Some(step) = self.global_undo.last().cloned() else {
             tracing::info!("deshacer: nada que deshacer");
             return;
         };
-        if slot_id == self.active_slot_id {
-            self.undo_local();
-        } else {
-            self.pending_global_undo = Some(slot_id);
+        match step {
+            GlobalStep::Edit(slot_id) if slot_id == self.active_slot_id => self.undo_local(),
+            GlobalStep::Delete(record) => {
+                self.global_undo.pop();
+                self.pending_restore = Some(record);
+            }
+            _ => self.pending_global_undo = Some(step),
         }
     }
 
     /// Rehace el último paso deshecho de TODA la sesión (menú Edit, clic
-    /// derecho o Ctrl+Y) — simétrico a `undo`.
+    /// derecho o Ctrl+Y) — simétrico a `undo`. `GlobalStep::Create` nunca
+    /// debería aparecer aquí (deshacer una creación no deja rastro en
+    /// `global_redo`); el `match` de `finish_pending_global_redo` lo cubre
+    /// solo por si acaso, no como camino esperado.
     pub fn redo(&mut self) {
-        let Some(&slot_id) = self.global_redo.last() else {
+        let Some(step) = self.global_redo.last().cloned() else {
             tracing::info!("rehacer: nada que rehacer");
             return;
         };
-        if slot_id == self.active_slot_id {
-            self.redo_local();
-        } else {
-            self.pending_global_redo = Some(slot_id);
+        match step {
+            GlobalStep::Edit(slot_id) if slot_id == self.active_slot_id => self.redo_local(),
+            GlobalStep::Delete(_) => {
+                // No debería pasar: `undo()` nunca deja un `Delete` en
+                // `global_redo` (no se "rehace" volver a borrar).
+                tracing::warn!("rehacer global: entrada de borrado inesperada, se descarta");
+                self.global_redo.pop();
+            }
+            _ => self.pending_global_redo = Some(step),
         }
     }
 
@@ -1015,7 +1131,7 @@ impl EditorState {
             Ok(true) => {
                 tracing::info!("deshacer OK");
                 self.global_undo.pop();
-                self.global_redo.push(self.active_slot_id);
+                self.global_redo.push(GlobalStep::Edit(self.active_slot_id));
             }
             Ok(false) => tracing::info!("deshacer: nada que deshacer"),
             Err(e) => {
@@ -1036,7 +1152,7 @@ impl EditorState {
             Ok(true) => {
                 tracing::info!("rehacer OK");
                 self.global_redo.pop();
-                self.global_undo.push(self.active_slot_id);
+                self.global_undo.push(GlobalStep::Edit(self.active_slot_id));
             }
             Ok(false) => tracing::info!("rehacer: nada que rehacer"),
             Err(e) => {
@@ -1049,17 +1165,49 @@ impl EditorState {
     }
 
     /// `main.rs` llama a esto en cuanto el diseño pedido por
-    /// `pending_global_undo` ya es el activo.
+    /// `pending_global_undo` ya es el activo. Un `Edit` se deshace en el
+    /// sitio; un `Create` no tiene "documento que revertir" — en vez de eso
+    /// pide borrar la ranura entera por el mismo camino que el botón
+    /// «Delete» (`delete_requested`, que `main.rs` ya sabe resolver contra
+    /// una provisional o un archivo real).
     pub(crate) fn finish_pending_global_undo(&mut self) {
-        if self.pending_global_undo.take().is_some() {
-            self.undo_local();
+        let Some(step) = self.pending_global_undo.take() else {
+            return;
+        };
+        match step {
+            GlobalStep::Edit(_) => self.undo_local(),
+            GlobalStep::Create(_) => {
+                self.global_undo.pop();
+                // Marca este borrado como "consecuencia de deshacer una
+                // creación", no una decisión directa del usuario: evita que
+                // genere su propio `GlobalStep::Delete` (si lo hiciera,
+                // podrías "deshacer el deshacer" y restaurar un lienzo que
+                // tú mismo acabas de decidir descartar).
+                self.pending_delete_from_undo = true;
+                self.delete_requested = true;
+            }
+            GlobalStep::Delete(_) => {
+                unreachable!("undo() resuelve Delete de inmediato, nunca lo deja pendiente")
+            }
         }
     }
 
-    /// Simétrico de `finish_pending_global_undo` para rehacer.
+    /// Simétrico de `finish_pending_global_undo` para rehacer. `Create`
+    /// nunca debería llegar aquí (ver `redo`) — si pasara, se descarta con
+    /// aviso en vez de intentar nada.
     pub(crate) fn finish_pending_global_redo(&mut self) {
-        if self.pending_global_redo.take().is_some() {
-            self.redo_local();
+        let Some(step) = self.pending_global_redo.take() else {
+            return;
+        };
+        match step {
+            GlobalStep::Edit(_) => self.redo_local(),
+            GlobalStep::Create(_) => {
+                tracing::warn!("rehacer global: entrada de creación inesperada, se descarta");
+                self.global_redo.pop();
+            }
+            GlobalStep::Delete(_) => {
+                unreachable!("Delete nunca se deja en pending_global_redo")
+            }
         }
     }
 
@@ -1147,6 +1295,7 @@ impl EditorState {
             save_error: self.save_error.take(),
             external_change: self.external_change,
             born_blank: self.born_blank,
+            pending_creation: self.pending_creation,
             bytes,
         }
     }
@@ -1165,6 +1314,7 @@ impl EditorState {
         self.save_error = slot.save_error;
         self.external_change = slot.external_change;
         self.born_blank = slot.born_blank;
+        self.pending_creation = slot.pending_creation;
         // Los gestos y ediciones de panel se quedan a sus valores por
         // defecto (vacíos): `is_idle()` garantizaba que ya lo estaban antes
         // del salto. La selección y el fondo desenfocado ya llegan del slot;
@@ -4449,6 +4599,124 @@ mod tests {
         assert!(state.images.contains_key(&original_layer.id));
     }
 
+    /// Deshacer un borrado de archivo real (`GlobalStep::Delete`, apilado
+    /// vía `record_delete` tras un «Delete» del usuario) no pertenece a
+    /// ninguna ranura: se resuelve de inmediato — dejando la restauración
+    /// pedida en `pending_restore` — sin esperar ningún salto de baraja, y
+    /// sin dejar rastro en `global_redo` (no se "rehace" volver a borrar).
+    #[test]
+    fn undoing_a_delete_step_requests_a_restore_without_touching_redo() {
+        let mut state = EditorState::new_blank(10.0, 10.0);
+        state.pending_creation = false; // no es lo que se está probando aquí
+        let record = DeleteRecord {
+            path: PathBuf::from("C:/photos/cat.png"),
+            sidecar: Some(PathBuf::from("C:/photos/.canvas/cat.png.canvas")),
+        };
+        state.record_delete(record.clone());
+        assert!(state.can_undo());
+
+        state.undo();
+
+        assert_eq!(state.pending_restore, Some(record));
+        assert!(!state.can_undo(), "el paso de borrado ya se resolvió");
+        assert!(
+            !state.can_redo(),
+            "deshacer un borrado no deja nada que rehacer"
+        );
+    }
+
+    /// El borrado que dispara `finish_pending_global_undo` al deshacer una
+    /// creación (`GlobalStep::Create`) queda marcado como "no venía de un
+    /// clic del usuario" (`pending_delete_from_undo`) — es la señal que lee
+    /// `main.rs` para NO apilarle a su vez un `GlobalStep::Delete`: si lo
+    /// hiciera, un `Ctrl+Z` más adelante podría "deshacer el deshacer" y
+    /// restaurar un lienzo que el propio usuario decidió descartar.
+    #[test]
+    fn finishing_a_pending_create_undo_marks_the_delete_as_not_user_initiated() {
+        let mut state = EditorState::new_blank(10.0, 10.0);
+        state.active_slot_id = 1;
+        state.pending_creation = false;
+        state.pending_global_undo = Some(GlobalStep::Create(1));
+
+        assert!(!state.pending_delete_from_undo);
+        state.finish_pending_global_undo();
+
+        assert!(state.delete_requested);
+        assert!(state.pending_delete_from_undo);
+    }
+
+    /// Un lienzo recién creado (`new_blank`) nace con `pending_creation`
+    /// activo y SIN nada que deshacer todavía: hasta que no se edita de
+    /// verdad, "crear" no es un paso — evita que un relleno automático de la
+    /// baraja que nadie llega a tocar se cuele como un paso de deshacer
+    /// fantasma (la causa del bug: registrar la creación en cada sitio
+    /// donde podía aparecer una ranura, en vez de en su primera edición
+    /// real, dejaba huecos y duplicados según la carrera entre clics del
+    /// usuario y el relleno asíncrono).
+    #[test]
+    fn a_freshly_created_canvas_has_nothing_to_undo_until_its_first_edit() {
+        let state = EditorState::new_blank(10.0, 10.0);
+        assert!(state.pending_creation);
+        assert!(!state.can_undo());
+    }
+
+    /// La primera edición real de un lienzo recién creado antepone su
+    /// `GlobalStep::Create` en la pila global: dos `Ctrl+Z` deshacen esa
+    /// UNA edición y LUEGO piden borrar la ranura entera — no las dos
+    /// cosas de golpe con un solo `Ctrl+Z` (el bug reportado).
+    #[test]
+    fn first_edit_of_a_freshly_created_canvas_records_its_creation_too() {
+        let mut state = EditorState::new_blank(10.0, 10.0);
+        let id = state
+            .doc
+            .add_layer(
+                "a",
+                Transform::new(0.0, 0.0, 1.0, 1.0),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: 1,
+                    natural_height: 1,
+                    crop: None,
+                }),
+            )
+            .unwrap();
+        state.active_slot_id = 2;
+
+        state.doc.layer_mut(id).unwrap().name = "b".to_string();
+        state.push_undo_step(Box::new(canvas_core::Rename {
+            layer: id,
+            before: "a".to_string(),
+            after: "b".to_string(),
+        }));
+        assert!(
+            !state.pending_creation,
+            "se consume en la primera edición real"
+        );
+
+        // Ctrl+Z #1: deshace SOLO la edición; la ranura sigue viva.
+        state.undo();
+        assert!(state.pending_global_undo.is_none());
+        assert_eq!(state.doc.layer(id).unwrap().name, "a");
+        assert!(!state.delete_requested);
+        assert!(
+            state.can_undo(),
+            "todavía queda el paso de creación por deshacer"
+        );
+
+        // Ctrl+Z #2: ahora sí, pide borrar la ranura entera.
+        state.undo();
+        assert_eq!(state.pending_global_undo, Some(GlobalStep::Create(2)));
+        state.finish_pending_global_undo();
+        assert!(
+            state.delete_requested,
+            "debe pedir borrar la ranura recién creada"
+        );
+        assert!(
+            !state.can_undo(),
+            "crear no deja nada más que deshacer detrás"
+        );
+    }
+
     /// Simula "editar el diseño 1, luego el 3, luego el 1 otra vez" con
     /// `active_slot_id` (una sola `EditorState`/`Document` de sobra para
     /// probar el ORDEN cruzado — el salto real de baraja lo cubre
@@ -4472,6 +4740,9 @@ mod tests {
                 }),
             )
             .unwrap();
+        // Este test es sobre el orden entre `Edit`, no sobre `Create` (ya
+        // cubierto aparte) — se apaga para no mezclar ambos.
+        state.pending_creation = false;
         let rename = |state: &mut EditorState, before: &str, after: &str| {
             state.doc.layer_mut(id).unwrap().name = after.to_string();
             state.push_undo_step(Box::new(canvas_core::Rename {
@@ -4497,7 +4768,7 @@ mod tests {
         // El siguiente le toca al diseño 3: pide el salto SIN tocar el
         // documento todavía.
         state.undo();
-        assert_eq!(state.pending_global_undo, Some(3));
+        assert_eq!(state.pending_global_undo, Some(GlobalStep::Edit(3)));
         assert_eq!(name(&state), "c");
 
         // `main.rs` completó el salto de baraja al diseño 3.
@@ -4507,7 +4778,7 @@ mod tests {
 
         // Queda el primer paso, del diseño 1: pide saltar de vuelta.
         state.undo();
-        assert_eq!(state.pending_global_undo, Some(1));
+        assert_eq!(state.pending_global_undo, Some(GlobalStep::Edit(1)));
         state.active_slot_id = 1;
         state.finish_pending_global_undo();
         assert_eq!(name(&state), "a");
@@ -4517,12 +4788,12 @@ mod tests {
         state.redo();
         assert_eq!(name(&state), "b");
         state.redo();
-        assert_eq!(state.pending_global_redo, Some(3));
+        assert_eq!(state.pending_global_redo, Some(GlobalStep::Edit(3)));
         state.active_slot_id = 3;
         state.finish_pending_global_redo();
         assert_eq!(name(&state), "c");
         state.redo();
-        assert_eq!(state.pending_global_redo, Some(1));
+        assert_eq!(state.pending_global_redo, Some(GlobalStep::Edit(1)));
         state.active_slot_id = 1;
         state.finish_pending_global_redo();
         assert_eq!(name(&state), "d");

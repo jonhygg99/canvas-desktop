@@ -177,6 +177,83 @@ fn hide_dir(_dir: &Path) {
     // El prefijo `.` del nombre ya la oculta por convención Unix.
 }
 
+/// Papelera propia del proyecto — deshacer un borrado ("Delete" del editor)
+/// mueve el archivo aquí en vez de a la del sistema operativo: un
+/// `std::fs::rename` no depende de ninguna API de plataforma (a diferencia
+/// de restaurar de la papelera real, que en el crate `trash` solo funciona
+/// en Windows/Linux, no en macOS). Vive dentro de `.canvas/`, que ya se
+/// esconde entera — no hace falta ocultarla aparte.
+pub fn trash_dir(folder: &Path) -> PathBuf {
+    sidecar_dir(folder).join("trash")
+}
+
+/// Ruta que tendría `original` si estuviera en la papelera del proyecto:
+/// mismo nombre de archivo, sin desambiguar — un archivo no puede estar
+/// borrado dos veces a la vez en la misma carpeta (la segunda vez ya lo
+/// habría movido o purgado la primera), así que no hace falta un sufijo.
+pub fn local_trash_path(original: &Path) -> PathBuf {
+    let folder = original.parent().unwrap_or_else(|| Path::new(""));
+    let name = original.file_name().unwrap_or_default();
+    trash_dir(folder).join(name)
+}
+
+/// Mueve `path` a la papelera del proyecto (creándola si hace falta) y
+/// devuelve dónde quedó — deshacible con `restore_from_local_trash`.
+pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
+    let folder = path.parent().unwrap_or_else(|| Path::new(""));
+    ensure_sidecar_dir(folder)?;
+    let dir = trash_dir(folder);
+    if let Err(source) = std::fs::create_dir(&dir) {
+        if source.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(IoError::Write {
+                path: dir,
+                message: format!("creando la papelera del proyecto: {source}"),
+            });
+        }
+    }
+    let staged = local_trash_path(path);
+    std::fs::rename(path, &staged).map_err(|source| IoError::Write {
+        path: path.to_path_buf(),
+        message: format!("moviendo a la papelera del proyecto: {source}"),
+    })?;
+    Ok(staged)
+}
+
+/// Deshace `move_to_local_trash`: mueve `staged` de vuelta a `original`.
+/// Rechaza si `original` ya existe (alguien creó otro archivo con ese mismo
+/// nombre mientras tanto) en vez de sobrescribirlo en silencio — mismo
+/// criterio que `rename_with_sidecar` en `canvas-app`.
+pub fn restore_from_local_trash(staged: &Path, original: &Path) -> Result<(), IoError> {
+    if original.exists() {
+        return Err(IoError::Write {
+            path: original.to_path_buf(),
+            message: "a file already exists at the original location".to_owned(),
+        });
+    }
+    std::fs::rename(staged, original).map_err(|source| IoError::Write {
+        path: staged.to_path_buf(),
+        message: format!("restaurando desde la papelera del proyecto: {source}"),
+    })
+}
+
+/// Borra de verdad (mejor esfuerzo, sin fallar si `trash/` no existe o algún
+/// archivo ya no está) todo lo que quedó en la papelera del proyecto sin
+/// deshacer — se llama al salir de la carpeta (galería/proyecto) y al
+/// volver a entrar en ella, para que un `Ctrl+Z` que nunca llegó, o los
+/// restos de una sesión que se cerró en falso, no se queden para siempre.
+pub fn purge_local_trash(folder: &Path) {
+    let dir = trash_dir(folder);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!("no se pudo purgar {} de la papelera: {e}", path.display());
+        }
+    }
+}
+
 /// FNV-1a de 64 bits: determinista entre ejecuciones y versiones de Rust
 /// (el `DefaultHasher` de std no lo garantiza).
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -969,5 +1046,62 @@ mod tests {
             !path.with_extension("").is_file(),
             "no debe crear ninguna imagen"
         );
+    }
+
+    #[test]
+    fn moving_to_local_trash_and_restoring_round_trips_the_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("foto.png");
+        std::fs::write(&path, b"pixels").unwrap();
+
+        let staged = move_to_local_trash(&path).expect("mover a la papelera");
+        assert!(!path.exists(), "ya no debe estar en su sitio original");
+        assert!(staged.exists());
+        assert_eq!(staged, trash_dir(dir.path()).join("foto.png"));
+        assert_eq!(staged, local_trash_path(&path));
+
+        restore_from_local_trash(&staged, &path).expect("restaurar");
+        assert!(path.exists());
+        assert!(!staged.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"pixels");
+    }
+
+    #[test]
+    fn restoring_refuses_to_overwrite_a_file_that_reappeared_at_the_original_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("foto.png");
+        std::fs::write(&path, b"original").unwrap();
+        let staged = move_to_local_trash(&path).expect("mover a la papelera");
+
+        // Algo (o alguien) creó un archivo nuevo con el mismo nombre
+        // mientras tanto.
+        std::fs::write(&path, b"nuevo").unwrap();
+
+        let err = restore_from_local_trash(&staged, &path);
+        assert!(err.is_err(), "no debe sobrescribir en silencio");
+        assert_eq!(std::fs::read(&path).unwrap(), b"nuevo");
+        assert!(staged.exists(), "lo movido sigue a salvo en la papelera");
+    }
+
+    #[test]
+    fn purge_removes_everything_left_in_the_trash_but_not_the_folder_itself() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.png");
+        let b = dir.path().join("b.png");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        move_to_local_trash(&a).expect("mover a");
+        move_to_local_trash(&b).expect("mover b");
+
+        purge_local_trash(dir.path());
+
+        assert!(!local_trash_path(&a).exists());
+        assert!(!local_trash_path(&b).exists());
+    }
+
+    #[test]
+    fn purge_of_a_folder_with_no_trash_yet_does_not_panic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        purge_local_trash(dir.path());
     }
 }

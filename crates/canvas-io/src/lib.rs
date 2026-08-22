@@ -28,8 +28,9 @@ pub use metadata::{
 pub use probe::{probe_page_size, probe_page_size_with};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
-    blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, make_preview, preview_scale,
-    read_design, read_preview, read_sidecar, sidecar_dir, sidecar_path, write_blank_canvas,
+    blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, local_trash_path, make_preview,
+    move_to_local_trash, preview_scale, purge_local_trash, read_design, read_preview, read_sidecar,
+    restore_from_local_trash, sidecar_dir, sidecar_path, trash_dir, write_blank_canvas,
     write_design, write_sidecar, CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM,
     SIDECAR_DIR,
 };

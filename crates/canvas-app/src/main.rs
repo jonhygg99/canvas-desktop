@@ -21,6 +21,7 @@ mod surface;
 mod watcher;
 mod welcome;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -272,6 +273,16 @@ struct App {
     /// volvería a cumplirse cada frame: se abandona en vez de reintentar sin
     /// fin, mismo criterio que `save_all_attempted` con un lote fallido.
     materialize_blocked: Option<u64>,
+    /// Rutas cuyo borrado en curso (`spawn_document_delete`) fue pedido
+    /// directamente por el usuario (botón «Delete», o «Delete» desde la
+    /// cabecera de un lienzo de fondo) — NO el borrado que ya ocurre como
+    /// consecuencia de deshacer una creación (`pending_delete_from_undo`).
+    /// El valor es el sidecar que tenía, si tenía uno — hay que anotarlo
+    /// ANTES de borrar, porque una vez borrado ya no queda en disco para
+    /// que `canvas_io::find_sidecar` lo encuentre. `AppMsg::DocumentDeleted`
+    /// la consulta para decidir si ese borrado se apila como
+    /// `GlobalStep::Delete` (deshacible) o no.
+    undoable_deletes: HashMap<PathBuf, Option<PathBuf>>,
 }
 
 impl App {
@@ -353,6 +364,7 @@ impl App {
             save_all_attempted: false,
             materializing: None,
             materialize_blocked: None,
+            undoable_deletes: HashMap::new(),
         };
         if let Some(m) = app.menus.as_mut() {
             m.set_recents(&app.settings.recent_files);
@@ -498,6 +510,12 @@ impl App {
             self.deck = deck::Deck::single(path.to_path_buf());
             self.apply_deck_prefs();
         }
+        // Limpieza defensiva: si esta carpeta se cerró en falso la vez
+        // anterior (crash, apagón) con algo sin deshacer en su papelera
+        // propia (`GlobalStep::Delete`), no se queda ahí para siempre.
+        if let Some(folder) = self.deck.folder.clone() {
+            canvas_io::purge_local_trash(&folder);
+        }
     }
 
     /// Siembra una `Deck` recién construida con las preferencias persistidas
@@ -567,9 +585,25 @@ impl App {
     }
 
     fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
+        // Se abandona la carpeta activa (galería o baraja del editor), si
+        // había una: purga su papelera propia — cualquier `Ctrl+Z` pendiente
+        // sobre un borrado ya perdió su ventana, porque el `EditorState` que
+        // lo llevaba (`global_undo`) está a punto de descartarse con el
+        // cambio de vista de más abajo.
+        let leaving_folder = match &self.view {
+            View::Gallery(g) => Some(g.folder.clone()),
+            View::Editor(_) => self.deck.folder.clone(),
+            _ => None,
+        };
+        if let Some(folder) = leaving_folder {
+            canvas_io::purge_local_trash(&folder);
+        }
         match nav {
             Nav::Open(path) => self.open_path(path, ctx),
             Nav::OpenGallery { path, navigation } => {
+                // Defensivo (crash-recovery): restos de un cierre en falso
+                // de la sesión anterior en ESTA carpeta, si los hay.
+                canvas_io::purge_local_trash(&path);
                 let gallery_state = gallery::GalleryState::with_navigation(
                     path.clone(),
                     self.settings.gallery_sort,
@@ -1355,6 +1389,23 @@ impl App {
                     // decisión se guarda en una variable local y se aplica
                     // después de que el préstamo termine.
                     let mut go_to_welcome = false;
+                    // `remove` (no `get`): de un solo uso — `Some(sidecar)`
+                    // si este borrado lo pidió el usuario directamente (no
+                    // como consecuencia de deshacer un `Create`), con el
+                    // sidecar que tenía (si tenía uno) anotado ANTES de
+                    // borrar. Se apila como `GlobalStep::Delete` más abajo,
+                    // solo si el borrado tuvo éxito.
+                    let undoable_delete = self.undoable_deletes.remove(&path);
+                    if result.is_ok() {
+                        if let (Some(sidecar), View::Editor(state)) =
+                            (undoable_delete, &mut self.view)
+                        {
+                            state.record_delete(editor::DeleteRecord {
+                                path: path.clone(),
+                                sidecar,
+                            });
+                        }
+                    }
                     let is_active = matches!(&self.view, View::Editor(state)
                         if state.doc.source_path.as_deref() == Some(path.as_path()));
                     if is_active {
@@ -1451,6 +1502,37 @@ impl App {
                         self.view = View::Welcome { error: None };
                     }
                 }
+                AppMsg::DocumentRestored { path, result } => match result {
+                    Ok(()) => {
+                        // Igual que tras una `GalleryOp` (`GalleryOpDone`,
+                        // arriba): si la carpeta activa (baraja o galería)
+                        // es la del archivo restaurado, se rescanea para que
+                        // reaparezca como ranura/miniatura — no hace falta
+                        // reconstruir un `Slot` a mano.
+                        self.ignore_fs_events_until =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
+                        if let Some(folder) = path.parent().map(PathBuf::from) {
+                            if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                                loader::spawn_gallery_scan(
+                                    folder.clone(),
+                                    self.thumb_cache.clone(),
+                                    self.tx.clone(),
+                                    ctx.clone(),
+                                );
+                            }
+                            if matches!(&self.view, View::Gallery(g) if g.folder == folder) {
+                                self.rescan_gallery(ctx);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("no se pudo restaurar «{}»: {e}", path.display());
+                        if let View::Editor(state) = &mut self.view {
+                            state.save_error =
+                                Some(format!("Could not restore \"{}\": {e}", path.display()));
+                        }
+                    }
+                },
                 AppMsg::FocusWindow => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
@@ -2363,6 +2445,12 @@ impl eframe::App for App {
                     }
                 }
                 if std::mem::take(&mut state.delete_requested) {
+                    // Si viene de deshacer un `Create` (ver
+                    // `pending_delete_from_undo`), este borrado en concreto
+                    // no debe poder deshacerse a su vez — se consume aquí,
+                    // ANTES de decidir si la ruta entra en
+                    // `undoable_deletes`.
+                    let from_undo = std::mem::take(&mut state.pending_delete_from_undo);
                     let placeholder_id = self
                         .deck
                         .slots
@@ -2375,6 +2463,10 @@ impl eframe::App for App {
                         self.ignore_fs_events_until =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                         self.watcher = None;
+                        if !from_undo {
+                            let sidecar = canvas_io::find_sidecar(&path);
+                            self.undoable_deletes.insert(path.clone(), sidecar);
+                        }
                         loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                     }
                 }
@@ -2992,6 +3084,8 @@ impl eframe::App for App {
                             self.ignore_fs_events_until =
                                 Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
                             self.watcher = None;
+                            let sidecar = canvas_io::find_sidecar(&path);
+                            self.undoable_deletes.insert(path.clone(), sidecar);
                             loader::spawn_document_delete(path, self.tx.clone(), ctx.clone());
                         }
                     }
@@ -3042,7 +3136,12 @@ impl eframe::App for App {
                             }
                         }
                     }
-                } else if let Some(id) = state.pending_global_undo.or(state.pending_global_redo) {
+                } else if let Some(id) = state
+                    .pending_global_undo
+                    .as_ref()
+                    .or(state.pending_global_redo.as_ref())
+                    .map(editor::GlobalStep::slot_id)
+                {
                     // Deshacer/rehacer global: el paso más reciente de toda
                     // la sesión le tocaba a OTRO diseño de la baraja — salta
                     // a él para mostrarlo (mismo patrón que «Save all»,
@@ -3133,15 +3232,26 @@ impl eframe::App for App {
                 // le tocaba a la petición pendiente (el salto de arriba se
                 // aplicó, esta misma vuelta o en una anterior), ejecuta el
                 // paso local ahora que es la activa y limpia la petición.
-                if state.pending_global_undo.is_some_and(|id| {
-                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                if state.pending_global_undo.as_ref().is_some_and(|step| {
+                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(step.slot_id())
                 }) {
                     state.finish_pending_global_undo();
                 }
-                if state.pending_global_redo.is_some_and(|id| {
-                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                if state.pending_global_redo.as_ref().is_some_and(|step| {
+                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(step.slot_id())
                 }) {
                     state.finish_pending_global_redo();
+                }
+                // Deshacer un borrado (`GlobalStep::Delete`): no pertenece a
+                // ninguna ranura, así que `undo()` ya lo resolvió sin
+                // esperar ningún salto — solo queda lanzar la restauración.
+                if let Some(record) = state.pending_restore.take() {
+                    loader::spawn_restore_from_trash(
+                        record.path,
+                        record.sidecar,
+                        self.tx.clone(),
+                        ctx.clone(),
+                    );
                 }
 
                 if std::mem::take(&mut state.settings_clicked) {

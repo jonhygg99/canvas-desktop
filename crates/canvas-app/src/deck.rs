@@ -190,6 +190,9 @@ pub struct SlotDoc {
     /// Nació en blanco y no se ha guardado ni una vez — ver
     /// `EditorState::born_blank`.
     pub born_blank: bool,
+    /// Su creación todavía no se ha registrado en el deshacer global — ver
+    /// `EditorState::pending_creation`.
+    pub pending_creation: bool,
     /// Bytes aproximados en RAM (Σ ancho·alto·4 de `images`), para el
     /// presupuesto de descarte.
     pub bytes: usize,
@@ -1160,6 +1163,7 @@ mod tests {
             save_error: None,
             external_change: false,
             born_blank: false,
+            pending_creation: false,
             bytes: 0,
         }
     }

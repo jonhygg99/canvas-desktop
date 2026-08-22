@@ -129,6 +129,12 @@ pub enum AppMsg {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// Se restauró `path` desde la Papelera de reciclaje al deshacer un
+    /// `GlobalStep::Delete` (`editor::EditorState::pending_restore`).
+    DocumentRestored {
+        path: PathBuf,
+        result: Result<(), String>,
+    },
 }
 
 /// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:
@@ -251,13 +257,33 @@ fn rename_with_sidecar(path: &std::path::Path, new_stem: &str) -> Result<PathBuf
 
 /// Envía `path` (y su sidecar, si es una imagen que tiene uno) a la
 /// Papelera de reciclaje del sistema: recuperable si el usuario se
-/// equivoca, a diferencia de un borrado permanente.
+/// equivoca, a diferencia de un borrado permanente. Usado por el borrado
+/// desde la GALERÍA (`GalleryOp::Delete`) — ese no tiene deshacer, así que
+/// sí le compensa depender de la papelera real del sistema.
 fn trash_with_sidecar(path: &std::path::Path) -> Result<(), String> {
     trash::delete(path).map_err(|e| e.to_string())?;
     if canvas_io::is_image_file(path) {
         if let Some(sidecar) = canvas_io::find_sidecar(path) {
             if let Err(e) = trash::delete(&sidecar) {
                 tracing::warn!("no se pudo borrar el sidecar: {e}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mueve `path` (y su sidecar, si es una imagen que tiene uno) a la
+/// papelera PROPIA del proyecto (`canvas_io::move_to_local_trash`), no la
+/// del sistema — este borrado sí tiene deshacer (botón «Delete» del
+/// editor/cabecera de un lienzo), y restaurar con un `rename` no depende de
+/// ninguna API de plataforma (a diferencia de `trash::os_limited`, que en
+/// macOS no existe).
+fn trash_locally_with_sidecar(path: &std::path::Path) -> Result<(), String> {
+    canvas_io::move_to_local_trash(path).map_err(|e| e.to_string())?;
+    if canvas_io::is_image_file(path) {
+        if let Some(sidecar) = canvas_io::find_sidecar(path) {
+            if let Err(e) = canvas_io::move_to_local_trash(&sidecar) {
+                tracing::warn!("no se pudo mover el sidecar a la papelera: {e}");
             }
         }
     }
@@ -344,14 +370,41 @@ pub fn spawn_document_rename(
     });
 }
 
-/// Envía a la Papelera de reciclaje el archivo abierto en el editor (y su
-/// sidecar) — disparado desde el botón «Delete» del panel de propiedades.
+/// Mueve a la papelera del proyecto el archivo abierto en el editor (y su
+/// sidecar) — disparado desde el botón «Delete» del panel de propiedades, o
+/// desde la cabecera de un lienzo de fondo.
 pub fn spawn_document_delete(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = trash_with_sidecar(&path);
+        let result = trash_locally_with_sidecar(&path);
         let _ = tx.send(AppMsg::DocumentDeleted { path, result });
         ctx.request_repaint();
     });
+}
+
+/// Restaura de la papelera del proyecto `path` (y `sidecar`, si lo tenía) a
+/// su ubicación original — deshacer un `GlobalStep::Delete`. El sidecar es
+/// mejor esfuerzo (solo se avisa por log si falla, no aborta el resto).
+pub fn spawn_restore_from_trash(
+    path: PathBuf,
+    sidecar: Option<PathBuf>,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = restore_one(&path);
+        if let Some(sidecar) = &sidecar {
+            if let Err(e) = restore_one(sidecar) {
+                tracing::warn!("no se pudo restaurar el sidecar: {e}");
+            }
+        }
+        let _ = tx.send(AppMsg::DocumentRestored { path, result });
+        ctx.request_repaint();
+    });
+}
+
+fn restore_one(original: &std::path::Path) -> Result<(), String> {
+    let staged = canvas_io::local_trash_path(original);
+    canvas_io::restore_from_local_trash(&staged, original).map_err(|e| e.to_string())
 }
 
 /// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
