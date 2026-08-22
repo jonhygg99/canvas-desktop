@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 5 completada**
+**Estado: Terminado — Fases 0-6 completas**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -136,9 +136,21 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
    código que no se movía hasta un paso posterior, y `pub(super)` no llega
    hasta la raíz. `main.rs`: 3348 → 161 líneas. Build real, 56 tests, clippy
    y fmt limpios en cada sub-paso.
-7. **Fase 6 — Limpieza final.** `cargo clippy --workspace --all-targets -- -D
-   warnings` y `cargo fmt --all -- --check` sobre todo el workspace; revisar
-   que no queden `pub` innecesarios expuestos solo por la partición.
+7. ✅ **Fase 6 — Limpieza final.** clippy/fmt ya estaban limpios en todo el
+   workspace. Encontré ~25 métodos/funciones en `app/*.rs` marcados
+   `pub(crate)` durante la Fase 5 (necesario en su momento porque `main.rs`
+   los llamaba desde código aún no movido) que ya no lo necesitaban —
+   confirmé que nada fuera de `app/` los usa salvo `App`/`App::new` desde
+   `main.rs` — y los apreté a `pub(super)`. `Nav` volvió a privado.
+   Build, 145 tests, clippy y fmt limpios.
+
+**Plan completo.** `editor.rs` (4825 líneas) → `editor/` (8 archivos:
+`state.rs`, `viewport.rs`, `layer_ops.rs`, `interaction.rs`, `overlay.rs`,
+`slot_chrome.rs`, `canvas_view.rs`, `properties_panel.rs`) + `mod.rs` en 28
+líneas de hub. `main.rs` (3348 líneas) → `app/` (6 archivos: `window.rs`,
+`persistence.rs`, `menu_actions.rs`, `navigation.rs`, `messages.rs`,
+`mod.rs`) + `main.rs` en 161 líneas de punto de entrada puro. Verificado
+limpio (build real, tests, clippy, fmt) en cada uno de los ~20 sub-pasos.
 
 ### Estimación
 
