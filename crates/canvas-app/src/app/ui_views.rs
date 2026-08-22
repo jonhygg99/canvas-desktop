@@ -157,6 +157,22 @@ pub(super) fn gallery_view_ui(
                 ctx.clone(),
             );
         }
+        Some(gallery::GalleryAction::RenameFolder(path, new_name)) => {
+            loader::spawn_gallery_op(
+                loader::GalleryOp::RenameFolder { path, new_name },
+                false,
+                tx.clone(),
+                ctx.clone(),
+            );
+        }
+        Some(gallery::GalleryAction::DeleteFolder(path)) => {
+            loader::spawn_gallery_op(
+                loader::GalleryOp::DeleteFolder { path },
+                false,
+                tx.clone(),
+                ctx.clone(),
+            );
+        }
         Some(gallery::GalleryAction::CreateFolder(parent, name)) => {
             loader::spawn_gallery_op(
                 loader::GalleryOp::CreateFolder { parent, name },

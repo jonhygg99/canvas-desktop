@@ -189,6 +189,21 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                     Err(e) => (parent, None, Err(e.to_string())),
                 }
             }
+            GalleryOp::RenameFolder { path, new_name } => {
+                let parent = path.parent().map(PathBuf::from).unwrap_or_default();
+                let dst = parent.join(&new_name);
+                match std::fs::rename(&path, &dst) {
+                    Ok(()) => (parent, Some(dst), Ok(())),
+                    Err(e) => (parent, None, Err(e.to_string())),
+                }
+            }
+            GalleryOp::DeleteFolder { path } => {
+                let parent = path.parent().map(PathBuf::from).unwrap_or_default();
+                match trash::delete(&path) {
+                    Ok(()) => (parent, None, Ok(())),
+                    Err(e) => (parent, None, Err(e.to_string())),
+                }
+            }
         };
         let _ = tx.send(AppMsg::GalleryOpDone {
             folder,

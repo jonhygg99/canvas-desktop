@@ -189,4 +189,6 @@ pub enum GalleryOp {
     /// A la Papelera de reciclaje (crate `trash`), no borrado permanente.
     Delete { path: PathBuf },
     CreateFolder { parent: PathBuf, name: String },
+    RenameFolder { path: PathBuf, new_name: String },
+    DeleteFolder { path: PathBuf },
 }

@@ -93,6 +93,7 @@ pub struct GalleryState {
     pub rename_edit: Option<(PathBuf, String)>,
     pub new_folder_inside: Option<String>,
     pub new_folder_sibling: Option<String>,
+    pub folder_rename_edit: Option<(PathBuf, String)>,
     /// Último fallo de una operación de archivos (crear/duplicar/pegar/
     /// renombrar/borrar), visible hasta que el usuario lo descarta.
     pub op_error: Option<String>,
@@ -153,6 +154,7 @@ impl GalleryState {
             rename_edit: None,
             new_folder_inside: None,
             new_folder_sibling: None,
+            folder_rename_edit: None,
             op_error: None,
         }
     }
@@ -178,6 +180,7 @@ impl GalleryState {
             rename_edit: None,
             new_folder_inside: None,
             new_folder_sibling: None,
+            folder_rename_edit: None,
             op_error: None,
         }
     }
@@ -297,6 +300,8 @@ pub enum GalleryAction {
     /// ocurrió (diálogo nativo) antes de devolver esta acción.
     Delete(PathBuf),
     CreateFolder(PathBuf, String),
+    RenameFolder(PathBuf, String),
+    DeleteFolder(PathBuf),
 }
 
 /// Ruta copiada desde una galería. Ranura de proceso, como el portapapeles

@@ -73,14 +73,94 @@ fn folder_button_list(
     ui: &mut egui::Ui,
     folders: &[PathBuf],
     current: Option<&Path>,
+    rename_edit: &mut Option<(PathBuf, String)>,
     action: &mut Option<GalleryAction>,
 ) {
     for folder in folders {
         let name = folder_name(folder);
-        if current == Some(folder.as_path()) {
-            ui.strong(name);
-        } else if ui.button(name).clicked() {
-            *action = Some(GalleryAction::OpenFolder(folder.clone()));
+        let rename_this = rename_edit
+            .as_ref()
+            .is_some_and(|(p, _)| p == folder);
+        if rename_this {
+            let Some((_, text)) = rename_edit.as_mut() else { continue };
+            let id = egui::Id::new(("folder_rename", folder.as_os_str()));
+            let response = ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(id)
+                    .desired_width(140.0),
+            );
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                *rename_edit = None;
+            } else if response.lost_focus() {
+                let trimmed = text.trim().to_owned();
+                let old_name = folder_name(folder);
+                if !trimmed.is_empty() && trimmed != old_name {
+                    *action = Some(GalleryAction::RenameFolder(folder.clone(), trimmed));
+                }
+                *rename_edit = None;
+            }
+        } else if current == Some(folder.as_path()) {
+            let label = ui.add(
+                egui::Label::new(egui::RichText::new(&name).strong())
+                    .sense(egui::Sense::click()),
+            );
+            label.context_menu(|ui| {
+                if ui.button("Rename").clicked() {
+                    let stem = folder_name(folder);
+                    *rename_edit = Some((folder.clone(), stem));
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(egui::Id::new(("folder_rename", folder.as_os_str())));
+                    });
+                    ui.close();
+                }
+                let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+                if ui.button(delete_label).clicked() {
+                    let fname = folder_name(folder);
+                    let confirmed = rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title("Delete folder")
+                        .set_description(format!(
+                            "Move \"{fname}\" to the trash?\nThis deletes all files inside it.",
+                        ))
+                        .set_buttons(rfd::MessageButtons::OkCancel)
+                        .show();
+                    if confirmed == rfd::MessageDialogResult::Ok {
+                        *action = Some(GalleryAction::DeleteFolder(folder.clone()));
+                    }
+                    ui.close();
+                }
+            });
+        } else {
+            let btn = ui.button(name);
+            if btn.clicked() {
+                *action = Some(GalleryAction::OpenFolder(folder.clone()));
+            }
+            btn.context_menu(|ui| {
+                if ui.button("Rename").clicked() {
+                    let stem = folder_name(folder);
+                    *rename_edit = Some((folder.clone(), stem));
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(egui::Id::new(("folder_rename", folder.as_os_str())));
+                    });
+                    ui.close();
+                }
+                let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+                if ui.button(delete_label).clicked() {
+                    let folder_name = folder_name(folder);
+                    let confirmed = rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title("Delete folder")
+                        .set_description(format!(
+                            "Move \"{folder_name}\" to the trash?\nThis deletes all files inside it.",
+                        ))
+                        .set_buttons(rfd::MessageButtons::OkCancel)
+                        .show();
+                    if confirmed == rfd::MessageDialogResult::Ok {
+                        *action = Some(GalleryAction::DeleteFolder(folder.clone()));
+                    }
+                    ui.close();
+                }
+            });
         }
     }
 }
@@ -147,7 +227,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                 if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                     ui.weak("No subfolders");
                 } else if !state.folders.children.is_empty() {
-                    folder_button_list(ui, &state.folders.children, None, &mut action);
+                    folder_button_list(ui, &state.folders.children, None, &mut state.folder_rename_edit, &mut action);
                 }
                 ui.add_space(8.0);
                 ui.separator();
@@ -160,6 +240,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     ui,
                     &state.folders.siblings,
                     Some(state.folder.as_path()),
+                    &mut state.folder_rename_edit,
                     &mut action,
                 );
             });
@@ -175,7 +256,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                         ui.weak("No subfolders");
                     } else if !state.folders.children.is_empty() {
-                        folder_button_list(ui, &state.folders.children, None, &mut action);
+                        folder_button_list(ui, &state.folders.children, None, &mut state.folder_rename_edit, &mut action);
                     }
                 });
             });
@@ -194,6 +275,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                         ui,
                         &state.folders.siblings,
                         Some(state.folder.as_path()),
+                        &mut state.folder_rename_edit,
                         &mut action,
                     );
                 });
