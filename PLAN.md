@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 4 completada**
+**Estado: En curso — Fase 5 completada**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -127,9 +127,15 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
    `ACCENT` volvieron a `mod.rs` (las necesitan `interaction`/`overlay`/
    `slot_chrome`, no `properties_panel`). Build real (app cerrada), 56
    tests, clippy y fmt limpios.
-6. **Fase 5 — Repetir el proceso en `main.rs`.** `messages.rs` primero (más
-   fácil de partir por variante de `AppMsg`), luego `navigation.rs`,
-   `persistence.rs`, `menu_actions.rs`, `window.rs`.
+6. ✅ **Fase 5 — Modularizar `main.rs` en `app/`.** Orden real (ajustado del
+   plan original: menos acoplado primero, `app/mod.rs` al final):
+   `window.rs` → `persistence.rs` → `menu_actions.rs` → `navigation.rs` →
+   `messages.rs` → `app/mod.rs` (`App`/`View`/`Nav`/`fn ui()`). Visibilidad
+   `pub(crate)` en vez de `pub(super)` en casi todo: a diferencia de
+   `editor/`, `main.rs` (la raíz del crate) llamaba a estos métodos desde
+   código que no se movía hasta un paso posterior, y `pub(super)` no llega
+   hasta la raíz. `main.rs`: 3348 → 161 líneas. Build real, 56 tests, clippy
+   y fmt limpios en cada sub-paso.
 7. **Fase 6 — Limpieza final.** `cargo clippy --workspace --all-targets -- -D
    warnings` y `cargo fmt --all -- --check` sobre todo el workspace; revisar
    que no queden `pub` innecesarios expuestos solo por la partición.
