@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::{deck, editor, loader, App, Nav, View};
+use crate::{deck, editor, loader};
+
+use super::{App, Nav, View};
 use loader::AppMsg;
 
 use super::persistence::build_slot_doc;

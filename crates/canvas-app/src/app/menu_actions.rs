@@ -3,7 +3,9 @@
 
 use eframe::egui;
 
-use crate::{clipboard, editor, export, layers_panel, loader, menus, App, Nav, View};
+use crate::{clipboard, editor, export, layers_panel, loader, menus};
+
+use super::{App, Nav, View};
 
 impl App {
     /// Traduce un clic de menú a la acción correspondiente.

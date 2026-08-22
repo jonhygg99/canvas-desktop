@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
-use crate::{deck, editor, gallery, loader, settings, App, Nav, View};
+use crate::{deck, editor, gallery, loader, settings};
+
+use super::{App, Nav, View};
 
 use super::persistence::{resolve_canvas_sidecar, seed_gallery_from_deck};
 

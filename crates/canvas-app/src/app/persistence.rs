@@ -10,7 +10,9 @@ use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 
 use crate::loader::{self, AppMsg};
-use crate::{deck, editor, export, gallery, settings, App, View};
+use crate::{deck, editor, export, gallery, settings};
+
+use super::{App, View};
 
 impl App {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no

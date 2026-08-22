@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use canvas_shell::ShellIntegration as _;
 use eframe::egui;
 
-use crate::{deck, loader, App, View};
+use crate::{deck, loader};
+
+use super::{App, View};
 
 impl App {
     /// Apunta lo abierto en los recientes: ajustes, menú y Jump List del SO.
