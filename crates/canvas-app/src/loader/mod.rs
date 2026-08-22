@@ -188,4 +188,5 @@ pub enum GalleryOp {
     Rename { path: PathBuf, new_stem: String },
     /// A la Papelera de reciclaje (crate `trash`), no borrado permanente.
     Delete { path: PathBuf },
+    CreateFolder { parent: PathBuf, name: String },
 }

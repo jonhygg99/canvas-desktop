@@ -415,7 +415,8 @@ impl App {
                         Ok(()) => {
                             // Solo rescanea si el usuario sigue en esa galería:
                             // pudo haber navegado mientras corría la copia.
-                            if matches!(&self.view, View::Gallery(g) if g.folder == folder) {
+                            if matches!(&self.view, View::Gallery(g) if g.folder == folder
+                                    || g.folder.parent() == Some(folder.as_path())) {
                                 // El resultado de la operación queda
                                 // seleccionado (borde azul): la copia recién
                                 // duplicada/pegada, el archivo recién
@@ -423,6 +424,7 @@ impl App {
                                 // (`created` es `None`, limpia la marca).
                                 if let View::Gallery(g) = &mut self.view {
                                     g.selected = created.clone();
+                                    g.refresh_folder_lists();
                                 }
                                 self.rescan_gallery(ctx);
                             }
@@ -648,8 +650,12 @@ impl App {
                                     ctx.clone(),
                                 );
                             }
-                            if matches!(&self.view, View::Gallery(g) if g.folder == folder) {
+                            if matches!(&self.view, View::Gallery(g) if g.folder == folder
+                                    || g.folder.parent() == Some(folder.as_path())) {
                                 self.rescan_gallery(ctx);
+                                if let View::Gallery(g) = &mut self.view {
+                                    g.refresh_folder_lists();
+                                }
                             }
                         }
                     }

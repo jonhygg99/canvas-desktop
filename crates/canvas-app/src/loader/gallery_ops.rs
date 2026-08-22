@@ -182,6 +182,13 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                     Err(e) => (folder, None, Err(e)),
                 }
             }
+            GalleryOp::CreateFolder { parent, name } => {
+                let path = parent.join(&name);
+                match std::fs::create_dir(&path) {
+                    Ok(()) => (parent, Some(path), Ok(())),
+                    Err(e) => (parent, None, Err(e.to_string())),
+                }
+            }
         };
         let _ = tx.send(AppMsg::GalleryOpDone {
             folder,

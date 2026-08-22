@@ -91,6 +91,13 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
     ui.horizontal_wrapped(|ui| {
         ui.strong("Folders");
         if ui
+            .small_button("↻")
+            .on_hover_text("Refresh folder list")
+            .clicked()
+        {
+            state.refresh_folder_lists();
+        }
+        if ui
             .small_button("Change View")
             .on_hover_text(format!(
                 "Change folders view to {}",
@@ -135,14 +142,20 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.strong(format!("Inside {current_name}"));
-                if state.folders.children.is_empty() {
+                new_folder_ui(ui, "inside", &state.folder, &mut state.new_folder_inside, &mut action);
+                ui.add_space(2.0);
+                if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                     ui.weak("No subfolders");
-                } else {
+                } else if !state.folders.children.is_empty() {
                     folder_button_list(ui, &state.folders.children, None, &mut action);
                 }
                 ui.add_space(8.0);
                 ui.separator();
                 ui.strong("Siblings");
+                if let Some(parent) = state.folder.parent() {
+                    new_folder_ui(ui, "sibling", &parent, &mut state.new_folder_sibling, &mut action);
+                    ui.add_space(2.0);
+                }
                 folder_button_list(
                     ui,
                     &state.folders.siblings,
@@ -152,20 +165,26 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             });
     } else {
         ui.strong(format!("Inside {current_name}"));
+        new_folder_ui(ui, "inside", &state.folder, &mut state.new_folder_inside, &mut action);
+        ui.add_space(2.0);
         egui::ScrollArea::horizontal()
             .id_salt("gallery_child_folders_horizontal")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if state.folders.children.is_empty() {
+                    if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                         ui.weak("No subfolders");
-                    } else {
+                    } else if !state.folders.children.is_empty() {
                         folder_button_list(ui, &state.folders.children, None, &mut action);
                     }
                 });
             });
         ui.separator();
         ui.strong("Siblings");
+        if let Some(parent) = state.folder.parent() {
+            new_folder_ui(ui, "sibling", &parent, &mut state.new_folder_sibling, &mut action);
+            ui.add_space(2.0);
+        }
         egui::ScrollArea::horizontal()
             .id_salt("gallery_sibling_folders_horizontal")
             .auto_shrink([false, false])
@@ -182,6 +201,44 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
     }
     action
 }
+
+fn new_folder_ui(
+    ui: &mut egui::Ui,
+    id_prefix: &str,
+    parent: &Path,
+    new_folder_name: &mut Option<String>,
+    action: &mut Option<GalleryAction>,
+) {
+    match new_folder_name {
+        Some(name) => {
+            let id = egui::Id::new(("new_folder_input", id_prefix, parent));
+            let response = ui.add(
+                egui::TextEdit::singleline(name)
+                    .id(id)
+                    .hint_text("Folder name")
+                    .desired_width(160.0),
+            );
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                *new_folder_name = None;
+            } else if response.lost_focus() {
+                let trimmed = name.trim().to_owned();
+                if !trimmed.is_empty() {
+                    *action = Some(GalleryAction::CreateFolder(parent.to_path_buf(), trimmed));
+                }
+                *new_folder_name = None;
+            }
+        }
+        None => {
+            if ui.small_button("✚ New folder").clicked() {
+                *new_folder_name = Some(String::new());
+                ui.ctx().memory_mut(|m| {
+                    m.request_focus(egui::Id::new(("new_folder_input", id_prefix, parent)));
+                });
+            }
+        }
+    }
+}
+
 fn show_folder_panel(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
     match state.folder_panel_side {

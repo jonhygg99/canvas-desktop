@@ -91,6 +91,8 @@ pub struct GalleryState {
     /// Renombrado en curso: ruta y texto editable (solo el nombre base, sin
     /// extensión — cambiarla rompería la detección de imagen/diseño).
     pub rename_edit: Option<(PathBuf, String)>,
+    pub new_folder_inside: Option<String>,
+    pub new_folder_sibling: Option<String>,
     /// Último fallo de una operación de archivos (crear/duplicar/pegar/
     /// renombrar/borrar), visible hasta que el usuario lo descarta.
     pub op_error: Option<String>,
@@ -149,6 +151,8 @@ impl GalleryState {
             sort,
             selected: None,
             rename_edit: None,
+            new_folder_inside: None,
+            new_folder_sibling: None,
             op_error: None,
         }
     }
@@ -172,9 +176,20 @@ impl GalleryState {
             sort,
             selected: None,
             rename_edit: None,
+            new_folder_inside: None,
+            new_folder_sibling: None,
             op_error: None,
         }
     }
+    /// Vuelve a sondear las carpetas (Inside y Siblings). Útil tras crear
+    /// o borrar una subcarpeta desde el panel.
+    pub fn refresh_folder_lists(&mut self) {
+        self.folders = Box::new(FolderLists {
+            siblings: sibling_folders(&self.folder),
+            children: child_folders(&self.folder),
+        });
+    }
+
     pub fn navigation_to_folder(&mut self, folder: PathBuf) -> (PathBuf, FolderNavigation) {
         self.navigation.push(folder.clone());
         (folder, self.navigation.clone())
@@ -281,6 +296,7 @@ pub enum GalleryAction {
     /// Enviar este archivo a la Papelera de reciclaje. La confirmación ya
     /// ocurrió (diálogo nativo) antes de devolver esta acción.
     Delete(PathBuf),
+    CreateFolder(PathBuf, String),
 }
 
 /// Ruta copiada desde una galería. Ranura de proceso, como el portapapeles
