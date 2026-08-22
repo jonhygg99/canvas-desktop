@@ -73,7 +73,95 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         });
 }
 
+/// Consolida cualquier edición de panel a medias (`panel_edit`/`blur_edit`/
+/// `color_edit`/`content_edit`/`shadow_edit`) cuya capa ya no es la
+/// seleccionada. Esos campos solo se limpian solos cuando el control que los
+/// arma detecta `lost_focus()`/`drag_stopped()` — pero ese control solo se
+/// dibuja mientras su capa sigue siendo `selection.primary()`
+/// (`layer_properties_ui`/`content_properties_ui`). Cambiar de capa (o
+/// deseleccionar) a mitad de una edición hace que ese control desaparezca
+/// del árbol de UI sin soltar nunca el foco, dejando el campo pegado en
+/// `Some(...)` para siempre: la edición se pierde como paso de deshacer y,
+/// para `content_edit`, además bloquea Ctrl+Z/Ctrl+Y de TODO el editor
+/// (`handle_shortcuts` se los cede a un `TextEdit` con foco propio mientras
+/// `content_edit.is_some()`).
+fn commit_stale_panel_edits(state: &mut EditorState) {
+    let current = state.selection.primary();
+
+    if matches!(&state.panel_edit, Some((id, _)) if Some(*id) != current) {
+        if let Some((id, before)) = state.panel_edit.take() {
+            if let Ok(l) = state.doc.layer(id) {
+                let after = l.transform;
+                if after != before {
+                    state.push_undo_step(Box::new(SetTransform {
+                        layer: id,
+                        before,
+                        after,
+                    }));
+                }
+            }
+        }
+    }
+    if matches!(&state.blur_edit, Some((id, _)) if Some(*id) != current) {
+        if let Some((id, before)) = state.blur_edit.take() {
+            let after = state
+                .doc
+                .layer(id)
+                .map(|l| l.effects.blur_radius)
+                .unwrap_or(before);
+            if (after - before).abs() > f32::EPSILON {
+                state.push_undo_step(Box::new(canvas_core::SetBlur {
+                    layer: id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+    if matches!(&state.color_edit, Some((id, _)) if Some(*id) != current) {
+        if let Some((id, before)) = state.color_edit.take() {
+            let after = state.doc.layer(id).map(|l| l.effects).unwrap_or(before);
+            if after != before {
+                state.push_undo_step(Box::new(canvas_core::SetEffects {
+                    layer: id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+    if matches!(&state.content_edit, Some((id, _)) if Some(*id) != current) {
+        if let Some((id, before)) = state.content_edit.take() {
+            let after = state
+                .doc
+                .layer(id)
+                .map(|l| l.content.clone())
+                .unwrap_or_else(|_| before.clone());
+            if after != before {
+                state.push_undo_step(Box::new(canvas_core::SetContent {
+                    layer: id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+    if matches!(&state.shadow_edit, Some((id, _)) if Some(*id) != current) {
+        if let Some((id, before)) = state.shadow_edit.take() {
+            let after = state.doc.layer(id).ok().and_then(|l| l.effects.shadow);
+            if after != before {
+                state.push_undo_step(Box::new(canvas_core::SetShadow {
+                    layer: id,
+                    before,
+                    after,
+                }));
+            }
+        }
+    }
+}
+
 fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
+    commit_stale_panel_edits(state);
     ui.add_space(8.0);
 
     // Banner: el archivo cambió en disco fuera de la app.
@@ -3174,6 +3262,57 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn switching_selection_mid_edit_commits_the_pending_change_instead_of_leaking_it() {
+        let mut state = EditorState::new_blank(500.0, 500.0);
+        state.insert_layer_centered(
+            "Text",
+            200.0,
+            80.0,
+            LayerContent::Text(canvas_core::TextContent::default()),
+        );
+        let text_id = state.selection.primary().unwrap();
+        let original = state.doc.layer(text_id).unwrap().content.clone();
+
+        // Simula una edición de texto a medias: el control ya mutó el
+        // documento en vivo (como hace `content_properties_ui` en cada
+        // tecla), pero el usuario no soltó el foco del `TextEdit` todavía.
+        state.content_edit = Some((text_id, original.clone()));
+        if let LayerContent::Text(t) = &mut state.doc.layer_mut(text_id).unwrap().content {
+            t.text = "edited mid-flight".to_owned();
+        }
+
+        // Selecciona otra capa SIN soltar el foco antes: en la UI real esto
+        // hace que `content_properties_ui` deje de dibujarse para `text_id`
+        // y `lost_focus()` nunca vuelva a disparar para ese control.
+        state.insert_layer_centered(
+            "Shape",
+            50.0,
+            50.0,
+            LayerContent::Shape(canvas_core::ShapeContent::default()),
+        );
+        assert_ne!(state.selection.primary(), Some(text_id));
+        assert!(
+            state.content_edit.is_some(),
+            "sigue colgado hasta que se reconcilie"
+        );
+
+        commit_stale_panel_edits(&mut state);
+
+        assert!(
+            state.content_edit.is_none(),
+            "la edición colgada debe consolidarse, no seguir viva"
+        );
+
+        // El commit tardío debe haber quedado como su propio paso de
+        // deshacer: un solo Ctrl+Z basta para devolver el texto a su valor
+        // original, sin tocar la capa "Shape".
+        state.undo();
+        let restored = state.doc.layer(text_id).unwrap().content.clone();
+        assert_eq!(restored, original);
+        assert!(state.doc.layer(state.selection.primary().unwrap()).is_ok());
     }
 
     #[test]
