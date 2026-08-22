@@ -1,3 +1,4 @@
+mod menu_actions;
 mod persistence;
 mod window;
 
