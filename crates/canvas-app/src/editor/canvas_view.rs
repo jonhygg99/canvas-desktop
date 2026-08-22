@@ -18,11 +18,12 @@ use crate::surface::CanvasSurface;
 use super::interaction::layer_interaction;
 use super::layer_ops::{apply_alignment, reorder_layer, sibling_position, ZOrder};
 use super::overlay::{draw_grid, draw_rulers, draw_selection_overlay};
+use super::properties_panel::size_popup_ui;
 use super::slot_chrome::{
     draw_add_zone, draw_header_tooltips, draw_rename_overlay, draw_slot_chrome, slot_header_layout,
 };
 use super::viewport::{page_to_screen, screen_to_page, AutoFit};
-use super::{size_popup_ui, EditorState};
+use super::EditorState;
 
 /// Acción pedida desde la cabecera de un lienzo (área central) que necesita
 /// tocar disco (duplicar/borrar) o reconciliarse con el nombre real del
