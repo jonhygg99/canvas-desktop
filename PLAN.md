@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 0 completada**
+**Estado: En curso — Fase 1 completada**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -106,8 +106,11 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
 1. ✅ **Fase 0 — `editor.rs` → `editor/mod.rs` (andamiaje puro).** `git mv` a
    `editor/mod.rs`, sin tocar lógica. `app/` de `main.rs` se aborda en la
    Fase 5 (ver nota abajo). Build, 55 tests, clippy y fmt limpios.
-2. **Fase 1 — Extraer lógica pura sin egui.** Mover `layer_ops.rs` y las
-   funciones de coordenadas de `viewport.rs`.
+2. ✅ **Fase 1 — Extraer lógica pura sin egui.** `Viewport`/`AutoFit` +
+   funciones de coordenadas → `editor/viewport.rs`; `ZOrder`/`reorder_layer`/
+   `apply_alignment`/`sibling_position` → `editor/layer_ops.rs`. `Gesture`
+   se quedó en `mod.rs` (se revisa en la Fase 3). Build, 55 tests, clippy y
+   fmt limpios.
 3. **Fase 2 — Extraer `EditorState`.** Mover `state.rs` completo, incluyendo
    undo-redo global. Correr explícitamente los tests de undo/redo cross-deck.
 4. **Fase 3 — Extraer interacción y overlays del canvas.** `interaction.rs`,

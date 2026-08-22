@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use canvas_core::{
     contain_transform, cover_transform, resize_rotated_from_corner, snap_translation,
     trim_crop_from_corner, uncrop_transform, Command, CoreError, Corner, CropRect, Document,
-    History, ImageContent, InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, Reorder,
-    Selection, SetCrop, SetPageSize, SetTransform, Transform,
+    History, ImageContent, InsertLayer, Layer, LayerContent, LayerId, RemoveLayer, Selection,
+    SetCrop, SetPageSize, SetTransform, Transform,
 };
 use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, CanvasRenderer, FxScope, ImageMap};
@@ -20,125 +20,14 @@ use crate::gallery::ItemKind;
 use crate::loader::{self, AppMsg};
 use crate::surface::CanvasSurface;
 
-const MIN_ZOOM: f64 = 0.02;
-const MAX_ZOOM: f64 = 32.0;
+mod layer_ops;
+mod viewport;
 
-/// Qué se vuelve a ajustar solo cuando la ventana cambia de tamaño. El
-/// último ajuste automático manda: `Ctrl+0` deja `Active`, `Ctrl+Alt+0` deja
-/// `All`, y cualquier zoom o paneo MANUAL lo apaga (`Off`) — nadie quiere
-/// pelearse con un reajuste que le deshace el zoom que acaba de hacer a
-/// mano. `Ctrl+0`/`Ctrl+Alt+0` lo vuelven a encender.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AutoFit {
-    Off,
-    Active,
-    All,
-}
-
-pub struct Viewport {
-    /// Factor página → puntos de pantalla.
-    pub zoom: f64,
-    /// Desplazamiento del origen de la página, en puntos, relativo al lienzo.
-    pub pan: egui::Vec2,
-    needs_fit: bool,
-    /// Centrar este rect (en espacio de baraja) en el próximo frame, sin
-    /// tocar el zoom: saltar a otro lienzo de la baraja por la tira o el
-    /// teclado. `canvas_ui` lo consume en cuanto conoce el tamaño real del
-    /// lienzo — un clic directo sobre un lienzo visible no lo usa, porque
-    /// si ya se ve no hace falta recentrar la vista.
-    center_request: Option<DeckRect>,
-    /// Qué volver a ajustar si el área de dibujo cambia de tamaño (ventana
-    /// maximizada/restaurada, un panel lateral arrastrado). `Off` tras
-    /// cualquier zoom o paneo manual.
-    auto_fit: AutoFit,
-    /// Último tamaño visto del área de dibujo, para detectar el cambio.
-    last_avail: egui::Vec2,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            zoom: 1.0,
-            pan: egui::Vec2::ZERO,
-            needs_fit: true,
-            center_request: None,
-            auto_fit: AutoFit::Active,
-            last_avail: egui::Vec2::ZERO,
-        }
-    }
-}
-
-impl Viewport {
-    /// Ajusta `target` (en espacio de baraja) a la ventana: cambia zoom y
-    /// pan. Con `target = (0,0,w,h)` (un solo lienzo en el origen) es
-    /// idéntico al `fit` de antes de la Fase 14c — el caso general solo
-    /// añade centrar sobre el centro de `target`, no necesariamente el
-    /// origen. `mode` es qué volver a repetir si la ventana cambia de
-    /// tamaño más tarde (ver `AutoFit`) — se recibe como parámetro, no se
-    /// asigna suelto en cada sitio, para que sea imposible añadir un camino
-    /// de ajuste que se olvide de armar/desarmar el reajuste automático.
-    fn fit(&mut self, target: DeckRect, avail: egui::Vec2, mode: AutoFit) {
-        const MARGIN: f32 = 24.0;
-        if target.w <= 0.0 || target.h <= 0.0 {
-            return;
-        }
-        let usable_w = f64::from((avail.x - 2.0 * MARGIN).max(32.0));
-        let usable_h = f64::from((avail.y - 2.0 * MARGIN).max(32.0));
-        self.zoom = (usable_w / target.w)
-            .min(usable_h / target.h)
-            .clamp(MIN_ZOOM, MAX_ZOOM);
-        self.center_on(target, avail);
-        self.needs_fit = false;
-        self.auto_fit = mode;
-    }
-
-    /// Centra `target` (en espacio de baraja) en la ventana sin tocar el
-    /// zoom — saltar a otro lienzo de la baraja sin que el nivel de zoom
-    /// cambie de golpe.
-    fn center_on(&mut self, target: DeckRect, avail: egui::Vec2) {
-        let (cx, cy) = (target.x + target.w / 2.0, target.y + target.h / 2.0);
-        self.pan = egui::vec2(
-            (f64::from(avail.x) / 2.0 - cx * self.zoom) as f32,
-            (f64::from(avail.y) / 2.0 - cy * self.zoom) as f32,
-        );
-    }
-
-    fn zoom_at(&mut self, anchor: egui::Vec2, factor: f64) {
-        self.manual_view_change();
-        let new_zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-        let applied = new_zoom / self.zoom;
-        self.pan = anchor - (anchor - self.pan) * applied as f32;
-        self.zoom = new_zoom;
-    }
-
-    /// Vuelve a ajustar el lienzo activo a la ventana en el próximo frame.
-    pub fn request_fit(&mut self) {
-        self.needs_fit = true;
-    }
-
-    /// Pide centrar `target` (en espacio de baraja) en cuanto se conozca el
-    /// tamaño real del lienzo, sin tocar el zoom.
-    pub(crate) fn request_center(&mut self, target: DeckRect) {
-        self.center_request = Some(target);
-    }
-
-    /// ¿Cambió el tamaño del área de dibujo desde el frame anterior? Sella
-    /// el nuevo tamaño de paso. El umbral de medio punto evita reajustar
-    /// por el temblor sub-píxel de `available_size` al arrastrar un panel.
-    fn note_size(&mut self, avail: egui::Vec2) -> bool {
-        let changed =
-            (self.last_avail.x - avail.x).abs() > 0.5 || (self.last_avail.y - avail.y).abs() > 0.5;
-        self.last_avail = avail;
-        changed
-    }
-
-    /// El usuario ha movido la vista a mano (zoom o paneo): deja de
-    /// reajustar solo al redimensionar la ventana, hasta que vuelva a pedir
-    /// un ajuste explícito (`Ctrl+0`/`Ctrl+Alt+0`).
-    fn manual_view_change(&mut self) {
-        self.auto_fit = AutoFit::Off;
-    }
-}
+use layer_ops::{apply_alignment, reorder_layer, sibling_position, ZOrder};
+pub use viewport::Viewport;
+use viewport::{
+    layer_corners_screen, page_to_screen, rotation_handle_screen, screen_to_page, AutoFit,
+};
 
 /// Gesto de edición en curso sobre el lienzo. El documento se muta en directo
 /// durante el gesto y al soltarlo se consolida en UN comando de deshacer.
@@ -2372,71 +2261,6 @@ fn layer_properties_ui(
     }
 }
 
-/// Destino de `reorder_layer` — el submenú "Layers" del menú contextual.
-enum ZOrder {
-    Front,
-    Forward,
-    Backward,
-    Back,
-}
-
-/// Posición de `id` entre sus hermanos: (padre, índice actual, último
-/// índice). Compartida por `reorder_layer` (para calcular el destino) y el
-/// submenú "Layers" (para deshabilitar los botones que ya no tendrían
-/// efecto — Bring to Front/Move Forward en el extremo del frente, Move
-/// Backward/Send to Back en el del fondo).
-fn sibling_position(state: &EditorState, id: LayerId) -> Option<(Option<LayerId>, usize, usize)> {
-    let page = state.doc.page().ok()?;
-    let parent = page.layer(id)?.parent_id;
-    let siblings = page.children_of(parent);
-    let current = siblings.iter().position(|&s| s == id)?;
-    Some((parent, current, siblings.len() - 1))
-}
-
-/// Mueve `id` dentro de su grupo de hermanos, un paso o hasta el extremo.
-/// Mismo comando (`Reorder`) y convención de índice que ya usa
-/// `layers_panel::apply_reorder` para el arrastre en el panel de capas:
-/// índice 0 = fondo de la pila, el último = frente.
-fn reorder_layer(state: &mut EditorState, id: LayerId, to: ZOrder) {
-    let Some((parent, current, last)) = sibling_position(state, id) else {
-        return;
-    };
-    let target = match to {
-        ZOrder::Front => last,
-        ZOrder::Forward => (current + 1).min(last),
-        ZOrder::Backward => current.saturating_sub(1),
-        ZOrder::Back => 0,
-    };
-    if target == current {
-        return;
-    }
-    let mut cmd = Reorder::new(id, parent, target);
-    if cmd.apply(&mut state.doc).is_ok() {
-        state.push_undo_step(Box::new(cmd));
-    }
-}
-
-/// Aplica un `Transform` ya calculado (los botones de "Align to Page" del
-/// menú contextual) como un commit inmediato contra el transform ACTUAL de
-/// la capa — más simple que la reconciliación con `panel_edit` que usa el
-/// panel de propiedades, porque un clic de menú no es una edición en curso
-/// a medias que consolidar.
-fn apply_alignment(state: &mut EditorState, sel: LayerId, after: Transform) {
-    let Ok(before) = state.doc.layer(sel).map(|l| l.transform) else {
-        return;
-    };
-    if after == before {
-        return;
-    }
-    if let Err(e) = state.apply_undo_step(Box::new(SetTransform {
-        layer: sel,
-        before,
-        after,
-    })) {
-        tracing::error!("alinear falló: {e}");
-    }
-}
-
 /// Acción pedida desde la cabecera de un lienzo (área central) que necesita
 /// tocar disco (duplicar/borrar) o reconciliarse con el nombre real del
 /// archivo (renombrar) — `canvas_ui` la arma pero no la ejecuta; se resuelve
@@ -3740,34 +3564,6 @@ fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rect: egui::Re
 
 const HANDLE_SIZE: f32 = 9.0;
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
-
-fn page_to_screen(vp: &Viewport, rect: egui::Rect, x: f64, y: f64) -> egui::Pos2 {
-    rect.min + vp.pan + egui::vec2((x * vp.zoom) as f32, (y * vp.zoom) as f32)
-}
-
-fn screen_to_page(vp: &Viewport, rect: egui::Rect, pos: egui::Pos2) -> (f64, f64) {
-    let local = pos - rect.min - vp.pan;
-    (f64::from(local.x) / vp.zoom, f64::from(local.y) / vp.zoom)
-}
-
-/// Esquinas de la capa (rotadas) en pantalla: [sup-izq, sup-der, inf-izq, inf-der].
-fn layer_corners_screen(vp: &Viewport, rect: egui::Rect, t: &Transform) -> [egui::Pos2; 4] {
-    t.corners().map(|(x, y)| page_to_screen(vp, rect, x, y))
-}
-
-/// Posición en pantalla del manejador de rotación (por encima del centro del
-/// borde superior, en la dirección local de la capa).
-fn rotation_handle_screen(vp: &Viewport, rect: egui::Rect, t: &Transform) -> egui::Pos2 {
-    const OFFSET_SCREEN: f64 = 26.0;
-    let theta = t.rotation.to_radians();
-    let (sin, cos) = theta.sin_cos();
-    let (cx, cy) = t.center();
-    // Centro del borde superior + prolongación hacia fuera (en px de página).
-    let reach = t.height / 2.0 + OFFSET_SCREEN / vp.zoom;
-    let px = cx + reach * sin;
-    let py = cy - reach * cos;
-    page_to_screen(vp, rect, px, py)
-}
 
 /// La esquina (si hay) cuyo manejador contiene el punto de pantalla.
 fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Corner> {
