@@ -423,6 +423,16 @@ impl App {
                                 // renombrado, o nada tras un borrado
                                 // (`created` es `None`, limpia la marca).
                                 if let View::Gallery(g) = &mut self.view {
+                                    // If we renamed the current folder itself,
+                                    // update g.folder to the new path.
+                                    if let Some(ref new_path) = created {
+                                        if new_path.is_dir()
+                                            && new_path != &g.folder
+                                            && new_path.parent() == g.folder.parent()
+                                        {
+                                            g.folder = new_path.clone();
+                                        }
+                                    }
                                     g.selected = created.clone();
                                     g.refresh_folder_lists();
                                 }

@@ -417,13 +417,56 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     egui::CentralPanel::default().show(ui, |ui| {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.heading(
-                state
-                    .folder
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| state.folder.display().to_string()),
-            );
+            let current_name = state
+                .folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| state.folder.display().to_string());
+            let renaming = state
+                .folder_rename_edit
+                .as_ref()
+                .is_some_and(|(p, _)| p == &state.folder);
+            if renaming {
+                let Some((_, text)) = state.folder_rename_edit.as_mut() else {
+                    ui.heading(&current_name);
+                    ui.weak(format!("— {} items", state.items.len()));
+                    return;
+                };
+                let id = egui::Id::new(("gallery_folder_rename_heading", &state.folder));
+                let response = ui.add(
+                    egui::TextEdit::singleline(text)
+                        .id(id)
+                        .desired_width(200.0)
+                        .font(egui::TextStyle::Heading),
+                );
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    state.folder_rename_edit = None;
+                } else if response.lost_focus() {
+                    let trimmed = text.trim().to_owned();
+                    if !trimmed.is_empty() && trimmed != current_name {
+                        action = Some(GalleryAction::RenameFolder(
+                            state.folder.clone(),
+                            trimmed,
+                        ));
+                    }
+                    state.folder_rename_edit = None;
+                }
+            } else {
+                let btn = egui::Button::new(
+                    egui::RichText::new(&current_name)
+                        .heading(),
+                )
+                .fill(egui::Color32::TRANSPARENT);
+                if ui.add(btn).clicked() {
+                    state.folder_rename_edit =
+                        Some((state.folder.clone(), current_name.clone()));
+                    ui.ctx().memory_mut(|m| {
+                        m.request_focus(egui::Id::new(
+                            ("gallery_folder_rename_heading", &state.folder),
+                        ));
+                    });
+                }
+            }
             ui.weak(format!("— {} items", state.items.len()));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
