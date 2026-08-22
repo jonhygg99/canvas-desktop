@@ -745,14 +745,24 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
     ));
     let out = path.to_string_lossy().into_owned();
 
+    // `-Command` no vincula argumentos extra del proceso a `$args` (eso solo
+    // pasa con `-File script.ps1 arg1 arg2`) — se pegarían sueltos al final
+    // del script, dejando `$args[0]`/`$args[1]` siempre en `$null`. La URL y
+    // la ruta van incrustadas como literales `'...'` del propio comando, con
+    // la comilla simple escapada duplicándola (`''`), la forma estándar de
+    // PowerShell — a diferencia de comillas dobles, no interpola variables.
     #[cfg(windows)]
-    let output = Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg("Invoke-WebRequest -Uri $args[0] -OutFile $args[1]")
-        .arg(trimmed)
-        .arg(&out)
-        .output();
+    let output = {
+        let escaped_url = trimmed.replace('\'', "''");
+        let escaped_out = out.replace('\'', "''");
+        Command::new("powershell")
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg(format!(
+                "Invoke-WebRequest -Uri '{escaped_url}' -OutFile '{escaped_out}'"
+            ))
+            .output()
+    };
 
     #[cfg(not(windows))]
     let output = Command::new("curl")
