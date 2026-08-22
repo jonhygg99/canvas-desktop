@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 2 completada**
+**Estado: En curso — Fase 3 completada**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -116,10 +116,11 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
    `mod.rs` (privado, pero visible desde el módulo hijo `state` por la regla
    de Rust de que un ítem privado es visible en su módulo Y sus
    descendientes). Build, 55 tests, clippy y fmt limpios.
-4. **Fase 3 — Extraer interacción y overlays del canvas.** `interaction.rs`,
-   `overlay.rs`, `slot_chrome.rs`, `canvas_view.rs`. Parte más grande y con
-   más estado egui compartido — probar manualmente drag/resize/rotate,
-   selección múltiple y slots vecinos del deck strip.
+4. ✅ **Fase 3 — Extraer interacción y overlays del canvas.**
+   `slot_chrome.rs` → `overlay.rs` → `interaction.rs` (con `Gesture`) →
+   `canvas_view.rs`, en ese orden (menos acoplado primero). `mod.rs` bajó de
+   4825 a 1729 líneas — solo queda el panel de propiedades (Fase 4). Build,
+   tests, clippy y fmt limpios en cada sub-paso.
 5. **Fase 4 — Extraer panel de propiedades.** `properties_panel.rs`. Bajo
    riesgo funcional, alto volumen de líneas.
 6. **Fase 5 — Repetir el proceso en `main.rs`.** `messages.rs` primero (más
