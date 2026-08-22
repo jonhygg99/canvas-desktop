@@ -901,6 +901,22 @@ impl App {
                                     std::time::Instant::now() + std::time::Duration::from_secs(2),
                                 );
                                 self.watcher = None;
+                                // Refresca la miniatura de la tira (y de la
+                                // galería, si está abierta ahí) con el
+                                // contenido recién guardado — sin esto, un
+                                // diseño añadido o editado en esta misma
+                                // sesión se queda con su miniatura en blanco
+                                // hasta volver a abrir la carpeta, porque
+                                // nada más dispara un rescan.
+                                if let Some(folder) = path.parent() {
+                                    loader::spawn_single_thumb(
+                                        folder.to_path_buf(),
+                                        path.clone(),
+                                        self.thumb_cache.clone(),
+                                        self.tx.clone(),
+                                        ctx.clone(),
+                                    );
+                                }
                                 if new_source {
                                     state.doc.source_path = Some(path);
                                 }

@@ -863,16 +863,45 @@ pub fn spawn_gallery_scan(
         ctx.request_repaint();
 
         files.par_iter().for_each_with(tx, |tx, (path, _mtime)| {
-            let result =
-                canvas_io::thumbnail(path, 256, cache_dir.as_deref()).map_err(|e| e.to_string());
-            let _ = tx.send(AppMsg::GalleryThumb {
-                folder: folder.clone(),
-                path: path.clone(),
-                result,
-            });
-            ctx.request_repaint();
+            send_thumb(tx, &ctx, folder.clone(), path.clone(), cache_dir.as_deref());
         });
     });
+}
+
+/// Genera la miniatura de UN solo archivo y la manda por el mismo mensaje
+/// que usa el escaneo completo (`GalleryThumb`) — su manejador en `main.rs`
+/// ya sabe repartirla a `Deck::set_thumb`/`GalleryState::set_thumb` según
+/// quién la quiera. Se usa para refrescar la miniatura de un diseño recién
+/// guardado (nuevo o editado) sin tener que resondear la carpeta entera: sin
+/// esto, un lienzo añadido durante la sesión (tira "+", `Ctrl+N`, duplicar)
+/// se queda con su miniatura en blanco hasta que el usuario vuelve a abrir
+/// la carpeta, porque nada más dispara `spawn_gallery_scan`.
+pub fn spawn_single_thumb(
+    folder: PathBuf,
+    path: PathBuf,
+    cache_dir: Option<PathBuf>,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        send_thumb(&tx, &ctx, folder, path, cache_dir.as_deref());
+    });
+}
+
+fn send_thumb(
+    tx: &Sender<AppMsg>,
+    ctx: &egui::Context,
+    folder: PathBuf,
+    path: PathBuf,
+    cache_dir: Option<&Path>,
+) {
+    let result = canvas_io::thumbnail(&path, 256, cache_dir).map_err(|e| e.to_string());
+    let _ = tx.send(AppMsg::GalleryThumb {
+        folder,
+        path,
+        result,
+    });
+    ctx.request_repaint();
 }
 
 pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: egui::Context) {
