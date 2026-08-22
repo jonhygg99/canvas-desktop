@@ -9,10 +9,9 @@ use canvas_core::{
 };
 use eframe::egui;
 
-use super::{
-    format_dims, layer_corners_screen, rotation_handle_screen, screen_to_page, show_drag_tag,
-    EditorState, HANDLE_SIZE,
-};
+use super::overlay::{format_dims, show_drag_tag};
+use super::viewport::{layer_corners_screen, rotation_handle_screen, screen_to_page};
+use super::{EditorState, HANDLE_SIZE};
 
 /// Gesto de edición en curso sobre el lienzo. El documento se muta en directo
 /// durante el gesto y al soltarlo se consolida en UN comando de deshacer.

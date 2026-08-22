@@ -8,7 +8,8 @@ use eframe::egui;
 use crate::deck::{Deck, DeckAxis, Slot, SlotContent};
 use crate::gallery::ItemKind;
 
-use super::{page_to_screen, CanvasAction, EditorState, Viewport, ACCENT};
+use super::viewport::page_to_screen;
+use super::{CanvasAction, EditorState, Viewport, ACCENT};
 
 /// Marco (acento en la activa, débil en las demás), nombre de archivo, y —
 /// si la ranura todavía no está cargada — su miniatura o un glifo de

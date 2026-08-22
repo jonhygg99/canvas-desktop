@@ -5,10 +5,10 @@
 use canvas_core::Transform;
 use eframe::egui;
 
-use super::{
-    layer_corners_screen, page_to_screen, rotation_handle_screen, screen_to_page, EditorState,
-    ACCENT, HANDLE_SIZE,
+use super::viewport::{
+    layer_corners_screen, page_to_screen, rotation_handle_screen, screen_to_page,
 };
+use super::{EditorState, ACCENT, HANDLE_SIZE};
 
 pub(super) fn format_dims(t: &Transform) -> String {
     format!(
