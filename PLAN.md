@@ -1,6 +1,6 @@
 # PLAN.md
 
-**Estado: En curso — Fase 1 completada**
+**Estado: En curso — Fase 2 completada**
 
 ## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
@@ -111,8 +111,11 @@ importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
    `apply_alignment`/`sibling_position` → `editor/layer_ops.rs`. `Gesture`
    se quedó en `mod.rs` (se revisa en la Fase 3). Build, 55 tests, clippy y
    fmt limpios.
-3. **Fase 2 — Extraer `EditorState`.** Mover `state.rs` completo, incluyendo
-   undo-redo global. Correr explícitamente los tests de undo/redo cross-deck.
+3. ✅ **Fase 2 — Extraer `EditorState`.** `EditorState`/`GlobalStep`/
+   `DeckNav`/`DeleteRecord` → `editor/state.rs`. `Gesture` se quedó en
+   `mod.rs` (privado, pero visible desde el módulo hijo `state` por la regla
+   de Rust de que un ítem privado es visible en su módulo Y sus
+   descendientes). Build, 55 tests, clippy y fmt limpios.
 4. **Fase 3 — Extraer interacción y overlays del canvas.** `interaction.rs`,
    `overlay.rs`, `slot_chrome.rs`, `canvas_view.rs`. Parte más grande y con
    más estado egui compartido — probar manualmente drag/resize/rotate,
