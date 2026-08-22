@@ -12,7 +12,8 @@ use canvas_io::LoadedImage;
 use canvas_render::{image_data_from_rgba, ImageMap};
 use eframe::egui;
 
-use super::{Gesture, Viewport};
+use super::interaction::Gesture;
+use super::Viewport;
 
 pub struct EditorState {
     pub doc: Document,
