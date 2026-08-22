@@ -25,7 +25,7 @@ mod navigation;
 mod persistence;
 mod window;
 
-pub(crate) use persistence::{is_jpeg_path, start_export, start_save, start_save_design};
+use persistence::{is_jpeg_path, start_export, start_save, start_save_design};
 
 enum View {
     Welcome { error: Option<String> },
@@ -37,7 +37,7 @@ enum View {
 /// Navegación diferida: qué hacer cuando termine el guardado en curso o al
 /// final del frame (para no pelear con el préstamo de `self.view`).
 #[derive(Clone)]
-pub(crate) enum Nav {
+enum Nav {
     Open(PathBuf),
     OpenGallery {
         path: PathBuf,

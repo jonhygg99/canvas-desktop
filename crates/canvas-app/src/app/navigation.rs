@@ -16,7 +16,7 @@ use super::persistence::{resolve_canvas_sidecar, seed_gallery_from_deck};
 impl App {
     /// Punto único de entrada para abrir algo, venga de argv, diálogo,
     /// arrastrar y soltar, un clic en la galería o una segunda instancia.
-    pub(crate) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
+    pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
         // Un sidecar `foto.png.canvas` se abre como su imagen `foto.png`
         // (que a su vez restaura las capas del sidecar automáticamente).
         let path = resolve_canvas_sidecar(path);
@@ -63,7 +63,7 @@ impl App {
     /// Documento nuevo en blanco (desde la bienvenida o el menú File):
     /// hereda el tamaño de página del último documento abierto o creado, y
     /// nace en el formato elegido en Ajustes (`new_canvas_format`).
-    pub(crate) fn new_design(&mut self, ctx: &egui::Context) {
+    pub(super) fn new_design(&mut self, ctx: &egui::Context) {
         self.deck = deck::Deck::default();
         self.apply_deck_prefs();
         let (w, h) = self.settings.last_page_size;
@@ -89,7 +89,7 @@ impl App {
     /// teclado dentro del propio editor, que no toca `pending_deck`), o una
     /// baraja degenerada de una sola ranura en cualquier otro caso (CLI,
     /// recientes, arrastrar y soltar, segunda instancia).
-    pub(crate) fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
+    pub(super) fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
         if let Some(seed) = self.pending_deck.take() {
             self.deck = deck::Deck::from_seed(seed, path);
             self.apply_deck_prefs();
@@ -114,7 +114,7 @@ impl App {
     /// (eje de apilado, visibilidad de la tira) — `Deck::single`/`from_seed`
     /// no conocen `AppSettings`, así que el llamador las aplica justo
     /// después de construirla, antes del primer `relayout`.
-    pub(crate) fn apply_deck_prefs(&mut self) {
+    pub(super) fn apply_deck_prefs(&mut self) {
         self.deck.axis = self.settings.deck_axis;
         self.deck.strip_visible = self.settings.deck_strip_visible;
         self.deck.strip_side = self.settings.deck_strip_side;
@@ -122,7 +122,7 @@ impl App {
     /// Sondea el tamaño real de las ranuras cuyo tamaño aún se desconoce.
     /// No hace nada con una baraja degenerada (`Deck::single`: sin carpeta,
     /// sin hermanos que necesiten sondeo) ni cuando ya se conocen todos.
-    pub(crate) fn spawn_deck_probe(&self, ctx: &egui::Context) {
+    pub(super) fn spawn_deck_probe(&self, ctx: &egui::Context) {
         let Some(folder) = self.deck.folder.clone() else {
             return;
         };
@@ -140,7 +140,7 @@ impl App {
     }
     /// Alterna el eje de apilado de la baraja activa y lo persiste — la tira
     /// (botón ⇅/⇆) y el menú View (Fase 14e) comparten este único camino.
-    pub(crate) fn toggle_deck_axis(&mut self) {
+    pub(super) fn toggle_deck_axis(&mut self) {
         self.deck.axis = self.deck.axis.toggled();
         self.deck.layout_dirty = true;
         self.settings.deck_axis = self.deck.axis;
@@ -148,7 +148,7 @@ impl App {
     }
     /// Mueve la tira al siguiente lado y lo persiste — el botón de la propia
     /// tira y el menú View comparten este único camino.
-    pub(crate) fn cycle_strip_side(&mut self) {
+    pub(super) fn cycle_strip_side(&mut self) {
         self.deck.strip_side = self.deck.strip_side.cycled();
         self.settings.deck_strip_side = self.deck.strip_side;
         self.settings.save_in_background();
@@ -159,7 +159,7 @@ impl App {
     /// tiene carpeta donde crear un hermano) — es el único camino a esta
     /// función cuando la tira está oculta (un solo archivo en la carpeta,
     /// donde la celda "+" todavía no existe).
-    pub(crate) fn add_canvas(&mut self) {
+    pub(super) fn add_canvas(&mut self) {
         let ext = self.settings.new_canvas_format.extension();
         match self
             .deck
@@ -172,7 +172,7 @@ impl App {
             None => tracing::info!("«Add canvas» sin efecto: la baraja no tiene carpeta"),
         }
     }
-    pub(crate) fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
+    pub(super) fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
         // Se abandona la carpeta activa (galería o baraja del editor), si
         // había una: purga su papelera propia — cualquier `Ctrl+Z` pendiente
         // sobre un borrado ya perdió su ventana, porque el `EditorState` que
@@ -225,7 +225,7 @@ impl App {
     /// editor, no de esta navegación); el texto lo dice explícitamente
     /// cuando hay más de un lienzo sucio, para que abrir algo distinto
     /// nunca pierda trabajo en silencio.
-    pub(crate) fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
+    pub(super) fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
         let names = self.dirty_canvas_names();
         if names.is_empty() {
             self.navigate(nav, ctx);

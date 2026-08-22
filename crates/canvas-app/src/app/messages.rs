@@ -18,7 +18,7 @@ impl App {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería
     /// (tras crear/duplicar/pegar un archivo). `GalleryState::merge_files`
     /// conserva las miniaturas ya cargadas, así que esto es casi gratis.
-    pub(crate) fn rescan_gallery(&mut self, ctx: &egui::Context) {
+    pub(super) fn rescan_gallery(&mut self, ctx: &egui::Context) {
         if let View::Gallery(g) = &self.view {
             loader::spawn_gallery_scan(
                 g.folder.clone(),
@@ -29,7 +29,7 @@ impl App {
         }
     }
 
-    pub(crate) fn handle_messages(&mut self, ctx: &egui::Context) {
+    pub(super) fn handle_messages(&mut self, ctx: &egui::Context) {
         // Aperturas diferidas para no pelear con el préstamo de self.view.
         let mut open_after: Option<Nav> = None;
         while let Ok(msg) = self.rx.try_recv() {

@@ -13,7 +13,7 @@ use super::{App, View};
 
 impl App {
     /// Apunta lo abierto en los recientes: ajustes, menú y Jump List del SO.
-    pub(crate) fn push_recent(&mut self, path: &std::path::Path) {
+    pub(super) fn push_recent(&mut self, path: &std::path::Path) {
         let path = path.to_owned();
         self.settings.recent_files.retain(|p| p != &path);
         self.settings.recent_files.insert(0, path);
@@ -32,7 +32,7 @@ impl App {
     }
     /// Recuerda el tamaño de página para el próximo diseño nuevo, sin
     /// escribir ajustes si no cambió (`save_in_background` lanza un hilo).
-    pub(crate) fn remember_page_size(&mut self, doc: &canvas_core::Document) {
+    pub(super) fn remember_page_size(&mut self, doc: &canvas_core::Document) {
         let Ok(page) = doc.page() else { return };
         let size = (page.width, page.height);
         if self.settings.last_page_size != size {
@@ -46,7 +46,7 @@ impl App {
     /// (Fase 14c), un solo `state.is_dirty()` ya no cuenta la historia
     /// entera: una ranura de fondo puede estar sucia sin que el documento
     /// activo lo esté.
-    pub(crate) fn dirty_canvas_names(&self) -> Vec<String> {
+    pub(super) fn dirty_canvas_names(&self) -> Vec<String> {
         let View::Editor(state) = &self.view else {
             return Vec::new();
         };
@@ -61,7 +61,7 @@ impl App {
         }
         names
     }
-    pub(crate) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+    pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -84,7 +84,7 @@ impl App {
     }
     /// Si el usuario intenta cerrar con cambios sin guardar, cancela el
     /// cierre y pregunta con un diálogo nativo Guardar / Descartar / Cancelar.
-    pub(crate) fn confirm_close(&mut self, ctx: &egui::Context) {
+    pub(super) fn confirm_close(&mut self, ctx: &egui::Context) {
         if self.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
@@ -151,7 +151,7 @@ impl App {
     }
     /// Mantiene el título de la ventana (con asterisco de cambios sin
     /// guardar) al día; solo envía el comando cuando cambia.
-    pub(crate) fn sync_title(&mut self, ctx: &egui::Context) {
+    pub(super) fn sync_title(&mut self, ctx: &egui::Context) {
         let title = match &self.view {
             View::Editor(state) => {
                 let dirty = if state.is_dirty() { "*" } else { "" };
@@ -185,7 +185,7 @@ impl App {
 }
 
 /// Directorio de caché de miniaturas del usuario (mejor esfuerzo).
-pub(crate) fn thumbnail_cache_dir() -> Option<PathBuf> {
+pub(super) fn thumbnail_cache_dir() -> Option<PathBuf> {
     let dirs = directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")?;
     let dir = dirs.cache_dir().join("thumbnails");
     match std::fs::create_dir_all(&dir) {

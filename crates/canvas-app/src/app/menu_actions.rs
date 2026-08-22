@@ -9,7 +9,7 @@ use super::{App, Nav, View};
 
 impl App {
     /// Traduce un clic de menú a la acción correspondiente.
-    pub(crate) fn handle_menu_action(&mut self, action: menus::MenuAction, ctx: &egui::Context) {
+    pub(super) fn handle_menu_action(&mut self, action: menus::MenuAction, ctx: &egui::Context) {
         use menus::MenuAction as A;
         match action {
             // Desde una galería, Ctrl+N crea el diseño DENTRO de esa carpeta

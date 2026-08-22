@@ -22,7 +22,7 @@ impl App {
     /// sobrescribir y un lote no tiene un destino automático razonable para
     /// ellos sin preguntar archivo por archivo — el usuario los guarda
     /// individualmente activándolos, donde `Ctrl+S` ya redirige a «Save as…».
-    pub(crate) fn start_save_all(&mut self) {
+    pub(super) fn start_save_all(&mut self) {
         let View::Editor(state) = &mut self.view else {
             return;
         };
@@ -60,7 +60,7 @@ impl App {
 /// formas, para detectar archivos nuevos o borrados por fuera) volviera a
 /// decodificarlo todo. Si la baraja pertenece a otra carpeta, la rejilla
 /// arranca vacía como siempre.
-pub(crate) fn seed_gallery_from_deck(
+pub(super) fn seed_gallery_from_deck(
     deck: &deck::Deck,
     folder: PathBuf,
     sort: settings::GallerySort,
@@ -102,7 +102,7 @@ pub(crate) fn seed_gallery_from_deck(
 /// disparado por hacer scroll): las capas restauradas se usan de todas
 /// formas y `external_change` queda encendido, para que el banner normal de
 /// «cambió por fuera» aparezca en cuanto el usuario active esa ranura.
-pub(crate) fn build_slot_doc(
+pub(super) fn build_slot_doc(
     path: PathBuf,
     outcome: loader::LoadOutcome,
     metadata: Option<canvas_io::ImageMetadata>,
@@ -139,7 +139,7 @@ pub(crate) fn build_slot_doc(
 /// hilo de trabajo. Si el horneado falla, el error queda visible en el panel
 /// y el documento intacto.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn start_save(
+pub(super) fn start_save(
     state: &mut editor::EditorState,
     renderer: &mut CanvasRenderer,
     rs: &RenderState,
@@ -205,7 +205,7 @@ pub(crate) fn start_save(
 /// 156 px). Si el horneado falla, el diseño se guarda igual sin miniatura:
 /// no es motivo para bloquear el guardado real.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn start_save_design(
+pub(super) fn start_save_design(
     state: &mut editor::EditorState,
     renderer: &mut CanvasRenderer,
     rs: &RenderState,
@@ -255,7 +255,7 @@ pub(crate) fn start_save_design(
 /// procesadas — lo mismo que hace `bake_page` por dentro — para que el SVG
 /// lleve los píxeles TAL Y COMO se ven en el lienzo, sin reimplementar los
 /// efectos como filtros SVG.
-pub(crate) fn start_export(
+pub(super) fn start_export(
     state: &mut editor::EditorState,
     renderer: &mut CanvasRenderer,
     rs: &RenderState,
@@ -350,7 +350,7 @@ pub(crate) fn start_export(
 }
 
 /// ¿La extensión de `path` es JPEG? (para el aviso de calidad de recompresión)
-pub(crate) fn is_jpeg_path(path: &std::path::Path) -> bool {
+pub(super) fn is_jpeg_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
@@ -363,7 +363,7 @@ pub(crate) fn is_jpeg_path(path: &std::path::Path) -> bool {
 /// sea además una imagen (no solo un archivo cualquiera) para que un diseño
 /// autónomo con nombre `Untitled.canvas` (cuyo `inner` es `Untitled`, sin
 /// extensión) nunca se confunda con el sidecar de otra cosa.
-pub(crate) fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
+pub(super) fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
     if !canvas_io::is_canvas_file(&path) {
         return path;
     }
