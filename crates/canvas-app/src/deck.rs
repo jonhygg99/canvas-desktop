@@ -968,10 +968,12 @@ impl Deck {
             .sum()
     }
 
-    /// Descarta ranuras `Ready` lejanas, limpias y sin guardado en curso
-    /// hasta volver al presupuesto (la más lejos vista primero). Nunca
-    /// descarta la activa ni una sucia. Devuelve los `FxScope` a liberar en
-    /// el renderer — el llamador, que tiene el `CanvasRenderer`, hace el
+    /// Descarta ranuras `Ready` lejanas, limpias, sin historial de deshacer
+    /// pendiente y sin guardado en curso, hasta volver al presupuesto (la
+    /// más lejos vista primero). Nunca descarta la activa, una sucia, ni una
+    /// que aún pueda deshacer algo (recargarla de disco perdería ese
+    /// historial para siempre). Devuelve los `FxScope` a liberar en el
+    /// renderer — el llamador, que tiene el `CanvasRenderer`, hace el
     /// `forget_scope` (aquí no se acopla `Deck` a `canvas-render` más que
     /// por el tipo del scope).
     pub fn evict(&mut self) -> Vec<FxScope> {
@@ -1001,7 +1003,13 @@ impl Deck {
                         // existe, dejándola en `Failed`. No se puede confiar
                         // en que otro estado la proteja por accidente.
                         && !s.is_placeholder
-                        && matches!(&s.content, SlotContent::Ready(d) if !d.history.is_dirty() && !d.saving)
+                        // Limpia (`is_dirty() == false`) no basta: una
+                        // ranura guardada puede seguir teniendo pasos de
+                        // deshacer en la pila, y expulsarla a `Idle` los
+                        // perdería para siempre (al volver, se recarga de
+                        // disco con un `History` en blanco). `can_undo()`
+                        // los protege también.
+                        && matches!(&s.content, SlotContent::Ready(d) if !d.history.is_dirty() && !d.history.can_undo() && !d.saving)
                 })
                 .min_by_key(|(_, s)| s.last_seen)
                 .map(|(i, _)| i);
@@ -1415,6 +1423,37 @@ mod tests {
         );
         assert!(matches!(deck.slots[4].content, SlotContent::Idle));
         assert!(matches!(deck.slots[5].content, SlotContent::Idle));
+    }
+
+    #[test]
+    fn evict_skips_a_clean_slot_that_still_has_undo_history() {
+        // Activa = 0, radio de precarga = 2 ⇒ la ranura 3 es candidata.
+        let mut deck = Deck::from_seed(
+            seed(&["a.png", "b.png", "c.png", "d.png"]),
+            Path::new("a.png"),
+        );
+        let mut doc = blank_slot_doc(10.0, 10.0);
+        doc.history.push_applied(Box::new(canvas_core::Rename {
+            layer: LayerId::from_raw(1),
+            before: "a".to_string(),
+            after: "b".to_string(),
+        }));
+        // Guardado: limpio (`is_dirty() == false`), pero con un paso de
+        // deshacer todavía en la pila.
+        doc.history.mark_saved();
+        // Estrictamente por encima del presupuesto: igualarlo no dispara el
+        // descarte (ver `evict_never_discards_a_placeholder`).
+        doc.bytes = EVICT_BUDGET_BYTES + 1;
+        deck.slots[3].content = SlotContent::Ready(Box::new(doc));
+
+        let freed = deck.evict();
+
+        assert!(
+            freed.is_empty(),
+            "una ranura limpia con historial de deshacer no debe expulsarse: \
+             perdería ese historial al recargarse de disco"
+        );
+        assert!(matches!(deck.slots[3].content, SlotContent::Ready(_)));
     }
 
     #[test]

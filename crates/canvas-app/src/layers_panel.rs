@@ -154,7 +154,7 @@ pub(crate) fn group_selection(state: &mut EditorState) {
     let group_id = state.doc.allocate_layer_id();
     let mut cmd = Group::new(roots, group_id, "Group");
     if cmd.apply(&mut state.doc).is_ok() {
-        state.history.push_applied(Box::new(cmd));
+        state.push_undo_step(Box::new(cmd));
         state.selection.set(Some(group_id));
     }
 }
@@ -179,9 +179,7 @@ pub(crate) fn ungroup_selection(state: &mut EditorState) {
         }
     }
     if !cmds.is_empty() {
-        state
-            .history
-            .push_applied(Box::new(Composite::new("Desagrupar", cmds)));
+        state.push_undo_step(Box::new(Composite::new("Desagrupar", cmds)));
     }
     state.forget_deleted_selection();
 }
@@ -200,9 +198,7 @@ fn delete_selection(state: &mut EditorState) {
         }
     }
     if !cmds.is_empty() {
-        state
-            .history
-            .push_applied(Box::new(Composite::new("Quitar capas", cmds)));
+        state.push_undo_step(Box::new(Composite::new("Quitar capas", cmds)));
     }
     state.selection.clear();
 }
@@ -257,9 +253,7 @@ fn apply_reorder(state: &mut EditorState, ids: &[LayerId], drop: Drop) {
         }
     }
     if !cmds.is_empty() {
-        state
-            .history
-            .push_applied(Box::new(Composite::new("Reordenar capas", cmds)));
+        state.push_undo_step(Box::new(Composite::new("Reordenar capas", cmds)));
     }
 }
 
@@ -407,7 +401,7 @@ fn row_contents(
                 after: !visible,
             };
             if cmd.apply(&mut state.doc).is_ok() {
-                state.history.push_applied(Box::new(cmd));
+                state.push_undo_step(Box::new(cmd));
             }
         }
 
@@ -419,7 +413,7 @@ fn row_contents(
                 after: !locked,
             };
             if cmd.apply(&mut state.doc).is_ok() {
-                state.history.push_applied(Box::new(cmd));
+                state.push_undo_step(Box::new(cmd));
             }
         }
 
@@ -475,7 +469,7 @@ fn rename_edit_ui(state: &mut EditorState, ui: &mut egui::Ui, id: LayerId) {
                     after: text,
                 };
                 if cmd.apply(&mut state.doc).is_ok() {
-                    state.history.push_applied(Box::new(cmd));
+                    state.push_undo_step(Box::new(cmd));
                 }
             }
         }

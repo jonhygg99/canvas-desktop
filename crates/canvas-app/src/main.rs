@@ -2115,7 +2115,7 @@ impl eframe::App for App {
         // nativo como el de respaldo — mismo criterio de "solo llamar al
         // menú nativo cuando cambia" que `menus_editor_open` de arriba.
         let (can_undo, can_redo) = match &self.view {
-            View::Editor(state) => (state.history.can_undo(), state.history.can_redo()),
+            View::Editor(state) => (state.can_undo(), state.can_redo()),
             _ => (false, false),
         };
         if (can_undo, can_redo) != (self.menus_can_undo, self.menus_can_redo) {
@@ -2281,6 +2281,14 @@ impl eframe::App for App {
                 let Some(rs) = frame.wgpu_render_state().cloned() else {
                     return;
                 };
+                // El deshacer/rehacer global (`push_undo_step`/`undo`/`redo`
+                // en `editor.rs`) etiqueta cada paso con esta id: hay que
+                // tenerla al día ANTES de `handle_shortcuts` (que puede
+                // disparar un Ctrl+Z ese mismo frame) y de cualquier edición
+                // que ocurra más abajo en `canvas_ui`. Barato de refrescar
+                // cada frame; más simple que perseguir cada sitio donde
+                // `deck.active`/`self.view` pueden cambiar.
+                state.active_slot_id = self.deck.slots.get(self.deck.active).map_or(0, |s| s.id);
                 state.handle_shortcuts(&ctx, paste_requested, self.deck.rename_edit.is_some());
 
                 // Recarga pedida desde el banner de «cambió en disco».
@@ -3034,6 +3042,26 @@ impl eframe::App for App {
                             }
                         }
                     }
+                } else if let Some(id) = state.pending_global_undo.or(state.pending_global_redo) {
+                    // Deshacer/rehacer global: el paso más reciente de toda
+                    // la sesión le tocaba a OTRO diseño de la baraja — salta
+                    // a él para mostrarlo (mismo patrón que «Save all»,
+                    // arriba). `request_loads`, más abajo en `canvas_ui`,
+                    // dispara la recarga de disco si esa ranura ya no está
+                    // `Ready` (fue descartada por presupuesto).
+                    match self.deck.find_by_id(id) {
+                        Some(idx) => {
+                            self.deck.jump_to = Some(idx);
+                            self.deck.jump_center = true;
+                        }
+                        // El diseño desapareció (archivo borrado) mientras
+                        // esperaba turno: se descarta ese paso, sin
+                        // encadenar automáticamente con el siguiente.
+                        None => {
+                            state.discard_pending_global_undo();
+                            state.discard_pending_global_redo();
+                        }
+                    }
                 }
                 // Aplica el salto si el destino ya está listo y el editor
                 // está ocioso; si no, la petición queda pendiente y se
@@ -3100,6 +3128,20 @@ impl eframe::App for App {
                             state.save_clicked = true;
                         }
                     }
+                }
+                // Deshacer/rehacer global: si la activa ya es la ranura que
+                // le tocaba a la petición pendiente (el salto de arriba se
+                // aplicó, esta misma vuelta o en una anterior), ejecuta el
+                // paso local ahora que es la activa y limpia la petición.
+                if state.pending_global_undo.is_some_and(|id| {
+                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                }) {
+                    state.finish_pending_global_undo();
+                }
+                if state.pending_global_redo.is_some_and(|id| {
+                    self.deck.slots.get(self.deck.active).map(|s| s.id) == Some(id)
+                }) {
+                    state.finish_pending_global_redo();
                 }
 
                 if std::mem::take(&mut state.settings_clicked) {

@@ -278,6 +278,28 @@ pub struct EditorState {
     /// bandera existe justo para que `apply_jump` SÍ pueda saltar mientras
     /// el botón sigue pulsado.
     pub(crate) press_on_other_slot: bool,
+    /// Id de ranura de la baraja a la que pertenece el documento activo
+    /// ahora mismo. Campo "de sesión" (como `viewport`): NO viaja en
+    /// `SlotDoc`, `main.rs` lo refresca cada frame contra `deck.active`.
+    /// Sirve para etiquetar cada paso de deshacer en `global_undo`/
+    /// `global_redo` con su diseño de origen.
+    pub(crate) active_slot_id: u64,
+    /// Pila global de deshacer: un id de ranura por paso, en el mismo orden
+    /// cronológico en que ocurrieron los pasos SIN IMPORTAR de qué diseño
+    /// eran — a diferencia de `history` (local, solo el diseño activo). El
+    /// comando en sí sigue viviendo en el `History` local de esa ranura;
+    /// esto solo registra el ORDEN cruzado para que `Ctrl+Z` sepa cuál
+    /// deshacer a continuación y en qué diseño.
+    global_undo: Vec<u64>,
+    /// Simétrico de `global_undo` para `Ctrl+Y`/rehacer.
+    global_redo: Vec<u64>,
+    /// Deshacer global pedido cuyo diseño destino NO es el activo: `undo()`
+    /// deja esto en vez de tocar el documento, y `main.rs` pide el salto de
+    /// baraja; en cuanto ese diseño pasa a ser el activo llama a
+    /// `finish_pending_global_undo`, que hace el deshacer de verdad.
+    pub pending_global_undo: Option<u64>,
+    /// Simétrico de `pending_global_undo` para rehacer.
+    pub pending_global_redo: Option<u64>,
 }
 
 /// Dirección de salto entre lienzos de la baraja, pedida por teclado.
@@ -341,6 +363,11 @@ impl EditorState {
             born_blank: false,
             deck_nav: None,
             press_on_other_slot: false,
+            active_slot_id: 0,
+            global_undo: Vec::new(),
+            global_redo: Vec::new(),
+            pending_global_undo: None,
+            pending_global_redo: None,
         }
     }
 
@@ -523,10 +550,9 @@ impl EditorState {
             layer,
         }));
 
-        if let Err(e) = self.history.apply(
-            &mut self.doc,
-            Box::new(canvas_core::Composite::new("Add image", commands)),
-        ) {
+        if let Err(e) =
+            self.apply_undo_step(Box::new(canvas_core::Composite::new("Add image", commands)))
+        {
             tracing::error!("añadir capa falló: {e}");
             return;
         }
@@ -561,21 +587,17 @@ impl EditorState {
         new_layer.id = new_id;
         new_layer.content = LayerContent::Image(content);
 
-        self.history
-            .apply(
-                &mut self.doc,
-                Box::new(canvas_core::Composite::new(
-                    "Replace image",
-                    vec![
-                        Box::new(RemoveLayer::new(target)),
-                        Box::new(InsertLayer {
-                            index,
-                            layer: new_layer,
-                        }),
-                    ],
-                )),
-            )
-            .map_err(|e| e.to_string())?;
+        self.apply_undo_step(Box::new(canvas_core::Composite::new(
+            "Replace image",
+            vec![
+                Box::new(RemoveLayer::new(target)),
+                Box::new(InsertLayer {
+                    index,
+                    layer: new_layer,
+                }),
+            ],
+        )))
+        .map_err(|e| e.to_string())?;
 
         self.images.insert(new_id, pixels);
         if self.background_layer == Some(target) {
@@ -630,10 +652,7 @@ impl EditorState {
             Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h),
             content,
         );
-        if let Err(e) = self
-            .history
-            .apply(&mut self.doc, Box::new(InsertLayer { index, layer }))
-        {
+        if let Err(e) = self.apply_undo_step(Box::new(InsertLayer { index, layer })) {
             tracing::error!("insertar capa falló: {e}");
             return;
         }
@@ -675,10 +694,7 @@ impl EditorState {
     fn set_blurred_background(&mut self, on: bool) {
         if !on {
             if let Some(id) = self.background_layer.take() {
-                if let Err(e) = self
-                    .history
-                    .apply(&mut self.doc, Box::new(RemoveLayer::new(id)))
-                {
+                if let Err(e) = self.apply_undo_step(Box::new(RemoveLayer::new(id))) {
                     tracing::error!("quitar fondo falló: {e}");
                 }
                 // El ImageData se queda en el mapa a propósito: deshacer el
@@ -746,10 +762,10 @@ impl EditorState {
         layer.effects.blur_radius = 50.0;
         commands.push(Box::new(InsertLayer { index: 0, layer }));
 
-        if let Err(e) = self.history.apply(
-            &mut self.doc,
-            Box::new(canvas_core::Composite::new("Blurred background", commands)),
-        ) {
+        if let Err(e) = self.apply_undo_step(Box::new(canvas_core::Composite::new(
+            "Blurred background",
+            commands,
+        ))) {
             tracing::error!("añadir fondo falló: {e}");
             return;
         }
@@ -930,30 +946,138 @@ impl EditorState {
         }
     }
 
-    /// Deshace el último comando (menú Edit, clic derecho o Ctrl+Z).
+    /// Aplica `cmd` al documento y lo apila como paso de deshacer del diseño
+    /// activo — igual que `History::apply`, pero además registra el paso en
+    /// la pila GLOBAL cruzada entre diseños (`global_undo`). Todo comando
+    /// real (fuera del truco interno de `push_placeholder` en `deck.rs`,
+    /// que no es una edición visible del usuario) debe pasar por aquí o por
+    /// `push_undo_step`, nunca por `self.history` directamente — si no, ese
+    /// paso quedaría invisible para el `Ctrl+Z` global.
+    pub(crate) fn apply_undo_step(&mut self, cmd: Box<dyn Command>) -> Result<(), CoreError> {
+        self.history.apply(&mut self.doc, cmd)?;
+        self.global_undo.push(self.active_slot_id);
+        self.global_redo.clear();
+        Ok(())
+    }
+
+    /// Apila un comando cuyo efecto YA está reflejado en el documento (fin
+    /// de un gesto continuo) — ver `apply_undo_step`.
+    pub(crate) fn push_undo_step(&mut self, cmd: Box<dyn Command>) {
+        self.history.push_applied(cmd);
+        self.global_undo.push(self.active_slot_id);
+        self.global_redo.clear();
+    }
+
+    /// ¿Hay algo que deshacer/rehacer en TODA la sesión (no solo en el
+    /// diseño activo)? Gobierna si el menú/atajo Undo-Redo están activos.
+    pub fn can_undo(&self) -> bool {
+        !self.global_undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.global_redo.is_empty()
+    }
+
+    /// Deshace la acción más reciente de TODA la sesión (menú Edit, clic
+    /// derecho o Ctrl+Z) — no solo del diseño activo. Si le toca a OTRO
+    /// diseño de la baraja, no toca el documento: dejar `pending_global_undo`
+    /// es la señal para que `main.rs` pida el salto de baraja y, en cuanto
+    /// ese diseño pase a ser el activo, llame a `finish_pending_global_undo`.
     pub fn undo(&mut self) {
+        let Some(&slot_id) = self.global_undo.last() else {
+            tracing::info!("deshacer: nada que deshacer");
+            return;
+        };
+        if slot_id == self.active_slot_id {
+            self.undo_local();
+        } else {
+            self.pending_global_undo = Some(slot_id);
+        }
+    }
+
+    /// Rehace el último paso deshecho de TODA la sesión (menú Edit, clic
+    /// derecho o Ctrl+Y) — simétrico a `undo`.
+    pub fn redo(&mut self) {
+        let Some(&slot_id) = self.global_redo.last() else {
+            tracing::info!("rehacer: nada que rehacer");
+            return;
+        };
+        if slot_id == self.active_slot_id {
+            self.redo_local();
+        } else {
+            self.pending_global_redo = Some(slot_id);
+        }
+    }
+
+    /// Deshace de verdad en el documento activo (asume que ya es el diseño
+    /// correcto) y mantiene las pilas globales en sincronía con la local.
+    fn undo_local(&mut self) {
         match self.history.undo(&mut self.doc) {
-            Ok(true) => tracing::info!("deshacer OK"),
+            Ok(true) => {
+                tracing::info!("deshacer OK");
+                self.global_undo.pop();
+                self.global_redo.push(self.active_slot_id);
+            }
             Ok(false) => tracing::info!("deshacer: nada que deshacer"),
             Err(e) => {
                 tracing::error!("deshacer falló: {e}");
                 self.save_error = Some(format!("Undo failed: {e}"));
+                // Se descarta también la entrada global: insistir en un
+                // comando cuyo revert falla dejaría el deshacer global
+                // atascado para siempre en el mismo paso.
+                self.global_undo.pop();
             }
         }
         self.forget_deleted_selection();
     }
 
-    /// Rehace el último comando deshecho (menú Edit, clic derecho o Ctrl+Y).
-    pub fn redo(&mut self) {
+    /// Simétrico de `undo_local` para rehacer.
+    fn redo_local(&mut self) {
         match self.history.redo(&mut self.doc) {
-            Ok(true) => tracing::info!("rehacer OK"),
+            Ok(true) => {
+                tracing::info!("rehacer OK");
+                self.global_redo.pop();
+                self.global_undo.push(self.active_slot_id);
+            }
             Ok(false) => tracing::info!("rehacer: nada que rehacer"),
             Err(e) => {
                 tracing::error!("rehacer falló: {e}");
                 self.save_error = Some(format!("Redo failed: {e}"));
+                self.global_redo.pop();
             }
         }
         self.forget_deleted_selection();
+    }
+
+    /// `main.rs` llama a esto en cuanto el diseño pedido por
+    /// `pending_global_undo` ya es el activo.
+    pub(crate) fn finish_pending_global_undo(&mut self) {
+        if self.pending_global_undo.take().is_some() {
+            self.undo_local();
+        }
+    }
+
+    /// Simétrico de `finish_pending_global_undo` para rehacer.
+    pub(crate) fn finish_pending_global_redo(&mut self) {
+        if self.pending_global_redo.take().is_some() {
+            self.redo_local();
+        }
+    }
+
+    /// La ranura pedida por un deshacer/rehacer cruzado ya no existe
+    /// (archivo borrado entre medias, por ejemplo): descarta esa entrada de
+    /// la pila global correspondiente y avisa, sin encadenar automáticamente
+    /// con la siguiente — un `Ctrl+Z` más la vuelve a pedir si hace falta.
+    pub(crate) fn discard_pending_global_undo(&mut self) {
+        if self.pending_global_undo.take().is_some() {
+            tracing::warn!("deshacer global: la ranura pedida ya no existe, se descarta ese paso");
+            self.global_undo.pop();
+        }
+    }
+    pub(crate) fn discard_pending_global_redo(&mut self) {
+        if self.pending_global_redo.take().is_some() {
+            tracing::warn!("rehacer global: la ranura pedida ya no existe, se descarta ese paso");
+            self.global_redo.pop();
+        }
     }
 
     /// Olvida de la selección los ids que ya no existen en el documento
@@ -1341,12 +1465,10 @@ fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 if let Some(cmd) = state.resync_background_cover() {
                     commands.push(cmd);
                 }
-                state
-                    .history
-                    .push_applied(Box::new(canvas_core::Composite::new(
-                        "Resize page",
-                        commands,
-                    )));
+                state.push_undo_step(Box::new(canvas_core::Composite::new(
+                    "Resize page",
+                    commands,
+                )));
             }
         }
     }
@@ -1505,12 +1627,10 @@ fn size_popup_ui(state: &mut EditorState, ctx: &egui::Context) {
     if let Some(cmd) = state.resync_background_cover() {
         commands.push(cmd);
     }
-    state
-        .history
-        .push_applied(Box::new(canvas_core::Composite::new(
-            "Resize page",
-            commands,
-        )));
+    state.push_undo_step(Box::new(canvas_core::Composite::new(
+        "Resize page",
+        commands,
+    )));
 }
 
 /// Slider de desenfoque (no destructivo) de una capa, con consolidación en un
@@ -1545,7 +1665,7 @@ fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
                     .map(|l| l.effects.blur_radius)
                     .unwrap_or(before);
                 if (after - before).abs() > f32::EPSILON {
-                    state.history.push_applied(Box::new(canvas_core::SetBlur {
+                    state.push_undo_step(Box::new(canvas_core::SetBlur {
                         layer: id,
                         before,
                         after,
@@ -1554,14 +1674,11 @@ fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
             }
         }
         if current_blur > 0.0 && ui.button("Remove").clicked() {
-            if let Err(e) = state.history.apply(
-                &mut state.doc,
-                Box::new(canvas_core::SetBlur {
-                    layer: target,
-                    before: current_blur,
-                    after: 0.0,
-                }),
-            ) {
+            if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetBlur {
+                layer: target,
+                before: current_blur,
+                after: 0.0,
+            })) {
                 tracing::error!("quitar desenfoque falló: {e}");
             }
         }
@@ -1620,14 +1737,11 @@ fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
         neutral.grayscale = 0.0;
         neutral.sepia = 0.0;
         let before = state.color_edit.take().map_or(original, |(_, b)| b);
-        if let Err(e) = state.history.apply(
-            &mut state.doc,
-            Box::new(canvas_core::SetEffects {
-                layer: sel,
-                before,
-                after: neutral,
-            }),
-        ) {
+        if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetEffects {
+            layer: sel,
+            before,
+            after: neutral,
+        })) {
             tracing::error!("reset de ajustes falló: {e}");
         }
         return;
@@ -1645,13 +1759,11 @@ fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
         if let Some((id, before)) = state.color_edit.take() {
             let after = state.doc.layer(id).map(|l| l.effects).unwrap_or(before);
             if after != before {
-                state
-                    .history
-                    .push_applied(Box::new(canvas_core::SetEffects {
-                        layer: id,
-                        before,
-                        after,
-                    }));
+                state.push_undo_step(Box::new(canvas_core::SetEffects {
+                    layer: id,
+                    before,
+                    after,
+                }));
             }
         }
     }
@@ -1664,14 +1776,11 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
     let mut enabled = current.is_some();
     if ui.checkbox(&mut enabled, "Shadow").changed() {
         let after = enabled.then(canvas_core::Shadow::default);
-        if let Err(e) = state.history.apply(
-            &mut state.doc,
-            Box::new(canvas_core::SetShadow {
-                layer: sel,
-                before: current,
-                after,
-            }),
-        ) {
+        if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetShadow {
+            layer: sel,
+            before: current,
+            after,
+        })) {
             tracing::error!("sombra falló: {e}");
         }
         return;
@@ -1746,7 +1855,7 @@ fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
         if let Some((id, before)) = state.shadow_edit.take() {
             let after = state.doc.layer(id).ok().and_then(|l| l.effects.shadow);
             if after != before {
-                state.history.push_applied(Box::new(canvas_core::SetShadow {
+                state.push_undo_step(Box::new(canvas_core::SetShadow {
                     layer: id,
                     before,
                     after,
@@ -2052,24 +2161,21 @@ fn layer_properties_ui(
         if let Some(crop) = current_crop {
             let before = state.panel_edit.take().map_or(original, |(_, b)| b);
             let restored = uncrop_transform(&before, crop);
-            if let Err(e) = state.history.apply(
-                &mut state.doc,
-                Box::new(canvas_core::Composite::new(
-                    "Reset crop",
-                    vec![
-                        Box::new(SetTransform {
-                            layer: sel,
-                            before,
-                            after: restored,
-                        }),
-                        Box::new(SetCrop {
-                            layer: sel,
-                            before: current_crop,
-                            after: None,
-                        }),
-                    ],
-                )),
-            ) {
+            if let Err(e) = state.apply_undo_step(Box::new(canvas_core::Composite::new(
+                "Reset crop",
+                vec![
+                    Box::new(SetTransform {
+                        layer: sel,
+                        before,
+                        after: restored,
+                    }),
+                    Box::new(SetCrop {
+                        layer: sel,
+                        before: current_crop,
+                        after: None,
+                    }),
+                ],
+            ))) {
                 tracing::error!("reset crop falló: {e}");
             }
         }
@@ -2081,14 +2187,11 @@ fn layer_properties_ui(
         // edición de campo pendiente como parte del mismo paso).
         let before = state.panel_edit.take().map_or(original, |(_, b)| b);
         if after != before {
-            if let Err(e) = state.history.apply(
-                &mut state.doc,
-                Box::new(SetTransform {
-                    layer: sel,
-                    before,
-                    after,
-                }),
-            ) {
+            if let Err(e) = state.apply_undo_step(Box::new(SetTransform {
+                layer: sel,
+                before,
+                after,
+            })) {
                 tracing::error!("alinear falló: {e}");
             }
         }
@@ -2108,7 +2211,7 @@ fn layer_properties_ui(
             if let Ok(l) = state.doc.layer(id) {
                 let after = l.transform;
                 if after != before {
-                    state.history.push_applied(Box::new(SetTransform {
+                    state.push_undo_step(Box::new(SetTransform {
                         layer: id,
                         before,
                         after,
@@ -2159,7 +2262,7 @@ fn reorder_layer(state: &mut EditorState, id: LayerId, to: ZOrder) {
     }
     let mut cmd = Reorder::new(id, parent, target);
     if cmd.apply(&mut state.doc).is_ok() {
-        state.history.push_applied(Box::new(cmd));
+        state.push_undo_step(Box::new(cmd));
     }
 }
 
@@ -2175,14 +2278,11 @@ fn apply_alignment(state: &mut EditorState, sel: LayerId, after: Transform) {
     if after == before {
         return;
     }
-    if let Err(e) = state.history.apply(
-        &mut state.doc,
-        Box::new(SetTransform {
-            layer: sel,
-            before,
-            after,
-        }),
-    ) {
+    if let Err(e) = state.apply_undo_step(Box::new(SetTransform {
+        layer: sel,
+        before,
+        after,
+    })) {
         tracing::error!("alinear falló: {e}");
     }
 }
@@ -2278,8 +2378,8 @@ pub fn canvas_ui(
                 ui.close();
             }
         };
-        item(ui, "Undo", state.history.can_undo(), MenuAction::Undo);
-        item(ui, "Redo", state.history.can_redo(), MenuAction::Redo);
+        item(ui, "Undo", state.can_undo(), MenuAction::Undo);
+        item(ui, "Redo", state.can_redo(), MenuAction::Redo);
         ui.separator();
         item(ui, "Cut", true, MenuAction::Cut);
         item(ui, "Copy", true, MenuAction::Copy);
@@ -3789,7 +3889,7 @@ fn layer_interaction(
                 if let Ok(l) = state.doc.layer(layer) {
                     let after = l.transform;
                     if after != start {
-                        state.history.push_applied(Box::new(SetTransform {
+                        state.push_undo_step(Box::new(SetTransform {
                             layer,
                             before: start,
                             after,
@@ -3810,23 +3910,21 @@ fn layer_interaction(
                         _ => None,
                     };
                     if after_t != start_t || after_crop != start_crop {
-                        state
-                            .history
-                            .push_applied(Box::new(canvas_core::Composite::new(
-                                "Recortar",
-                                vec![
-                                    Box::new(SetTransform {
-                                        layer,
-                                        before: start_t,
-                                        after: after_t,
-                                    }),
-                                    Box::new(SetCrop {
-                                        layer,
-                                        before: start_crop,
-                                        after: after_crop,
-                                    }),
-                                ],
-                            )));
+                        state.push_undo_step(Box::new(canvas_core::Composite::new(
+                            "Recortar",
+                            vec![
+                                Box::new(SetTransform {
+                                    layer,
+                                    before: start_t,
+                                    after: after_t,
+                                }),
+                                Box::new(SetCrop {
+                                    layer,
+                                    before: start_crop,
+                                    after: after_crop,
+                                }),
+                            ],
+                        )));
                     }
                 }
             }
@@ -4033,13 +4131,11 @@ fn content_properties_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerI
                 .map(|l| l.content.clone())
                 .unwrap_or_else(|_| before.clone());
             if after != before {
-                state
-                    .history
-                    .push_applied(Box::new(canvas_core::SetContent {
-                        layer: id,
-                        before,
-                        after,
-                    }));
+                state.push_undo_step(Box::new(canvas_core::SetContent {
+                    layer: id,
+                    before,
+                    after,
+                }));
             }
         }
     }
@@ -4352,6 +4448,87 @@ mod tests {
         }
         assert!(state.images.contains_key(&original_layer.id));
     }
+
+    /// Simula "editar el diseño 1, luego el 3, luego el 1 otra vez" con
+    /// `active_slot_id` (una sola `EditorState`/`Document` de sobra para
+    /// probar el ORDEN cruzado — el salto real de baraja lo cubre
+    /// `deck::apply_jump` por separado). Comprueba que deshacer tres veces
+    /// reproduce el orden cronológico real (1, 3, 1) pidiendo el salto
+    /// correspondiente cada vez que le toca a un diseño que no es el
+    /// activo, y que rehacer reconstruye el mismo cruce en sentido inverso.
+    #[test]
+    fn global_undo_and_redo_replay_steps_in_true_chronological_order_across_designs() {
+        let mut state = EditorState::new_blank(10.0, 10.0);
+        let id = state
+            .doc
+            .add_layer(
+                "a",
+                Transform::new(0.0, 0.0, 1.0, 1.0),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: 1,
+                    natural_height: 1,
+                    crop: None,
+                }),
+            )
+            .unwrap();
+        let rename = |state: &mut EditorState, before: &str, after: &str| {
+            state.doc.layer_mut(id).unwrap().name = after.to_string();
+            state.push_undo_step(Box::new(canvas_core::Rename {
+                layer: id,
+                before: before.to_string(),
+                after: after.to_string(),
+            }));
+        };
+        let name = |state: &EditorState| state.doc.layer(id).unwrap().name.clone();
+
+        state.active_slot_id = 1;
+        rename(&mut state, "a", "b"); // diseño 1
+        state.active_slot_id = 3;
+        rename(&mut state, "b", "c"); // diseño 3
+        state.active_slot_id = 1;
+        rename(&mut state, "c", "d"); // diseño 1 otra vez
+
+        // El paso más reciente es del diseño activo (1): deshace en el sitio.
+        state.undo();
+        assert!(state.pending_global_undo.is_none());
+        assert_eq!(name(&state), "c");
+
+        // El siguiente le toca al diseño 3: pide el salto SIN tocar el
+        // documento todavía.
+        state.undo();
+        assert_eq!(state.pending_global_undo, Some(3));
+        assert_eq!(name(&state), "c");
+
+        // `main.rs` completó el salto de baraja al diseño 3.
+        state.active_slot_id = 3;
+        state.finish_pending_global_undo();
+        assert_eq!(name(&state), "b");
+
+        // Queda el primer paso, del diseño 1: pide saltar de vuelta.
+        state.undo();
+        assert_eq!(state.pending_global_undo, Some(1));
+        state.active_slot_id = 1;
+        state.finish_pending_global_undo();
+        assert_eq!(name(&state), "a");
+        assert!(!state.can_undo());
+
+        // Rehacer reproduce el mismo cruce de diseños en sentido inverso.
+        state.redo();
+        assert_eq!(name(&state), "b");
+        state.redo();
+        assert_eq!(state.pending_global_redo, Some(3));
+        state.active_slot_id = 3;
+        state.finish_pending_global_redo();
+        assert_eq!(name(&state), "c");
+        state.redo();
+        assert_eq!(state.pending_global_redo, Some(1));
+        state.active_slot_id = 1;
+        state.finish_pending_global_redo();
+        assert_eq!(name(&state), "d");
+        assert!(!state.can_redo());
+    }
+
     #[test]
     fn pasting_into_a_non_empty_canvas_keeps_the_old_contain_behavior() {
         let mut state = EditorState::new_blank(1080.0, 1080.0);

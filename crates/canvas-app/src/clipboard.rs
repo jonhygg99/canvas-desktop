@@ -145,9 +145,7 @@ pub fn delete_selected(state: &mut EditorState) {
         }
     }
     if !cmds.is_empty() {
-        state
-            .history
-            .push_applied(Box::new(Composite::new("Quitar capas", cmds)));
+        state.push_undo_step(Box::new(Composite::new("Quitar capas", cmds)));
     }
     state.forget_deleted_selection();
 }
@@ -186,9 +184,7 @@ fn paste_doc(state: &mut EditorState, clip: canvas_io::ClipboardDoc) -> Option<V
         // páginas a media inserción, algo que no ocurre en la práctica.
         let _ = cmd.apply(&mut state.doc);
     }
-    state
-        .history
-        .push_applied(Box::new(Composite::new("Pegar capas", cmds)));
+    state.push_undo_step(Box::new(Composite::new("Pegar capas", cmds)));
 
     for (old_raw, png_base64) in &clip.images {
         let Some(&new_id) = remap.get(&LayerId::from_raw(*old_raw)) else {
