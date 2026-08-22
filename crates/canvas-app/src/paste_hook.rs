@@ -1,4 +1,4 @@
-//! Enlaza Ctrl+V (y Shift+Insert) a nivel de mensajes crudos de Windows.
+//! Detecta Ctrl+V / Cmd+V a nivel de eventos crudos del sistema operativo.
 //!
 //! egui-winit intercepta Ctrl+V para leer el portapapeles como TEXTO
 //! (`egui-winit-0.35.0/src/lib.rs:1007-1015`): si el portapapeles solo trae
@@ -9,18 +9,20 @@
 //! ruta que ya existe para imágenes del sistema (`clipboard::system_image`)
 //! no llega a dispararse.
 //!
-//! El único sitio donde Ctrl+V sigue siendo observable en ese caso es el
-//! bucle de mensajes de Win32, así que aquí se engancha con `with_msg_hook`
-//! y se deja una señal en un flag atómico que `App::ui` consume una vez por
-//! frame, sin importar qué vista esté activa.
+//! **Windows**: hook de mensajes Win32 (`with_msg_hook` de winit) — el
+//! único sitio donde Ctrl+V sigue siendo observable cuando el portapapeles
+//! solo tiene un bitmap.
+//!
+//! **macOS**: `NSEvent` local monitor — equivalente funcional del MSG hook,
+//! instalado antes de que winit procese el evento.
+//!
+//! En ambos casos se deja una señal en un flag atómico que `App::ui`
+//! consume una vez por frame, sin importar qué vista esté activa.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static PASTE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// Registra el hook en Windows; no-op en el resto de sistemas, donde
-/// `egui::Event::Paste` no tiene este problema (arboard no compite ahí con
-/// la lectura de texto del portapapeles como en Win32).
 #[cfg(windows)]
 pub fn install(builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -48,7 +50,45 @@ pub fn install(builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
     });
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn install(_builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
+    use std::ptr::NonNull;
+
+    use block2::StackBlock;
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
+
+    let mask = NSEventMask::KeyDown;
+    let block = StackBlock::new(|event: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: `event` es un puntero válido que el runtime de Objective-C
+        // nos entrega; vivirá mientras dure la llamada al bloque.
+        let event_ref = unsafe { event.as_ref() };
+        // keyCode 9 = V; ignorar eventos de repetición de tecla.
+        if !event_ref.isARepeat()
+            && event_ref.keyCode() == 9
+            && event_ref
+                .modifierFlags()
+                .contains(NSEventModifierFlags::Command)
+        {
+            PASTE_REQUESTED.store(true, Ordering::Relaxed);
+        }
+        // Devolvemos el evento sin modificarlo para que winit/egui sigan
+        // viéndolo normalmente.
+        event.as_ptr()
+    });
+
+    // SAFETY: El bloque es válido y no captura punteros colgantes.
+    // `install` se llama una sola vez desde `main.rs`, así que podemos
+    // filtrar el `Retained` devuelto para que el monitor viva lo que dure
+    // el proceso.
+    let monitor =
+        unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block) };
+
+    if let Some(mon) = monitor {
+        std::mem::forget(mon);
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn install(_builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {}
 
 /// Lee y limpia la señal de pegado. Se llama una vez por frame en

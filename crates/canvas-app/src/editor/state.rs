@@ -815,16 +815,12 @@ impl EditorState {
         if want_copy {
             crate::clipboard::copy(self);
         }
-        // En Windows, `Event::Paste` no llega cuando el portapapeles solo
-        // trae un bitmap (ver el doc del parámetro y `paste_hook.rs`): ahí
-        // se usa la señal del hook en su lugar. Fuera de Windows
-        // `paste_requested` siempre es `false` (el hook es un no-op) y
-        // `Event::Paste` sigue siendo la única señal.
-        let want_paste = if cfg!(windows) {
-            paste_requested
-        } else {
-            event_paste
-        };
+        // `paste_requested` llega del hook del SO (MSG en Windows, NSEvent
+        // monitor en macOS) y cubre el caso en que el portapapeles solo
+        // trae un bitmap: egui-winit se traga Cmd/Ctrl+V sin emitir
+        // `Event::Paste`. Cuando `Event::Paste` sí llega (p. ej. pegado de
+        // texto), también se acepta como señal válida.
+        let want_paste = paste_requested || event_paste;
         if want_paste && !crate::clipboard::paste(self) {
             self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
         }

@@ -283,6 +283,12 @@ pub fn system_image() -> Option<canvas_io::LoadedImage> {
     let width = u32::try_from(img.width).ok()?;
     let height = u32::try_from(img.height).ok()?;
     let rgba = img.bytes.into_owned();
+    tracing::debug!(
+        "system clipboard image: {}x{} ({} bytes)",
+        width,
+        height,
+        rgba.len()
+    );
     (width > 0 && height > 0 && rgba.len() == width as usize * height as usize * 4).then_some(())?;
     Some(canvas_io::LoadedImage {
         rgba,
