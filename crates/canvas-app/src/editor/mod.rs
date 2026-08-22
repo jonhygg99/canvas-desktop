@@ -66,6 +66,14 @@ pub(crate) use state::{DeleteRecord, GlobalStep};
 
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            properties_ui_inner(state, ui);
+        });
+}
+
+fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     // Banner: el archivo cambió en disco fuera de la app.
