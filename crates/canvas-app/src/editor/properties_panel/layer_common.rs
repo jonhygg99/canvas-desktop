@@ -1,0 +1,369 @@
+//! Campos de posición/tamaño/rotación/recorte/alineación de la capa
+//! seleccionada — comunes a cualquier tipo de contenido (el contenido en sí
+//! se delega a `content::content_properties_ui`).
+
+use canvas_core::{
+    cover_transform, uncrop_transform, LayerContent, LayerId, SetCrop, SetTransform, Transform,
+};
+use eframe::egui;
+
+use super::content::content_properties_ui;
+use super::effects::{blur_control, color_adjustments_ui, shadow_ui};
+use super::EditorState;
+
+/// Campos de posición/tamaño/escala y botones de alineación de una capa.
+pub(super) fn layer_properties_ui(
+    state: &mut EditorState,
+    ui: &mut egui::Ui,
+    sel: LayerId,
+    (page_w, page_h): (f64, f64),
+) {
+    let Ok(layer) = state.doc.layer(sel) else {
+        return;
+    };
+    // Un grupo no tiene geometría propia (su `transform` es una caja
+    // envolvente derivada de sus hijos, recalculada por
+    // `refresh_group_bounds`): posición/tamaño/rotación/recorte no
+    // significan nada aquí. Se gestiona desde el panel de capas.
+    if matches!(layer.content, LayerContent::Group(_)) {
+        ui.label(format!("Group: {}", layer.name));
+        ui.weak("Manage its contents from the layers panel on the left.");
+        return;
+    }
+    let original = layer.transform;
+    let natural = match &layer.content {
+        LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
+        LayerContent::Svg(svg) => (f64::from(svg.natural_width), f64::from(svg.natural_height)),
+        LayerContent::Text(_) | LayerContent::Shape(_) => (0.0, 0.0),
+        LayerContent::Group(_) => unreachable!("ya se devolvió arriba para los grupos"),
+    };
+    let current_crop = match &layer.content {
+        LayerContent::Image(img) => img.crop,
+        _ => None,
+    };
+    let is_image = matches!(&layer.content, LayerContent::Image(_));
+    let mut t = original;
+    let mut changed = false;
+    let mut commit = false;
+    let mut track = |r: egui::Response| -> bool {
+        let c = r.changed();
+        // Consolida al soltar el arrastre del campo o al salir de él (Enter/Tab).
+        if r.drag_stopped() || r.lost_focus() {
+            commit = true;
+        }
+        c
+    };
+
+    // --- Posición ---
+    ui.label("Position");
+    ui.horizontal(|ui| {
+        ui.label("X");
+        changed |= track(ui.add(egui::DragValue::new(&mut t.x).speed(1.0).max_decimals(1)));
+        ui.label("Y");
+        changed |= track(ui.add(egui::DragValue::new(&mut t.y).speed(1.0).max_decimals(1)));
+    });
+
+    // --- Rotación y volteo ---
+    let mut reset_rotation = false;
+    let mut flip_h = false;
+    let mut flip_v = false;
+    ui.horizontal(|ui| {
+        ui.label("Rotation");
+        if track(
+            ui.add(
+                egui::DragValue::new(&mut t.rotation)
+                    .speed(1.0)
+                    .range(-180.0..=180.0)
+                    .suffix("°")
+                    .max_decimals(1),
+            ),
+        ) {
+            changed = true;
+        }
+        reset_rotation = t.rotation != 0.0
+            && ui
+                .small_button("0°")
+                .on_hover_text("Reset rotation")
+                .clicked();
+        flip_h = ui
+            .small_button("⇋")
+            .on_hover_text("Flip horizontally")
+            .clicked();
+        flip_v = ui
+            .small_button("⇅")
+            .on_hover_text("Flip vertically")
+            .clicked();
+    });
+    // `track` retiene prestado `commit` hasta su último uso: los botones
+    // acumulan en un flag aparte que se fusiona al final.
+    let mut force_commit = false;
+    if reset_rotation {
+        t.rotation = 0.0;
+        changed = true;
+        force_commit = true;
+    }
+    if flip_h {
+        t.flip_h = !t.flip_h;
+        changed = true;
+        force_commit = true;
+    }
+    if flip_v {
+        t.flip_v = !t.flip_v;
+        changed = true;
+        force_commit = true;
+    }
+
+    ui.add_space(6.0);
+
+    // --- Tamaño ---
+    ui.horizontal(|ui| {
+        ui.label("Size");
+        let lock_icon = if state.aspect_lock { "🔒" } else { "🔓" };
+        if ui
+            .selectable_label(state.aspect_lock, lock_icon)
+            .on_hover_text("Locked aspect ratio (hold Shift while dragging to invert)")
+            .clicked()
+        {
+            state.aspect_lock = !state.aspect_lock;
+        }
+    });
+    let ratio = original.aspect_ratio();
+    ui.horizontal(|ui| {
+        ui.label("W");
+        let before_w = t.width;
+        if track(
+            ui.add(
+                egui::DragValue::new(&mut t.width)
+                    .speed(1.0)
+                    .range(1.0..=f64::MAX)
+                    .max_decimals(1),
+            ),
+        ) {
+            changed = true;
+            if state.aspect_lock && t.width != before_w {
+                t.height = (t.width / ratio).max(1.0);
+            }
+        }
+        ui.label("H");
+        let before_h = t.height;
+        if track(
+            ui.add(
+                egui::DragValue::new(&mut t.height)
+                    .speed(1.0)
+                    .range(1.0..=f64::MAX)
+                    .max_decimals(1),
+            ),
+        ) {
+            changed = true;
+            if state.aspect_lock && t.height != before_h {
+                t.width = (t.height * ratio).max(1.0);
+            }
+        }
+    });
+
+    // --- Escala respecto al tamaño natural de la imagen ---
+    if natural.0 > 0.0 && natural.1 > 0.0 {
+        let mut scale = t.width / natural.0 * 100.0;
+        ui.horizontal(|ui| {
+            ui.label("Scale");
+            if track(
+                ui.add(
+                    egui::DragValue::new(&mut scale)
+                        .speed(0.5)
+                        .range(0.1..=10_000.0)
+                        .suffix(" %")
+                        .max_decimals(1),
+                ),
+            ) {
+                changed = true;
+                t.width = (natural.0 * scale / 100.0).max(1.0);
+                t.height = (natural.1 * scale / 100.0).max(1.0);
+            }
+        });
+    }
+
+    // Los campos de tamaño (W/H/Scale) escalan alrededor del centro, igual
+    // que la rotación gira sobre él; anclar la esquina superior izquierda
+    // hacía "caer" la capa hacia abajo-derecha al agrandarla.
+    if t.width != original.width || t.height != original.height {
+        let sized = canvas_core::resize_around_center(&original, t.width, t.height);
+        t.x = sized.x;
+        t.y = sized.y;
+    }
+
+    ui.add_space(8.0);
+
+    // --- Contenido (texto / forma) ---
+    content_properties_ui(state, ui, sel);
+
+    // --- Recorte no destructivo (solo capas de imagen) ---
+    let mut reset_crop = false;
+    if is_image {
+        ui.label("Crop");
+        ui.horizontal(|ui| {
+            let label = if state.crop_mode {
+                "✔ Done"
+            } else {
+                "✂ Crop"
+            };
+            if ui
+                .button(label)
+                .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
+                .clicked()
+            {
+                state.crop_mode = !state.crop_mode;
+            }
+            if current_crop.is_some() && ui.button("Reset").clicked() {
+                reset_crop = true;
+            }
+        });
+    }
+
+    ui.add_space(8.0);
+
+    // --- Desenfoque (no destructivo, vista previa en vivo) ---
+    ui.label("Blur");
+    blur_control(state, ui, sel);
+
+    ui.add_space(8.0);
+
+    // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
+    color_adjustments_ui(state, ui, sel);
+
+    ui.add_space(8.0);
+
+    // --- Sombra proyectada ---
+    shadow_ui(state, ui, sel);
+
+    ui.add_space(8.0);
+
+    // --- Alineación respecto a la página ---
+    ui.label("Align to page");
+    let mut aligned: Option<Transform> = None;
+    ui.horizontal(|ui| {
+        if ui.button("⏴ Left").clicked() {
+            aligned = Some(canvas_core::align_horizontal(
+                &t,
+                page_w,
+                canvas_core::HAlign::Left,
+            ));
+        }
+        if ui.button("↔ Center").clicked() {
+            aligned = Some(canvas_core::align_horizontal(
+                &t,
+                page_w,
+                canvas_core::HAlign::Center,
+            ));
+        }
+        if ui.button("Right ⏵").clicked() {
+            aligned = Some(canvas_core::align_horizontal(
+                &t,
+                page_w,
+                canvas_core::HAlign::Right,
+            ));
+        }
+    });
+    ui.horizontal(|ui| {
+        if ui.button("⏶ Top").clicked() {
+            aligned = Some(canvas_core::align_vertical(
+                &t,
+                page_h,
+                canvas_core::VAlign::Top,
+            ));
+        }
+        if ui.button("↕ Middle").clicked() {
+            aligned = Some(canvas_core::align_vertical(
+                &t,
+                page_h,
+                canvas_core::VAlign::Middle,
+            ));
+        }
+        if ui.button("Bottom ⏷").clicked() {
+            aligned = Some(canvas_core::align_vertical(
+                &t,
+                page_h,
+                canvas_core::VAlign::Bottom,
+            ));
+        }
+    });
+    if ui.button("◎ Center on page").clicked() {
+        let centered = canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center);
+        aligned = Some(canvas_core::align_vertical(
+            &centered,
+            page_h,
+            canvas_core::VAlign::Middle,
+        ));
+    }
+    if ui
+        .button("⛶ Cover the page")
+        .on_hover_text("The image fills the whole page keeping its aspect ratio")
+        .clicked()
+    {
+        aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));
+    }
+
+    // --- Aplicar cambios ---
+    if reset_crop {
+        if let Some(crop) = current_crop {
+            let before = state.panel_edit.take().map_or(original, |(_, b)| b);
+            let restored = uncrop_transform(&before, crop);
+            if let Err(e) = state.apply_undo_step(Box::new(canvas_core::Composite::new(
+                "Reset crop",
+                vec![
+                    Box::new(SetTransform {
+                        layer: sel,
+                        before,
+                        after: restored,
+                    }),
+                    Box::new(SetCrop {
+                        layer: sel,
+                        before: current_crop,
+                        after: None,
+                    }),
+                ],
+            ))) {
+                tracing::error!("reset crop falló: {e}");
+            }
+        }
+        return;
+    }
+
+    if let Some(after) = aligned {
+        // Botón de alineación: comando inmediato (consolidando cualquier
+        // edición de campo pendiente como parte del mismo paso).
+        let before = state.panel_edit.take().map_or(original, |(_, b)| b);
+        if after != before {
+            if let Err(e) = state.apply_undo_step(Box::new(SetTransform {
+                layer: sel,
+                before,
+                after,
+            })) {
+                tracing::error!("alinear falló: {e}");
+            }
+        }
+        return;
+    }
+
+    if changed {
+        if state.panel_edit.is_none() {
+            state.panel_edit = Some((sel, original));
+        }
+        if let Ok(l) = state.doc.layer_mut(sel) {
+            l.transform = t;
+        }
+    }
+    if commit || force_commit {
+        if let Some((id, before)) = state.panel_edit.take() {
+            if let Ok(l) = state.doc.layer(id) {
+                let after = l.transform;
+                if after != before {
+                    state.push_undo_step(Box::new(SetTransform {
+                        layer: id,
+                        before,
+                        after,
+                    }));
+                }
+            }
+        }
+    }
+}
