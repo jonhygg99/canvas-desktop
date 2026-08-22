@@ -1,402 +1,155 @@
-# Plan de trabajo — Canvas Desktop
+# PLAN.md
 
-Plan derivado de `PROMPT.md` con las decisiones fijadas: **Windows primero**
-(macOS/Linux quedan como stubs compilables en `canvas-shell`) y plan completo
-hasta empaquetado y CI. Desde la Fase 13, un `.canvas` puede ser también un
-**diseño autónomo** (sin imagen que lo acompañe) además del sidecar clásico de
-`foto.png.canvas` — ver la fase y las decisiones correspondientes más abajo.
+**Estado: En curso — Fase 0 completada**
 
-Regla de oro heredada de la spec: cada fase se verifica **ejecutando la app**,
-no solo compilando. `cargo test`, `cargo clippy -- -D warnings` y
-`cargo fmt --check` deben quedar limpios en cada fase.
+## 📋 Plan — Modularizar los God Objects de canvas-app (editor.rs, main.rs)
 
----
+### 🎯 Objetivo y alcance
 
-## PENDIENTE
+- Modularizar `crates/canvas-app/src/editor.rs` (4825 líneas) y
+  `crates/canvas-app/src/main.rs` (3348 líneas) siguiendo SRP: cada archivo
+  nuevo con un propósito único (estado, viewport, interacción, overlays,
+  panel de propiedades, navegación, mensajes, persistencia, ventana).
+- Fuera de alcance por ahora: `deck.rs` (1646 líneas), `sidecar.rs` (1107),
+  `loader.rs` (1064) — no tienen el mismo nivel de mezcla de
+  responsabilidades; se revisan en un plan futuro si hace falta.
+- Sin cambios de comportamiento: es refactor puro, sin nueva funcionalidad.
 
-### Verificación interactiva pendiente (requiere una persona delante)
+### Diagnóstico
 
-Lo automatizable ya está verificado; esto necesita ojos y ratón:
+**`editor.rs` (4825 líneas)** mezcla:
 
-1. `Ctrl+S` sobre un JPEG real → el modal muestra la calidad (92); "Don't ask
-   again" sobrevive al reinicio; al confirmar, el visor de Windows muestra el
-   cambio.
-2. Foto con GPS/fecha/Adobe RGB → guardar → `exiftool` (o Propiedades del
-   Explorador) conserva fecha, GPS y perfil, con `Orientation: normal`.
-3. Settings → Register → clic derecho sobre un `.png` → "Open with" → Canvas
-   Desktop; clic derecho sobre carpeta y sobre el fondo de una carpeta;
-   Unregister lo limpia sin reiniciar el Explorador.
-4. Con la app abierta, abrir otra imagen desde el Explorador reutiliza la
-   MISMA ventana (y un diálogo pregunta si hay cambios sin guardar).
-5. Editar el archivo abierto con Paint → banner "Reload / Keep mine"; guardar
-   desde la app NO dispara el banner.
-6. Menús nativos, Open Recent, Jump List de la barra de tareas, tema
-   System/Light/Dark en vivo, geometría de ventana restaurada.
-7. Rotar/voltear/recortar con deshacer; guías magnéticas al arrastrar (Alt
-   las desactiva); Grid y Rulers desde el menú View.
-8. Los 6 sliders de Adjustments a 60 fps sobre un JPEG de 24 MP; Reset
-   devuelve la imagen exacta.
-9. Insertar texto y formas, editarlos desde el panel, guardar con sidecar,
-   reabrir → siguen siendo capas editables (criterio de producto 5 adaptado).
-10. Repasar los 10 criterios de aceptación de la primera entrega de
-    `PROMPT.md` de una sentada.
-11. Arrastrar una fila en el panel de capas cambia el orden de apilado en el
-    lienzo (Above/Below/Into); Ctrl+G/Ctrl+Shift+G agrupan/desagrupan desde el
-    teclado; el ojo y el candado ocultan/bloquean con herencia visible sobre
-    los hijos; renombrar con doble clic.
-12. Win+Shift+S (recorte de pantalla) → Ctrl+V pega la captura como capa
-    nueva; Ctrl+C/X/V/D sobre una selección múltiple (Ctrl+clic/Shift+clic)
-    copian/cortan/pegan/duplican el conjunto completo.
-13. File → Export… → PDF abre en Edge con texto nítido al ampliar (vectorial,
-    no rasterizado); Export SVG abre en Edge/Inkscape con el texto como
-    `<text>` real, no una imagen; Export PNG a 2x/3x.
-14. Confirmar en un runner real de GitHub Actions (`windows-latest`) que el
-    cross-compile a `aarch64-pc-windows-msvc` enlaza: en local falla
-    (`link.exe` sin el componente "MSVC ARM64 build tools" de Visual
-    Studio instalado) — `release.yml` lo marca `continue-on-error` y no
-    bloquea el release de x64. Tampoco hay hardware Windows ARM64 para
-    instalar y probar el `.exe` resultante aunque compile.
-15. Generar de verdad el bundle `.app`/`.dmg` en un Mac: `canvas-shell/src/
-    macos.rs` sigue siendo el stub `NotImplemented`; falta instalar un
-    `NSApplicationDelegate` propio con `objc2` que envuelva el de `winit` y
-    encole `application:openURLs:` (puede llegar antes de que la ventana
-    exista). `packaging/macos/Info.plist` está escrito y es XML válido, pero
-    sin `plutil -lint` real ni instalación en un Mac.
-16. Generar de verdad el AppImage/`.deb` en Linux: `canvas-shell/src/
-    linux.rs` sigue siendo el stub `NotImplemented`. Ojo:
-    `cargo packager --formats deb,appimage` genera su PROPIO `.desktop` a
-    partir de `[package.metadata.packager]` (no lee
-    `packaging/linux/canvas-desktop.desktop`), así que el `.desktop`
-    real que sale del build de CI hoy NO incluye ni el MIME propio
-    `.canvas` ni `inode/directory` — los archivos vendidos en
-    `packaging/linux/` (`.desktop` + `canvas-desktop.xml` de
-    shared-mime-info) son referencia para cuando se conecte de verdad, no
-    algo que el pipeline ya use.
-17. Confirmar en un tag de prueba real que `ci.yml` queda en verde en los
-    tres sistemas operativos: esta sesión solo pudo compilar/testear en
-    Windows localmente. Se corrigieron dos bloqueadores para que
-    `canvas-app` compile fuera de Windows (`anyhow`/`tracing`/
-    `tracing-subscriber` estaban mal ubicados bajo
-    `[target.'cfg(windows)'.dependencies]`; `unused_mut` en
-    `native_menus`), pero el fallback de menú egui de ~180 líneas en
-    `menus.rs` (`#[cfg(not(windows))]`) nunca se ha compilado de verdad
-    fuera de Windows — es la primera cosa a mirar si `ci.yml` falla en
-    ubuntu/macos.
+| Responsabilidad | Bloques actuales |
+|---|---|
+| Estado de documento / undo-redo (lógica de negocio, sin UI) | `EditorState` (176–1327): `add_image_layer`, `set_blurred_background`, `handle_shortcuts`, `undo`/`redo`, `record_edit_step` |
+| Cámara/viewport del canvas | `Viewport`, `AutoFit`, `Gesture` (32–175) |
+| Panel de propiedades (UI) | `properties_ui`, `page_ui`, `size_popup_ui`, `blur_control`, `color_adjustments_ui`, `shadow_ui`, `layer_properties_ui`, `content_properties_ui` (1328–2375, 4111–4302) |
+| Operaciones de orden/alineación de capas (lógica, no UI) | `ZOrder`, `reorder_layer`, `apply_alignment` (2376–2443) |
+| Render + interacción del lienzo principal | `canvas_ui`, `CanvasAction`, `replace_url_popup_ui` (2444–3168) |
+| Hit-testing / drag / resize / rotate | `layer_interaction`, `corner_at`, transforms página↔pantalla (3744–4110) |
+| Chrome de slots vecinos del deck dentro del canvas | `draw_slot_chrome`, `draw_slot_header`, iconos, tooltips, rename, add-zone (3169–3743) |
+| Overlays de selección/grid/reglas | `draw_selection_overlay`, `draw_grid`, `draw_rulers`, `show_drag_tag` (4303–4444) |
 
----
+**`main.rs` (3348 líneas)** mezcla:
 
-## HECHO (commits `eede998` … `b854c94`)
+| Responsabilidad | Bloques actuales |
+|---|---|
+| Máquina de estados de la app (eframe::App) | `App`, `View`, `Nav`, `impl eframe::App` |
+| Navegación / apertura de archivos / deck | `open_path`, `navigate`, `request_nav`, `resolve_deck`, `new_design`, `add_canvas`, `toggle_deck_axis`, `cycle_strip_side` |
+| Manejo de mensajes de hilos en background | `handle_messages` — 750 líneas en una sola función (904–1656) |
+| Guardado / exportación (orquestación de hilos) | `start_save`, `start_save_all`, `start_save_design`, `start_export`, `build_slot_doc`, `resolve_canvas_sidecar` |
+| Acciones de menú | `handle_menu_action` |
+| Ventana / SO | `sync_title`, `confirm_close`, `load_app_icon`, `handle_dropped_files`, `thumbnail_cache_dir` |
+| Entry point real | `fn main()`, `shell_registration_flag` |
 
-| Fase | Contenido | Verificación |
-|---|---|---|
-| 1 | Ajustes persistidos (`settings.json`), aviso de sobrescritura destructiva con "Don't ask again", calidad JPEG (92), guardado no-op, UI en inglés | clippy/fmt/tests + arranque |
-| 2 | ICC y EXIF preservados al guardar (`img-parts`), `Orientation`→1 parcheado in situ | tests de roundtrip (JPEG APP1/APP2, PNG iCCP) |
-| 3 | SVG abre rasterizado (`resvg`), GIF primer fotograma, `Ctrl+S` sobre ellos redirige a "Save as…" | tests + app con SVG real |
-| 4 | Test de kill a mitad de guardado (criterio 9), galería sin ocultos y orden Nombre/Fecha | `cargo test` (proceso hijo real) |
-| 5 | Instancia única (`interprocess`), watcher `notify` con banner, trait `ShellIntegration`, `foto.png.canvas` abre su imagen | 2ª instancia sale con 0, primaria recibe la ruta |
-| 6 | "Abrir con" en Windows: ProgID + `OpenWithProgids` + menú contextual de carpetas + `SHChangeNotify`, botones Register/Unregister | claves comprobadas con `reg query` y limpiadas |
-| 7 | Menús nativos `muda` (atajos siguen en egui), recientes + Jump List (COM STA), tema, geometría persistida, navegación unificada con diálogo de cambios | menú instalado, Jump List OK headless, recents en settings.json |
-| 8 | Rotación (manejador, Shift=15°), volteo, recorte no destructivo (`CropRect` + trim/uncrop), guías magnéticas (`snap.rs`), cuadrícula y reglas | 12 tests nuevos de geometría pura |
-| 9 | Filtros de color GPU (brillo/contraste/saturación/temperatura/grises/sepia) encadenados al blur, `SetEffects` consolidado | example `bake_filters`: neutro byte-idéntico, grises R≈G≈B |
-| 10 | Gate parley 0.11 + vello 0.9 (un solo `peniko`), capas de **texto** y **formas** editables, `SvgContent`, sidecar v2 | example `text_probe` (PNG verificado) + clippy/tests |
-| 11 | Grupos (`parent_id` + invariante de preorden, comandos `Reorder`/`Group`/`Ungroup`/`Rename`/`SetVisible`/`SetLocked`/`SetOpacity`), panel de capas (arrastrar, renombrar, ojo, candado), `Selection` multi-capa con primaria, portapapeles interno + pegado de imágenes del sistema (`arboard`), exportación PNG/JPEG/SVG/PDF con escala (`svg2pdf`), sidecar v3 | example `export_probe`: escala 2x exacta, opacidad de grupo horneada (alpha 127≈128), SVG reparseado con usvg + 107 tests |
-| 12 | Empaquetado Windows real: `build.rs` + `winresource` incrusta `assets/windows/icon.ico` en el `.exe`; flags headless `--register-shell`/`--unregister-shell` en `canvas-desktop` delegan en `canvas_shell::windows` (sigue siendo la única lista canónica); `packaging/windows/installer.nsi` bifurcado de cargo-packager (fork documentado y pineado al tag `@crabnebula/packager-v0.11.8`) invoca esos flags por `nsExec` en Install/Uninstall y corrige el AppUserModelID de los accesos directos (`${AUMID}`, no `${IDENTIFIER}`); `[package.metadata.packager]` en `canvas-app/Cargo.toml` (`installer-mode = "currentUser"`, sin usar el `file-associations` propio del empaquetador); iconos `.ico`/`.icns`/hicolor generados sin herramientas externas (`cargo run -p canvas-render --example gen_icons`, solo `resvg`+`tiny-skia`); `packaging/macos/Info.plist` y `packaging/linux/{.desktop,canvas-desktop.xml}` preparados, sin verificar; `.github/workflows/ci.yml` (fmt/clippy `-D warnings`/test en windows+ubuntu+macos) y `release.yml` (NSIS x64 garantizado; arm64/dmg/AppImage/deb best-effort, `continue-on-error`) | ciclo real `cargo packager --formats nsis` → instalar → `reg query` confirma las 8 claves canónicas + entrada de desinstalación → desinstalar → registro y carpeta completamente limpios (probado dos veces); icono visible en la barra de título (captura); 110 tests + clippy/fmt limpios tras mover `anyhow`/`tracing`/`tracing-subscriber` fuera de `[target.'cfg(windows)']` |
-| 13 | Diseños `.canvas` de primera clase: sidecar v4 (`image_hash` opcional, `preview_png` embebido), diseño autónomo (`write_design`/`read_design`, sin imagen que lo acompañe), la galería lista imágenes Y diseños con su miniatura embebida, «✚ New design» crea-y-abre dentro de la carpeta actual con nombre libre (`Untitled.canvas`, `Untitled 2.canvas`…), menú contextual (Open/Duplicate/Copy/Reveal in Explorer) y Ctrl+C/Ctrl+V para copiar diseños entre carpetas, tamaño de página heredado del último documento (`settings.last_page_size`). De paso, arregla un bug preexistente: Ctrl+C/X/V nunca llegaban como `Key` porque winit los intercepta como `Event::Copy/Cut/Paste` — el portapapeles interno de capas (Fase 11) llevaba built pero inalcanzable por teclado | 63 tests de `canvas-app` + 46 de `canvas-io` (18 nuevos) verdes; app real: New Design → editar → Ctrl+S → diálogo `.canvas` → cerrar → reabrir → capas intactas; galería con imagen+sidecar+diseño autónomo muestra un tile por imagen y uno por diseño; Duplicate copia imagen+sidecar; Ctrl+C en una carpeta y Ctrl+V en otra mueve el diseño y abre limpio |
-| 13b | Rename y Delete en el menú contextual de la galería (quedaron fuera de la Fase 13 a propósito, ahora sí se piden): renombrado inline (`TextEdit` en el sitio del nombre, mismo patrón que `layers_panel::rename_edit_ui`) que también renombra el sidecar si lo hay y rechaza colisiones sin sobrescribir; Delete envía a la Papelera de reciclaje (crate `trash`), no borrado permanente — **sin diálogo de confirmación aparte**: al ser recuperable no hace falta el freno extra, decisión explícita del usuario. De paso añade `GalleryState::op_error`, visible bajo la cabecera — antes un fallo de cualquier operación de galería (incluido Duplicate/Paste de la Fase 13) solo se registraba en el log. Pulido posterior: las etiquetas del menú pierden los puntos suspensivos ("Rename"/"Delete"); el resultado de Duplicate/Paste/Rename queda seleccionado (borde azul) tras la operación (`GalleryOpDone` copia `created` a `GalleryState::selected`); y las mismas dos operaciones llegan **dentro del editor** — un lápiz junto al nombre del archivo en el panel (mismo patrón inline, campo nuevo `EditorState::file_rename_edit` para no chocar con el `rename_edit` ya existente de las capas) y un botón «Delete» junto a Save/Save as… (también directo, sin confirmación) que navega a la galería de origen (`from_gallery`) o a Bienvenida. **Bug real encontrado y arreglado**: renombrar disparaba el banner "This file changed on disk outside Canvas Desktop" — el watcher `notify` sigue mirando la ruta VIEJA mientras el rename está en vuelo, detecta que "desaparece" y manda `SourceChangedOnDisk` antes de que `AppMsg::DocumentRenamed` actualice `doc.source_path`, así que la comparación de rutas coincide por la ruta vieja. Arreglado igual que ya hace `Saved`, pero abriendo la ventana de gracia (`ignore_fs_events_until` + `self.watcher = None`) **antes** de lanzar la operación, no solo al recibir la respuesta — con Save el mismo riesgo existe en teoría pero no se nota porque reescribir en el sitio es un evento mucho más silencioso para el watcher que un rename (que dispara un evento de borrado/movimiento inmediato) | 63 tests de `canvas-app` verdes; app real: renombrar una imagen con sidecar mueve ambos archivos; renombrar a un nombre ya existente muestra el error sin tocar disco; Delete hace desaparecer el archivo (y su sidecar) sin ningún diálogo intermedio y aparece en la Papelera de Windows (verificado con `Shell.Application` COM); dentro del editor, renombrar actualiza el título de ventana y `doc.source_path` SIN disparar el banner de cambio externo, y Delete navega a Bienvenida cuando el archivo se abrió directo |
+### Arquitectura propuesta
 
-| 14a | Fase 14 (workspace multi-lienzo estilo Canva), primer tramo: tira lateral de miniaturas (`deck_strip.rs`) para saltar entre TODOS los archivos de la carpeta de origen sin volver a la galería, y una `Deck` (`deck.rs`) — folder + `Vec<Slot>` con id estable, ruta, miniatura — que sobrevive al cambio de `View` (a diferencia de `GalleryState`, que se destruye). Al hacer clic en una carpeta desde la galería, `DeckSeed::from_gallery` se lleva las miniaturas YA subidas a GPU (`std::mem::take` de `GalleryState::items`) en vez de tirarlas; `App::resolve_deck` decide al terminar de cargar si la baraja viene de esa semilla, sigue siendo la ya activa (navegación por la tira o el teclado dentro del propio editor) o es degenerada de una ranura (CLI, recientes, arrastrar y soltar, segunda instancia). Volver a la galería siembra `GalleryState` desde la `Deck` (`seed_gallery_from_deck`): de paso corrige un problema de rendimiento existente — antes, volver a la galería re-decodificaba y re-subía a GPU todas las miniaturas. `PageUp`/`PageDown`/`Ctrl+PageUp/Down`/`Home`/`End` (todos libres en el repo) saltan de lienzo con el mismo diálogo de cambios sin guardar que «Back to gallery»; menú View añade Next/Previous/Toggle Canvases Panel. El intercambio de documento real (N lienzos cargados a la vez, geometría apilada, carga perezosa) queda para la Fase 14b+ — aquí solo hay UN documento cargado, la `Deck` es metadatos | 6 tests nuevos de `deck.rs` (baraja degenerada, activar por ruta, siguiente/anterior con envoltura, primero/último, `merge_scan` preserva id/miniatura por ruta y descarta lo que desapareció) + 136 tests totales verdes; app real con una carpeta de 4 imágenes: la tira lista los mismos 4 archivos que la rejilla; clic en una imagen abre el editor con la tira mostrando "1/4" y el activo resaltado; `PageDown` cambia de lienzo y mueve el resaltado; clic en otra celda de la tira cambia de lienzo; «Back to gallery» repinta los 4 tiles al instante, sin el parpadeo de ⏳ que había antes (capturas de pantalla verificadas) |
-| 14b | Segundo tramo de la Fase 14, deliberadamente **sin cambio visible**: las primitivas de render y sondeo que 14c necesitará para lienzos apilados de verdad, aisladas para que cualquier regresión sea atribuible. En `canvas-render`: `FxScope(pub u64)` (blur.rs) — la caché de efectos GPU pasa de `HashMap<LayerId, LayerFx>` a `HashMap<(FxScope, LayerId), LayerFx>`, porque cada `Document` reinicia su `next_layer_id` en 1 y sin este prefijo dos documentos cargados a la vez se pisarían la textura procesada; `BlurEngine::forget_scope`/`CanvasRenderer::forget_scope` retiran de la caché Y des-registran de vello las texturas de un lienzo descargado (si no, quedarían vivas en GPU indefinidamente); `sync_layer_effects`/`blur_overrides`/`bake_page` llevan `scope` ahora, con `FxScope::default()` en todos los llamantes de esta fase (un solo documento cargado, no hace falta distinguir ámbitos todavía). `scene::build_scene` se parte en `append_document(&mut Scene, ...)` + envoltorio de una sola llamada: el editor multi-lienzo podrá llamarlo una vez por lienzo visible sobre la MISMA escena. En `canvas-io`: `probe::probe_page_size` — tamaño de página sin decodificar el archivo entero (cabecera de imagen vía `image::image_dimensions`, con intercambio ancho/alto según orientación EXIF 5..=8 porque `load_image` aplica esa misma rotación; JSON de un `.canvas` vía el nuevo `sidecar::read_page_size`/`PageProbe`, mismo patrón que `PreviewProbe`; SVG vía `usvg::Tree::size()` sin rasterizar ni cargar fuentes del sistema; una imagen CON sidecar sondea el sidecar, no los píxeles, porque `from_restored` reabriría su documento). Adición pura: sin llamantes todavía. En `canvas-app/editor.rs`: el truco del rect desplazado — `canvas_ui` gana un parámetro `deck: &Deck`, calcula `slot_rect` (= `rect` corrido por `Deck::active_origin()`, siempre `(0,0)` hasta la Fase 14c) y lo pasa en vez de `rect` a `layer_interaction` y a los cuatro ayudantes de coordenadas; `draw_grid`/`draw_selection_overlay`/`draw_rulers` ganan un segundo parámetro `clip` (el rect real del viewport, para `painter_at` y los bordes de guías/reglas) separado de `coord` (para la traducción página→pantalla). Con origen fijo en `(0,0)`, `slot_rect == rect` siempre en esta fase: el cambio es matemáticamente un no-op, no solo "no se nota a simple vista" | `probe::tests` (7, incluida la EXIF `Orientation: 6` que confirma que la sonda da el mismo tamaño que `load_image` decodificaría) + 142 tests totales verdes; los 4 ejemplos headless de regresión dan su salida esperada byte a byte tras el cambio de `FxScope` (`bake_blur`, `bake_filters`: "neutro OK"/"grayscale OK: R≈G≈B", `save_roundtrip`: dims y edición intactas, `export_probe`: "escala 2x exacta, opacidad de grupo, text_lines, SVG válido"); app real con las 4 fotos de prueba: abrir, seleccionar, arrastrar la capa (Position X/Y actualizado en el panel, tablero de transparencia y manejadores de selección correctos), Ctrl+Z — todo idéntico a antes de la fase (capturas verificadas) |
+No se crean crates nuevas; se modulariza dentro de `canvas-app` convirtiendo
+los dos archivos en carpetas de módulos:
 
-| 14c | Tercer tramo de la Fase 14: lienzos apilados de verdad, con carga perezosa y descarte — el corazón del modelo Canva. `Deck`/`Slot` ganan geometría y contenido: `DeckRect` (px de baraja), `Slot::size()` (tamaño sondeado → aspecto de la miniatura a lado mayor 1600 px → 1600×1600 si no hay ninguno), `Deck::relayout` apila en una columna centrada con un hueco proporcional al ancho de la pila (`(deck_w*0.03).clamp(24,400)`, en espacio de baraja, no de pantalla), `Deck::bounds`/`active_rect` para «Fit lienzo activo» (`Ctrl+0`, sin cambiar) y «Fit toda la baraja» (`Ctrl+Alt+0`, nuevo). `SlotContent::{Idle,Loading,Ready(Box<SlotDoc>),Failed,Active}` — `SlotDoc` es exactamente lo que antes vivía suelto en `EditorState` para el único documento (doc/history/images/selection/fondo desenfocado/metadata/flags), sin viewport ni gestos: `EditorState::take_slot`/`put_slot` mueven ese contenido entre la ranura y el editor, protegidos por `is_idle()` (ningún gesto ni edición de panel a medias). `deck::apply_jump` (función libre, no método — ninguno de los dos, `Deck` ni `EditorState`, es dueño del otro) hace el intercambio en `main.rs`, DESPUÉS de que `canvas_ui` pinte (si se hiciera dentro, el panel de capas saldría desincronizado del lienzo un frame). El salto entre lienzos de la baraja (clic en el propio lienzo, tira, `PageUp`/`PageDown`/`Home`/`End`) dejó de preguntar por cambios sin guardar: es SIN PÉRDIDA, el saliente quedó en su ranura con su historial intacto — simplificación real sobre el diálogo que tenían las Fases 14a/14b para esa navegación. Carga perezosa: `Deck::visible_indices` (con margen de precarga `Deck::dilate`, 50% del viewport a cada lado) + `request_loads` (radio de precarga 2 alrededor de la activa, máx. 2 cargas en vuelo) disparan `loader::spawn_load_slot` vía el nuevo `AppMsg::SlotLoaded` — deliberadamente NO reutiliza `ImageLoaded`: esa rama puede abrir el modal "Image changed outside Canvas Desktop", inaceptable para una carga disparada por hacer scroll (un hash que no coincide enciende `external_change` en silencio, visible como el banner normal en cuanto la ranura se activa). `AppMsg::DeckProbed` (sondeo de toda la carpeta en un solo mensaje, vía `probe_page_size` en rayon dentro de `spawn_gallery_scan`) alimenta `Deck::set_probes`. Descarte: `Deck::evict` libera ranuras `Ready` lejanas, limpias y sin guardado en curso por LRU (`last_seen`) hasta volver al presupuesto (512 MB o 12 ranuras), nunca la activa ni una sucia; devuelve los `FxScope` a liberar y el llamador hace `renderer.forget_scope` (retira de caché Y des-registra de vello). Render: una sola `Scene`, `append_document` una vez por lienzo visible cargado con su propio `FxScope(slot.id)` — los no cargados se pintan como miniatura/placeholder con el `Painter` de egui, encima del blit de vello, sin subir nada nuevo a la escena. La rueda cambia de semántica en toda la fase (decisión ya confirmada): ahora desplaza por la baraja (Shift = eje transversal), `Ctrl`+rueda y el pellizco hacen zoom — uniforme también con un solo lienzo. `confirm_close` (cerrar la ventana) gana una comprobación de ranuras sucias que NO son la activa: hoy no hay forma de guardarlas (eso es la Fase 14d), así que al menos avisa por su nombre antes de perderlas en vez de cerrarse en silencio. Simplificaciones conscientes frente al plan original, con su motivo: sin `DeckAnchor` de relayout que preserve el punto bajo el cursor (el sondeo llega en un único mensaje por carpeta, así que en la práctica solo hay un relayout real, no una serie que necesite anclarse); sin el filtro adicional `MIN_SCREEN_SIZE_TO_LOAD` (el tope de 2 cargas en vuelo ya evita la avalancha al alejar el zoom sobre cientos de lienzos); el primer clic sobre un lienzo no activo solo lo activa, sin seleccionar además la capa de debajo en el mismo clic (llegará si hace falta, no bloqueaba nada) | 13 tests nuevos de `deck.rs` (apilado vertical con centrado, ranuras visibles por intersección de rect, intercambio de contenido preservando el sucio, descarte que respeta sucias/cercanas y se lleva las limpias/lejanas) + 148 tests totales verdes; app real con 8 imágenes de tamaños y colores distintos: `Ctrl+Alt+0` muestra la pila entera con las 8 en su color y orden correctos, nombre sobre cada una, marco de acento en la activa; clic en un lienzo lejano cambia el activo al instante (panel de propiedades, capas y tira sincronizados); **desenfoque de 75 px en un lienzo y 0 px en otro, alternando entre ambos varias veces, cada uno conserva el suyo** — la prueba directa de que `FxScope` evita la colisión de `LayerId`; cerrar con un lienzo sucio muestra el mismo diálogo de siempre; ~360 MB de RAM con la carpeta de prueba, proceso limpio al cerrar (capturas de pantalla verificadas) |
+```
+crates/canvas-app/src/
+├─ main.rs                     # solo entry point: parseo de args, run_native, shell_registration_flag
+├─ app/
+│  ├─ mod.rs                   # struct App, View, Nav, impl eframe::App::ui (dispatch)
+│  ├─ navigation.rs            # open_path, navigate, request_nav, resolve_deck, apply_deck_prefs,
+│  │                           #   new_design, add_canvas, toggle_deck_axis, cycle_strip_side
+│  ├─ messages.rs               # handle_messages, partida por variante de AppMsg
+│  ├─ persistence.rs            # start_save, start_save_all, start_save_design, start_export,
+│  │                           #   build_slot_doc, seed_gallery_from_deck, resolve_canvas_sidecar, is_jpeg_path
+│  ├─ menu_actions.rs           # handle_menu_action
+│  └─ window.rs                 # sync_title, confirm_close, load_app_icon, handle_dropped_files,
+│                               #   thumbnail_cache_dir, push_recent, remember_page_size, dirty_canvas_names
+│
+├─ editor/
+│  ├─ mod.rs                   # re-exports públicos (EditorState, canvas_ui, properties_ui, CanvasAction…)
+│  ├─ state.rs                  # EditorState (struct + impl): modelo/undo, sin egui salvo firma mínima
+│  ├─ viewport.rs               # Viewport, AutoFit, Gesture, page_to_screen/screen_to_page,
+│  │                           #   layer_corners_screen, rotation_handle_screen
+│  ├─ layer_ops.rs              # ZOrder, sibling_position, reorder_layer, apply_alignment (lógica pura)
+│  ├─ interaction.rs            # layer_interaction, corner_at, Corner — hit-testing y gestos de drag/resize/rotate
+│  ├─ canvas_view.rs            # canvas_ui, CanvasAction, replace_url_popup_ui — orquesta viewport+interaction+overlay
+│  ├─ overlay.rs                # draw_selection_overlay, draw_grid, draw_rulers, show_drag_tag
+│  ├─ slot_chrome.rs            # draw_slot_chrome, draw_slot_header, iconos, tooltips, rename overlay, add-zone
+│  ├─ properties_panel.rs       # properties_ui, page_ui, size_popup_ui, blur_control, color_adjustments_ui,
+│  │                           #   shadow_ui, layer_properties_ui, content_properties_ui, file_name_ui, format_dims
+│  └─ tests.rs                  # el actual #[cfg(test)] mod tests (undo/redo, paste, replace…)
+│
+├─ deck.rs / loader.rs / gallery.rs / menus.rs / ...   # sin cambios en esta fase
+```
 
-| 14d | Cuarto tramo de la Fase 14: guardado multi-lienzo. «Save All» (`Ctrl+Alt+S` / menú File) recorre las ranuras sucias de la baraja una por frame reutilizando el camino de guardado YA existente de un solo documento (`state.save_clicked`), en vez de la abstracción `SaveTarget<'a>` que preveía el plan original: `App::start_save_all` construye `save_all_queue: Vec<u64>` (ids de ranura, no rutas — sobrevive a un renombrado en vuelo) y, cada frame, si la activa coincide con el frente de la cola dispara su guardado; si no coincide, pide `deck.jump_to` hacia ella. El aviso de sobrescritura destructiva se pregunta una sola vez por lote (igual que con un documento, `overwrite_confirmed` persiste toda la sesión). Un fallo o una cancelación del modal detienen el lote entero en vez de reintentar sin fin. `dirty_canvas_names` (antes `dirty_name` en singular) recorre la activa más todas las `Ready` sucias de la baraja para los diálogos de cambios sin guardar de `request_nav`/`confirm_close`. `DocumentRenamed` actualiza `slot.path`/`slot.name`; `DocumentDeleted` quita la ranura y salta a la vecina sin salir del editor (antes navegaba fuera, único comportamiento que tenía sentido con una ranura). `sync_title` añade el sufijo `(i/N)` cuando hay más de una ranura. **Bug real encontrado y arreglado, de la misma familia que el de la Fase 13b**: justo después de fijar el guardado, aparecía el banner "changed on disk" en el propio archivo recién guardado (reproducible incluso guardando un único archivo suelto con `Ctrl+S`, sin baraja de por medio — no era un bug de Save All). Causa: `ignore_fs_events_until` se abría al RECIBIR `AppMsg::Saved`, pero el watcher corre en otro hilo y puede notificar el cambio en disco mientras la escritura todavía está en curso (la abre `spawn_save` en cuanto arranca) — la carrera hace que `SourceChangedOnDisk` a veces llegue al canal ANTES que `Saved`, sin ventana de gracia activa todavía. Arreglado moviendo la apertura de la ventana a `start_save`/`start_save_design`, en el mismo instante en que se pone `state.saving = true`, antes de lanzar el hilo de guardado — igual que 13b ya hacía para el rename. Segundo bug relacionado, encontrado y arreglado en el mismo tramo: `apply_jump` podía cambiar el lienzo activo mientras un guardado seguía en curso o un modal de guardado (`overwrite_prompt`/`readonly_prompt`) seguía esperando respuesta, lo que habría confirmado el modal sobre el documento equivocado tras el salto — `EditorState::is_idle()` ahora exige también `!saving && !exporting`, y el sitio donde se aplica el salto comprueba además que no haya modal pendiente | 148 tests totales verdes (sin tests nuevos: el bug era de interacción entre hilos, no cubierto por unitarios — se verificó a mano); app real con 3 lienzos (rojo/verde/azul): ensuciar los 3 vía el campo Position X, `Ctrl+Alt+S` (accesible solo desde el menú File — el atajo nativo `muda` no llegó a disparar `MenuAction::SaveAll` en esta sesión, coherente con que los aceleradores nativos están documentados como decorativos) muestra el modal de sobrescritura UNA vez, tras confirmar guarda los 3 PNG + 3 sidecars `.canvas` en la misma ráfaga (mtimes a milisegundos de diferencia), termina sin asterisco ni puntos de sucio en ningún lienzo y SIN el banner de cambio externo; renombrar el lienzo activo actualiza su celda en la tira al instante; borrar el lienzo activo salta a la vecina sin salir del editor y el archivo (+ sidecar) desaparece de disco (capturas de pantalla verificadas) |
+Regla de dependencia: `state.rs`, `layer_ops.rs` e `interaction.rs` no deben
+importar nada de `slot_chrome.rs`/`overlay.rs` (evita acoplamiento nuevo);
+`canvas_view.rs` es el único módulo que compone todo.
 
-| 14e | Quinto y último tramo de la Fase 14: eje horizontal y pulido. `DeckAxis::{Vertical,Horizontal}` (`deck.rs`) — `Deck::relayout` se bifurca (acumula en `x` centrando en `y`, o al revés) y `Deck::bounds` se generaliza a un min/max de verdad sobre ambos ejes en vez de asumir apilado vertical desde `(0,0)` (antes tomaba `y` del último slot; ahora min/max de `y` igual que de `x`, así sirve para cualquiera de los dos ejes sin caso especial). La tira (`deck_strip.rs`) sigue al eje: `ScrollArea::vertical`+lista con `ui.vertical` implícito o `ScrollArea::horizontal`+`ui.horizontal` explícito según `deck.axis`, con un botón ⇅/⇆ en su cabecera que devuelve `StripAction::ToggleAxis` (la tira no conoce `AppSettings`, así que no persiste ella misma — se lo deja al llamador). El panel que la aloja cambia de `Panel::left` a `Panel::bottom` en `main.rs`, con IDS DISTINTOS por eje (`deck_strip_v`/`deck_strip_h`): compartir un solo id habría aplicado el ancho recordado de la tira vertical como alto de la horizontal tras un cambio de eje. La rueda del ratón (`canvas_ui`) pasa de asumir siempre "eje primario = Y" a `swap = shift != is_horizontal`: con eje horizontal, la rueda simple ahora mueve `pan.x` (antes solo Shift+rueda lo hacía) y Shift pasa a mover `pan.y` — mismo cálculo que antes, con los papeles cambiados. Persistencia en `settings.json`: `deck_axis`/`deck_strip_visible` (`AppSettings`, Fase 14e) — como `Deck::single`/`from_seed` no conocen `AppSettings`, `App::apply_deck_prefs()` los siembra justo después de construir la baraja (`resolve_deck`, `new_design`); el toggle de la tira y el nuevo ítem de menú View «Canvases Axis» (`MenuAction::ToggleCanvasesAxis`, nativo `muda` + fallback egui) comparten `App::toggle_deck_axis()` para no duplicar la persistencia (salvo el sitio dentro del `match &mut self.view`, donde hace falta inlinearlo: `state` ya tiene prestado `self.view` y el borrow checker no ve que el método solo toca `self.deck`/`self.settings`, campos disjuntos). **Bug preexistente encontrado de paso y arreglado**: el texto de ayuda del panel de propiedades decía "Wheel: zoom" desde antes de la Fase 14c, cuando la rueda pasó a desplazar y `Ctrl`+rueda pasó a hacer zoom — quedó desactualizado en las tres fases siguientes sin que nadie lo notara porque no rompe nada, solo miente. Corregido a "Wheel: pan · Shift+wheel: pan the other axis · Ctrl+wheel: zoom". Deliberadamente FUERA de esta fase (simplificaciones conscientes, con motivo): la interpolación de ~8 frames al saltar de lienzo que preveía el plan original — el salto ya es instantáneo y funcional, animarlo es puro pulido visual con su propia superficie de bugs (readaptar `apply_jump`/`center_on` a un estado a medio interpolar, seguir pidiendo repintado mientras corre) que no se justifica sin que el usuario lo pida; y `settings.wheel_zooms` (revertir la rueda a su semántica pre-14c) — nadie ha pedido revertirla y añadir la bifurcación completa (rueda hace zoom, Ctrl+rueda desplaza) para un ajuste que quizá no use nadie es deuda innecesaria hasta que haga falta de verdad | 150 tests totales verdes (2 nuevos de `deck.rs`: `relayout_stacks_horizontally_and_centers_shorter_slots`, `bounds_spans_all_slots_on_either_axis`); app real con 3 lienzos: el botón ⇅ de la tira cambia a ⇆ y la tira salta de la izquierda al fondo de la ventana, los lienzos pasan de apilados verticalmente a lado a lado; con eje horizontal, la rueda simple (sin Shift) desplaza la vista horizontalmente (verificado por captura: el lienzo azul se desplaza en pantalla tras seis "clics" de rueda); cerrar la app y reabrirla en la misma carpeta respeta el eje elegido sin tocar nada (confirmado leyendo `settings.json`: `"deck_axis":"Horizontal"`); alternar de vuelta a vertical desde la tira lo persiste también (`"deck_axis":"Vertical"` tras el segundo clic) (capturas de pantalla verificadas) |
+### Mapeo de migración
 
-| 14f | Cuatro fallos de interacción reportados tras probar la Fase 14 a mano, todos con causa raíz confirmada por lectura de código antes de tocar nada (dos agentes de investigación de solo lectura + verificación manual propia). **(1) La tira no navegaba**: `Deck::request_loads` (`deck.rs`) solo encolaba carga para ranuras visibles o dentro del radio de precarga (±2) de la activa — nunca miraba `jump_to`, así que pulsar la celda de cualquier archivo más lejos dejaba el salto pedido para siempre porque nada disparaba jamás su carga. Arreglado añadiendo el destino de `jump_to` a los candidatos con prioridad máxima (`sort_by_key` con clave compuesta `(Some(i) != jump, distancia)`); de paso, `apply_jump` ahora limpia un salto a una ranura `Failed` en vez de dejarlo colgado. **(2) La ventana no reescalaba**: `Viewport` fijaba zoom/pan una sola vez (`needs_fit`, primer frame) y no había ningún sitio que reaccionara a que `ui.available_size()` cambiara. Nuevo `AutoFit::{Off,Active,All}` — arranca en `Active`; cualquier zoom o paneo manual (`zoom_at`, rueda sin Ctrl, arrastre con espacio/botón central) lo apaga; `Ctrl+0`/`Ctrl+Alt+0` lo reactivan; `Viewport::note_size` detecta el cambio de tamaño (umbral 0.5pt) y `canvas_ui` repite el último ajuste automático mientras siga armado. **(3) Sin separación entre lienzos hasta activarlos, y (4) la Position X «se movía sola» al pulsar un lienzo inactivo** — dos síntomas con una causa compartida y una segunda causa independiente para (4), corregida la hipótesis inicial en el propio proceso de investigación: los tamaños de página sondeados (`AppMsg::DeckProbed`) nunca llegaban a la baraja porque `spawn_gallery_scan` los manda desde la GALERÍA, antes de que la `Deck` de esa carpeta exista (se construye después, en `resolve_deck`) — el guardia de carpeta del manejador los descartaba en silencio. Cada ranura se quedaba con la estimación de `Slot::size()` (aspecto de la miniatura a 1600 px), que no coincide con el tamaño real pintado: un diseño mayor desbordaba su `rect` de layout y se comía el hueco con el vecino (3); y activar una ranura sustituía su tamaño falso por el real, cambiando `deck_w` (el máximo de todas), lo que desplazaba el origen de TODOS los lienzos en espacio de baraja (parte del efecto visual de (4), pero — verificado explícitamente — eso mueve `Slot::rect`, nunca `layer.transform.x`, así que no explica el número del panel de propiedades). Arreglado con `loader::spawn_deck_probe` (sondeo rayon extraído a `probe_page_sizes`, reutilizado por ambos) lanzado justo después de construir la baraja en `resolve_deck` (y tras `merge_scan` si el editor ya estaba abierto en esa carpeta), momento en el que el guardia de carpeta ya coincide; más una defensa en profundidad en `canvas_ui` que sincroniza `slot.page` de CUALQUIER ranura `Ready` (no solo la activa) contra su documento real cada frame; más compensación de pan cuando `relayout` mueve el origen activo como efecto secundario, para que el lienzo activo no salte en pantalla sin que el usuario lo pidiera. La causa REAL de (4) — confirmada tras corregir la hipótesis inicial — es independiente: `response.clicked()` (activación de lienzo no activo) solo se cumple si el puntero no cruza el umbral de arrastre de egui entre pulsar y soltar, y un clic humano real casi nunca es tan quieto; cuando egui lo clasifica como arrastre, `clicked()` no llegaba nunca y `layer_interaction` SÍ corría, agarrando una capa del documento ACTIVO (con `slot_rect`, siempre su espacio) desde un clic dado sobre OTRO lienzo. Arreglado activando en el frame de la PULSACIÓN (`ui.input(|i| i.pointer.primary_pressed())`, no `clicked()`) y con `EditorState::press_on_other_slot: bool` — persiste el gesto entero (pulsar/arrastrar/soltar), no solo el frame del clic, para que `layer_interaction` quede suprimida durante toda la pulsación aunque haya arrastre. De paso, restaura una intención ya documentada en el propio código (`editor.rs`: *"no por clic directo, que ya se ve"*) que `main.rs` no cumplía: `Deck::jump_center: bool`, puesto a `true` solo por la tira/teclado/Save all, deja que un clic directo dentro del editor no recentre la vista. **Quinto fallo añadido por el usuario a mitad de la investigación**: la rueda del ratón sobre los lienzos iba invertida. `state.viewport.pan -= delta` tenía el signo contrario al paneo por arrastre del propio archivo (`pan += drag_delta`) y a la convención de `egui::ScrollArea` (`offset -= scroll_delta`, con `offset` en el sentido opuesto a `pan`) — cambiado a `+=` | 153 tests totales verdes (3 nuevos de `deck.rs`: `request_loads` prioriza un salto pendiente fuera del radio de precarga, lo ignora si ya no está `Idle`, no entra en pánico si el destino está fuera de rango); app real con una carpeta de 12 archivos (uno de 3000×2200, mucho mayor que la estimación de 1600 px): pulsar la celda del último archivo de la tira navega al instante (antes se quedaba colgado); maximizar la ventana reescala el lienzo activo (verificado con capturas: 85 %→225 % de zoom), un `Ctrl+rueda` manual lo desarma (maximizar/restaurar ya no reescala) y `Ctrl+0` lo vuelve a armar; separación visible entre los 12 lienzos desde el primer frame, incluido alrededor del diseño de 3000×2200 (`Ctrl+Alt+0`, capturado); un clic con temblor real (pulsar, mover 2-4 px, soltar) sobre un lienzo inactivo lo activa SIN mover nada — confirmado navegando de vuelta al lienzo que estaba activo antes del clic y comprobando que su Position X seguía en 0; arrastrar una capa del lienzo YA activo sigue funcionando exactamente igual (Position X/Y actualizado, punto de sucio); clic en el hueco entre lienzos deselecciona igual que siempre; paneo con espacio+arrastre a través de varios lienzos no activa ninguno (título sin cambios); clic directo sobre un lienzo visible ya no recentra la cámara (capturas de pantalla verificadas) |
+- `editor.rs:32-175` (Viewport/AutoFit/Gesture) + `3744-3787` + `3760-3772` → `editor/viewport.rs`
+- `editor.rs:176-1327` (`EditorState` + impl) → `editor/state.rs`
+- `editor.rs:1328-2375`, `4111-4302` (paneles de propiedades) → `editor/properties_panel.rs`
+- `editor.rs:2376-2443` (`ZOrder`, reorder, alignment) → `editor/layer_ops.rs`
+- `editor.rs:2444-3168` (`canvas_ui`, `CanvasAction`, popup de reemplazo por URL) → `editor/canvas_view.rs`
+- `editor.rs:3169-3743` (chrome de slots del deck) → `editor/slot_chrome.rs`
+- `editor.rs:3788-4110` (`layer_interaction`, `corner_at`) → `editor/interaction.rs`
+- `editor.rs:4303-4444` (overlays de selección/grid/reglas) → `editor/overlay.rs`
+- `editor.rs:4506-4825` (tests) → `editor/tests.rs`
+- `main.rs:189-380`, `2171-3348` (`App` struct + `impl eframe::App`) → `app/mod.rs`
+- `main.rs:380-663` (navegación/apertura/deck) → `app/navigation.rs`
+- `main.rs:904-1656` (`handle_messages`) → `app/messages.rs`
+- `main.rs:725-757`, `1879-2137` (guardado/export) → `app/persistence.rs`
+- `main.rs:757-903` (`handle_menu_action`) → `app/menu_actions.rs`
+- `main.rs:1656-1781` (drag&drop, confirm close, título, icono) → `app/window.rs`
+- `main.rs:1-190` (entry point, `shell_registration_flag`) → se quedan en `main.rs`, reducido a ~150 líneas
 
-| 14g | Dos fallos más de la tira reportados tras probar 14f, más una función nueva pedida en el mismo turno: lienzos en blanco perpetuos. **(1) Redimensionar la tira vertical no agrandaba las miniaturas**: `CELL`/`THUMB` (`deck_strip.rs`) eran `const` fijas, nunca leídas contra `ui.available_width()`. Arreglado con `StripMetrics`/`strip_metrics()`, calculadas cada frame contra la dimensión TRANSVERSAL al flujo de scroll (ancho en Left/Right, alto en Top/Bottom), recortadas a `[64,240]` px; el truncado de nombre y el tamaño de los glifos de estado pasan a ser proporcionales al tamaño de celda en vez de fijos. **(2) La tira en horizontal no se dejaba redimensionar**: `egui::Panel::top`/`::bottom` fijan `.resizable(false)` en su propio constructor (`left`/`right` no) — un `.resizable(true)` explícito lo resuelve. Aprovechando el mismo `match` de montaje, se añade la función pedida: **(3) la tira ahora puede anclarse a los 4 lados**, no solo izquierda/abajo. Nuevo `StripSide::{Left,Right,Top,Bottom}` (`deck.rs`), DESACOPLADO a propósito de `DeckAxis` — el eje decide cómo se apilan los LIENZOS (`Deck::relayout`, sin tocar), esto decide solo dónde vive el PANEL de la tira; estaban unidos por conveniencia desde la Fase 14e, no por necesidad. `Deck.strip_side` + `settings.deck_strip_side` siguen el mismo patrón que `axis`/`deck_axis`; el montaje en `main.rs` pasa a 4 brazos con 4 ids de panel DISTINTOS (`deck_strip_left/right/top/bottom` — si no, el ancho recordado de un lado se aplicaría como alto al mover la tira a otro) y `.size_range()` explícito (96–280 px en Left/Right, 120–280 en Top/Bottom: el suelo de 20 px que trae egui por defecto en Top/Bottom es menor que una sola miniatura). Un segundo botón en la cabecera de la tira (además del ⇅/⇆ de eje ya existente) cicla Left→Top→Right→Bottom; la cabecera pasa de `ui.horizontal` a `ui.horizontal_wrapped` porque a 96 px (el mínimo de una tira Left/Right) dos botones más el contador ya no caben en una sola línea. **(4) Función nueva: lienzos en blanco perpetuos** — un botón "+" al final de la tira añade un lienzo vacío que NO es un archivo todavía; en cuanto el usuario dibuja algo en él (`History::is_dirty()` pasa a `true`), se escribe solo a disco con nombre automático (`Untitled.canvas`, `Untitled 2.canvas`…, mismo patrón que "✚ New design") SIN diálogo, y aparece otro "+" listo para el siguiente — patrón "nueva diapositiva" de Google Slides con auto-relleno. Implementado como reserva-y-guarda en dos fases para no duplicar el camino de guardado existente: `canvas_io::peek_unique_path` (nuevo, hermano de `reserve_unique_path` pero SIN crear el archivo — solo un vistazo para poder mostrar un nombre plausible en la tira antes de que exista de verdad) le da a la ranura provisional un `Slot.path` único desde el principio; `Deck::push_placeholder` la construye reutilizando `EditorState::new_blank`+`take_slot()` (mismo truco que ya usa `build_slot_doc`) con `history.mark_saved()` inmediato — sin esto, `History::default()` (`saved_depth: None`) ya lee como sucia por sí sola, y la provisional se «materializaría» sola sin que nadie dibujase nada. Al primer trazo, `loader::spawn_reserve_canvas_path` reserva el nombre DE VERDAD (`reserve_unique_path`, con `create_new`) en un hilo aparte; su respuesta (`AppMsg::CanvasPathReserved`, enrutada por el id ESTABLE de la ranura, no el índice) actualiza `path`/`name`/`is_placeholder=false` de la ranura (mismo patrón que `DocumentRenamed`) y deja `state.save_clicked = true` — el bloque de guardado normal, unas líneas más abajo en el mismo frame, hornea la miniatura y escribe el archivo por el camino de `start_save_design` de siempre, sin duplicar nada de eso. `Slot.is_placeholder: bool` nueva la excluye de tres sitios que asumían "toda ranura es un archivo real": `merge_scan` (se aparta antes de reconciliar contra el listado del disco — que nunca la va a traer — y se vuelve a pegar al final DESPUÉS de ordenar pero ANTES de restaurar la ranura activa, o una provisional activa perdería su índice en el próximo reescaneo), `evict` (está limpia por construcción, así que sin esta guarda volvería a `Idle` y `request_loads` intentaría cargar de disco un archivo que no existe) y `request_loads` (defensa en profundidad). Un hallazgo del propio diseño, no anticipado: `seed_gallery_from_deck` volcaba TODAS las ranuras a la rejilla de galería al volver atrás, incluida una provisional sin archivo — «Back to gallery» habría mostrado una miniatura rota; arreglado con el mismo filtro | 162 tests totales verdes (9 nuevos: 2 de `peek_unique_path` en `canvas-io`, 7 de `push_placeholder`/`merge_scan`/`evict`/`request_loads` con provisionales en `deck.rs`); app real con una carpeta de 12 archivos: arrastrar el borde de la tira vertical agranda las miniaturas de verdad (de ~54 px a más de 200 px, capturado); ciclar el botón de posición pasa la tira de izquierda a arriba (fila horizontal con las 12 miniaturas) y de ahí a la derecha, cada vez redimensionable; pulsar "+" crea "Untitled" y salta a él; insertar un rectángulo lo materializa al instante — título sin asterisco, `Untitled.canvas` aparece en la carpeta con el contenido real, y "Untitled 2" aparece como el siguiente "+"; repetido una segunda vez sobre "Untitled 2" (que materializa a `Untitled 2.canvas`, sin colisionar con el primero) confirma que el relleno automático no es de un solo uso; "Back to gallery" con una tercera provisional sin editar todavía en la baraja muestra sus 14 elementos reales (12 originales + 2 materializados) sin ninguna miniatura rota para la provisional (capturas de pantalla verificadas) |
+### Pasos
 
-| 14h | Cinco pedidos en un mismo turno tras probar 14g a fondo: **(1) el resize de la tira arriba/abajo se podía agrandar pero no se quedaba** (volvía a encogerse solo). Confirmado leyendo `panel.rs`: egui persiste el tamaño del panel a partir del rect que su CONTENIDO ocupó, no del arrastre en sí; en Left/Right `ui.separator()` reclamaba el ancho completo cada frame (fijador implícito que nadie había notado), pero en Top/Bottom nada reclamaba el alto y la `ScrollArea` (con `auto_shrink` en `true` por defecto) se encogía a su contenido cada frame — un valor decreciente que egui volvía a persistir como "el alto del panel". Arreglado con `.auto_shrink([false, false])` en AMBAS `ScrollArea` de `deck_strip_ui` (no solo la horizontal afectada — también la vertical, para dejar de depender de `ui.separator()` como fijador implícito y que el comportamiento sea simétrico en los 4 lados). **(2) Investigado por qué los archivos 6, 7, 8, 9 "no se veían"** en una carpeta real de 51 fotos sin ceros de relleno (`1.png`…`51.png`): confirmado que NO era un bug de render/carga (los cinco pasos que tocan visibilidad — `relayout`, `visible_indices`, `dilate`, `bounds`, `request_loads`, `evict` — iteran la lista completa sin caso especial por posición) sino de ORDEN: `Deck::apply_sort`/`GalleryState::apply_sort` comparaban el nombre con `Ord` de `String` puro, byte a byte — sin ceros de relleno, `"6.png" > "51.png"` como cadenas (`'6' > '5'` en el primer byte), así que 6-9 caían en las posiciones 47-50, DESPUÉS de 51.png, tanto en la tira como en la rejilla. Arreglado con `natural_cmp` (nuevo, `settings.rs`): compara tramos de dígitos consecutivos como número (primero por longitud sin ceros a la izquierda, luego lexicográfico) y el resto case-insensitive; reemplaza el comparador de `GallerySort::Name` en los dos sitios (deck y galería) sin añadir un tercer criterio — nadie prefiere de verdad el orden byte a byte para archivos numerados, y Explorador/Finder ya ordenan así por defecto. **(3) "Añadir lienzo" también desde el área central**, no solo la tira: `Deck::relayout()` calcula ahora además `pub add_zone: DeckRect` — la posición del PRÓXIMO lienzo, con el tamaño de la última ranura (o 1920×1080 si la baraja está vacía) y el mismo hueco proporcional que separa a las demás; `draw_add_zone` (editor.rs) la pinta con el mismo estilo que `strip_add_cell` (borde discontinuo, "✚", "Add canvas") en coordenadas de pantalla; el clic se resuelve inline en el bloque de pulsación de `canvas_ui` con el mismo `push_placeholder` que ya usa el botón de la tira, sin tocar `main.rs` — es una operación puramente en memoria. **(4)/(5) Bloqueo, orden manual con flechas, y barra de herramientas por lienzo** encima de cada diseño en el área central (nombre editable a la izquierda; mover/bloquear/duplicar/borrar a la derecha). `Slot` gana `locked: bool` (a nivel de DISEÑO completo, DELIBERADAMENTE independiente del `Layer::locked` ya existente por capa) — gatilla `!locked` en la llamada a `layer_interaction` dentro de `canvas_ui` y envuelve `layers_panel_ui`/`properties_ui` en `ui.add_enabled_ui(!locked, ...)` en `main.rs`, para que bloquear impida editar desde cualquier vía, no solo gestos sobre el lienzo. Y `order_hint: u64`, persistido POR RANURA (no por posición en el `Vec`) porque `merge_scan` reconstruye la lista en el orden del disco y reordena — un orden manual que solo viviera en la posición se perdería en el siguiente reescaneo, mientras que `merge_scan` ya conserva la ranura existente completa al reencontrarla por ruta, así que el hint sobrevive gratis. Nuevo `GallerySort::Manual` (nunca ofrecido en el selector de la galería — se entra en él implícitamente al mover una ranura, y deliberadamente NO se persiste en `AppSettings`: es una decisión sobre esta carpeta, no una preferencia global) y `Deck::move_slot(id, MoveDir::{Prev,Next})`: la PRIMERA vez que se activa el modo manual normaliza todos los `order_hint` a la posición visual actual (si no, el resto de la baraja "saltaría" al orden de creación en el próximo reordenado, no solo la pareja movida), intercambia los dos vecinos y reordena, reencontrando la ranura activa por id — no por índice — tras el resort. La cabecera (`draw_slot_header`/`slot_header_layout`, editor.rs) se pinta con el `Painter` normal, NO con widgets egui incrustados: el área central entera cuelga de un solo `response` gigante del que ya penden zoom-on-hover, paneo, arrastre de capa y "activar otro lienzo al pulsar" (los cuatro compitiendo por el mismo puntero desde la Fase 14f), y no hay precedente en este archivo de un widget normal conviviendo con eso sin arriesgar exactamente los bugs que 14f tuvo que arreglar dos veces. El hit-test de los botones extiende el mismo bloque de "pulsación activa un lienzo" — ahora iterando TODAS las ranuras visibles (el cálculo de `visible`/`mark_visible` se adelantó a antes de ese bloque para poder usarlo ahí) — comprobando primero los rects de la cabecera de cada una; un acierto consume la pulsación entera antes de caer al hit-test de activación o al de `add_zone`. Renombrar usa un `egui::Area` de primer plano (`draw_rename_overlay`) — paso de UI SEPARADO del `response` gigante, mismo patrón Escape-antes-que-`lost_focus()` que los otros 3 renombrados ya existentes (`editor.rs::file_name_ui`, `layers_panel.rs::rename_edit_ui`, `gallery.rs::gallery_cell`). `canvas_ui` cambia de `-> ()` a `-> Option<CanvasAction>` (`Rename(u64,String)`/`Duplicate(u64)`/`Delete(u64)`, mismo espíritu que `StripAction`); `main.rs` generaliza `AppMsg::DocumentDeleted`/`DocumentRenamed` (antes asumían siempre "la activa") con una rama `else` que busca la ranura de FONDO por ruta y la actualiza/quita directamente, y `AppMsg::GalleryOpDone` gana una condición `want_deck` paralela a la `want_gallery` ya existente para relanzar `spawn_gallery_scan` cuando Duplicate se pide desde el editor en vez de la galería. Duplicar/borrar se ocultan en una ranura provisional (`is_placeholder`, sin archivo en disco todavía); mover y bloquear siguen disponibles ahí | 41 tests de `canvas-app` verdes (8 nuevos: 4 de `natural_cmp` en `settings.rs`, 4 de `Deck::move_slot`/orden manual sobreviviendo a un reescaneo en `deck.rs`); `cargo clippy --workspace --all-targets -- -D warnings` y `cargo fmt --all -- --check` limpios; app real relanzada (tras limpiar una caché incremental corrupta de un build interrumpido a mitad, causa confirmada — no relacionada con el código de esta fase) contra la carpeta real de 51 fotos: arranca sin panics, GPU inicializado correctamente (RTX 3070 vía Vulkan) y la carpeta carga. La verificación INTERACTIVA completa (arrastrar el borde de la tira en los 4 lados y confirmar que se queda; 6-9 justo tras 5.png en tira y rejilla; pulsar la zona "+" del área central; renombrar/mover/bloquear/duplicar/borrar desde la cabecera de un lienzo activo y de uno de fondo) queda pendiente de que el usuario la haga a mano — no es algo que este agente pueda ejercitar con clics y arrastres reales |
+1. ✅ **Fase 0 — `editor.rs` → `editor/mod.rs` (andamiaje puro).** `git mv` a
+   `editor/mod.rs`, sin tocar lógica. `app/` de `main.rs` se aborda en la
+   Fase 5 (ver nota abajo). Build, 55 tests, clippy y fmt limpios.
+2. **Fase 1 — Extraer lógica pura sin egui.** Mover `layer_ops.rs` y las
+   funciones de coordenadas de `viewport.rs`.
+3. **Fase 2 — Extraer `EditorState`.** Mover `state.rs` completo, incluyendo
+   undo-redo global. Correr explícitamente los tests de undo/redo cross-deck.
+4. **Fase 3 — Extraer interacción y overlays del canvas.** `interaction.rs`,
+   `overlay.rs`, `slot_chrome.rs`, `canvas_view.rs`. Parte más grande y con
+   más estado egui compartido — probar manualmente drag/resize/rotate,
+   selección múltiple y slots vecinos del deck strip.
+5. **Fase 4 — Extraer panel de propiedades.** `properties_panel.rs`. Bajo
+   riesgo funcional, alto volumen de líneas.
+6. **Fase 5 — Repetir el proceso en `main.rs`.** `messages.rs` primero (más
+   fácil de partir por variante de `AppMsg`), luego `navigation.rs`,
+   `persistence.rs`, `menu_actions.rs`, `window.rs`.
+7. **Fase 6 — Limpieza final.** `cargo clippy --workspace --all-targets -- -D
+   warnings` y `cargo fmt --all -- --check` sobre todo el workspace; revisar
+   que no queden `pub` innecesarios expuestos solo por la partición.
 
-| 14i | Cuatro fallos reportados tras probar la Fase 14h a fondo, con `/plan` — investigados por lectura de código (sin ejecutar nada) antes de aprobar el plan, con causa raíz citada por línea en cada caso. **(1)/(2) "Añadir lienzo" desde el área central saltaba al PRIMER lienzo y los demás desaparecían.** Dos causas confirmadas, la misma explica ambos síntomas: `Deck::bounds()` (`deck.rs:769-799`) no incluía `add_zone` en el min/max — `Ctrl+Alt+0`/"ver toda la baraja" (`AutoFit::All`) encajaba el zoom/pan contra un rect que dejaba la zona "+" fuera o al borde; y `Viewport::request_center` (`editor.rs`) no tocaba `auto_fit` — si el usuario acababa de pulsar `Ctrl+Alt+0` (`auto_fit = All`) y luego añadía o cambiaba de lienzo, el centrado puntual se aplicaba una vez pero el modo seguía en `All`, así que el próximo evento que disparase la rama `resized` volvía a encajar TODA la baraja, deshaciendo el centrado — efecto percibido como "vuelve al primero" (el que queda arriba/primero al encajar todo) y "los demás desaparecen" (el `dilate()` de precarga alrededor del encuadre incorrecto los deja fuera de `visible_indices` hasta volver a pasar cerca). Arreglado añadiendo `add_zone` a `Deck::bounds()` (con guarda `folder.is_some()`, igual que su pintado/clic) y armando `auto_fit = AutoFit::Active` en el mismo punto donde se consume `center_request` — un centrado puntual pasa a ser la nueva referencia, no una excepción que el próximo resize revierta. **(3) Cambiar de lienzo activo en el área central (clic directo) no recentraba la vista** — decisión deliberada de la Fase 14f ("ya se ve, no hace falta"), invertida a petición explícita: la rama de activación por clic directo (`canvas_ui`) ahora también pone `deck.jump_center = true`. **(4) Rediseño de la cabecera por lienzo**: las flechas eran siempre ◀/▶ sin mirar `deck.axis` — ahora `draw_slot_header` elige ▲/▼ con la baraja en `DeckAxis::Vertical` y ◀/▶ en `Horizontal` (los rects de acierto no cambian de posición, solo el glifo). Los 5 botones tenían un ancho fijo en píxeles de pantalla (`HEADER_BTN_W = 20`) sin relación con el ancho real del lienzo en pantalla: con la baraja alejada (menos de 100px de ancho en pantalla) los botones se salían del propio lienzo hacia el vecino — la causa de "no tienen un tamaño definido". `slot_header_layout` pasa a devolver `Option<SlotHeader>` (`None` si la cabecera mide menos de `HEADER_MIN_VISIBLE_W = 70px` en pantalla — ni se pinta ni se puede pulsar, mismo criterio que usan ya las miniaturas de la tira con lienzos diminutos) y, cuando sí se pinta, el ancho de cada botón se calcula `(ancho_cabecera / 5.0).clamp(HEADER_BTN_MIN=12, HEADER_BTN_W=20)` — nunca se sale del propio lienzo y se queda fijo en 20px en cuanto hay sitio de sobra, en vez de crecer o encogerse sin límite. La cabecera gana un fondo propio (`rect_filled` + borde débil) y los iconos pasan de `weak_text_color()` a `strong_text_color()` — antes eran "iconos grises sobre fondo gris" al pintarse sueltos encima de lo que hubiera detrás. Tooltips nuevos: como la cabecera entera se pinta a mano con el `Painter` (no son widgets egui — ver el porqué, ya documentado en la Fase 14h, de por qué no conviven con el `response` gigante del lienzo), no hay `Response` del que colgar `on_hover_text`; `draw_header_tooltips` comprueba cada frame la posición del ratón contra los MISMOS rects que usa el hit-test de clic (nunca pueden desalinearse) y pinta una etiqueta corta pegada al cursor con el mismo estilo (fondo + borde) que la propia cabecera | 170 tests totales verdes (sin tests nuevos: los cuatro cambios son de interacción/geometría de UI en tiempo real, no cubiertos por unitarios — mismo criterio que otros fallos de interacción de fases anteriores); `cargo clippy --workspace --all-targets -- -D warnings` y `cargo fmt --all -- --check` limpios; app real relanzada contra la carpeta de 51 fotos: arranca sin panics. La verificación INTERACTIVA (añadir desde el área central activa y centra el nuevo lienzo, no el primero; los demás siguen cargando al volver a ellos; `Ctrl+Alt+0` seguido de añadir no rompe nada; clic en un lienzo distinto recentra; flechas ▲/▼ con la baraja en vertical; botones que no se salen del lienzo a ningún nivel de zoom; tooltips al pasar el ratón; contraste de la cabecera en tema claro y oscuro) queda pendiente de que el usuario la haga a mano |
+### Estimación
 
-| 14j | La Fase 14i no arregló de verdad el salto al añadir lienzo — atacaba una causa secundaria plausible, no la real; reportado de nuevo con `/plan`, investigado a fondo antes de tocar nada y esta vez con la causa raíz confirmada por lectura de código línea a línea. **Causa raíz real de "añadir salta al primer lienzo y los demás desaparecen"**: `Deck::push_placeholder` (`deck.rs:471-512`) creaba la ranura nueva con `rect: DeckRect::ZERO` — nadie la coloca todavía, eso lo hace `Deck::relayout()`, que solo se dispara al PRINCIPIO de `canvas_ui` (el `layout_dirty` que `push_placeholder` deja en `true` se comprueba recién en el SIGUIENTE `canvas_ui`). Pero `deck::apply_jump` + `state.viewport.request_center(self.deck.active_rect())` (`main.rs`) se ejecutan DESPUÉS, en el MISMO frame — leían `active_rect()` de la ranura recién creada con su rect todavía en `(0,0,0,0)`, así que `center_on` centraba la cámara en el origen del espacio de baraja, justo donde arranca el PRIMER lienzo apilado, no en la ranura nueva (al final de la pila, muy lejos en una carpeta de 51 fotos). Con decks pequeños (los probados en la Fase 14g) el error apenas se notaba porque el primero y el destino real quedaban cerca; con 51 fotos era enorme. Arreglado en una línea: `push_placeholder` nace con `rect: self.add_zone` (la posición donde `add_zone` YA predijo que iría el próximo lienzo) en vez de `DeckRect::ZERO` — correcta desde el instante de creación, sin depender de que corra un `relayout()` primero; si el tamaño pedido no coincide exacto con el de `add_zone` (el botón "+" de la tira usa `settings.last_page_size`, no necesariamente igual), se autocorrige con el próximo `relayout()` un frame después, para cuando ya no importa porque el centrado apuntó al sitio correcto. Los arreglos de la Fase 14i (bounds con `add_zone`, rearmar `AutoFit::Active` al centrar) no eran la causa pero tampoco estaban de más — se quedan. **Segundo pedido: quitar los iconos de la cabecera y sustituirlos por formas dibujadas a mano** (`draw_slot_header`, `editor.rs`) — motivado por el propio bug reportado de "las flechas ya no aparecen": ▲/▼ (triángulos geométricos U+25B2/25BC, elegidos en la Fase 14i para el eje vertical) muy probablemente no están cubiertos por la fuente que `egui`/`epaint_default_fonts` trae integrada, a diferencia de otros glifos ya usados con éxito en la app (⏳🖹⚠✚) — se pintaban sin glifo, invisibles, mientras que 🔒🔓⧉🗑 sí se veían. En vez de perseguir qué carácter concreto SÍ está cubierto, los 5 botones pasan a dibujarse con primitivas del `Painter` (nunca dependen de fuente/emoji): `draw_triangle_icon` (polígono relleno de 3 puntos, una función para las 4 direcciones), `draw_lock_icon` (cuerpo relleno + arco — cerrado simétrico, abierto desplazado arriba-derecha con el lado izquierdo suelto, vía un `arc_points` que traza un semicírculo), `draw_duplicate_icon` (dos rects redondeados solapados, el de delante relleno con el fondo de la cabecera para que tape de verdad la esquina del de detrás) y `draw_delete_icon` (cuerpo + tapa + dos ranuras, todo con `line_segment`/`rect_stroke`) | 170 tests totales verdes (sin tests nuevos: interacción/geometría de UI en tiempo real, mismo criterio que fases anteriores de este tipo); `cargo clippy --workspace --all-targets -- -D warnings` y `cargo fmt --all -- --check` limpios; app real relanzada contra la carpeta de 51 fotos: arranca sin panics. La verificación INTERACTIVA (añadir desde el área central activa y centra el lienzo NUEVO, no el primero, con los demás intactos; lo mismo desde el botón "+" de la tira; flechas visibles como triángulos con la baraja en vertical; candado/duplicar/borrar como formas, no emoji) queda pendiente de que el usuario la haga a mano |
+Fases 0–1 rápidas (~30 min combinadas). Fases 2–3 largas (más de 1h cada una
+por el volumen de estado compartido y pruebas manuales de gestos). Fases 4–6
+medias.
 
-| 14k | Borrar un lienzo desde el editor (activo o de fondo) dejaba un hueco vacío donde estaba — los demás no se recolocaban. `AppMsg::DocumentDeleted` (`main.rs:1269` y `1310`) hace `self.deck.slots.remove(...)` pero nunca ponía `deck.layout_dirty = true` — `Deck::relayout()` (el que reempaqueta todos los `rect` sin huecos) solo corre cuando `canvas_ui` ve ese flag encendido, así que los supervivientes se quedaban con la posición VIEJA, calculada con el borrado todavía en la pila. Arreglado añadiendo `self.deck.layout_dirty = true;` justo después de cada `remove` (las dos ramas: la activa y una de fondo). No hacía falta tocar `deck.rs`: la otra vía que quita ranuras (`merge_scan`, al reescanear) ya enciende el flag vía `apply_sort()` | 170 tests totales verdes (sin tests nuevos); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA (borrar un lienzo del medio de la pila, activo y de fondo, y comprobar que los siguientes se recolocan sin hueco) pendiente de que el usuario la haga a mano |
+### Riesgos y decisiones abiertas
 
-| 14l | La Fase 14k arregló el hueco pero dejó un segundo síntoma en el mismo gesto: al borrar una ranura de FONDO situada ANTES de la activa en la baraja, el cuerpo del lienzo activo desaparecía — solo quedaba su cabecera (nombre + botones) flotando. Causa: `AppMsg::DocumentDeleted` (rama de fondo, `main.rs:1315-1320`) hacía `self.deck.slots.remove(idx)` sin ajustar `self.deck.active` — al quitar un elemento ANTES de esa posición, todo lo posterior se desplaza un puesto en el `Vec`, así que `deck.active` (un ÍNDICE, no un id) pasaba a apuntar a la ranura EQUIVOCADA. El bucle de render de `canvas_ui` decide "es la activa" comparando `idx == deck.active`: con el índice desplazado, la ranura que de verdad seguía activa (su `SlotContent` es el marcador `Active`, prestado a `state.doc`) dejaba de encajar en ninguna rama (ni "es la activa" ni "tiene contenido `Ready`") — su cuerpo no se pintaba. Pero `draw_slot_chrome`/`draw_slot_header` recorren TODAS las ranuras visibles sin mirar el estado del contenido, así que la cabecera se seguía pintando con normalidad — de ahí el hueco con nombre y botones flotando. Arreglado con `if idx < self.deck.active { self.deck.active -= 1; }` justo después del `remove`. La rama de borrar la propia ranura ACTIVA ya reasignaba `deck.active` correctamente (Fase 14d) — no hacía falta tocarla | 170 tests totales verdes (sin tests nuevos); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA (con 3+ lienzos, borrar uno de fondo situado ANTES del activo y comprobar que el activo se sigue viendo entero, cuerpo y cabecera, en su posición recolocada) pendiente de que el usuario la haga a mano |
+- `canvas_view.rs`/`interaction.rs`/`slot_chrome.rs` comparten mucho estado
+  mutable de `EditorState` y del `Viewport` — mayor riesgo al partir
+  `canvas_ui` es romper el orden de borrowing. Se hace en su propia fase (3)
+  con pruebas manuales obligatorias de drag/resize/rotate/selección antes de
+  seguir.
+- Pendiente decidir: ¿un commit por fase, o uno solo al final?
+- `deck.rs` queda fuera de este plan por ahora; se puede añadir después si
+  hace falta.
+- Nota: el `PLAN.md` original del proyecto (tracking de fases del roadmap
+  completo, último commit `d399aa7`) estaba borrado sin stagear en el árbol
+  de trabajo al momento de escribir este archivo. Por decisión del usuario,
+  este archivo lo reemplaza con solo el plan de refactor; el contenido
+  anterior sigue recuperable vía `git show d399aa7:PLAN.md` o `git checkout
+  d399aa7 -- PLAN.md` si hiciera falta.
 
-| 14m | Menú contextual (clic derecho) en el área de edición del lienzo: no existía ninguno — a diferencia de la galería (`gallery.rs::gallery_cell`), `canvas_ui` nunca llamaba a `.context_menu(...)` ni miraba `secondary_clicked()`. El botón derecho estaba completamente libre (el paneo alternativo usa el botón central) así que no competía con nada. `CanvasAction` (`editor.rs`) gana una variante `Menu(menus::MenuAction)` — reutiliza el enum que YA resuelve el menú nativo/de respaldo (`App::handle_menu_action`) en vez de inventar una ruta nueva; el propio `response` gigante de `canvas_ui` gana `.context_menu(|ui| {...})` con un menú corto y enfocado (Cut/Copy/Paste/Duplicate/Delete, separador, Select All/Group/Ungroup, separador, Add Canvas) — deliberadamente NO una copia completa del menú Edit: Undo/Redo/Zoom/Grid/Rulers ya están a un atajo de teclado o al menú superior de distancia. Un matiz de préstamos al conectarlo en `main.rs`: `self.handle_menu_action(...)` necesita `&mut self` completo, pero dentro de la rama `View::Editor(state) => {...}` `state` ya tiene prestado `self.view` mutable durante todo ese bloque — llamarlo ahí dentro no compila (mismo motivo por el que `StripAction::ToggleAxis` ya tenía que inlinear `toggle_deck_axis()` en vez de llamarlo). En vez de duplicar la lógica de `handle_menu_action` inline, la acción elegida se captura en `pending_menu_action` (nueva variable local, declarada ANTES del `match &mut self.view`) y se resuelve DESPUÉS de que ese `match` termina, una vez liberado el préstamo — mismo patrón que ya usan `strip_action`/`canvas_action`, solo que estos se consumen dentro y este se difiere fuera | 170 tests totales verdes (sin tests nuevos: cableado de UI, no lógica nueva — cada acción ya estaba probada/verificada donde vive de verdad, en `handle_menu_action`); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA (clic derecho en el lienzo muestra el menú; con una capa seleccionada, Copy/Duplicate/Delete actúan sobre ella; Paste pega lo copiado; Add Canvas crea un lienzo en blanco) pendiente de que el usuario la haga a mano |
+### Verificación
 
-| 14n | Ajuste del menú contextual de la Fase 14m, pedido con `/plan`: quita "Add Canvas" y añade "Blurred background"/"Crop" (checkboxes con tick reflejando si están activos) y "Size" (ventanita con W/H). A diferencia de Cut/Copy/Paste/etc. (que pasan por `CanvasAction::Menu` + `App::handle_menu_action` porque tocan disco/`self` entero), estos tres se resuelven DENTRO del propio cierre de `response.context_menu(...)` en `canvas_ui`, usando `state: &mut EditorState` directamente — no hace falta ninguna vuelta por `main.rs` porque no tocan disco ni nada fuera de `EditorState`. "Blurred background" y "Crop" reutilizan mecanismos que YA existían en el panel de propiedades (`state.set_blurred_background`/`background_active()`/`background_source()`, ya usados por el checkbox de `page_ui`; `state.crop_mode`, ya alternado por el botón "✂ Crop"/"✔ Done" de `layer_properties_ui`) — el menú contextual es solo un atajo más a lo mismo, con "Crop" deshabilitado cuando la capa primaria seleccionada no es una imagen (mismo criterio `is_image` que ya usa el panel). "Size" es la única pieza nueva de verdad: `EditorState` gana `size_popup: Option<(f64,f64)>` (valores en edición mientras la ventanita está abierta; deliberadamente FUERA de `is_idle()` — no bloquea saltar de lienzo, mismo criterio que `Deck::rename_edit`, que tampoco bloquea, y sin pérdida real porque nada se confirma hasta pulsar Apply) y una función nueva `size_popup_ui` — un `egui::Window` centrado con dos `DragValue` y Apply/Cancel que, al confirmar, reutiliza LITERALMENTE el mismo bloque de commit que ya tenían los campos W/H del panel (`SetPageSize` + `resync_background_cover()` si hay fondo desenfocado, en un solo paso de deshacer) — codificado dos veces por ahora (panel + ventanita) porque la ventanita confirma con un botón en vez de al soltar un `DragValue`, formas de commit distintas que no valía la pena forzar a compartir función para dos únicos llamantes. Un tropiezo de préstamos menor: `.open(&mut open)` del builder de la ventana Y el cierre de `.show()` no pueden mutar `open` a la vez — se resolvió con un `cancel: bool` aparte, combinado al final (`open && !cancel`), en vez de mutar `open` directamente desde el botón Cancel | 170 tests totales verdes (sin tests nuevos: cableado de UI + un commit ya probado en otra forma); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA ("Add Canvas" ya no aparece en el menú; "Blurred background" muestra el tick correcto y lo activa/desactiva; con una capa de imagen seleccionada "Crop" activa/desactiva el modo recorte, deshabilitado sin selección de imagen; "Size" abre la ventanita, Apply redimensiona la página con el fondo desenfocado recolocado si lo hay, Cancel no toca nada) pendiente de que el usuario la haga a mano |
-
-| 14o | Dos submenús nuevos en el menú contextual del lienzo, pedidos con `/plan`: **"Layers"** (Bring to Front / Move Forward / Move Backward / Send to Back) y **"Align to Page"** (Left/Center/Right, Top/Middle/Bottom, Center on page) — ambos actúan sobre la capa PRIMARIA seleccionada y el propio botón del submenú se deshabilita entero sin selección (`ui.add_enabled_ui`), en vez de mostrarlo vacío o con todo gris dentro. Reutilizan mecanismos YA existentes en vez de inventar nada: el orden usa el mismo comando `Reorder` que ya aplica `layers_panel::apply_reorder` al arrastrar en el panel de capas, con la misma convención de índice (0 = fondo de la pila, el último = frente) — nueva función `reorder_layer(state, id, ZOrder::{Front,Forward,Backward,Back})` que calcula el índice destino entre hermanos (`Page::children_of`) y aplica un `Reorder` suelto (sin `Composite`: innecesario para mover una sola capa, a diferencia del arrastre múltiple del panel). La alineación reutiliza literalmente las mismas llamadas que ya tenía "Align to page" en el panel de propiedades (`canvas_core::align_horizontal`/`align_vertical`) a través de una función nueva `apply_alignment(state, sel, after)` — un commit inmediato contra el transform ACTUAL de la capa, más simple que la reconciliación con `panel_edit` que necesita el panel (ahí sí puede haber una edición de campo a medias que consolidar; un clic de menú nunca la tiene) | 170 tests totales verdes (sin tests nuevos: cableado de UI sobre comandos ya probados en otra forma — `Reorder` en `layers_panel`, alineación en el panel de propiedades); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA (con una capa seleccionada, cada opción de "Layers" la mueve en el orden esperado, visible en el panel de capas o por solapamiento; "Align to Page" la mueve a la posición correcta contra cada borde/centro de la página; sin selección, ambos submenús aparecen deshabilitados) pendiente de que el usuario la haga a mano |
-
-| 14p | Pulido de los submenús de la Fase 14o, pedido con `/plan`: que el diseño refleje el estado actual, no solo actúe. En **"Align to Page"**, la opción que YA coincide con la posición actual de la capa se resalta — `ui.button(...)` pasa a `ui.selectable_label(after == t, ...)` (comparando el `Transform` que cada opción produciría contra el actual), mismo widget que ya usa este archivo para "elegido entre varias opciones" (la alineación de texto del panel de propiedades, precedente directo). En **"Layers"**, los botones que ya no tendrían efecto se deshabilitan en vez de solo no-opear en silencio: nueva función compartida `sibling_position(state, id) -> Option<(Option<LayerId>, usize, usize)>` (padre, índice actual, último índice) — extraída de `reorder_layer`, que ahora la reutiliza en vez de recalcular lo mismo — con la que "Bring to Front"/"Move Forward" se deshabilitan si la capa ya está en el extremo del frente (`current == last`) y "Move Backward"/"Send to Back" si ya está en el del fondo (`current == 0`), mismo patrón gris-deshabilitado (`add_enabled`) que ya usan "Blurred background"/"Crop" en este mismo menú | 170 tests totales verdes (sin tests nuevos: refinamiento visual sobre lógica ya cubierta); `clippy -D warnings` y `fmt --check` limpios; app real relanzada sin panics. Verificación INTERACTIVA (una capa ya alineada a la izquierda muestra "Left" resaltado en Align to Page; una capa al frente de la pila muestra "Bring to Front"/"Move Forward" en gris y "Move Backward"/"Send to Back" activos, y al revés en el fondo) pendiente de que el usuario la haga a mano |
-
-| 14q | Deshacer/rehacer (menú Edit, Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y) reportado por el usuario como "no funciona nada". El cableado ya existía entero (`History` en `canvas-core`, los comandos apilándose en cada gesto, los ítems del menú, los atajos, el despacho a `EditorState::undo/redo`) y el render no cachea nada (`surface.rs` reconstruye la escena cada frame desde `state.doc`), así que la causa no podía ser "falta la función" — tenían que ser fallos silenciosos. Dos de verdad: (1) `EditorState::undo`/`redo` (`editor.rs`) solo mandaban el error a `tracing::error!`, invisible sin consola; (2) `History::undo`/`redo` (`command.rs`) sacaban el comando de la pila **después** de revertir/aplicar — un solo `revert()` que fallara alguna vez dejaba ese comando atascado arriba de la pila para siempre, con cada Ctrl+Z posterior reintentando el mismo fallo en silencio (síntoma exacto de "dejó de funcionar del todo"). Arreglado sacando el comando ANTES de revertir/aplicar (se descarta si falla, en vez de quedar atascado) y propagando el error a `state.save_error` además de a los logs. Un tercer defecto, solo de teclado: `handle_shortcuts` cortaba TODOS los atajos con `ctx.text_edit_focused()`, que en egui 0.35 también es `true` mientras se edita un `DragValue` del panel (X/Y/W/H/Scale) por teclado — tras tocar cualquiera de esos campos, Ctrl+Z quedaba muerto hasta hacer clic en otro sitio. Sustituido por una guarda propia (`rename_edit`/`file_rename_edit`/`content_edit` del editor, más `deck.rename_edit` pasado como parámetro nuevo `deck_renaming`) que solo bloquea undo/redo mientras hay un `TextEdit` PROPIO del editor con foco — el resto de atajos (portapapeles, Supr, navegación de baraja) se quedan con la guarda `text_edit_focused()` general, que para ellos sí es el criterio correcto. De paso, Undo/Redo se añaden también al menú contextual del lienzo (clic derecho), arriba del todo, pedido explícitamente junto con el arreglo — reutilizan la misma `CanvasAction::Menu` que ya resuelve el resto del menú. Y tanto el menú nativo (`menus.rs::AppMenus::set_undo_redo`, nuevo) como el fallback egui (`menu_bar_ui`) y el propio menú contextual ahora reflejan el estado REAL del historial (`History::can_undo`/`can_redo`) en vez de solo "hay editor abierto": un historial vacío muestra los ítems en gris, así que "no pasa nada" y "no hay nada que deshacer" dejan de ser indistinguibles | 183 tests totales verdes (2 nuevos en `command.rs`: un `revert`/`apply` que siempre falla no deja el historial atascado, en undo y en redo); `clippy -D warnings` y `fmt --check` limpios. Verificación INTERACTIVA (con el editor recién abierto Undo/Redo salen en gris; arrastrar una capa activa Undo, Ctrl+Z la devuelve, Ctrl+Y/Ctrl+Shift+Z la rehace; lo mismo desde Edit y desde el clic derecho; tocar un DragValue de X/Y/W/H y sin hacer clic en otro sitio Ctrl+Z deshace; renombrar una capa y pulsar Ctrl+Z deshace el TEXTO, no el documento; saltar de lienzo en la baraja y volver conserva su propio historial) pendiente de que el usuario la haga a mano |
-
-Estado global: **183 tests**, `clippy -D warnings` y `fmt --check` limpios (Windows; ver ítem 17 de verificación pendiente para ubuntu/macos).
-
-## Decisiones tomadas (no reabrir sin motivo)
-
-- **ICC/EXIF con `img-parts`**, no `lcms2` (lcms2 convierte color, no
-  preserva bloques). El parche de `Orientation` es un parser TIFF propio de
-  ~40 líneas con fallo suave.
-- **muda sin aceleradores nativos**: sin acceso al event loop de eframe no hay
-  `TranslateAcceleratorW`; los atajos los gestiona egui y el menú los muestra
-  como texto. En Linux el fallback es una barra de menús egui.
-- **El checkbox del sidecar en el editor ES el ajuste persistido**
-  (`sidecar_default`).
-- **Snap solo entre capas sin rotar** (con rotación los bordes AABB no
-  significan nada); umbral 6 px de pantalla, Alt lo desactiva.
-- **Recorte = "trim de bordes"**: el contenido queda clavado en la página y la
-  ventana visible se mueve sobre él; `uncrop` lo restaura en el sitio.
-- **parley fijado en 0.11** (comparte `peniko 0.6` con vello 0.9); si se
-  actualiza vello hay que revalidar con `cargo tree -i peniko` y el example
-  `text_probe`.
-- **Grupos: `parent_id` + invariante de preorden**, no anidar `Vec<Layer>`: los
-  descendientes de un grupo ocupan el tramo contiguo justo por encima de su
-  cabecera en `Page::layers`; el renderer y el exportador SVG recorren esa
-  lista con un índice + pila de fin de subárbol. Toda mutación del árbol pasa
-  por `Page::move_subtree`/`insert_child` para no romper la invariante.
-- **Selección múltiple con primaria** (`canvas_core::Selection`): la primera
-  capa manda en el panel de propiedades y los gestos del lienzo; el resto de
-  la selección solo participa en operaciones en bloque (`roots`/
-  `in_stack_order`) como agrupar, borrar o copiar.
-- **Texto en SVG con un `<tspan>` por línea**, usando las métricas reales de
-  parley (`canvas_render::text_lines`) en vez de dejar que el visor SVG rompa
-  líneas por su cuenta; canvas-io no lleva motor de texto propio.
-- **PDF vía `svg2pdf` sobre `resvg::usvg`** (no `svg2pdf::usvg`): fuerza a que
-  ambos compartan la misma versión de usvg 0.45 — si se actualiza `resvg` hay
-  que revalidar con `cargo tree -i usvg` (una sola entrada).
-- **cargo-packager NO tiene `installer_hooks`** (eso es de Tauri v2): solo
-  expone `preinstall_section` (código antes de instalar, no toca el
-  desinstalador) y `template` (sustituir el `.nsi` entero). Por eso el
-  registro «Abrir con» se delega en el propio binario
-  (`--register-shell`/`--unregister-shell`, headless, sin ventana, sin tocar
-  la instancia única — se interceptan al principio mismo de `main()`,
-  antes de `acquire_instance`) invocado por `nsExec` desde
-  `packaging/windows/installer.nsi`, una plantilla bifurcada y pineada al
-  tag `@crabnebula/packager-v0.11.8` con solo 4 cambios documentados en su
-  propia cabecera. `windows.rs` sigue siendo la única lista canónica; no
-  hay una segunda copia de las claves de registro que pueda desincronizarse.
-- **NO se usa el `file-associations` propio de cargo-packager**: su macro
-  `APP_ASSOCIATE` fija un ProgID **por defecto** por extensión, y esta app
-  solo quiere aparecer como opción en «Abrir con» (`OpenWithProgids`), nunca
-  robar el asociado por defecto.
-- **El AppUserModelID de los accesos directos NSIS usa `${AUMID}`
-  ("CanvasDesktop.App"), no `${IDENTIFIER}`** (el identificador de
-  empaquetado, `com.canvas-desktop.CanvasDesktop`, una cadena distinta): si
-  no coincide exactamente con lo que `set_app_user_model_id()` pasa a
-  `SetCurrentProcessExplicitAppUserModelID`, la Jump List de la barra de
-  tareas se parte en dos entradas.
-- **Iconos generados con el propio árbol de dependencias**
-  (`cargo run -p canvas-render --example gen_icons`), no con Inkscape ni
-  ImageMagick: rasteriza `assets/icon.svg` con `resvg`/`tiny-skia` (ya en el
-  árbol para exportar SVG) y escribe `.ico`/`.icns` a mano (formatos simples,
-  contenedores con PNG embebido) — repetible sin instalar nada al cambiar el
-  arte definitivo.
-- **`aarch64-pc-windows-msvc` no compila en todas las máquinas de
-  desarrollo**: enlaza con `link.exe` solo si Visual Studio tiene el
-  componente "MSVC ARM64 build tools"; confirmado que falla sin él. El
-  workflow de release lo trata como best-effort (`continue-on-error`), nunca
-  bloquea el release x64.
-- **Un `.canvas` sirve para dos papeles, discriminados por un campo, no por
-  dos formatos**: `image_hash: Option<String>` — `Some` es el sidecar clásico
-  de una imagen, `None` es un diseño autónomo. Un solo `SIDECAR_VERSION`, un
-  solo parser (`sidecar.rs`); evita duplicar toda la lógica de lectura para
-  "el mismo archivo pero sin imagen".
-- **La miniatura de un diseño va EMBEBIDA en el propio `.canvas`
-  (`preview_png`)**, no generada bajo demanda: el hilo de miniaturas de la
-  galería es un `rayon::for_each` sin contexto de GPU, así que no puede
-  hornear la página él mismo. Se hornea a escala reducida (`preview_scale`,
-  lado mayor ≤ 256 px) en el momento de guardar, que es cuando la GPU ya está
-  disponible en el hilo de UI.
-- **Los nombres nuevos de la galería se reservan con `create_new`
-  (`reserve_unique_path`), nunca con un `exists()` suelto**: un `exists()`
-  deja una ventana TOCTOU en la que `write_atomic`/`fs::copy` podrían
-  sobrescribir en silencio un archivo creado por otra ventana o proceso justo
-  entre la comprobación y la escritura.
-- **Los sidecar de una imagen viven en `<carpeta>/.canvas/`, oculta con
-  `FILE_ATTRIBUTE_HIDDEN` en Windows** (el prefijo `.` del nombre NO oculta
-  nada ahí, a diferencia de Unix — hay que marcar el atributo explícitamente,
-  `sidecar::ensure_sidecar_dir`). Lectura con fallback al hermano legacy
-  (`foto.png.canvas`, `sidecar::find_sidecar`) para carpetas de antes de este
-  cambio; escritura siempre en la carpeta nueva, y el hermano legacy se borra
-  en cuanto se guarda una vez (migración perezosa, un archivo a la vez, nunca
-  un movimiento masivo). Un diseño autónomo (`Untitled.canvas`) NO se mueve
-  ahí: es el documento en sí, no un sidecar — meterlo en la carpeta oculta lo
-  borraría de la galería.
-- **Un lienzo nuevo nace como imagen real (`new_canvas_format`, PNG por
-  defecto), no como diseño autónomo**: «✚ New design», la zona «+» de la
-  baraja y Ctrl+N escriben un raster (con su sidecar, `sidecar_enabled`
-  forzado a `true` para no perder capas en el primer guardado) salvo que el
-  ajuste esté en `Canvas`, que conserva el comportamiento clásico. El primer
-  guardado de un lienzo `born_blank` se salta el modal de sobrescritura: lo
-  creó la propia app, no hay píxeles del usuario que destruir.
-- **`preview_png` solo se embebe en un diseño autónomo**, nunca en el sidecar
-  de una imagen: ese sidecar nadie lo mira para la miniatura de la galería
-  (`thumbs::thumbnail` lee el PNG/JPEG directamente), así que embeberlo ahí
-  era peso muerto en cada guardado.
-- **El portapapeles de archivos de la galería es una ranura de proceso
-  (`OnceLock<Mutex<Option<PathBuf>>>`)**, igual que el portapapeles interno de
-  capas de la Fase 11, y a propósito no toca el portapapeles del SO: `arboard`
-  no sabe escribir `CF_HDROP`, así que intentarlo machacaría el portapapeles
-  de texto del usuario sin ganar nada (copiar un archivo entre ventanas de la
-  propia app no necesita salir del proceso).
-- **Ctrl+C/Ctrl+X/Ctrl+V nunca llegan como pulsaciones de tecla normales**:
-  winit los intercepta para la integración con el portapapeles del sistema
-  operativo y egui los entrega como `Event::Copy`/`Event::Cut`/
-  `Event::Paste(texto)` en vez de `Event::Key{C/X/V, pressed: true, ...}`, así
-  que `InputState::consume_shortcut` nunca los ve. Confirmado con un log de
-  eventos crudos (`ctx.input(|i| i.events.clone())`): la pulsación genera
-  `Copy`/`Paste`, y solo el KEY-UP aparece como `Key`. Esto es lo que hacía
-  que el portapapeles interno de capas de la Fase 11 (`crate::clipboard`)
-  nunca respondiera a Ctrl+C/X/V pese a estar completamente implementado; el
-  fix (mirar `i.events` en vez de `consume_shortcut`) se aplicó tanto en
-  `EditorState::handle_shortcuts` como en el portapapeles de archivos de la
-  galería. `Ctrl+D`/`Ctrl+A`/`Ctrl+G`/`Ctrl+Z` no están afectados: solo
-  C/X/V son especiales para el SO.
-- **«Save a Copy» en el menú File queda descartado**: la vía para tener dos
-  copias de un diseño es Duplicate/Ctrl+C+Ctrl+V desde la galería, no un
-  ítem de menú adicional dentro del editor.
-- **Delete en la galería usa la Papelera de reciclaje (crate `trash`), no
-  borrado permanente** (`std::fs::remove_file`): recuperable si el usuario
-  se equivoca, como en el Explorador. Arrastra su propia versión de
-  `windows` (0.56) distinta de la fijada para el resto del árbol (0.62) —
-  duplicado transitivo aceptado, no corregible sin forkear `trash`.
-- **Renombrar en la galería solo cambia el nombre base, nunca la
-  extensión**, y rechaza el destino si ya existe en vez de numerar como
-  Duplicate/Paste: el usuario pidió ESE nombre en concreto.
-  `std::fs::rename` en Windows usa `MOVEFILE_REPLACE_EXISTING`, así que el
-  chequeo de colisión previo no es opcional — sin él sobrescribiría en
-  silencio.
-- **Subsistema GUI de Windows solo en release**
-  (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` en
-  `crates/canvas-app/src/main.rs`): sin esto el binario se enlaza con el
-  subsistema console por defecto de Rust y Windows le abre una consola negra
-  detrás de la ventana al lanzarlo desde el Explorador (acceso directo del
-  instalador). Condicionado a `not(debug_assertions)` para no perder la
-  consola con `cargo run` en desarrollo. No rompe
-  `packaging/windows/installer.nsi`: `nsExec::ExecToLog` lanza
-  `--register-shell`/`--unregister-shell` con sus propias tuberías de
-  stdout/stderr, que se heredan igual sea cual sea el subsistema del `.exe`.
-- **La baraja (`App::deck: deck::Deck`) es un campo de `App`, no de
-  `View::Editor`**: sobrevive al cambio de vista a propósito, para poder
-  sembrar tanto el editor (miniaturas ya en GPU al entrar) como la galería
-  (miniaturas ya en GPU al volver) sin re-decodificar nada. `App::resolve_deck`
-  decide entre tres orígenes al terminar de cargar: la semilla de un clic de
-  galería (`pending_deck`, consumida con `.take()`), la baraja ya activa si la
-  ruta es uno de sus lienzos (navegación por la tira o el teclado, que no
-  toca `pending_deck`), o una baraja degenerada de una ranura en cualquier
-  otro caso. En la Fase 14a la baraja es solo metadatos (como
-  `GalleryState`); apilar N documentos cargados a la vez con geometría propia
-  y carga perezosa es trabajo de una fase posterior, aún sin programar.
-- **La rejilla de galería (`GalleryState`) y la baraja del editor (`Deck`)
-  pueden querer el mismo `GalleryScanned`/`GalleryThumb` a la vez** (típico
-  al volver de un editor recién abierto desde esa carpeta): la textura se
-  sube a GPU UNA sola vez y el `TextureHandle` (barato de clonar) se reparte
-  a quien lo quiera, para no duplicar la subida.
-- **La caché de efectos GPU de `canvas-render` está indexada por
-  `(FxScope, LayerId)`, no por `LayerId` a secas** (`blur.rs`): cada
-  `Document` reinicia su `next_layer_id` en 1, así que sin el prefijo de
-  ámbito dos documentos cargados a la vez (la baraja del editor) se pisarían
-  la textura procesada el uno al otro. `FxScope::default()` sigue sirviendo
-  para "un solo documento" (ejemplos headless, guardado/exportación, y el
-  editor mientras solo cargue un lienzo a la vez — Fases 14a/14b); asignar un
-  `FxScope` por ranura de la baraja es trabajo de la Fase 14c.
-  `CanvasRenderer::forget_scope` es el único camino para liberar las
-  texturas de un lienzo descargado: retira de la caché Y des-registra de
-  vello, las dos cosas — solo lo primero dejaría el atlas de imágenes
-  reteniéndolas en GPU indefinidamente.
-- **El truco del "rect desplazado"** (`editor.rs::canvas_ui`): los cuatro
-  ayudantes de coordenadas (`page_to_screen`, `screen_to_page`,
-  `layer_corners_screen`, `rotation_handle_screen`) usan su parámetro `rect`
-  únicamente como origen — nunca para `contains`, tamaño o recorte. Por eso
-  colocar un lienzo en un punto cualquiera de la baraja no necesita tocar
-  `layer_interaction` (selección, arrastre, redimensionado, rotación): basta
-  pasarle un `slot_rect` = `rect` corrido por `Deck::active_origin() * zoom`
-  en vez de `rect`. Los tres pintores que SÍ recortan o dibujan de borde a
-  borde (`draw_grid`/`draw_selection_overlay`/`draw_rulers`) reciben además
-  un `clip` (el rect real del viewport) separado del `coord` que usan para la
-  traducción página→pantalla. `Deck::active_origin()` devuelve siempre
-  `(0, 0)` hasta que la Fase 14c implemente la disposición apilada real, así
-  que hoy `slot_rect == rect` en todos los casos — el cambio de 14b es un
-  no-op demostrable, no solo "no se nota".
-- **`probe_page_size` prioriza el sidecar sobre los píxeles** cuando una
-  imagen tiene uno (`foto.png.canvas`): el sidecar manda porque
-  `EditorState::from_restored` reabre SU documento, que puede tener un
-  tamaño de página distinto al de los píxeles guardados en el PNG/JPEG.
-- **Saltar entre lienzos de la baraja ya cargados es SIN PÉRDIDA y no
-  pregunta por cambios sin guardar** (`deck::apply_jump`): el lienzo
-  saliente no se descarta, se guarda en su propia ranura con su `History`
-  intacto (undo/redo y el flag sucio siguen ahí si se vuelve). El diálogo de
-  «cambios sin guardar» sigue existiendo, pero solo para lo que SÍ pierde
-  algo: salir del editor entero («Back to gallery», cerrar la ventana, abrir
-  otra cosa).
-- **`apply_jump` es una función libre en `deck.rs`, no un método de `Deck`
-  ni de `EditorState`**: ninguno de los dos es dueño del otro, y una función
-  libre lo deja explícito en la firma en vez de esconderlo en `self`. Solo
-  actúa con `EditorState::is_idle()` (ningún gesto ni edición de panel a
-  medias) — si no, la petición de salto queda pendiente y se reintenta en
-  frames sucesivos, nunca se fuerza a mitad de un arrastre.
-- **El intercambio de lienzo activo pasa siempre por `main.rs`, después de
-  que `canvas_ui` termine de pintar el frame**, aunque `canvas_ui` ya reciba
-  `&mut EditorState` y `&mut Deck` a la vez y técnicamente podría hacerlo
-  él mismo: los paneles de capas y propiedades se dibujan ANTES que el
-  lienzo en el orden de paneles, así que intercambiar a mitad de
-  `canvas_ui` dejaría ese frame incoherente (panel del lienzo saliente,
-  lienzo entrante en pantalla).
-- **La caché de efectos GPU se indexa por `FxScope(slot.id)` en el render
-  normal de `canvas_ui`** (ya no `FxScope::default()` como en la Fase 14b):
-  con N documentos visibles a la vez de verdad, cada uno necesita su propio
-  ámbito. El guardado/exportación (`main.rs::start_save*`) sigue usando
-  `FxScope::default()` — coherente porque ahí solo hay un documento
-  involucrado a la vez —, aunque eso significa que el documento activo tiene
-  dos entradas de caché (una para previsualizar, otra para guardar):
-  deliberadamente aceptado por ahora, se resuelve si hace falta cuando la
-  Fase 14d unifique el camino de guardado.
-- **Simplificaciones conscientes de la Fase 14c frente al diseño original**
-  (con su motivo, por si hace falta revisar): sin `DeckAnchor` que preserve
-  el punto bajo el cursor al recolocar — el sondeo de una carpeta llega en
-  un único mensaje (`DeckProbed`), así que en la práctica hay un solo
-  `relayout` real por apertura, no una serie que necesite anclarse; sin el
-  filtro `MIN_SCREEN_SIZE_TO_LOAD` — el tope de `MAX_INFLIGHT_LOADS = 2`
-  cargas en vuelo ya evita la avalancha de decodificaciones al alejar el
-  zoom sobre cientos de lienzos; el primer clic sobre un lienzo no activo
-  solo lo activa, sin seleccionar además la capa de debajo en el mismo clic.
-- **`confirm_close` avisa de ranuras sucias que no son la activa, pero no
-  sabe guardarlas** (esa vía de guardado es de `EditorState`, no existe
-  todavía para un `SlotDoc` de fondo): el diálogo lista sus nombres y dice
-  explícitamente que solo la activa se puede guardar desde ahí, para que
-  cerrar la ventana nunca las pierda EN SILENCIO aunque de momento no haya
-  un botón que las salve a todas. `request_nav` (abrir otra cosa desde el
-  editor) se deja sin este mismo aviso — recorrer todos los orígenes de
-  navegación es más superficie de la que compensa antes de que la Fase 14d
-  traiga el guardado multi-lienzo de verdad.
-- **«Save All» reutiliza el flujo de guardado de un documento en vez de
-  introducir `SaveTarget<'a>`** (la abstracción que preveía el plan
-  original). El plan asumía que había que generalizar `start_save`/
-  `start_save_design`/`start_export` para operar sobre una ranura de fondo
-  directamente; en la práctica, la Fase 14c ya resuelve eso: `apply_jump`
-  hace que CUALQUIER ranura pueda convertirse en la activa en un frame, así
-  que «guardar la ranura de fondo N» se reduce a «saltar a N, luego pulsar
-  Guardar» — literalmente la misma cola que dispara `state.save_clicked` y
-  deja correr el camino ya existente sin tocarlo. Menos superficie nueva,
-  y el modal de sobrescritura, el redirect de SVG/GIF y el sidecar
-  funcionan gratis porque son el mismo código que ya los maneja para un
-  documento suelto.
-- **La ventana de gracia del watcher (`ignore_fs_events_until`) debe abrirse
-  al EMPEZAR a escribir, no al terminar.** Descubierto arreglando el banner
-  falso de Save All: el guardado ocurre en un hilo aparte y el watcher
-  `notify` en otro más — el mensaje `SourceChangedOnDisk` del watcher y el
-  `AppMsg::Saved` del guardado llegan por el mismo canal pero SIN garantía
-  de orden, así que si la ventana se abre solo al procesar `Saved`, un
-  evento de disco que dispara la escritura misma puede colarse antes y
-  encender el banner sin que haya nada que perdonar todavía. Aplica a
-  cualquier operación futura que escriba el archivo vigilado: abrir la
-  ventana en el punto de partida (cuando se marca `saving = true`), nunca en
-  el de llegada. Mismo principio que ya usaba el arreglo del rename en la
-  Fase 13b, generalizado aquí a Save/Save All.
+- `cargo test`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --all -- --check` tras cada fase.
+- Prueba manual en `cargo run -p canvas-app`: abrir imagen, editar
+  (mover/rotar/reordenar capas), deshacer/rehacer, guardar, exportar —
+  especialmente después de las Fases 2, 3 y 5.
