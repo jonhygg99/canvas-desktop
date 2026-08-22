@@ -56,7 +56,7 @@ impl CanvasRenderer {
         effects: &canvas_core::Effects,
     ) {
         let renderer = &mut self.renderer;
-        let removed = self.blur.sync_layer(
+        let outcome = self.blur.sync_layer(
             device,
             queue,
             scope,
@@ -66,8 +66,15 @@ impl CanvasRenderer {
             effects.blur_radius,
             &mut |texture| renderer.register_texture(texture),
         );
-        if let Some(image) = removed {
-            renderer.override_image(&image, None);
+        match outcome {
+            blur::FxSync::Unchanged => {}
+            // Re-horneado: la textura registrada cambió de contenido sin
+            // volver a registrarse — sin esto vello sigue usando la copia
+            // que hizo en su atlas de imágenes la primera vez.
+            blur::FxSync::Rebaked(image) => renderer.mark_override_image_dirty(&image),
+            blur::FxSync::Removed(image) => {
+                renderer.override_image(&image, None);
+            }
         }
     }
 

@@ -112,6 +112,21 @@ pub struct BlurEngine {
     cache: HashMap<(FxScope, LayerId), LayerFx>,
 }
 
+/// Resultado de `BlurEngine::sync_layer`, para que el llamador sepa si tiene
+/// que avisar a vello. Vello copia la textura registrada a su atlas de
+/// imágenes SOLO al registrarla (`Renderer::register_texture`) — mutar la
+/// textura después (un re-horneado con un radio/color nuevo) no la vuelve a
+/// copiar sola; sin `mark_override_image_dirty` en cada re-horneado, la
+/// pantalla se queda pegada en el primer valor horneado para siempre.
+pub enum FxSync {
+    /// Nada que hacer: sin caché o sin cambios desde el último frame.
+    Unchanged,
+    /// Se (re)horneó: el llamador debe marcar esta imagen "dirty" en vello.
+    Rebaked(ImageData),
+    /// Ya no queda ningún efecto activo: el llamador debe des-registrarla.
+    Removed(ImageData),
+}
+
 impl BlurEngine {
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -229,8 +244,8 @@ impl BlurEngine {
         removed
     }
 
-    /// Sincroniza los efectos GPU de una capa de `scope`. Devuelve el handle
-    /// a des-registrar de vello cuando ya no queda ningún efecto activo.
+    /// Sincroniza los efectos GPU de una capa de `scope`. Ver `FxSync` para
+    /// qué debe hacer el llamador con el resultado.
     ///
     /// `register` registra la textura de salida en vello y devuelve su handle
     /// (se inyecta para no acoplar este módulo al `Renderer`).
@@ -245,12 +260,14 @@ impl BlurEngine {
         color: ColorParams,
         radius: f32,
         register: &mut dyn FnMut(wgpu::Texture) -> ImageData,
-    ) -> Option<ImageData> {
+    ) -> FxSync {
         let blur_active = radius > 0.0;
         let key = (scope, layer);
         if !blur_active && color.is_identity() {
-            // Devuelve el handle a des-registrar, si lo había.
-            return self.cache.remove(&key).map(|b| b.image);
+            return match self.cache.remove(&key) {
+                Some(b) => FxSync::Removed(b.image),
+                None => FxSync::Unchanged,
+            };
         }
 
         let entry = self.cache.entry(key).or_insert_with(|| {
@@ -366,8 +383,9 @@ impl BlurEngine {
                 );
             }
             entry.last = Some((color, radius));
+            return FxSync::Rebaked(entry.image.clone());
         }
-        None
+        FxSync::Unchanged
     }
 }
 
