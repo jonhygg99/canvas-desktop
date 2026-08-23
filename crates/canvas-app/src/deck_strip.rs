@@ -193,12 +193,6 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let painter = ui.painter();
-    painter.rect_stroke(
-        rect.shrink(2.0),
-        4.0,
-        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
-        egui::StrokeKind::Inside,
-    );
     let name_rect = egui::Rect::from_min_size(
         rect.left_top() + egui::vec2(CELL_PAD, 4.0),
         egui::vec2(rect.width() - 2.0 * CELL_PAD, LABEL_H - 4.0),
@@ -206,7 +200,7 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
     painter.text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        "New canvas",
+        "Add canvas",
         egui::FontId::proportional(12.5),
         ui.visuals().text_color(),
     );
@@ -214,6 +208,9 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         rect.left_top() + egui::vec2(CELL_PAD, LABEL_H + TITLE_TO_THUMB_GAP),
         m.thumb,
     );
+    if response.hovered() {
+        painter.rect_filled(thumb_rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
     painter.rect_stroke(
         thumb_rect,
         4.0,
