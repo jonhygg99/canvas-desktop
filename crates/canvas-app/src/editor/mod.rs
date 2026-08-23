@@ -10,7 +10,7 @@ pub(super) const HANDLE_SIZE: f32 = 9.0;
 /// `slot_chrome`.
 pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 
-mod canvas_view;
+mod canvas;
 mod interaction;
 mod layer_ops;
 mod overlay;
@@ -18,7 +18,7 @@ mod properties_panel;
 mod slot_chrome;
 mod viewport;
 
-pub use canvas_view::{canvas_ui, CanvasAction};
+pub use canvas::{canvas_ui, CanvasAction};
 pub use properties_panel::properties_ui;
 pub use viewport::Viewport;
 

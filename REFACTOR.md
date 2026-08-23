@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-5 hechas.
+Estado: **En curso** — Fases 0-6 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -44,7 +44,7 @@ separado por plataforma.
 - [x] **Fase 3 — `deck.rs` → `deck/`.**
 - [x] **Fase 4 — `editor/state.rs` → `editor/state/`.**
 - [x] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
-- [ ] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
+- [x] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
 - [ ] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
 - [ ] **Fase 8 — `App` en sub-estados + `app/messages/`.**
 
@@ -194,3 +194,28 @@ Misma trampa de visibilidad que en la Fase 4: lo que era `pub(super)` en un
 archivo hijo directo de `editor` pasa a `pub(in crate::editor)` al bajar un
 nivel. Afecta a `SlotHeader` y sus campos, `slot_header_layout` y
 `draw_header_tooltips`.
+
+### Fase 6
+
+`editor/canvas_view.rs` (798, con `canvas_ui` de 691 líneas) →
+`editor/canvas/`:
+
+| Archivo | Líneas | Contenido |
+|---|---|---|
+| `mod.rs` | 277 | `CanvasAction` y `canvas_ui`, ya solo orquestación |
+| `context_menu.rs` | 216 | el menú de clic derecho |
+| `picking.rs` | 155 | qué pasa al pulsar: cabecera, zona «+», salto de lienzo |
+| `camera.rs` | 151 | centrado, autofit, zoom, rueda, paneo |
+| `paint.rs` | 122 | escena vello, blit y overlays |
+| `url_popup.rs` | 50 | «Replace from URL» |
+
+**Regla que se respetó al pie de la letra**: las funciones extraídas se llaman
+en el MISMO orden en que estaban sus bloques dentro de `canvas_ui`. Nada se
+fusionó, nada se reordenó, nada se "aprovechó para simplificar". Lo único que
+cambia en los cuerpos movidos es que `action` pasa de captura del closure a
+`&mut Option<CanvasAction>` (de ahí los `*action = …`) y que `visible` llega
+como `&[usize]` en vez de `Vec`.
+
+`canvas_ui` sigue en 158 líneas de cuerpo, por encima del objetivo de 80: lo
+que queda es la secuencia de orquestación en sí, y trocearla más solo movería
+el orden significativo a otro archivo sin ganar nada.
