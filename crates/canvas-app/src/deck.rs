@@ -1010,8 +1010,11 @@ impl Deck {
 
         let mut spawned = Vec::new();
         let memory_pressure = self.loaded_bytes() > adaptive_evict_budget() / 2;
-        let inflight_limit = configured_inflight_limit()
-            .unwrap_or(if memory_pressure { 1 } else { MAX_INFLIGHT_LOADS });
+        let inflight_limit = configured_inflight_limit().unwrap_or(if memory_pressure {
+            1
+        } else {
+            MAX_INFLIGHT_LOADS
+        });
         for i in candidates {
             if self.inflight >= inflight_limit {
                 break;
@@ -1560,10 +1563,7 @@ mod tests {
 
     #[test]
     fn request_loads_prioritises_neighbours_of_an_active_placeholder() {
-        let mut deck = Deck::from_seed(
-            seed(&["a.png", "b.png", "c.png"]),
-            Path::new("a.png"),
-        );
+        let mut deck = Deck::from_seed(seed(&["a.png", "b.png", "c.png"]), Path::new("a.png"));
         let placeholder = deck
             .push_placeholder((800.0, 600.0), "canvas")
             .expect("con carpeta");

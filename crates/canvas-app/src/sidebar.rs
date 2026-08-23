@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn sidebar_padding_is_compact_but_positive() {
-        assert!(PANEL_PAD > 0.0);
-        assert!(PANEL_PAD <= 8.0);
+        const { assert!(PANEL_PAD > 0.0) };
+        const { assert!(PANEL_PAD <= 8.0) };
     }
 }

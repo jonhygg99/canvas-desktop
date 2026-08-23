@@ -38,7 +38,7 @@ impl App {
                 ctx.clone(),
             );
             self.push_recent(&path);
-            self.view = View::Gallery(gallery_state);
+            self.view = View::Gallery(Box::new(gallery_state));
         } else if canvas_io::is_canvas_file(&path) {
             // Diseño autónomo: el `.canvas` ES el documento. Qué baraja usar
             // (semilla de galería, la ya activa, o una degenerada de una
@@ -275,7 +275,7 @@ impl App {
                     ctx.clone(),
                 );
                 self.push_recent(&path);
-                self.view = View::Gallery(gallery_state);
+                self.view = View::Gallery(Box::new(gallery_state));
                 self.sync_title(ctx);
             }
             Nav::CloseProject => {

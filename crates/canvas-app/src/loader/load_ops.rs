@@ -95,16 +95,15 @@ pub fn spawn_load_slot(
         } else {
             canvas_io::extract_metadata_from_file(&path)
         };
-        let prepared = result
-            .and_then(|outcome| {
-                build_slot_doc(
-                    path.clone(),
-                    outcome,
-                    (!metadata.is_empty()).then_some(metadata),
-                    sidecar_default,
-                )
-                .ok_or_else(|| "could not build the background document".to_owned())
-            });
+        let prepared = result.and_then(|outcome| {
+            build_slot_doc(
+                path.clone(),
+                outcome,
+                (!metadata.is_empty()).then_some(metadata),
+                sidecar_default,
+            )
+            .ok_or_else(|| "could not build the background document".to_owned())
+        });
         tracing::debug!(
             target: "canvas.preload",
             path = %path.display(),

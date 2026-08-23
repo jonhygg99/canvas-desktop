@@ -129,17 +129,13 @@ fn folder_button_list(
 ) {
     for folder in folders {
         let name = folder_name(folder);
-        let rename_this = rename_edit
-            .as_ref()
-            .is_some_and(|(p, _)| p == folder);
+        let rename_this = rename_edit.as_ref().is_some_and(|(p, _)| p == folder);
         if rename_this {
-            let Some((_, text)) = rename_edit.as_mut() else { continue };
+            let Some((_, text)) = rename_edit.as_mut() else {
+                continue;
+            };
             let id = egui::Id::new(("folder_rename", folder.as_os_str()));
-            let response = ui.add(
-                egui::TextEdit::singleline(text)
-                    .id(id)
-                    .desired_width(140.0),
-            );
+            let response = ui.add(egui::TextEdit::singleline(text).id(id).desired_width(140.0));
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 *rename_edit = None;
             } else if response.lost_focus() {
@@ -152,8 +148,7 @@ fn folder_button_list(
             }
         } else if current == Some(folder.as_path()) {
             let label = ui.add(
-                egui::Label::new(egui::RichText::new(&name).strong())
-                    .sense(egui::Sense::click()),
+                egui::Label::new(egui::RichText::new(&name).strong()).sense(egui::Sense::click()),
             );
             label.context_menu(|ui| {
                 if ui.button("Rename").clicked() {
@@ -273,18 +268,36 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.strong(format!("Inside {current_name}"));
-                new_folder_ui(ui, "inside", &state.folder, &mut state.new_folder_inside, &mut action);
+                new_folder_ui(
+                    ui,
+                    "inside",
+                    &state.folder,
+                    &mut state.new_folder_inside,
+                    &mut action,
+                );
                 ui.add_space(2.0);
                 if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                     ui.weak("No subfolders");
                 } else if !state.folders.children.is_empty() {
-                    folder_button_list(ui, &state.folders.children, None, &mut state.folder_rename_edit, &mut action);
+                    folder_button_list(
+                        ui,
+                        &state.folders.children,
+                        None,
+                        &mut state.folder_rename_edit,
+                        &mut action,
+                    );
                 }
                 ui.add_space(8.0);
                 ui.separator();
                 ui.strong("Siblings");
                 if let Some(parent) = state.folder.parent() {
-                    new_folder_ui(ui, "sibling", &parent, &mut state.new_folder_sibling, &mut action);
+                    new_folder_ui(
+                        ui,
+                        "sibling",
+                        parent,
+                        &mut state.new_folder_sibling,
+                        &mut action,
+                    );
                     ui.add_space(2.0);
                 }
                 folder_button_list(
@@ -297,7 +310,13 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             });
     } else {
         ui.strong(format!("Inside {current_name}"));
-        new_folder_ui(ui, "inside", &state.folder, &mut state.new_folder_inside, &mut action);
+        new_folder_ui(
+            ui,
+            "inside",
+            &state.folder,
+            &mut state.new_folder_inside,
+            &mut action,
+        );
         ui.add_space(2.0);
         egui::ScrollArea::horizontal()
             .id_salt("gallery_child_folders_horizontal")
@@ -307,14 +326,26 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                         ui.weak("No subfolders");
                     } else if !state.folders.children.is_empty() {
-                        folder_button_list(ui, &state.folders.children, None, &mut state.folder_rename_edit, &mut action);
+                        folder_button_list(
+                            ui,
+                            &state.folders.children,
+                            None,
+                            &mut state.folder_rename_edit,
+                            &mut action,
+                        );
                     }
                 });
             });
         ui.separator();
         ui.strong("Siblings");
         if let Some(parent) = state.folder.parent() {
-            new_folder_ui(ui, "sibling", &parent, &mut state.new_folder_sibling, &mut action);
+            new_folder_ui(
+                ui,
+                "sibling",
+                parent,
+                &mut state.new_folder_sibling,
+                &mut action,
+            );
             ui.add_space(2.0);
         }
         egui::ScrollArea::horizontal()
@@ -495,26 +526,20 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                 } else if response.lost_focus() {
                     let trimmed = text.trim().to_owned();
                     if !trimmed.is_empty() && trimmed != current_name {
-                        action = Some(GalleryAction::RenameFolder(
-                            state.folder.clone(),
-                            trimmed,
-                        ));
+                        action = Some(GalleryAction::RenameFolder(state.folder.clone(), trimmed));
                     }
                     state.folder_rename_edit = None;
                 }
             } else {
-                let btn = egui::Button::new(
-                    egui::RichText::new(&current_name)
-                        .heading(),
-                )
-                .fill(egui::Color32::TRANSPARENT);
+                let btn = egui::Button::new(egui::RichText::new(&current_name).heading())
+                    .fill(egui::Color32::TRANSPARENT);
                 if ui.add(btn).clicked() {
-                    state.folder_rename_edit =
-                        Some((state.folder.clone(), current_name.clone()));
+                    state.folder_rename_edit = Some((state.folder.clone(), current_name.clone()));
                     ui.ctx().memory_mut(|m| {
-                        m.request_focus(egui::Id::new(
-                            ("gallery_folder_rename_heading", &state.folder),
-                        ));
+                        m.request_focus(egui::Id::new((
+                            "gallery_folder_rename_heading",
+                            &state.folder,
+                        )));
                     });
                 }
             }

@@ -27,7 +27,7 @@ mod window;
 enum View {
     Welcome { error: Option<String> },
     Loading { path: PathBuf },
-    Gallery(gallery::GalleryState),
+    Gallery(Box<gallery::GalleryState>),
     Editor(Box<editor::EditorState>),
 }
 
@@ -42,7 +42,9 @@ enum Nav {
     },
     CloseProject,
     NewDesign,
-    NewDesignInFolder { seed: deck::DeckSeed },
+    NewDesignInFolder {
+        seed: deck::DeckSeed,
+    },
 }
 
 pub(crate) struct App {

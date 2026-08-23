@@ -80,8 +80,7 @@ pub fn install(_builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
     // `install` se llama una sola vez desde `main.rs`, así que podemos
     // filtrar el `Retained` devuelto para que el monitor viva lo que dure
     // el proceso.
-    let monitor =
-        unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block) };
+    let monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &block) };
 
     if let Some(mon) = monitor {
         std::mem::forget(mon);

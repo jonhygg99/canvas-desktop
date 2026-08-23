@@ -1,0 +1,97 @@
+# Refactorización modular de Canvas Desktop
+
+Estado: **En curso** — Fase 0 hecha.
+
+Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
+función, aplicando SRP a los archivos que hoy acumulan varias
+responsabilidades. **Ninguna fase cambia comportamiento**: si aparece un bug
+durante un traslado se anota aquí, no se arregla dentro del refactor.
+
+Truco que hace barato casi todo el plan: en Rust los `impl` inherentes solo
+exigen estar en el mismo **crate** que el tipo, no en el mismo módulo. Así
+`impl Deck` se reparte entre `deck/cache.rs`, `deck/loading.rs`, etc. sin
+traits, sin wrappers y sin tocar una sola llamada.
+
+## Diagnóstico de partida
+
+Líneas de código (sin contar los bloques `#[cfg(test)]`):
+
+| Archivo | Código | Tests | Responsabilidades |
+|---|---|---|---|
+| `canvas-app/src/deck.rs` | 1208 | 569 | 6 |
+| `canvas-app/src/editor/state.rs` | 1170 | 0 | 6 |
+| `canvas-app/src/app/ui_views.rs` | 898 | 0 | `editor_view_ui`: 705 líneas, 32 parámetros |
+| `canvas-app/src/gallery/ui.rs` | 844 | 0 | 4 |
+| `canvas-app/src/editor/canvas_view.rs` | 798 | 0 | `canvas_ui`: 691 líneas |
+| `canvas-app/src/app/messages.rs` | 790 | 0 | un `match` de 23 brazos |
+| `canvas-core/src/command.rs` | 727 | 656 | 17 comandos + `History` |
+| `canvas-app/src/menus.rs` | 603 | 0 | 3 |
+| `canvas-io/src/export.rs` | 602 | 0 | 3 |
+| `canvas-app/src/editor/slot_chrome.rs` | 579 | 0 | 2 |
+| `canvas-render/src/blur.rs` | 457 | 0 | 3 |
+
+`canvas-shell` no entra en el plan: su archivo mayor son 258 líneas y ya está
+separado por plataforma.
+
+## Fases
+
+- [x] **Fase 0 — Red de seguridad.** Dejar el árbol verde con el toolchain
+      actual y escribir este documento.
+- [ ] **Fase 1 — `canvas-core`.** `command.rs` → `command/`, `align.rs` →
+      `geometry/`, `document.rs` → `document/`.
+- [ ] **Fase 2 — `canvas-io` + `canvas-render`.** `export.rs` → `export/`,
+      `blur.rs` → `blur/`, `scene.rs` → `scene/`.
+- [ ] **Fase 3 — `deck.rs` → `deck/`.**
+- [ ] **Fase 4 — `editor/state.rs` → `editor/state/`.**
+- [ ] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
+- [ ] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
+- [ ] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
+- [ ] **Fase 8 — `App` en sub-estados + `app/messages/`.**
+
+## Verificación al final de cada fase
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo run -p canvas-app          # y ejercitar la feature afectada
+```
+
+La Fase 2 añade los ejemplos headless de GPU (`bake_blur`, `bake_filters`,
+`save_roundtrip`, `export_probe`, `text_probe`), que son lo único que cubre el
+camino GPU.
+
+### Guion de smoke test manual
+
+1. Abrir una imagen suelta; zoom (`Ctrl+0`, `Ctrl+Alt+0`), rueda, paneo.
+2. Abrir una carpeta; saltar entre lienzos (tira, `PageUp`/`PageDown`, clic).
+3. Editar una capa (mover, redimensionar, rotar); `Ctrl+Z` / `Ctrl+Y`.
+4. `Ctrl+S` y `Ctrl+Shift+S`; comprobar el aviso de sobrescritura.
+5. Exportar a PNG y a PDF.
+6. Renombrar y borrar un archivo desde la galería; deshacer el borrado.
+7. Crear un lienzo nuevo desde la zona "+" y editarlo (materialización).
+8. Modificar el archivo abierto desde fuera y comprobar el banner de recarga.
+
+## Notas de las fases
+
+### Fase 0
+
+El árbol **no estaba verde** al empezar, por deriva de toolchain (rustc/clippy
+1.97.1, rustfmt 1.9.0). Correcciones mecánicas, ninguna con cambio de
+comportamiento:
+
+- `clippy::replace_box` (lint nuevo) — `gallery/mod.rs`:
+  `self.folders = Box::new(...)` → `*self.folders = ...`, evita realojar.
+- `clippy::assertions_on_constants` — `sidebar.rs`: los dos `assert!` del test
+  pasan a `const { assert!(..) }`.
+- `clippy::needless_borrow` — `gallery/ui.rs`: dos `&parent` → `parent`.
+- `clippy::large_enum_variant` — `app/mod.rs`: `View::Gallery` pasa a
+  `Box<GalleryState>` (328 bytes frente a 32 de la segunda variante).
+- `cargo fmt --all` sobre todo el árbol (10 archivos): normaliza el formato
+  antes de empezar a mover código, para que los diffs de las fases siguientes
+  sean movimientos puros y no ruido de reformateo.
+
+Línea base tras la Fase 0: **208 tests en verde**, clippy y fmt limpios.
+
+`PLAN.md` y `PROMPT.md` aparecen borrados sin commitear en el árbol de trabajo
+desde antes de empezar; el refactor no los toca.

@@ -12,7 +12,6 @@ use crate::{deck, editor, loader};
 use super::{App, Nav, View};
 use loader::AppMsg;
 
-
 impl App {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería
     /// (tras crear/duplicar/pegar un archivo). `GalleryState::merge_files`
@@ -275,10 +274,10 @@ impl App {
                                 matches!(slot.content, deck::SlotContent::Loading)
                             });
                             if still_loading {
-                                let content = result.map_or_else(
-                                    deck::SlotContent::Failed,
-                                    |doc| deck::SlotContent::Ready(Box::new(doc)),
-                                );
+                                let content = result
+                                    .map_or_else(deck::SlotContent::Failed, |doc| {
+                                        deck::SlotContent::Ready(Box::new(doc))
+                                    });
                                 if let Some(slot) = self.deck.slots.get_mut(idx) {
                                     slot.content = content;
                                 }
@@ -407,7 +406,8 @@ impl App {
                             // Solo rescanea si el usuario sigue en esa galería:
                             // pudo haber navegado mientras corría la copia.
                             if matches!(&self.view, View::Gallery(g) if g.folder == folder
-                                    || g.folder.parent() == Some(folder.as_path())) {
+                                    || g.folder.parent() == Some(folder.as_path()))
+                            {
                                 // El resultado de la operación queda
                                 // seleccionado (borde azul): la copia recién
                                 // duplicada/pegada, el archivo recién
@@ -652,7 +652,8 @@ impl App {
                                 );
                             }
                             if matches!(&self.view, View::Gallery(g) if g.folder == folder
-                                    || g.folder.parent() == Some(folder.as_path())) {
+                                    || g.folder.parent() == Some(folder.as_path()))
+                            {
                                 self.rescan_gallery(ctx);
                                 if let View::Gallery(g) = &mut self.view {
                                     g.refresh_folder_lists();

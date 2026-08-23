@@ -168,18 +168,36 @@ pub enum AppMsg {
 pub enum GalleryOp {
     /// Duplica `path` (y su sidecar, si es una imagen que tiene uno) dentro
     /// de la misma carpeta, con sufijo « copy».
-    Duplicate { path: PathBuf },
+    Duplicate {
+        path: PathBuf,
+    },
     /// Copia `src` (y su sidecar, si lo tiene) dentro de `folder`. Mismo
     /// nombre si no colisiona; si `src` ya está en `folder`, se comporta
     /// como `Duplicate` (sufijo « copy»).
-    CopyInto { src: PathBuf, folder: PathBuf },
+    CopyInto {
+        src: PathBuf,
+        folder: PathBuf,
+    },
     /// Cambia solo el nombre base (stem); la extensión no se toca —
     /// cambiarla rompería `is_image_file`/`is_canvas_file` y la detección
     /// de sidecar.
-    Rename { path: PathBuf, new_stem: String },
+    Rename {
+        path: PathBuf,
+        new_stem: String,
+    },
     /// A la Papelera de reciclaje (crate `trash`), no borrado permanente.
-    Delete { path: PathBuf },
-    CreateFolder { parent: PathBuf, name: String },
-    RenameFolder { path: PathBuf, new_name: String },
-    DeleteFolder { path: PathBuf },
+    Delete {
+        path: PathBuf,
+    },
+    CreateFolder {
+        parent: PathBuf,
+        name: String,
+    },
+    RenameFolder {
+        path: PathBuf,
+        new_name: String,
+    },
+    DeleteFolder {
+        path: PathBuf,
+    },
 }

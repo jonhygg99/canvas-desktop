@@ -191,10 +191,10 @@ impl GalleryState {
     /// Vuelve a sondear las carpetas (Inside y Siblings). Útil tras crear
     /// o borrar una subcarpeta desde el panel.
     pub fn refresh_folder_lists(&mut self) {
-        self.folders = Box::new(FolderLists {
+        *self.folders = FolderLists {
             siblings: sibling_folders(&self.folder),
             children: child_folders(&self.folder),
-        });
+        };
     }
 
     pub fn navigation_to_folder(&mut self, folder: PathBuf) -> (PathBuf, FolderNavigation) {
