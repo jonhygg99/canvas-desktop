@@ -523,7 +523,11 @@ pub fn canvas_ui(
         w: x1 - x0,
         h: y1 - y0,
     });
-    let visible = deck.visible_indices(view_deck_rect);
+    let visible = if state.isolate {
+        vec![deck.active]
+    } else {
+        deck.visible_indices(view_deck_rect)
+    };
     deck.mark_visible(&visible);
 
     // Pulsación sobre un lienzo que no es el activo: lo activa (el
@@ -591,6 +595,13 @@ pub fn canvas_ui(
                     if let Some(s) = deck.slots.get_mut(idx) {
                         s.locked = !s.locked;
                     }
+                    header_hit = true;
+                } else if header.isolate.contains(pos) {
+                    if idx != deck.active {
+                        deck.jump_to = Some(idx);
+                        deck.jump_center = true;
+                    }
+                    state.isolate = !state.isolate;
                     header_hit = true;
                 } else if header.dup.contains(pos) {
                     action = Some(CanvasAction::Duplicate(id));
@@ -735,7 +746,9 @@ pub fn canvas_ui(
     for &idx in &visible {
         draw_slot_chrome(state, deck, idx, ui, rect);
     }
-    draw_add_zone(state, deck, ui, rect);
+    if !state.isolate {
+        draw_add_zone(state, deck, ui, rect);
+    }
     draw_header_tooltips(deck, ui, rect, &state.viewport, &visible);
 
     if state.show_grid {

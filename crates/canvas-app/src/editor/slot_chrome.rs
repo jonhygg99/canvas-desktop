@@ -104,7 +104,7 @@ pub(super) fn draw_slot_chrome(
 /// `canvas_ui`, sobre el mismo `slot_header_layout` que esta función usa
 /// para pintar, así que ambos nunca pueden desalinearse.
 ///
-/// Los 5 botones son formas dibujadas a mano (triángulos, arco, rects),
+/// Los 6 botones son formas dibujadas a mano (triángulos, arco, rects),
 /// NO texto/emoji: un carácter Unicode como ▲/▼ puede simplemente no estar
 /// en la fuente que trae `egui` integrada — pasó de verdad (las flechas
 /// dejaron de verse, mientras que otros glifos ya usados en la app seguían
@@ -162,6 +162,13 @@ fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_rect: egui::
     draw_triangle_icon(painter, header.prev, prev_dir, icon_color);
     draw_triangle_icon(painter, header.next, next_dir, icon_color);
     draw_lock_icon(painter, header.lock, slot.locked, icon_color);
+    painter.text(
+        header.isolate.center(),
+        egui::Align2::CENTER_CENTER,
+        "I",
+        egui::FontId::proportional(12.0),
+        icon_color,
+    );
     draw_duplicate_icon(
         painter,
         header.dup,
@@ -322,12 +329,12 @@ const HEADER_BTN_W: f32 = 20.0;
 /// precisión — mejor que se quede aquí a que seis encimen sin límite.
 const HEADER_BTN_MIN: f32 = 12.0;
 /// Ancho de cabecera por debajo del cual ni se pinta ni se comprueba el
-/// clic: con 5 botones al suelo (`HEADER_BTN_MIN * 5`) más algo de nombre,
+/// clic: con 6 botones al suelo (`HEADER_BTN_MIN * 6`) más algo de nombre,
 /// menos que esto es un lienzo tan alejado que la cabecera sería ruido
 /// ilegible superpuesto a otra cosa — mismo criterio que usan las
 /// miniaturas de la tira, que a partir de cierto tamaño mínimo dejan de
 /// intentar mostrar detalle y muestran solo un glifo.
-const HEADER_MIN_VISIBLE_W: f32 = 70.0;
+const HEADER_MIN_VISIBLE_W: f32 = 84.0;
 
 /// Rects (en espacio de PANTALLA) de la cabecera de un lienzo: la barra
 /// entera (para el fondo), el nombre y los 5 botones, calculados a partir
@@ -341,6 +348,7 @@ pub(super) struct SlotHeader {
     pub(super) prev: egui::Rect,
     pub(super) next: egui::Rect,
     pub(super) lock: egui::Rect,
+    pub(super) isolate: egui::Rect,
     pub(super) dup: egui::Rect,
     pub(super) del: egui::Rect,
 }
@@ -359,8 +367,8 @@ pub(super) fn slot_header_layout(left: f32, right: f32, top: f32) -> Option<Slot
     // nunca se salen sobre el lienzo vecino, y en cuanto hay sitio de sobra
     // (zoom normal o mayor) se quedan clavados en `HEADER_BTN_W` sin seguir
     // creciendo ni encogiendo con el zoom.
-    let btn_w = (bar.width() / 5.0).clamp(HEADER_BTN_MIN, HEADER_BTN_W);
-    let buttons_w = btn_w * 5.0;
+    let btn_w = (bar.width() / 6.0).clamp(HEADER_BTN_MIN, HEADER_BTN_W);
+    let buttons_w = btn_w * 6.0;
     let name_right = (bar.right() - buttons_w).max(bar.left());
     let name = egui::Rect::from_min_max(bar.left_top(), egui::pos2(name_right, bar.bottom()));
     let btn = |i: f32| {
@@ -376,8 +384,9 @@ pub(super) fn slot_header_layout(left: f32, right: f32, top: f32) -> Option<Slot
         prev: btn(0.0),
         next: btn(1.0),
         lock: btn(2.0),
-        dup: btn(3.0),
-        del: btn(4.0),
+        isolate: btn(3.0),
+        dup: btn(4.0),
+        del: btn(5.0),
     })
 }
 
@@ -420,6 +429,8 @@ pub(super) fn draw_header_tooltips(
             Some(move_next)
         } else if header.lock.contains(pos) {
             Some(if slot.locked { "Unlock" } else { "Lock" })
+        } else if header.isolate.contains(pos) {
+            Some("Isolate")
         } else if header.dup.contains(pos) {
             Some("Duplicate")
         } else if header.del.contains(pos) {

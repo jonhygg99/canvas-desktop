@@ -84,6 +84,8 @@ pub struct EditorState {
     /// Cuadrícula y reglas (menú View).
     pub show_grid: bool,
     pub show_rulers: bool,
+    /// Muestra únicamente el lienzo activo en el editor.
+    pub isolate: bool,
     /// Modo recorte activo: las esquinas recortan en vez de redimensionar.
     pub crop_mode: bool,
     /// Guías de alineación magnéticas activas durante un arrastre
@@ -267,6 +269,7 @@ impl EditorState {
             pending_zoom_factor: None,
             show_grid: false,
             show_rulers: false,
+            isolate: false,
             crop_mode: false,
             snap_guides: (Vec::new(), Vec::new()),
             rename_edit: None,

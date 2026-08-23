@@ -543,7 +543,7 @@ pub(super) fn editor_view_ui(
     // (renombrar/duplicar/borrar) — se llena dentro del `CentralPanel` de
     // más abajo, se resuelve junto a `strip_action`.
     let mut canvas_action = None;
-    if deck.is_visible() {
+    if deck.is_visible() && !state.isolate {
         let active_dirty = state.is_dirty();
         // Ids DISTINTOS por lado (no el mismo panel reetiquetado): así el
         // tamaño recordado de la tira a la izquierda (ancho) no se aplica
