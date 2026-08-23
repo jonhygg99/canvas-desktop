@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-6 hechas.
+Estado: **En curso** — Fases 0-7 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -45,7 +45,7 @@ separado por plataforma.
 - [x] **Fase 4 — `editor/state.rs` → `editor/state/`.**
 - [x] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
 - [x] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
-- [ ] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
+- [x] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
 - [ ] **Fase 8 — `App` en sub-estados + `app/messages/`.**
 
 ## Verificación al final de cada fase
@@ -219,3 +219,33 @@ como `&[usize]` en vez de `Vec`.
 `canvas_ui` sigue en 158 líneas de cuerpo, por encima del objetivo de 80: lo
 que queda es la secuencia de orquestación en sí, y trocearla más solo movería
 el orden significativo a otro archivo sin ganar nada.
+
+### Fase 7
+
+Dos pasos dentro de la misma fase.
+
+**1. `EditorFrame`.** `app/frame.rs` agrupa los 25 campos de `App` que
+`editor_view_ui` recibía sueltos. La firma pasa de **32 parámetros a 6**. Es
+un struct de préstamos independientes (`&'a mut` campo a campo), no un
+`&mut App`: eso es justo lo que permite seguir usando `state` —prestado de
+`self.view`— a la vez que `deck`, `renderer` y compañía, cosa que un
+`&mut self` no permitiría. Compiló a la primera.
+
+**2. El troceado.** `app/ui_views.rs` (898) → `app/views/`:
+
+| Archivo | Líneas | Contenido |
+|---|---|---|
+| `editor/deck_nav.rs` | 294 | acciones de la tira y de la cabecera, salto de baraja, «Save all», pasos globales pendientes |
+| `editor/save_flow.rs` | 153 | guardar / guardar como |
+| `editor/mod.rs` | 128 | `editor_view_ui`, ya solo orquestación |
+| `gallery.rs` | 120 | vista de galería |
+| `editor/panels.rs` | 110 | tira, capas, propiedades, área central |
+| `editor/file_ops.rs` | 101 | renombrar, borrar, materializar provisional |
+| `editor/modals.rs` | 57 | sobrescritura, readonly, exportación |
+| `welcome.rs` | 45 | vista de bienvenida |
+| `loading.rs` | 21 | vista de carga |
+
+Misma regla que en la Fase 6: los submódulos se llaman en el MISMO orden en
+que estaban sus bloques. Lo único que cambia en los cuerpos movidos es que
+`open_next` y `pending_menu_action` pasan a ser parámetros de salida
+(`*open_next = …`).

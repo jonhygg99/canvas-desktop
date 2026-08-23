@@ -15,13 +15,14 @@ use crate::loader::AppMsg;
 use crate::surface::CanvasSurface;
 use crate::{deck, editor, export, gallery, menus, paste_hook, settings, watcher};
 
+mod frame;
 mod menu_actions;
 mod messages;
 mod navigation;
 pub(crate) mod persistence;
 mod ui_menu;
 mod ui_modals;
-mod ui_views;
+mod views;
 mod window;
 
 enum View {
@@ -269,7 +270,7 @@ impl eframe::App for App {
         match &mut self.view {
             View::Welcome { error } => {
                 let error = error.clone();
-                open_next = ui_views::welcome_view_ui(
+                open_next = views::welcome_view_ui(
                     ui,
                     error.as_deref(),
                     &self.settings.recent_files,
@@ -280,10 +281,10 @@ impl eframe::App for App {
                 );
             }
             View::Loading { path } => {
-                ui_views::loading_view_ui(ui, path);
+                views::loading_view_ui(ui, path);
             }
             View::Gallery(g) => {
-                open_next = ui_views::gallery_view_ui(
+                open_next = views::gallery_view_ui(
                     g,
                     ui,
                     &mut self.settings,
@@ -299,38 +300,35 @@ impl eframe::App for App {
                 let Some(rs) = frame.wgpu_render_state().cloned() else {
                     return;
                 };
-                let (nav, action) = ui_views::editor_view_ui(
-                    ui,
-                    &ctx,
-                    &rs,
-                    state,
-                    paste_requested,
-                    &mut self.deck,
-                    &mut self.renderer,
-                    &mut self.surface,
-                    &self.tx,
-                    &mut self.settings,
-                    &mut self.show_settings,
-                    &mut self.save_requested,
-                    &mut self.close_after_save,
-                    &mut self.after_save,
-                    &mut self.allow_close,
-                    &mut self.overwrite_confirmed,
-                    &mut self.overwrite_prompt,
-                    &mut self.overwrite_dont_ask,
-                    &mut self.readonly_prompt,
-                    &mut self.export_dialog,
-                    &mut self.pending_export_settings,
-                    &mut self.pending_export,
-                    &mut self.pending_save_as,
-                    &mut self.ignore_fs_events_until,
-                    &mut self.watcher,
-                    &mut self.undoable_deletes,
-                    &mut self.materializing,
-                    &mut self.materialize_blocked,
-                    &mut self.save_all_queue,
-                    &mut self.save_all_attempted,
-                );
+                let mut frame = frame::EditorFrame {
+                    deck: &mut self.deck,
+                    renderer: &mut self.renderer,
+                    surface: &mut self.surface,
+                    tx: &self.tx,
+                    settings: &mut self.settings,
+                    show_settings: &mut self.show_settings,
+                    save_requested: &mut self.save_requested,
+                    close_after_save: &mut self.close_after_save,
+                    after_save: &mut self.after_save,
+                    allow_close: &mut self.allow_close,
+                    overwrite_confirmed: &mut self.overwrite_confirmed,
+                    overwrite_prompt: &mut self.overwrite_prompt,
+                    overwrite_dont_ask: &mut self.overwrite_dont_ask,
+                    readonly_prompt: &mut self.readonly_prompt,
+                    export_dialog: &mut self.export_dialog,
+                    pending_export_settings: &mut self.pending_export_settings,
+                    pending_export: &mut self.pending_export,
+                    pending_save_as: &mut self.pending_save_as,
+                    ignore_fs_events_until: &mut self.ignore_fs_events_until,
+                    watcher: &mut self.watcher,
+                    undoable_deletes: &mut self.undoable_deletes,
+                    materializing: &mut self.materializing,
+                    materialize_blocked: &mut self.materialize_blocked,
+                    save_all_queue: &mut self.save_all_queue,
+                    save_all_attempted: &mut self.save_all_attempted,
+                };
+                let (nav, action) =
+                    views::editor_view_ui(ui, &ctx, &rs, state, paste_requested, &mut frame);
                 open_next = nav;
                 pending_menu_action = action;
             }
