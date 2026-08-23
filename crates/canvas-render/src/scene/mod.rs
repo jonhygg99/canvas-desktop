@@ -10,6 +10,9 @@ mod raster;
 mod shape;
 mod text;
 
+#[cfg(test)]
+mod tests;
+
 pub use raster::{image_data_from_rgba, ImageMap};
 pub use text::text_lines;
 
@@ -30,6 +33,23 @@ pub fn build_scene(
     let mut scene = Scene::new();
     append_document(&mut scene, doc, images, blurred, view, decorated);
     scene
+}
+
+/// Los píxeles con los que pintar una capa: la textura ya procesada (efectos
+/// GPU) si la hay, y si no la original del documento. `None` mientras la carga
+/// asíncrona no ha terminado, o si el mapa de bits mide 0x0.
+///
+/// Que devuelva `Option` en vez de que el llamador corte por lo sano con un
+/// `continue` es deliberado: el bucle de `append_document` lleva su propio
+/// índice y cierra capas de opacidad al final de cada vuelta, así que saltarse
+/// el resto del cuerpo lo dejaría sin avanzar y sin cerrar.
+fn drawable_image<'a>(
+    blurred: &'a ImageMap,
+    images: &'a ImageMap,
+    id: canvas_core::LayerId,
+) -> Option<&'a vello::peniko::ImageData> {
+    let image = blurred.get(&id).or_else(|| images.get(&id))?;
+    (image.width != 0 && image.height != 0).then_some(image)
 }
 
 /// Añade UN documento a una escena ya empezada, con su propia transformación
@@ -160,58 +180,54 @@ pub fn append_document(
         }
         match &layer.content {
             LayerContent::Image(content) => {
-                let Some(image) = blurred.get(&layer.id).or_else(|| images.get(&layer.id)) else {
-                    continue;
-                };
-                if image.width == 0 || image.height == 0 {
-                    continue;
-                }
-                let t = layer.transform;
-                let place = place_transform(&t);
+                // `if let`, NO `let … else { continue }`: saltarse el resto del
+                // cuerpo del bucle se saltaría también el `i += 1` y el
+                // `pop_layer` del final, colgando el hilo de render.
+                if let Some(image) = drawable_image(blurred, images, layer.id) {
+                    let t = layer.transform;
+                    let place = place_transform(&t);
 
-                // Recorte no destructivo: la fracción `crop` del mapa de bits
-                // llena el rect; el resto se recorta con una capa de clip.
-                let crop = content
-                    .crop
-                    .map(canvas_core::CropRect::clamped)
-                    .unwrap_or_else(canvas_core::CropRect::full);
-                let (iw, ih) = (f64::from(image.width), f64::from(image.height));
-                let sx = t.width / (crop.width * iw);
-                let sy = t.height / (crop.height * ih);
-                let image_local = Affine::scale_non_uniform(sx, sy)
-                    * Affine::translate((-crop.x * iw, -crop.y * ih));
+                    // Recorte no destructivo: la fracción `crop` del mapa de bits
+                    // llena el rect; el resto se recorta con una capa de clip.
+                    let crop = content
+                        .crop
+                        .map(canvas_core::CropRect::clamped)
+                        .unwrap_or_else(canvas_core::CropRect::full);
+                    let (iw, ih) = (f64::from(image.width), f64::from(image.height));
+                    let sx = t.width / (crop.width * iw);
+                    let sy = t.height / (crop.height * ih);
+                    let image_local = Affine::scale_non_uniform(sx, sy)
+                        * Affine::translate((-crop.x * iw, -crop.y * ih));
 
-                let cropped = content.crop.is_some();
-                if cropped {
-                    scene.push_layer(
-                        Fill::NonZero,
-                        vello::peniko::Mix::Normal,
-                        1.0,
-                        view * place,
-                        &Rect::new(0.0, 0.0, t.width, t.height),
-                    );
-                }
-                scene.draw_image(image, view * place * image_local);
-                if cropped {
-                    scene.pop_layer();
+                    let cropped = content.crop.is_some();
+                    if cropped {
+                        scene.push_layer(
+                            Fill::NonZero,
+                            vello::peniko::Mix::Normal,
+                            1.0,
+                            view * place,
+                            &Rect::new(0.0, 0.0, t.width, t.height),
+                        );
+                    }
+                    scene.draw_image(image, view * place * image_local);
+                    if cropped {
+                        scene.pop_layer();
+                    }
                 }
             }
             // El SVG pinta sus píxeles rasterizados del ImageMap (la fuente
             // vectorial viaja en el documento para reexportar sin pérdida).
             LayerContent::Svg(_) => {
-                let Some(image) = blurred.get(&layer.id).or_else(|| images.get(&layer.id)) else {
-                    continue;
-                };
-                if image.width == 0 || image.height == 0 {
-                    continue;
+                // Mismo motivo que en `Image`: nada de `continue` aquí.
+                if let Some(image) = drawable_image(blurred, images, layer.id) {
+                    let t = layer.transform;
+                    let place = place_transform(&t);
+                    let image_local = Affine::scale_non_uniform(
+                        t.width / f64::from(image.width),
+                        t.height / f64::from(image.height),
+                    );
+                    scene.draw_image(image, view * place * image_local);
                 }
-                let t = layer.transform;
-                let place = place_transform(&t);
-                let image_local = Affine::scale_non_uniform(
-                    t.width / f64::from(image.width),
-                    t.height / f64::from(image.height),
-                );
-                scene.draw_image(image, view * place * image_local);
             }
             LayerContent::Text(text) => {
                 let t = layer.transform;

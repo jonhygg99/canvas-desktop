@@ -132,7 +132,7 @@ de control. Solo se extrajo el brazo `Shape` (43 líneas, sin `continue`), que
 sí lo es. Es código GPU sin cobertura de tests unitarios: no es sitio para
 arriesgar.
 
-#### 🐛 Bug preexistente encontrado (NO corregido aquí)
+#### 🐛 Bug preexistente encontrado (corregido después, ver «Bug de append_document»)
 
 `scene/mod.rs::append_document`, brazos `Image` y `Svg`: cuando la textura de
 la capa todavía no está cargada (`blurred`/`images` no la tienen) o mide 0x0,
@@ -142,9 +142,9 @@ el `continue` salta tanto el `if fade { scene.pop_layer(); }` como el
 1. **Bucle infinito**: `i` nunca avanza, el hilo de render se cuelga.
 2. `push_layer`/`pop_layer` desbalanceados si la capa tenía `opacity < 1.0`.
 
-Es alcanzable mientras una imagen se está cargando de forma asíncrona. Se deja
-tal cual a propósito (el refactor no cambia comportamiento); merece su propio
-arreglo con un test de regresión.
+Es alcanzable mientras una imagen se está cargando de forma asíncrona. Se dejó
+tal cual durante el refactor a propósito (ninguna fase cambia comportamiento) y
+se arregló después, en su propio commit.
 
 ### Fase 3
 
@@ -303,7 +303,36 @@ app arrancando sobre una imagen suelta y sobre una carpeta sin panics.
    la app y comprobar que no revienta, pero no puede hacer clic: guardar,
    exportar, deshacer, arrastrar capas y saltar de lienzo hay que probarlos a
    mano.
-2. **El bug de `append_document`** documentado en la Fase 2: sigue ahí, a
-   propósito. Merece su propio arreglo con test de regresión.
-3. `.refactor-tools/` son los scripts de troceado que se usaron. Se dejan
+2. `.refactor-tools/` son los scripts de troceado que se usaron. Se dejan
    commiteados por trazabilidad; se pueden borrar sin más.
+
+## Bug de `append_document` (corregido)
+
+El cuelgue que salió a la luz en la Fase 2 ya está arreglado, fuera del
+refactor y con su propio commit.
+
+**Causa.** En los brazos `LayerContent::Image` y `Svg`, cuatro `continue`
+saltaban al `while` exterior cuando la textura no estaba en el `ImageMap`
+(carga asíncrona en vuelo) o medía 0x0. El bucle lleva su propio índice y
+cierra la capa de opacidad al final de cada vuelta, así que ese salto se comía
+tanto el `i += 1` como el `pop_layer`.
+
+**Arreglo.** Un ayudante `drawable_image(blurred, images, id) -> Option<&ImageData>`
+concentra las dos comprobaciones, y los brazos usan `if let Some(image)` en vez
+de `let … else { continue }`. El cuerpo del bucle siempre llega a su epílogo.
+
+Los otros dos `continue` del bucle (capa oculta, cabecera de grupo) se quedan:
+ambos avanzan `i` antes de saltar, y ninguno tiene una capa de opacidad
+pendiente de cerrar.
+
+**Tests.** `canvas-render/src/scene/tests.rs`, seis casos — los primeros del
+crate. No necesitan GPU: `vello::Scene` es solo un buffer de codificación en
+CPU. Cada uno construye la escena en un hilo aparte con `recv_timeout`, para
+que una regresión FALLE en vez de colgar la suite. Cubren: imagen sin cargar,
+SVG sin cargar, mapa de bits 0x0, que no quede una capa de opacidad abierta
+(`n_open_clips == 0`), que las capas por encima de la que falta se sigan
+pintando, y el camino feliz — sin este último, un `drawable_image` que
+devolviera siempre `None` pasaría todos los demás.
+
+Verificado revirtiendo el arreglo a mano: con el `continue` de vuelta en el
+brazo `Image`, cinco de los seis tests fallan por timeout.
