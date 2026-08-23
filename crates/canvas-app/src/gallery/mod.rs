@@ -190,6 +190,15 @@ impl GalleryState {
     }
     /// Vuelve a sondear las carpetas (Inside y Siblings). Útil tras crear
     /// o borrar una subcarpeta desde el panel.
+    /// ¿Tiene que rescanearse esta galería porque cambió algo en `changed`?
+    ///
+    /// Sí si es la carpeta que se está mostrando, y también si es su carpeta
+    /// PADRE: el panel lateral lista las hermanas, que salen justo de ahí, así
+    /// que crear o borrar una carpeta un nivel más arriba también se ve.
+    pub fn is_affected_by(&self, changed: &Path) -> bool {
+        self.folder == changed || self.folder.parent() == Some(changed)
+    }
+
     pub fn refresh_folder_lists(&mut self) {
         *self.folders = FolderLists {
             siblings: sibling_folders(&self.folder),
@@ -329,9 +338,51 @@ fn slot_contents() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::ui::gallery_cell_size;
-    use super::{next_folder_panel_side, FolderNavigation};
+    use super::{next_folder_panel_side, FolderNavigation, GalleryState};
     use crate::deck::StripSide;
-    use std::path::PathBuf;
+    use crate::settings::GallerySort;
+    use std::path::{Path, PathBuf};
+
+    /// Una galería abierta en `folder`. `GalleryState::new` sondea el disco
+    /// para las listas de carpetas; con una ruta que no existe salen vacías,
+    /// que es justo lo que hace falta aquí.
+    fn open_at(folder: &str) -> GalleryState {
+        GalleryState::new(PathBuf::from(folder), GallerySort::Name, StripSide::Left)
+    }
+
+    #[test]
+    fn a_gallery_rescans_when_its_own_folder_changes() {
+        let g = open_at("raiz/hijo");
+        assert!(g.is_affected_by(Path::new("raiz/hijo")));
+    }
+
+    #[test]
+    fn a_gallery_rescans_when_its_parent_changes() {
+        // El panel lateral lista las carpetas HERMANAS, que salen del padre:
+        // crear o borrar una ahí también se ve desde aquí.
+        let g = open_at("raiz/hijo");
+        assert!(g.is_affected_by(Path::new("raiz")));
+    }
+
+    #[test]
+    fn a_gallery_ignores_a_sibling_folder() {
+        let g = open_at("raiz/hijo");
+        assert!(!g.is_affected_by(Path::new("raiz/otro")));
+    }
+
+    #[test]
+    fn a_gallery_ignores_a_grandparent() {
+        // Dos niveles arriba no se ve desde aquí: ni es la carpeta abierta ni
+        // aporta la lista de hermanas.
+        let g = open_at("raiz/hijo/nieto");
+        assert!(!g.is_affected_by(Path::new("raiz")));
+    }
+
+    #[test]
+    fn a_gallery_ignores_its_own_subfolder() {
+        let g = open_at("raiz");
+        assert!(!g.is_affected_by(Path::new("raiz/hijo")));
+    }
 
     #[test]
     fn folder_panel_cycles_clockwise_from_left_to_bottom() {

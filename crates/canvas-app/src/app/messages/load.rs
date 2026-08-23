@@ -140,9 +140,7 @@ impl App {
         path: PathBuf,
         result: Result<deck::SlotDoc, String>,
     ) {
-        if self.deck.folder.as_deref() == Some(folder.as_path())
-            && self.deck.generation() == generation
-        {
+        if self.deck.accepts_response(&folder, generation) {
             self.deck.loading_finished();
             if let Some(idx) = self.deck.find_by_path(&path) {
                 let still_loading = self
@@ -168,9 +166,7 @@ impl App {
         generation: u64,
         sizes: Vec<(PathBuf, Option<(f64, f64)>)>,
     ) {
-        if self.deck.folder.as_deref() == Some(folder.as_path())
-            && self.deck.generation() == generation
-        {
+        if self.deck.accepts_response(&folder, generation) {
             self.deck.set_probes(sizes);
         }
     }

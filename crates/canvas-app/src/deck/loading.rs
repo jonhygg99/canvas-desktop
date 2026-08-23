@@ -2,7 +2,7 @@
 //! cuantas a la vez. La generacion sirve para descartar respuestas de una
 //! baraja anterior.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::cache::adaptive_evict_budget;
@@ -73,6 +73,15 @@ impl Deck {
 
     /// Una carga (con éxito o sin él) terminó: libera un hueco de
     /// `MAX_INFLIGHT_LOADS`.
+    /// ¿Es esta respuesta del hilo de disco para ESTA baraja y no para una
+    /// anterior? Entre pedir una carga y recibirla el usuario puede haber
+    /// cambiado de carpeta o haber provocado un reescaneo, y la respuesta
+    /// vieja llegaría igual por el canal. La carpeta sola no basta: volver a
+    /// la misma carpeta crea una baraja nueva, con generación nueva.
+    pub fn accepts_response(&self, folder: &Path, generation: u64) -> bool {
+        self.folder.as_deref() == Some(folder) && self.generation() == generation
+    }
+
     pub fn loading_finished(&mut self) {
         self.inflight = self.inflight.saturating_sub(1);
     }

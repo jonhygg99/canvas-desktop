@@ -575,3 +575,33 @@ fn request_loads_never_asks_for_a_placeholder() {
     let spawned = deck.request_loads(&[]);
     assert!(!spawned.contains(&placeholder_path));
 }
+
+#[test]
+fn a_deck_accepts_a_response_for_its_own_folder_and_generation() {
+    let deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    assert!(deck.accepts_response(Path::new(r"C:\folder"), deck.generation()));
+}
+
+#[test]
+fn a_deck_rejects_a_response_from_an_older_generation_of_the_same_folder() {
+    // Volver a la misma carpeta crea una baraja NUEVA: las respuestas en
+    // vuelo de la anterior traen ids de ranura que ya no significan nada.
+    let first = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    let second = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+
+    assert_ne!(first.generation(), second.generation());
+    assert!(!second.accepts_response(Path::new(r"C:\folder"), first.generation()));
+}
+
+#[test]
+fn a_deck_rejects_a_response_for_another_folder() {
+    let deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    assert!(!deck.accepts_response(Path::new(r"C:\otra"), deck.generation()));
+}
+
+#[test]
+fn a_deck_without_a_folder_accepts_nothing() {
+    let deck = Deck::single(PathBuf::from("suelta.png"));
+    assert!(deck.folder.is_none());
+    assert!(!deck.accepts_response(Path::new(r"C:\folder"), deck.generation()));
+}

@@ -130,9 +130,7 @@ impl App {
             Ok(()) => {
                 // Solo rescanea si el usuario sigue en esa galería:
                 // pudo haber navegado mientras corría la copia.
-                if matches!(&self.view, View::Gallery(g) if g.folder == folder
-                    || g.folder.parent() == Some(folder.as_path()))
-                {
+                if matches!(&self.view, View::Gallery(g) if g.is_affected_by(&folder)) {
                     // El resultado de la operación queda
                     // seleccionado (borde azul): la copia recién
                     // duplicada/pegada, el archivo recién

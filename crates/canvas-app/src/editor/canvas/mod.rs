@@ -22,6 +22,10 @@ use super::viewport::screen_to_page;
 use super::EditorState;
 
 mod camera;
+
+#[cfg(test)]
+#[path = "camera_tests.rs"]
+mod camera_tests;
 mod context_menu;
 mod paint;
 mod picking;

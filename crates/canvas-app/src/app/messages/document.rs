@@ -209,9 +209,7 @@ impl App {
                             ctx.clone(),
                         );
                     }
-                    if matches!(&self.view, View::Gallery(g) if g.folder == folder
-                    || g.folder.parent() == Some(folder.as_path()))
-                    {
+                    if matches!(&self.view, View::Gallery(g) if g.is_affected_by(&folder)) {
                         self.rescan_gallery(ctx);
                         if let View::Gallery(g) = &mut self.view {
                             g.refresh_folder_lists();
