@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-4 hechas.
+Estado: **En curso** — Fases 0-5 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -43,7 +43,7 @@ separado por plataforma.
       `blur.rs` → `blur/`, `scene.rs` → `scene/`.
 - [x] **Fase 3 — `deck.rs` → `deck/`.**
 - [x] **Fase 4 — `editor/state.rs` → `editor/state/`.**
-- [ ] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
+- [x] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
 - [ ] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
 - [ ] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
 - [ ] **Fase 8 — `App` en sub-estados + `app/messages/`.**
@@ -178,3 +178,19 @@ nadie fuera lo nombraba.
 Los métodos movidos usan `pub(in crate::editor)`, que preserva exactamente la
 visibilidad original. Los campos del struct siguen en `mod.rs`, así que su
 `pub(super)` se queda como estaba.
+
+### Fase 5
+
+- `menus.rs` (603) → `menus/{mod,fallback}.rs` + `menus/native/{mod,build}.rs`.
+  El bloque `#[cfg(windows)] mod native { … }` en línea pasa a ser un
+  directorio de verdad, y su `fn build` (168 líneas de construcción del árbol
+  de menús con muda) se separa del ciclo de vida. El fallback no-Windows se
+  comprobó compilándolo temporalmente en Windows, ya que aquí la CI de
+  Linux/macOS es lo único que lo cubre.
+- `gallery/ui.rs` (844) → `gallery/ui/{mod,cell,folder_panel,shell}.rs`.
+- `editor/slot_chrome.rs` (579) → `slot_chrome/{mod,header,icons}.rs`.
+
+Misma trampa de visibilidad que en la Fase 4: lo que era `pub(super)` en un
+archivo hijo directo de `editor` pasa a `pub(in crate::editor)` al bajar un
+nivel. Afecta a `SlotHeader` y sus campos, `slot_header_layout` y
+`draw_header_tooltips`.
