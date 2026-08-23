@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-2 hechas.
+Estado: **En curso** — Fases 0-4 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -41,8 +41,8 @@ separado por plataforma.
       `geometry/`, `document.rs` → `document/`.
 - [x] **Fase 2 — `canvas-io` + `canvas-render`.** `export.rs` → `export/`,
       `blur.rs` → `blur/`, `scene.rs` → `scene/`.
-- [ ] **Fase 3 — `deck.rs` → `deck/`.**
-- [ ] **Fase 4 — `editor/state.rs` → `editor/state/`.**
+- [x] **Fase 3 — `deck.rs` → `deck/`.**
+- [x] **Fase 4 — `editor/state.rs` → `editor/state/`.**
 - [ ] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
 - [ ] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
 - [ ] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
@@ -145,3 +145,36 @@ el `continue` salta tanto el `if fade { scene.pop_layer(); }` como el
 Es alcanzable mientras una imagen se está cargando de forma asíncrona. Se deja
 tal cual a propósito (el refactor no cambia comportamiento); merece su propio
 arreglo con un test de regresión.
+
+### Fase 3
+
+`deck.rs` (1208 + 569) → `deck/{mod,geometry,model,layout,cache,loading,scan,nav,tests}.rs`.
+Archivo de código más largo: 1208 → 289.
+
+Lo único que cambia además de la ubicación son visibilidades: los ayudantes
+que ahora cruzan módulo (`Slot::size`, `Slot::last_seen`,
+`DeckRect::intersects`, `idle_slot`, `file_name`, `slot_kind`, los
+presupuestos de caché y los límites de carga) pasan a `pub(super)`, visibles
+solo dentro de `deck`. `SeedItem` deja de reexportarse desde `deck` porque
+nadie fuera lo nombraba.
+
+### Fase 4
+
+`editor/state.rs` (1170) → `editor/state/`:
+
+| Archivo | Líneas | Contenido |
+|---|---|---|
+| `mod.rs` | 272 | `struct EditorState`, `DeckNav`, y `file_name`/`is_dirty`/`is_idle`/`take_slot`/`put_slot` |
+| `history.rs` | 275 | `GlobalStep`, `DeleteRecord` y todo el deshacer/rehacer local + global |
+| `layer_factory.rs` | 199 | alta y sustitución de capas |
+| `background.rs` | 153 | la capa de «fondo desenfocado» |
+| `shortcuts.rs` | 151 | `handle_shortcuts` |
+| `constructors.rs` | 137 | `base`, `from_image`, `new_blank`, `new_blank_image` |
+| `sidecar.rs` | 67 | ida y vuelta con el sidecar |
+
+**Trampa de visibilidad**: en `state.rs`, `pub(super)` significaba «visible en
+`editor`». Desde un submódulo de `state` eso pasaría a significar «visible en
+`state`», que es más restrictivo y rompe a `canvas_view`/`properties_panel`.
+Los métodos movidos usan `pub(in crate::editor)`, que preserva exactamente la
+visibilidad original. Los campos del struct siguen en `mod.rs`, así que su
+`pub(super)` se queda como estaba.
