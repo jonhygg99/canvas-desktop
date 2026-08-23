@@ -133,14 +133,13 @@ mod native {
                     &new_item,
                     &open_item,
                     &open_folder_item,
+                    &recent_menu,
                     &close_project_item,
                     &PredefinedMenuItem::separator(),
                     &save_item,
                     &save_as_item,
                     &save_all_item,
                     &export_item,
-                    &PredefinedMenuItem::separator(),
-                    &recent_menu,
                     &PredefinedMenuItem::separator(),
                     &quit_item,
                 ],
@@ -396,6 +395,17 @@ pub fn menu_bar_ui(
             if ui.button("Open Folder…").clicked() {
                 action = Some(MenuAction::OpenFolder);
             }
+            ui.menu_button("Open Recent", |ui| {
+                for path in recents {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    if ui.button(name).clicked() {
+                        action = Some(MenuAction::OpenRecent(path.clone()));
+                    }
+                }
+            });
             if ui.button("Close Project").clicked() {
                 action = Some(MenuAction::CloseProject);
             }
@@ -424,18 +434,6 @@ pub fn menu_bar_ui(
             {
                 action = Some(MenuAction::Export);
             }
-            ui.separator();
-            ui.menu_button("Open Recent", |ui| {
-                for path in recents {
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| path.display().to_string());
-                    if ui.button(name).clicked() {
-                        action = Some(MenuAction::OpenRecent(path.clone()));
-                    }
-                }
-            });
             ui.separator();
             if ui.button("Quit").clicked() {
                 action = Some(MenuAction::Quit);
