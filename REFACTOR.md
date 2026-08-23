@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-7 hechas.
+Estado: **En curso** — Fases 0-8 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -46,7 +46,7 @@ separado por plataforma.
 - [x] **Fase 5 — UI hoja.** `menus/`, `gallery/ui/`, `editor/slot_chrome/`.
 - [x] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
 - [x] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
-- [ ] **Fase 8 — `App` en sub-estados + `app/messages/`.**
+- [x] **Fase 8 — `App` en sub-estados + `app/messages/`.**
 
 ## Verificación al final de cada fase
 
@@ -249,3 +249,25 @@ Misma regla que en la Fase 6: los submódulos se llaman en el MISMO orden en
 que estaban sus bloques. Lo único que cambia en los cuerpos movidos es que
 `open_next` y `pending_menu_action` pasan a ser parámetros de salida
 (`*open_next = …`).
+
+### Fase 8
+
+**`app/messages.rs` (791) → `app/messages/`.** El `match` de 23 brazos queda
+como despacho de una línea por brazo en `mod.rs` (105 líneas); el cuerpo de
+cada respuesta vive en el submódulo de su dominio: `document.rs` (244),
+`save.rs` (177), `gallery.rs` (173), `load.rs` (168), `export.rs` (36),
+`shell.rs` (34).
+
+Único cambio de forma en los cuerpos movidos: los `continue` que saltaban al
+siguiente mensaje pasan a `return`. Es exactamente equivalente — el `match`
+era lo último del cuerpo del `while`, así que continuar y salir del brazo son
+lo mismo.
+
+**Sub-estados de `App`.** Los 35 campos planos se agrupan en cuatro structs
+por dominio: `SaveFlow` (11), `ExportFlow` (3), `DeckOps` (4) y `MenuMirror`
+(3). Los nombres de campo NO cambian, solo se les antepone el del sub-estado
+(`self.save_requested` → `self.save.save_requested`): renombrarlos además
+habría hecho el diff mucho más difícil de revisar.
+
+Efecto secundario bueno: `EditorFrame` baja de 25 préstamos sueltos a 11,
+porque lo que ya viaja agrupado en `App` viaja agrupado también aquí.

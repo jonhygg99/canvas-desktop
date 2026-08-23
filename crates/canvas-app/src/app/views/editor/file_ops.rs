@@ -38,7 +38,7 @@ pub(super) fn handle_file_ops(
         // Si viene de deshacer un `Create` (ver `pending_delete_from_undo`),
         // este borrado en concreto no debe poder deshacerse a su vez — se
         // consume aquí, ANTES de decidir si la ruta entra en
-        // `f.undoable_deletes`.
+        // `f.deck_ops.undoable_deletes`.
         let from_undo = std::mem::take(&mut state.pending_delete_from_undo);
         let placeholder_id = f
             .deck
@@ -53,7 +53,7 @@ pub(super) fn handle_file_ops(
             *f.watcher = None;
             if !from_undo {
                 let sidecar = canvas_io::find_sidecar(&path);
-                f.undoable_deletes.insert(path.clone(), sidecar);
+                f.deck_ops.undoable_deletes.insert(path.clone(), sidecar);
             }
             loader::spawn_document_delete(path, f.tx.clone(), ctx.clone());
         }
@@ -89,11 +89,11 @@ pub(super) fn handle_file_ops(
         if has_canvas_content
             && state.is_dirty()
             && !state.saving
-            && f.materializing.is_none()
-            && *f.materialize_blocked != Some(id)
+            && f.deck_ops.materializing.is_none()
+            && f.deck_ops.materialize_blocked != Some(id)
         {
             if let Some(folder) = f.deck.folder.clone() {
-                *f.materializing = Some(id);
+                f.deck_ops.materializing = Some(id);
                 loader::spawn_reserve_canvas_path(folder, id, ext, f.tx.clone(), ctx.clone());
             }
         }

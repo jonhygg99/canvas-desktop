@@ -90,7 +90,7 @@ impl App {
     /// baraja degenerada de una sola ranura en cualquier otro caso (CLI,
     /// recientes, arrastrar y soltar, segunda instancia).
     pub(super) fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
-        if let Some(seed) = self.pending_deck.take() {
+        if let Some(seed) = self.deck_ops.pending_deck.take() {
             self.initialize_seeded_deck(seed, path);
             self.start_seeded_deck_preload(ctx);
         } else if let Some(idx) = self.deck.find_by_path(path) {
@@ -280,7 +280,7 @@ impl App {
             }
             Nav::CloseProject => {
                 self.deck = deck::Deck::default();
-                self.pending_deck = None;
+                self.deck_ops.pending_deck = None;
                 self.watcher = None;
                 self.view = View::Welcome { error: None };
                 self.sync_title(ctx);
@@ -339,12 +339,12 @@ impl App {
             .show();
         match choice {
             rfd::MessageDialogResult::Yes => {
-                self.save_requested = true;
-                self.after_save = Some(nav);
+                self.save.save_requested = true;
+                self.save.after_save = Some(nav);
             }
             rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                self.save_requested = true;
-                self.after_save = Some(nav);
+                self.save.save_requested = true;
+                self.save.after_save = Some(nav);
             }
             rfd::MessageDialogResult::No => self.navigate(nav, ctx),
             rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(nav, ctx),

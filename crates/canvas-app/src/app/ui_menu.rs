@@ -13,8 +13,8 @@ impl App {
             self.handle_menu_action(action, ctx);
         }
         let editor_open = matches!(self.view, View::Editor(_));
-        if editor_open != self.menus_editor_open {
-            self.menus_editor_open = editor_open;
+        if editor_open != self.menu_mirror.menus_editor_open {
+            self.menu_mirror.menus_editor_open = editor_open;
             if let Some(m) = self.menus.as_mut() {
                 m.set_editor_enabled(editor_open);
             }
@@ -27,9 +27,14 @@ impl App {
             View::Editor(state) => (state.can_undo(), state.can_redo()),
             _ => (false, false),
         };
-        if (can_undo, can_redo) != (self.menus_can_undo, self.menus_can_redo) {
-            self.menus_can_undo = can_undo;
-            self.menus_can_redo = can_redo;
+        if (can_undo, can_redo)
+            != (
+                self.menu_mirror.menus_can_undo,
+                self.menu_mirror.menus_can_redo,
+            )
+        {
+            self.menu_mirror.menus_can_undo = can_undo;
+            self.menu_mirror.menus_can_redo = can_redo;
             if let Some(m) = self.menus.as_mut() {
                 m.set_undo_redo(can_undo, can_redo);
             }

@@ -142,7 +142,7 @@ pub(super) fn resolve(
                     Some(Instant::now() + std::time::Duration::from_secs(2));
                 *f.watcher = None;
                 let sidecar = canvas_io::find_sidecar(&path);
-                f.undoable_deletes.insert(path.clone(), sidecar);
+                f.deck_ops.undoable_deletes.insert(path.clone(), sidecar);
                 loader::spawn_document_delete(path, f.tx.clone(), ctx.clone());
             }
         }
@@ -167,7 +167,7 @@ pub(super) fn resolve(
             // sin esto).
             f.deck.jump_center = true;
         }
-    } else if let Some(&next_id) = f.save_all_queue.first() {
+    } else if let Some(&next_id) = f.save.save_all_queue.first() {
         // «Save all»: sin una navegación más prioritaria este frame, salta
         // a la próxima ranura pendiente de la cola.
         if f.deck.slots.get(f.deck.active).map(|s| s.id) != Some(next_id) {
@@ -179,7 +179,7 @@ pub(super) fn resolve(
                 // Desapareció (renombrada/borrada) mientras esperaba turno:
                 // se salta sin más.
                 None => {
-                    f.save_all_queue.remove(0);
+                    f.save.save_all_queue.remove(0);
                 }
             }
         }
@@ -217,17 +217,18 @@ pub(super) fn resolve(
     // recentrar ahí sería mover la cámara sin que el usuario lo pidiera.
     //
     // NUNCA mientras haya un modal de guardado pendiente
-    // (`f.overwrite_prompt`/`f.readonly_prompt`): `is_idle()` ya cubre
+    // (`f.save.overwrite_prompt`/`f.save.readonly_prompt`): `is_idle()` ya cubre
     // `saving`, pero esos modales aparecen ANTES de que `start_save` los
     // ponga a `true` — sin este freno, saltar en ese hueco dejaría el modal
     // hablando de un archivo mientras `state` pasa a ser otro documento, y
     // al confirmarlo se guardarían los píxeles del documento EQUIVOCADO en
-    // la ruta del modal. Igual con `f.materializing`: la reserva de nombre de
+    // la ruta del modal. Igual con `f.deck_ops.materializing`: la reserva de nombre de
     // una provisional tampoco pone `saving` a `true` todavía, y saltar a
     // mitad de esa reserva dejaría la respuesta actuando sobre el lienzo
     // equivocado.
-    let save_modal_pending =
-        f.overwrite_prompt.is_some() || f.readonly_prompt.is_some() || f.materializing.is_some();
+    let save_modal_pending = f.save.overwrite_prompt.is_some()
+        || f.save.readonly_prompt.is_some()
+        || f.deck_ops.materializing.is_some();
     if !save_modal_pending
         && deck::apply_jump(f.deck, state)
         && std::mem::take(&mut f.deck.jump_center)
@@ -238,20 +239,21 @@ pub(super) fn resolve(
     // guardado — mismo camino que Ctrl+S, un frame más tarde (el bloque de
     // guardado de este frame ya corrió antes de que se dibujaran los
     // paneles).
-    if let Some(&next_id) = f.save_all_queue.first() {
+    if let Some(&next_id) = f.save.save_all_queue.first() {
         if f.deck.slots.get(f.deck.active).map(|s| s.id) == Some(next_id) {
             // El aviso de sobrescritura (primer lienzo raster del lote) o
             // el redirect de SVG/GIF cuentan como "en curso", no como
             // fallo: sin este freno, el intento ya marcado se leería como
             // fallido mientras el usuario todavía no ha respondido al
             // modal.
-            let waiting_on_modal = f.overwrite_prompt.is_some() || f.readonly_prompt.is_some();
+            let waiting_on_modal =
+                f.save.overwrite_prompt.is_some() || f.save.readonly_prompt.is_some();
             if !state.is_dirty() {
                 // Ya se guardó (`AppMsg::Saved` la sacó de la cola) o nunca
                 // hizo falta: nada que hacer aquí.
             } else if state.saving || waiting_on_modal {
                 // En curso, o esperando la respuesta del usuario.
-            } else if *f.save_all_attempted {
+            } else if f.save.save_all_attempted {
                 // Se pulsó "Guardar", no hay guardado en curso ni modal
                 // pendiente, y sigue sucia: ese intento falló de verdad (o
                 // el usuario canceló el modal). Se aborta el lote en vez de
@@ -259,10 +261,10 @@ pub(super) fn resolve(
                 tracing::warn!(
                     "Save all: se detiene en un lienzo de fondo (guardado fallido o cancelado)"
                 );
-                f.save_all_queue.clear();
-                *f.save_all_attempted = false;
+                f.save.save_all_queue.clear();
+                f.save.save_all_attempted = false;
             } else {
-                *f.save_all_attempted = true;
+                f.save.save_all_attempted = true;
                 state.save_clicked = true;
             }
         }

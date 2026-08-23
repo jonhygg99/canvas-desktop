@@ -88,7 +88,7 @@ impl App {
     /// Si el usuario intenta cerrar con cambios sin guardar, cancela el
     /// cierre y pregunta con un diálogo nativo Guardar / Descartar / Cancelar.
     pub(super) fn confirm_close(&mut self, ctx: &egui::Context) {
-        if self.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
+        if self.save.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
             return;
         }
         if !matches!(self.view, View::Editor(_)) {
@@ -134,19 +134,19 @@ impl App {
         // Yes/No/Cancel, nunca Custom. Hay que aceptar ambas familias.
         match choice {
             rfd::MessageDialogResult::Yes => {
-                self.save_requested = true;
-                self.close_after_save = true;
+                self.save.save_requested = true;
+                self.save.close_after_save = true;
             }
             rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                self.save_requested = true;
-                self.close_after_save = true;
+                self.save.save_requested = true;
+                self.save.close_after_save = true;
             }
             rfd::MessageDialogResult::No => {
-                self.allow_close = true;
+                self.save.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             rfd::MessageDialogResult::Custom(c) if c == "Discard" => {
-                self.allow_close = true;
+                self.save.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             _ => {}

@@ -1,0 +1,42 @@
+SPEC = {
+ 'Saved': ([('path','PathBuf'),('result','Result<(), String>'),('new_source','bool')], 'on_saved'),
+ 'SaveAsPicked': ([('path','Option<PathBuf>')], 'on_save_as_picked'),
+ 'CanvasPathReserved': ([('folder','PathBuf'),('slot','u64'),('result','Result<PathBuf, String>')], 'on_canvas_path_reserved'),
+ 'ExportPathPicked': ([('path','Option<PathBuf>')], 'on_export_path_picked'),
+ 'Exported': ([('path','PathBuf'),('result','Result<(), String>')], 'on_exported'),
+ 'ImageLoaded': ([('path','PathBuf'),('result','Result<loader::LoadOutcome, String>'),('metadata','canvas_io::ImageMetadata')], 'on_image_loaded'),
+ 'ImageLoadedForLayer': ([('path','PathBuf'),('result','Result<canvas_io::LoadedImage, String>')], 'on_image_loaded_for_layer'),
+ 'ImageLoadedForReplace': ([('layer','canvas_core::LayerId'),('label','String'),('source_path','Option<PathBuf>'),('result','Result<canvas_io::LoadedImage, String>')], 'on_image_loaded_for_replace'),
+ 'SlotPrepared': ([('folder','PathBuf'),('generation','u64'),('path','PathBuf'),('result','Result<deck::SlotDoc, String>')], 'on_slot_prepared'),
+ 'DeckProbed': ([('folder','PathBuf'),('generation','u64'),('sizes','Vec<(PathBuf, Option<(f64, f64)>)>')], 'on_deck_probed'),
+ 'GalleryScanned': ([('folder','PathBuf'),('files','Vec<(PathBuf, Option<std::time::SystemTime>)>')], 'on_gallery_scanned'),
+ 'GalleryThumb': ([('folder','PathBuf'),('path','PathBuf'),('result','Result<canvas_io::LoadedImage, String>')], 'on_gallery_thumb'),
+ 'GalleryOpDone': ([('folder','PathBuf'),('created','Option<PathBuf>'),('result','Result<(), String>'),('open','bool')], 'on_gallery_op_done'),
+ 'DocumentRenamed': ([('old_path','PathBuf'),('result','Result<PathBuf, String>')], 'on_document_renamed'),
+ 'DocumentDeleted': ([('path','PathBuf'),('result','Result<(), String>')], 'on_document_deleted'),
+ 'DocumentRestored': ([('path','PathBuf'),('result','Result<(), String>')], 'on_document_restored'),
+ 'SourceChangedOnDisk': ([('path','PathBuf')], 'on_source_changed_on_disk'),
+ 'FocusWindow': ([], 'on_focus_window'),
+ 'ShellIntegrationDone': ([('result','Result<String, String>')], 'on_shell_integration_done'),
+ 'OpenPathExternal': ([('path','PathBuf')], 'on_open_path_external'),
+}
+GROUP = {
+ 'load.rs': ['ImageLoaded','ImageLoadedForLayer','ImageLoadedForReplace','SlotPrepared','DeckProbed'],
+ 'save.rs': ['Saved','SaveAsPicked','CanvasPathReserved'],
+ 'export.rs': ['ExportPathPicked','Exported'],
+ 'gallery.rs': ['GalleryScanned','GalleryThumb','GalleryOpDone'],
+ 'document.rs': ['DocumentRenamed','DocumentDeleted','DocumentRestored','SourceChangedOnDisk'],
+ 'shell.rs': ['FocusWindow','ShellIntegrationDone','OpenPathExternal'],
+}
+DOC = {
+ 'load.rs': "//! Respuestas del hilo de disco que traen PIXELES: la imagen abierta en el\n//! editor, una imagen que se anade o sustituye una capa, un lienzo de fondo de\n//! la baraja, y el sondeo de tamanos de pagina de una carpeta.",
+ 'save.rs': "//! Respuestas del camino de guardado: el guardado en si, la ruta elegida en\n//! Guardar como..., y la reserva de nombre de una ranura provisional.",
+ 'export.rs': "//! Respuestas del camino de exportacion: la ruta elegida y el resultado.",
+ 'gallery.rs': "//! Respuestas de la galeria: el escaneo de una carpeta, sus miniaturas, y el\n//! resultado de una operacion de archivos (crear, duplicar, pegar).",
+ 'document.rs': "//! Respuestas de las operaciones sobre el archivo abierto en el editor:\n//! renombrar, borrar, restaurar de la papelera, y el aviso del watcher de que\n//! cambio en disco.",
+ 'shell.rs': "//! Mensajes que vienen del sistema o de una segunda instancia: traer la\n//! ventana al frente, abrir una ruta, y el resultado del registro de la\n//! integracion con el Explorador.",
+}
+ORDER = ['FilePicked','SaveAsPicked','Saved','ExportPathPicked','Exported','ImageLoadedForLayer',
+ 'ImageLoadedForReplace','GalleryScanned','GalleryThumb','DeckProbed','SlotPrepared',
+ 'CanvasPathReserved','GalleryOpDone','DocumentRenamed','DocumentDeleted','DocumentRestored',
+ 'FocusWindow','ShellIntegrationDone','OpenPathExternal','SourceChangedOnDisk','ImageLoaded']

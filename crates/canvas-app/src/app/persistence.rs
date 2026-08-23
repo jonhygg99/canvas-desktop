@@ -35,7 +35,7 @@ impl App {
         {
             state.save_clicked = true;
         }
-        self.save_all_queue = self
+        self.save.save_all_queue = self
             .deck
             .slots
             .iter()
@@ -50,7 +50,7 @@ impl App {
             })
             .map(|s| s.id)
             .collect();
-        self.save_all_attempted = false;
+        self.save.save_all_attempted = false;
     }
 }
 

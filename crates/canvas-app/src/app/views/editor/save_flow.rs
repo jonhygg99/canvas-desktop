@@ -30,7 +30,7 @@ pub(super) fn handle_save(
                 egui::Key::S,
             ))
         });
-    let mut save = *f.save_requested
+    let mut save = f.save.save_requested
         || std::mem::take(&mut state.save_clicked)
         || ctx.input_mut(|i| {
             i.consume_shortcut(&egui::KeyboardShortcut::new(
@@ -38,7 +38,7 @@ pub(super) fn handle_save(
                 egui::Key::S,
             ))
         });
-    *f.save_requested = false;
+    f.save.save_requested = false;
 
     if save_as {
         if state.is_design {
@@ -54,10 +54,10 @@ pub(super) fn handle_save(
             // recomprimir sin motivo costaría calidad. Si veníamos de un
             // diálogo de cerrar/volver, su flujo continúa.
             tracing::info!("documento sin cambios: no se reescribe el archivo");
-            if *f.close_after_save {
-                *f.allow_close = true;
+            if f.save.close_after_save {
+                f.save.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else if let Some(nav) = f.after_save.take() {
+            } else if let Some(nav) = f.save.after_save.take() {
                 *open_next = Some(nav);
             }
         } else if state.is_design {
@@ -86,7 +86,7 @@ pub(super) fn handle_save(
                 // SVG/GIF: no se sobrescriben nunca; se explica y se
                 // redirige a «Save as…».
                 Some(path) if !canvas_io::can_overwrite(&path) => {
-                    *f.readonly_prompt = Some(path);
+                    f.save.readonly_prompt = Some(path);
                 }
                 Some(path) => {
                     // Aviso de sobrescritura destructiva: la primera vez de
@@ -96,10 +96,10 @@ pub(super) fn handle_save(
                     // usuario que este primer guardado pudiera destruir.
                     if !state.born_blank
                         && !f.settings.skip_overwrite_warning
-                        && !*f.overwrite_confirmed
+                        && !f.save.overwrite_confirmed
                     {
-                        *f.overwrite_dont_ask = false;
-                        *f.overwrite_prompt = Some(path);
+                        f.save.overwrite_dont_ask = false;
+                        f.save.overwrite_prompt = Some(path);
                     } else {
                         start_save(
                             state,
@@ -121,7 +121,7 @@ pub(super) fn handle_save(
             }
         }
     }
-    if let Some(path) = f.pending_save_as.take() {
+    if let Some(path) = f.save.pending_save_as.take() {
         // La extensión final de la ruta elegida decide la rama, venga del
         // diálogo de diseño o del de imagen (ambos acaban en el mismo
         // `SaveAsPicked`).

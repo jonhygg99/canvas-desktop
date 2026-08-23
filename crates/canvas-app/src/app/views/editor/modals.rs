@@ -24,11 +24,11 @@ pub(super) fn show_modals(
         f.tx,
         ctx,
         f.settings,
-        f.overwrite_prompt,
-        f.overwrite_confirmed,
-        f.overwrite_dont_ask,
-        f.close_after_save,
-        f.after_save,
+        &mut f.save.overwrite_prompt,
+        &mut f.save.overwrite_confirmed,
+        &mut f.save.overwrite_dont_ask,
+        &mut f.save.close_after_save,
+        &mut f.save.after_save,
         f.ignore_fs_events_until,
     );
 
@@ -38,9 +38,9 @@ pub(super) fn show_modals(
         state,
         f.tx,
         ctx,
-        f.readonly_prompt,
-        f.close_after_save,
-        f.after_save,
+        &mut f.save.readonly_prompt,
+        &mut f.save.close_after_save,
+        &mut f.save.after_save,
     );
 
     // Diálogo de exportación.
@@ -50,8 +50,8 @@ pub(super) fn show_modals(
         rs,
         f.tx,
         ctx,
-        f.export_dialog,
-        f.pending_export_settings,
-        f.pending_export,
+        &mut f.export.export_dialog,
+        &mut f.export.pending_export_settings,
+        &mut f.export.pending_export,
     );
 }

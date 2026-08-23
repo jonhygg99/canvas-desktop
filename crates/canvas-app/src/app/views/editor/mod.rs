@@ -81,12 +81,12 @@ pub(in crate::app) fn editor_view_ui(
                 // como Yes/No/Cancel, no Custom.
                 match choice {
                     rfd::MessageDialogResult::Yes => {
-                        *f.save_requested = true;
-                        *f.after_save = Some(Nav::Open(folder));
+                        f.save.save_requested = true;
+                        f.save.after_save = Some(Nav::Open(folder));
                     }
                     rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                        *f.save_requested = true;
-                        *f.after_save = Some(Nav::Open(folder));
+                        f.save.save_requested = true;
+                        f.save.after_save = Some(Nav::Open(folder));
                     }
                     rfd::MessageDialogResult::No => {
                         open_next = Some(Nav::Open(folder));

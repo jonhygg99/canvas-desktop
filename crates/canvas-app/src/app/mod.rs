@@ -55,14 +55,6 @@ pub(crate) struct App {
     tx: Sender<AppMsg>,
     rx: Receiver<AppMsg>,
     last_title: String,
-    /// «Guardar como…» elegido, pendiente de hornear (necesita la GPU).
-    pending_save_as: Option<PathBuf>,
-    /// Guardar solicitado desde el diálogo de cierre.
-    save_requested: bool,
-    /// Cerrar la ventana en cuanto termine el guardado en curso.
-    close_after_save: bool,
-    /// El usuario ya confirmó el cierre: no volver a preguntar.
-    allow_close: bool,
     /// Directorio de caché de miniaturas (si se pudo crear).
     thumb_cache: Option<PathBuf>,
     /// Baraja de lienzos del editor abierto: todos los archivos de su
@@ -70,22 +62,8 @@ pub(crate) struct App {
     /// Sobrevive al cambio de vista (a diferencia de `GalleryState`, que se
     /// destruye), así que también sirve para sembrar la rejilla al volver.
     deck: deck::Deck,
-    /// Semilla capturada de la galería justo antes de navegar a un lienzo
-    /// suyo; `resolve_deck` la consume en cuanto la carga termina.
-    pending_deck: Option<deck::DeckSeed>,
-    /// Navegación pendiente para cuando termine el guardado en curso.
-    after_save: Option<Nav>,
     /// Ajustes persistidos del usuario.
     settings: settings::AppSettings,
-    /// El usuario ya confirmó la sobrescritura destructiva en esta sesión.
-    overwrite_confirmed: bool,
-    /// Sobrescritura pendiente de confirmar en el modal (ruta del original).
-    overwrite_prompt: Option<PathBuf>,
-    /// El original no admite sobrescritura (SVG/GIF): modal que redirige a
-    /// «Save as…».
-    readonly_prompt: Option<PathBuf>,
-    /// Estado del checkbox «Don't ask again» mientras el modal está abierto.
-    overwrite_dont_ask: bool,
     /// Ventana de ajustes visible.
     show_settings: bool,
     /// Resultado del último registro/desregistro del Explorador.
@@ -96,22 +74,43 @@ pub(crate) struct App {
     show_about: bool,
     /// Último tema aplicado a egui (para no reaplicar cada frame).
     applied_theme: Option<settings::ThemeChoice>,
-    /// Último estado «hay editor abierto» comunicado al menú.
-    menus_editor_open: bool,
-    /// Último estado de `History::can_undo`/`can_redo` comunicado al menú.
-    menus_can_undo: bool,
-    menus_can_redo: bool,
     /// Watcher `notify` del archivo abierto en el editor, si lo hay.
     watcher: Option<watcher::DocWatcher>,
     /// Ventana de gracia tras un guardado propio: los eventos del watcher
     /// hasta este instante son nuestros y se descartan.
     ignore_fs_events_until: Option<std::time::Instant>,
-    /// Diálogo de exportación visible.
-    export_dialog: Option<export::ExportDialog>,
-    /// Ajustes ya elegidos en el diálogo, pendientes de la ruta de archivo.
-    pending_export_settings: Option<export::ExportSettings>,
-    /// Ruta y ajustes de exportación, pendiente de hornear (necesita la GPU).
-    pending_export: Option<(PathBuf, export::ExportSettings)>,
+    /// Estado del camino de guardado.
+    save: SaveFlow,
+    /// Estado del camino de exportacion.
+    export: ExportFlow,
+    /// Contabilidad de la baraja que cruza con el disco.
+    deck_ops: DeckOps,
+    /// Espejo del estado de los menus nativos.
+    menu_mirror: MenuMirror,
+}
+
+/// Todo lo que hace falta para llevar un guardado a termino: lo pedido, lo
+/// diferido, los modales de aviso y el lote de «Save all».
+pub(super) struct SaveFlow {
+    /// «Guardar como…» elegido, pendiente de hornear (necesita la GPU).
+    pending_save_as: Option<PathBuf>,
+    /// Guardar solicitado desde el diálogo de cierre.
+    save_requested: bool,
+    /// Cerrar la ventana en cuanto termine el guardado en curso.
+    close_after_save: bool,
+    /// El usuario ya confirmó el cierre: no volver a preguntar.
+    allow_close: bool,
+    /// Navegación pendiente para cuando termine el guardado en curso.
+    after_save: Option<Nav>,
+    /// El usuario ya confirmó la sobrescritura destructiva en esta sesión.
+    overwrite_confirmed: bool,
+    /// Sobrescritura pendiente de confirmar en el modal (ruta del original).
+    overwrite_prompt: Option<PathBuf>,
+    /// Estado del checkbox «Don't ask again» mientras el modal está abierto.
+    overwrite_dont_ask: bool,
+    /// El original no admite sobrescritura (SVG/GIF): modal que redirige a
+    /// «Save as…».
+    readonly_prompt: Option<PathBuf>,
     /// «Save all»: ids (estables) de las ranuras sucias que faltan por
     /// guardar, el activo excluido — ese se guarda aparte, sin saltar,
     /// nada más pulsar. Se procesa una por frame: salta a ella (si no es ya
@@ -125,6 +124,25 @@ pub(crate) struct App {
     /// reintentar sin fin (no se puede usar `save_error` para esto: es un
     /// campo de propósito general, podría traer un error de otra cosa).
     save_all_attempted: bool,
+}
+
+/// El dialogo de exportacion y lo que queda pendiente de el.
+pub(super) struct ExportFlow {
+    /// Diálogo de exportación visible.
+    export_dialog: Option<export::ExportDialog>,
+    /// Ajustes ya elegidos en el diálogo, pendientes de la ruta de archivo.
+    pending_export_settings: Option<export::ExportSettings>,
+    /// Ruta y ajustes de exportación, pendiente de hornear (necesita la GPU).
+    pending_export: Option<(PathBuf, export::ExportSettings)>,
+}
+
+/// Contabilidad de la baraja que no cabe en `Deck` porque cruza con el disco:
+/// la semilla pendiente de la galeria, las reservas de nombre en vuelo y los
+/// borrados que todavia se pueden deshacer.
+pub(super) struct DeckOps {
+    /// Semilla capturada de la galería justo antes de navegar a un lienzo
+    /// suyo; `resolve_deck` la consume en cuanto la carga termina.
+    pending_deck: Option<deck::DeckSeed>,
     /// Id de la ranura provisional cuya reserva de nombre está en vuelo.
     /// Cerrojo de un solo disparo: la detección de «el usuario la ha
     /// editado» se cumple en TODOS los frames a partir del primero, y sin
@@ -145,6 +163,15 @@ pub(crate) struct App {
     /// la consulta para decidir si ese borrado se apila como
     /// `GlobalStep::Delete` (deshacible) o no.
     undoable_deletes: HashMap<PathBuf, Option<PathBuf>>,
+}
+
+/// Ultimo estado comunicado a los menus nativos, para no reenviarlo cada frame.
+struct MenuMirror {
+    /// Último estado «hay editor abierto» comunicado al menú.
+    menus_editor_open: bool,
+    /// Último estado de `History::can_undo`/`can_redo` comunicado al menú.
+    menus_can_undo: bool,
+    menus_can_redo: bool,
 }
 
 impl App {
@@ -196,37 +223,45 @@ impl App {
             tx,
             rx,
             last_title: String::new(),
-            pending_save_as: None,
-            save_requested: false,
-            close_after_save: false,
-            allow_close: false,
             thumb_cache: window::thumbnail_cache_dir(),
             deck: deck::Deck::default(),
-            pending_deck: None,
-            after_save: None,
             settings: settings::AppSettings::load(),
-            overwrite_confirmed: false,
-            overwrite_prompt: None,
-            readonly_prompt: None,
-            overwrite_dont_ask: false,
             show_settings: false,
             shell_status: String::new(),
             menus: native_menus,
             show_about: false,
             applied_theme: None,
-            menus_editor_open: false,
-            menus_can_undo: false,
-            menus_can_redo: false,
             watcher: None,
             ignore_fs_events_until: None,
-            export_dialog: None,
-            pending_export_settings: None,
-            pending_export: None,
-            save_all_queue: Vec::new(),
-            save_all_attempted: false,
-            materializing: None,
-            materialize_blocked: None,
-            undoable_deletes: HashMap::new(),
+            save: SaveFlow {
+                pending_save_as: None,
+                save_requested: false,
+                close_after_save: false,
+                allow_close: false,
+                after_save: None,
+                overwrite_confirmed: false,
+                overwrite_prompt: None,
+                overwrite_dont_ask: false,
+                readonly_prompt: None,
+                save_all_queue: Vec::new(),
+                save_all_attempted: false,
+            },
+            export: ExportFlow {
+                export_dialog: None,
+                pending_export_settings: None,
+                pending_export: None,
+            },
+            deck_ops: DeckOps {
+                pending_deck: None,
+                materializing: None,
+                materialize_blocked: None,
+                undoable_deletes: HashMap::new(),
+            },
+            menu_mirror: MenuMirror {
+                menus_editor_open: false,
+                menus_can_undo: false,
+                menus_can_redo: false,
+            },
         };
         if let Some(m) = app.menus.as_mut() {
             m.set_recents(&app.settings.recent_files);
@@ -288,7 +323,7 @@ impl eframe::App for App {
                     g,
                     ui,
                     &mut self.settings,
-                    &mut self.pending_deck,
+                    &mut self.deck_ops.pending_deck,
                     &self.tx,
                     &ctx,
                 );
@@ -307,25 +342,11 @@ impl eframe::App for App {
                     tx: &self.tx,
                     settings: &mut self.settings,
                     show_settings: &mut self.show_settings,
-                    save_requested: &mut self.save_requested,
-                    close_after_save: &mut self.close_after_save,
-                    after_save: &mut self.after_save,
-                    allow_close: &mut self.allow_close,
-                    overwrite_confirmed: &mut self.overwrite_confirmed,
-                    overwrite_prompt: &mut self.overwrite_prompt,
-                    overwrite_dont_ask: &mut self.overwrite_dont_ask,
-                    readonly_prompt: &mut self.readonly_prompt,
-                    export_dialog: &mut self.export_dialog,
-                    pending_export_settings: &mut self.pending_export_settings,
-                    pending_export: &mut self.pending_export,
-                    pending_save_as: &mut self.pending_save_as,
-                    ignore_fs_events_until: &mut self.ignore_fs_events_until,
                     watcher: &mut self.watcher,
-                    undoable_deletes: &mut self.undoable_deletes,
-                    materializing: &mut self.materializing,
-                    materialize_blocked: &mut self.materialize_blocked,
-                    save_all_queue: &mut self.save_all_queue,
-                    save_all_attempted: &mut self.save_all_attempted,
+                    ignore_fs_events_until: &mut self.ignore_fs_events_until,
+                    save: &mut self.save,
+                    export: &mut self.export,
+                    deck_ops: &mut self.deck_ops,
                 };
                 let (nav, action) =
                     views::editor_view_ui(ui, &ctx, &rs, state, paste_requested, &mut frame);

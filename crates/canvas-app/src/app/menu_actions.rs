@@ -43,7 +43,7 @@ impl App {
             A::SaveAll => self.start_save_all(),
             A::Export => {
                 if let View::Editor(_) = &self.view {
-                    self.export_dialog = Some(export::ExportDialog::default());
+                    self.export.export_dialog = Some(export::ExportDialog::default());
                 }
             }
             A::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
