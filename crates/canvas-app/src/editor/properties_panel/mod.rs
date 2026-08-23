@@ -19,6 +19,7 @@ use canvas_core::LayerContent;
 use eframe::egui;
 
 use super::EditorState;
+use crate::sidebar;
 
 pub(in crate::editor) use page::size_popup_ui;
 
@@ -27,6 +28,8 @@ use page::page_ui;
 
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    sidebar::compact(ui);
+    sidebar::title(ui, "Properties");
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -156,120 +159,124 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     ));
     ui.separator();
 
-    page_ui(state, ui);
-    ui.separator();
-
-    ui.label("Insert");
-    ui.horizontal(|ui| {
-        if ui.button("T Text").clicked() {
-            state.insert_layer_centered(
-                "Text",
-                500.0,
-                120.0,
-                LayerContent::Text(canvas_core::TextContent::default()),
-            );
-        }
-        if ui.button("R").on_hover_text("Rectangle").clicked() {
-            state.insert_layer_centered(
-                "Rectangle",
-                320.0,
-                220.0,
-                LayerContent::Shape(canvas_core::ShapeContent::default()),
-            );
-        }
-        if ui.button("O").on_hover_text("Ellipse").clicked() {
-            state.insert_layer_centered(
-                "Ellipse",
-                280.0,
-                280.0,
-                LayerContent::Shape(canvas_core::ShapeContent {
-                    kind: canvas_core::ShapeKind::Ellipse,
-                    ..Default::default()
-                }),
-            );
-        }
-        if ui.button("L").on_hover_text("Line").clicked() {
-            state.insert_layer_centered(
-                "Line",
-                400.0,
-                24.0,
-                LayerContent::Shape(canvas_core::ShapeContent {
-                    kind: canvas_core::ShapeKind::Line,
-                    stroke: [30, 30, 30, 255],
-                    stroke_width: 6.0,
-                    ..Default::default()
-                }),
-            );
-        }
+    sidebar::section(ui, "Page", true, |ui| {
+        page_ui(state, ui);
     });
-    ui.separator();
 
-    if let Some(sel) = state.selection.primary() {
-        if state.doc.layer(sel).is_ok() {
-            layer_properties_ui(state, ui, sel, page_dims);
-        }
-    } else {
-        ui.weak("No layer selected.");
-        ui.weak("Click the image to select it.");
-    }
-
-    ui.separator();
-    ui.horizontal(|ui| {
-        let dirty_mark = if state.is_dirty() { " •" } else { "" };
-        if ui
-            .add_enabled(
-                !state.saving,
-                egui::Button::new(format!("💾 Save{dirty_mark}")),
-            )
-            .clicked()
-        {
-            state.save_clicked = true;
-        }
-        if ui
-            .add_enabled(!state.saving, egui::Button::new("Save as…"))
-            .clicked()
-        {
-            state.save_as_clicked = true;
-        }
-        // Va a la Papelera de reciclaje (`trash::delete`), no borrado
-        // permanente: recuperable si el usuario se equivoca, así que no
-        // hace falta pedir confirmación aparte.
-        if ui
-            .add_enabled(
-                !state.saving,
-                egui::Button::new(
-                    egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 70, 70)),
-                ),
-            )
-            .clicked()
-        {
-            state.delete_requested = true;
-        }
-    });
-    if state.is_design {
-        ui.weak("Design file (.canvas) — layers are always kept.");
-    } else {
-        ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
-            .on_hover_text(
-                "Writes a .canvas file next to the image so the layers stay \
-                 editable when you reopen it. Turn it off if you don't want \
-                 extra files in your folders.",
-            );
-    }
-    if state.saving {
-        ui.horizontal(|ui| {
-            ui.add(egui::Spinner::new());
-            ui.label("Saving…");
-        });
-    }
-    if let Some(error) = state.save_error.clone() {
+    sidebar::section(ui, "Insert", false, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(ui.visuals().error_fg_color, &error);
-            if ui.small_button("✕").clicked() {
-                state.save_error = None;
+            if ui.button("T Text").clicked() {
+                state.insert_layer_centered(
+                    "Text",
+                    500.0,
+                    120.0,
+                    LayerContent::Text(canvas_core::TextContent::default()),
+                );
+            }
+            if ui.small_button("R").on_hover_text("Rectangle").clicked() {
+                state.insert_layer_centered(
+                    "Rectangle",
+                    320.0,
+                    220.0,
+                    LayerContent::Shape(canvas_core::ShapeContent::default()),
+                );
+            }
+            if ui.small_button("O").on_hover_text("Ellipse").clicked() {
+                state.insert_layer_centered(
+                    "Ellipse",
+                    280.0,
+                    280.0,
+                    LayerContent::Shape(canvas_core::ShapeContent {
+                        kind: canvas_core::ShapeKind::Ellipse,
+                        ..Default::default()
+                    }),
+                );
+            }
+            if ui.small_button("L").on_hover_text("Line").clicked() {
+                state.insert_layer_centered(
+                    "Line",
+                    400.0,
+                    24.0,
+                    LayerContent::Shape(canvas_core::ShapeContent {
+                        kind: canvas_core::ShapeKind::Line,
+                        stroke: [30, 30, 30, 255],
+                        stroke_width: 6.0,
+                        ..Default::default()
+                    }),
+                );
             }
         });
-    }
+    });
+
+    sidebar::section(ui, "Layer", true, |ui| {
+        if let Some(sel) = state.selection.primary() {
+            if state.doc.layer(sel).is_ok() {
+                layer_properties_ui(state, ui, sel, page_dims);
+            }
+        } else {
+            ui.weak("No layer selected.");
+            ui.weak("Click the image to select it.");
+        }
+    });
+
+    sidebar::section(ui, "File actions", false, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            let dirty_mark = if state.is_dirty() { " •" } else { "" };
+            if ui
+                .add_enabled(
+                    !state.saving,
+                    egui::Button::new(format!("💾 Save{dirty_mark}")),
+                )
+                .clicked()
+            {
+                state.save_clicked = true;
+            }
+            if ui
+                .add_enabled(!state.saving, egui::Button::new("Save as…"))
+                .clicked()
+            {
+                state.save_as_clicked = true;
+            }
+            // Va a la Papelera de reciclaje (`trash::delete`), no borrado
+            // permanente: recuperable si el usuario se equivoca, así que no
+            // hace falta pedir confirmación aparte.
+            if ui
+                .add_enabled(
+                    !state.saving,
+                    egui::Button::new(
+                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 70, 70)),
+                    ),
+                )
+                .clicked()
+            {
+                state.delete_requested = true;
+            }
+        });
+        if state.is_design {
+            ui.weak("Design file (.canvas) — layers are always kept.");
+        } else {
+            ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
+                .on_hover_text(
+                    "Writes a .canvas file next to the image so the layers stay \
+                     editable when you reopen it. Turn it off if you don't want \
+                     extra files in your folders.",
+                );
+        }
+        if state.saving {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new());
+                ui.label("Saving…");
+            });
+        }
+        if let Some(error) = state.save_error.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(ui.visuals().error_fg_color, &error);
+                if ui.small_button("✕").clicked() {
+                    state.save_error = None;
+                }
+            });
+        }
+    });
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
     ui.weak("Wheel: pan · Shift+wheel: pan the other axis · Ctrl+wheel: zoom");
     ui.weak("Space/middle button: pan · Ctrl+0: fit");

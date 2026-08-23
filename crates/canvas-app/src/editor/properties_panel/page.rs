@@ -16,7 +16,6 @@ pub(super) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let mut changed = false;
     let mut commit = false;
 
-    ui.label("Page");
     ui.horizontal(|ui| {
         ui.label("W");
         let rw = ui.add(

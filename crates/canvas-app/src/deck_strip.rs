@@ -9,6 +9,7 @@ use eframe::egui;
 
 use crate::deck::{Deck, DeckAxis, Slot, SlotContent};
 use crate::gallery::ItemKind;
+use crate::sidebar;
 
 /// Acción pedida desde la tira: la app decide si hace falta preguntar por
 /// cambios sin guardar antes de saltar, o (para `ToggleAxis`/`CycleSide`)
@@ -93,15 +94,16 @@ pub fn deck_strip_ui(
     ui: &mut egui::Ui,
 ) -> Option<StripAction> {
     let mut action = None;
+    sidebar::compact(ui);
+    sidebar::title(ui, "Canvases");
     let axis = deck.axis;
     let side = deck.strip_side;
-    ui.add_space(6.0);
     // `horizontal_wrapped`, no `horizontal`: a 96 px (mínimo de una tira
     // Left/Right) un contador más dos botones no cabe en una sola línea. Con
     // el ajuste envuelve en dos líneas cortas; en cuanto el usuario
     // ensancha el panel (ya posible, ver `strip_metrics`) se juntan en una.
     ui.horizontal_wrapped(|ui| {
-        ui.weak(format!("{} / {}", deck.active + 1, deck.slots.len()));
+        ui.strong(format!("{} / {}", deck.active + 1, deck.slots.len()));
         let (icon, hover) = match axis {
             DeckAxis::Vertical => ("⇅", "Switch to horizontal layout"),
             DeckAxis::Horizontal => ("⇆", "Switch to vertical layout"),

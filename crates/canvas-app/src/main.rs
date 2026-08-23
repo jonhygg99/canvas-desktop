@@ -23,6 +23,7 @@ mod loader;
 mod menus;
 mod paste_hook;
 mod settings;
+mod sidebar;
 mod surface;
 mod watcher;
 mod welcome;

@@ -9,6 +9,7 @@ use canvas_core::{
 use eframe::egui;
 
 use crate::editor::EditorState;
+use crate::sidebar;
 
 /// Fila del panel, de ARRIBA abajo (la cima de la pila primero). La cabecera
 /// de un grupo va antes que sus hijos aquí, aunque en `Page::layers` (la
@@ -64,7 +65,8 @@ enum Drop {
 }
 
 pub fn layers_panel_ui(state: &mut EditorState, ui: &mut egui::Ui) {
-    ui.heading("Layers");
+    sidebar::compact(ui);
+    sidebar::title(ui, "Layers");
     toolbar_ui(state, ui);
     ui.separator();
 
@@ -94,7 +96,7 @@ pub fn layers_panel_ui(state: &mut EditorState, ui: &mut egui::Ui) {
 }
 
 fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let (can_group, can_ungroup, can_delete) = match state.doc.page() {
             Ok(page) => {
                 let roots = groupable_roots(state, page);
@@ -109,15 +111,15 @@ fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         };
 
         if ui
-            .add_enabled(can_group, egui::Button::new("▣ Group"))
-            .on_hover_text("Ctrl+G")
+            .add_enabled(can_group, egui::Button::new("▣"))
+            .on_hover_text("Group (Ctrl+G)")
             .clicked()
         {
             group_selection(state);
         }
         if ui
-            .add_enabled(can_ungroup, egui::Button::new("▤ Ungroup"))
-            .on_hover_text("Ctrl+Shift+G")
+            .add_enabled(can_ungroup, egui::Button::new("▤"))
+            .on_hover_text("Ungroup (Ctrl+Shift+G)")
             .clicked()
         {
             ungroup_selection(state);
@@ -374,7 +376,7 @@ fn row_contents(
     is_background: bool,
 ) {
     ui.horizontal(|ui| {
-        ui.add_space(row.depth as f32 * 14.0);
+        ui.add_space(row.depth as f32 * 10.0);
 
         if row.is_group {
             let arrow = if row.collapsed { "▸" } else { "▾" };
@@ -386,7 +388,7 @@ fn row_contents(
                 }
             }
         } else {
-            ui.add_space(20.0);
+            ui.add_space(16.0);
         }
 
         let eye = if visible { "👁" } else { "🚫" };
@@ -432,7 +434,9 @@ fn row_contents(
             // gestiona el `ui.interact` sobre toda la fila, en `row_ui`.
             let selected = state.selection.contains(row.id);
             let text = if selected {
-                egui::RichText::new(name).strong()
+                egui::RichText::new(name)
+                    .strong()
+                    .color(egui::Color32::from_rgb(0, 122, 255))
             } else {
                 egui::RichText::new(name)
             };
