@@ -172,6 +172,35 @@ impl App {
             None => tracing::info!("«Add canvas» sin efecto: la baraja no tiene carpeta"),
         }
     }
+    fn new_design_in_folder(&mut self, seed: deck::DeckSeed, ctx: &egui::Context) {
+        let page = self.settings.last_page_size;
+        let ext = self.settings.new_canvas_format.extension();
+        self.deck = deck::Deck::from_seed(seed, Path::new(""));
+        self.apply_deck_prefs();
+        let Some(idx) = self.deck.push_placeholder(page, ext) else {
+            self.new_design(ctx);
+            return;
+        };
+        for (slot_index, slot) in self.deck.slots.iter_mut().enumerate() {
+            if slot_index != idx && matches!(slot.content, deck::SlotContent::Active) {
+                slot.content = deck::SlotContent::Idle;
+            }
+        }
+        let mut state = if ext == canvas_io::CANVAS_EXTENSION {
+            editor::EditorState::new_blank(page.0, page.1)
+        } else {
+            editor::EditorState::new_blank_image(page.0, page.1)
+        };
+        state.from_gallery = self.deck.folder.clone();
+        self.deck.active = idx;
+        if let Some(slot) = self.deck.slots.get_mut(idx) {
+            slot.content = deck::SlotContent::Active;
+        }
+        self.view = View::Editor(Box::new(state));
+        self.deck.layout_dirty = true;
+        self.sync_title(ctx);
+    }
+
     pub(super) fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
         // Se abandona la carpeta activa (galería o baraja del editor), si
         // había una: purga su papelera propia — cualquier `Ctrl+Z` pendiente
@@ -216,6 +245,7 @@ impl App {
                 self.sync_title(ctx);
             }
             Nav::NewDesign => self.new_design(ctx),
+            Nav::NewDesignInFolder { seed } => self.new_design_in_folder(seed, ctx),
         }
     }
     /// Navega, pero si hay algún lienzo con cambios sin guardar delante
@@ -240,6 +270,7 @@ impl App {
             ),
             Nav::CloseProject => "the Welcome screen".to_owned(),
             Nav::NewDesign => "a new design".to_owned(),
+            Nav::NewDesignInFolder { .. } => "a new design".to_owned(),
         };
         let description = if names.len() == 1 {
             format!(

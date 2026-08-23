@@ -15,18 +15,13 @@ impl App {
             // Desde una galería, Ctrl+N crea el diseño DENTRO de esa carpeta
             // en vez de un documento fantasma sin sitio en disco.
             A::NewDesign => {
-                if let View::Gallery(g) = &self.view {
-                    loader::spawn_gallery_op(
-                        loader::GalleryOp::NewDesign {
-                            folder: g.folder.clone(),
-                            page: self.settings.last_page_size,
-                            ext: self.settings.new_canvas_format.extension().to_owned(),
-                            jpeg_quality: self.settings.jpeg_quality,
-                        },
-                        true,
-                        self.tx.clone(),
-                        ctx.clone(),
-                    );
+                let gallery_seed = if let View::Gallery(g) = &mut self.view {
+                    Some(crate::deck::DeckSeed::from_gallery(g))
+                } else {
+                    None
+                };
+                if let Some(seed) = gallery_seed {
+                    self.request_nav(Nav::NewDesignInFolder { seed }, ctx);
                 } else {
                     self.request_nav(Nav::NewDesign, ctx);
                 }

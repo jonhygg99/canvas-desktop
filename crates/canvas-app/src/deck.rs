@@ -349,12 +349,14 @@ impl Default for Deck {
 /// rutas, nombres y las miniaturas YA subidas a GPU. `TextureHandle` es un
 /// handle contado, clonarlo es gratis — evita re-decodificar y volver a
 /// subir las miniaturas que la galería ya tenía cargadas.
+#[derive(Clone)]
 pub struct DeckSeed {
     pub folder: PathBuf,
     pub sort: GallerySort,
     pub items: Vec<SeedItem>,
 }
 
+#[derive(Clone)]
 pub struct SeedItem {
     pub path: PathBuf,
     pub name: String,

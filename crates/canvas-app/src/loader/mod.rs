@@ -165,16 +165,6 @@ pub enum AppMsg {
 /// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:
 /// copiar un PNG grande no puede bloquear la UI.
 pub enum GalleryOp {
-    /// Crea un lienzo en blanco en `folder` con un nombre libre. `ext` es la
-    /// extensión elegida en Ajustes (`settings.new_canvas_format`): un
-    /// raster real (con su sidecar) salvo que sea `canvas`, que sigue siendo
-    /// un diseño autónomo. `jpeg_quality` solo importa si `ext == "jpg"`.
-    NewDesign {
-        folder: PathBuf,
-        page: (f64, f64),
-        ext: String,
-        jpeg_quality: u8,
-    },
     /// Duplica `path` (y su sidecar, si es una imagen que tiene uno) dentro
     /// de la misma carpeta, con sufijo « copy».
     Duplicate { path: PathBuf },

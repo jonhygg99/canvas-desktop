@@ -136,24 +136,6 @@ fn trash_locally_with_sidecar(path: &Path) -> Result<(), String> {
 pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
         let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), String>) = match op {
-            GalleryOp::NewDesign {
-                folder,
-                page,
-                ext,
-                jpeg_quality,
-            } => {
-                let outcome = canvas_io::reserve_numbered_path(&folder, &ext)
-                    .map_err(|e| e.to_string())
-                    .and_then(|path| {
-                        canvas_io::write_blank_canvas(&path, page.0, page.1, jpeg_quality)
-                            .map(|()| path)
-                            .map_err(|e| e.to_string())
-                    });
-                match outcome {
-                    Ok(path) => (folder, Some(path), Ok(())),
-                    Err(e) => (folder, None, Err(e)),
-                }
-            }
             GalleryOp::Duplicate { path } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
                 match duplicate_into(&path, &folder, true) {

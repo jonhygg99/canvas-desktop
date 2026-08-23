@@ -42,6 +42,7 @@ enum Nav {
     },
     CloseProject,
     NewDesign,
+    NewDesignInFolder { seed: deck::DeckSeed },
 }
 
 pub(crate) struct App {

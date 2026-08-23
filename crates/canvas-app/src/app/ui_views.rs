@@ -118,17 +118,8 @@ pub(super) fn gallery_view_ui(
             settings.save_in_background();
         }
         Some(gallery::GalleryAction::NewDesign) => {
-            loader::spawn_gallery_op(
-                loader::GalleryOp::NewDesign {
-                    folder: g.folder.clone(),
-                    page: settings.last_page_size,
-                    ext: settings.new_canvas_format.extension().to_owned(),
-                    jpeg_quality: settings.jpeg_quality,
-                },
-                true,
-                tx.clone(),
-                ctx.clone(),
-            );
+            let seed = deck::DeckSeed::from_gallery(g);
+            open_next = Some(Nav::NewDesignInFolder { seed });
         }
         Some(gallery::GalleryAction::Duplicate(path)) => {
             loader::spawn_gallery_op(
