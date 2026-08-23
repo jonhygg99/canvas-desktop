@@ -1,177 +1,21 @@
-//! Construcción de la escena vello a partir del documento.
+//! Construccion de la escena vello a partir del documento.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-
-use canvas_core::{Document, LayerContent, LayerId, ShapeKind, TextAlign, TextContent};
+use canvas_core::{Document, LayerContent};
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::color::palette;
-use vello::peniko::{Blob, Color, Fill, ImageData};
+use vello::peniko::Fill;
 use vello::Scene;
 
-/// Colocación del rect de una capa: posición + rotación sobre el centro +
-/// volteo sobre el centro.
-fn place_transform(t: &canvas_core::Transform) -> Affine {
-    let center = vello::kurbo::Point::new(t.width / 2.0, t.height / 2.0);
-    let flip = Affine::translate((center.x, center.y))
-        * Affine::scale_non_uniform(
-            if t.flip_h { -1.0 } else { 1.0 },
-            if t.flip_v { -1.0 } else { 1.0 },
-        )
-        * Affine::translate((-center.x, -center.y));
-    Affine::translate((t.x, t.y)) * Affine::rotate_about(t.rotation.to_radians(), center) * flip
-}
+mod raster;
+mod shape;
+mod text;
 
-/// Contextos de parley reutilizados entre frames (crear un `FontContext`
-/// enumera las fuentes del sistema: demasiado caro por frame).
-struct TextCtx {
-    fonts: parley::FontContext,
-    layouts: parley::LayoutContext<[u8; 4]>,
-}
+pub use raster::{image_data_from_rgba, ImageMap};
+pub use text::text_lines;
 
-fn text_ctx() -> &'static Mutex<TextCtx> {
-    static CTX: OnceLock<Mutex<TextCtx>> = OnceLock::new();
-    CTX.get_or_init(|| {
-        Mutex::new(TextCtx {
-            fonts: parley::FontContext::new(),
-            layouts: parley::LayoutContext::new(),
-        })
-    })
-}
-
-/// Arma el layout de parley de un texto (line breaking + alineación): el
-/// MISMO que usan `draw_text` (para pintar) y `text_lines` (para exportar a
-/// SVG), así el SVG nunca puede desincronizarse de lo que se ve en el lienzo.
-fn build_layout(
-    fonts: &mut parley::FontContext,
-    layouts: &mut parley::LayoutContext<[u8; 4]>,
-    content: &TextContent,
-    box_width: f64,
-) -> parley::Layout<[u8; 4]> {
-    let mut builder = layouts.ranged_builder(fonts, &content.text, 1.0, true);
-    builder.push_default(parley::StyleProperty::FontSize(content.size.max(1.0)));
-    if !content.family.is_empty() {
-        builder.push_default(parley::StyleProperty::FontFamily(
-            parley::FontFamily::named(content.family.as_str()),
-        ));
-    }
-    builder.push_default(parley::StyleProperty::FontWeight(parley::FontWeight::new(
-        f32::from(content.weight),
-    )));
-    if content.italic {
-        builder.push_default(parley::StyleProperty::FontStyle(parley::FontStyle::Italic));
-    }
-    builder.push_default(parley::StyleProperty::LetterSpacing(content.letter_spacing));
-    builder.push_default(parley::StyleProperty::LineHeight(
-        parley::LineHeight::FontSizeRelative(content.line_height.max(0.5)),
-    ));
-    let mut layout = builder.build(&content.text);
-    layout.break_all_lines(Some(box_width.max(1.0) as f32));
-    let align = match content.align {
-        TextAlign::Left => parley::Alignment::Start,
-        TextAlign::Center => parley::Alignment::Center,
-        TextAlign::Right => parley::Alignment::End,
-    };
-    layout.align(align, parley::AlignmentOptions::default());
-    layout
-}
-
-/// Pinta una capa de texto: layout con parley, glifos con vello.
-fn draw_text(scene: &mut Scene, transform: Affine, content: &TextContent, box_width: f64) {
-    let Ok(mut ctx) = text_ctx().lock() else {
-        return;
-    };
-    let TextCtx { fonts, layouts } = &mut *ctx;
-    let layout = build_layout(fonts, layouts, content, box_width);
-
-    let [r, g, b, a] = content.color;
-    let brush = Color::from_rgba8(r, g, b, a);
-    for line in layout.lines() {
-        for item in line.items() {
-            let parley::PositionedLayoutItem::GlyphRun(run) = item else {
-                continue;
-            };
-            let font = run.run().font().clone();
-            let font_size = run.run().font_size();
-            let coords = run.run().normalized_coords().to_vec();
-            let glyphs: Vec<vello::Glyph> = run
-                .positioned_glyphs()
-                .map(|glyph| vello::Glyph {
-                    id: glyph.id,
-                    x: glyph.x,
-                    y: glyph.y,
-                })
-                .collect();
-            scene
-                .draw_glyphs(&font)
-                .font_size(font_size)
-                .normalized_coords(&coords)
-                .brush(brush)
-                .transform(transform)
-                .draw(Fill::NonZero, glyphs.into_iter());
-        }
-    }
-}
-
-/// Métricas de las líneas de un texto tal y como las rompe parley, en
-/// coordenadas locales de la caja (el MISMO layout que pinta `draw_text`).
-/// Lo usa la exportación a SVG para emitir un `<tspan x y>` por línea, sin
-/// que el renderer SVG tenga que tomar ninguna decisión de salto de línea ni
-/// de alineación por su cuenta: `x` ya lleva el desplazamiento de
-/// alineación (`LineMetrics::offset`) y `y` es la línea base.
-pub fn text_lines(content: &TextContent, box_width: f64) -> Vec<canvas_core::TextLine> {
-    let Ok(mut ctx) = text_ctx().lock() else {
-        return Vec::new();
-    };
-    let TextCtx { fonts, layouts } = &mut *ctx;
-    let layout = build_layout(fonts, layouts, content, box_width);
-    layout
-        .lines()
-        .map(|line| {
-            let metrics = line.metrics();
-            let text = content
-                .text
-                .get(line.text_range())
-                .unwrap_or("")
-                .trim_end_matches(['\n', '\r'])
-                .to_owned();
-            canvas_core::TextLine {
-                text,
-                x: f64::from(metrics.offset),
-                baseline: f64::from(metrics.baseline),
-            }
-        })
-        .collect()
-}
-
-/// Mapa de bits de cada capa de imagen, gestionado por la app.
-pub type ImageMap = HashMap<LayerId, ImageData>;
-
-/// Empaqueta un buffer RGBA8 como imagen de vello.
-pub fn image_data_from_rgba(rgba: Vec<u8>, width: u32, height: u32) -> ImageData {
-    ImageData {
-        data: Blob::new(Arc::new(rgba)),
-        format: vello::peniko::ImageFormat::Rgba8,
-        alpha_type: vello::peniko::ImageAlphaType::Alpha,
-        width,
-        height,
-    }
-}
-
-/// Tablero de ajedrez 2x2 (gris/blanco) que se repite bajo la página para
-/// hacer visible la transparencia.
-fn checker_image() -> &'static ImageData {
-    static CHECKER: OnceLock<ImageData> = OnceLock::new();
-    CHECKER.get_or_init(|| {
-        const LIGHT: [u8; 4] = [252, 252, 252, 255];
-        const DARK: [u8; 4] = [222, 222, 222, 255];
-        let mut rgba = Vec::with_capacity(2 * 2 * 4);
-        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-            rgba.extend_from_slice(if (x + y) % 2 == 0 { &LIGHT } else { &DARK });
-        }
-        image_data_from_rgba(rgba, 2, 2)
-    })
-}
+use raster::{checker_image, place_transform};
+use shape::draw_shape;
+use text::draw_text;
 
 /// Construye la escena de UN documento con la transformación de vista dada
 /// (página → píxeles físicos del lienzo). Envoltorio de una sola llamada a
@@ -373,50 +217,7 @@ pub fn append_document(
                 let t = layer.transform;
                 draw_text(scene, view * place_transform(&t), text, t.width);
             }
-            LayerContent::Shape(shape) => {
-                let t = layer.transform;
-                let place = view * place_transform(&t);
-                let [fr, fg, fb, fa] = shape.fill;
-                let [sr, sg, sb, sa] = shape.stroke;
-                let fill_color = Color::from_rgba8(fr, fg, fb, fa);
-                let stroke_color = Color::from_rgba8(sr, sg, sb, sa);
-                let stroke = vello::kurbo::Stroke::new(f64::from(shape.stroke_width.max(0.0)));
-                match shape.kind {
-                    ShapeKind::Rect => {
-                        let rounded = vello::kurbo::RoundedRect::from_rect(
-                            Rect::new(0.0, 0.0, t.width, t.height),
-                            f64::from(shape.corner_radius.max(0.0)),
-                        );
-                        if fa > 0 {
-                            scene.fill(Fill::NonZero, place, fill_color, None, &rounded);
-                        }
-                        if sa > 0 && shape.stroke_width > 0.0 {
-                            scene.stroke(&stroke, place, stroke_color, None, &rounded);
-                        }
-                    }
-                    ShapeKind::Ellipse => {
-                        let ellipse = vello::kurbo::Ellipse::new(
-                            (t.width / 2.0, t.height / 2.0),
-                            (t.width / 2.0, t.height / 2.0),
-                            0.0,
-                        );
-                        if fa > 0 {
-                            scene.fill(Fill::NonZero, place, fill_color, None, &ellipse);
-                        }
-                        if sa > 0 && shape.stroke_width > 0.0 {
-                            scene.stroke(&stroke, place, stroke_color, None, &ellipse);
-                        }
-                    }
-                    ShapeKind::Line => {
-                        let line = vello::kurbo::Line::new(
-                            (0.0, t.height / 2.0),
-                            (t.width, t.height / 2.0),
-                        );
-                        let color = if sa > 0 { stroke_color } else { fill_color };
-                        scene.stroke(&stroke, place, color, None, &line);
-                    }
-                }
-            }
+            LayerContent::Shape(shape) => draw_shape(scene, layer, shape, view),
             // Los grupos se gestionan más arriba (con `continue`, antes de
             // sombra+contenido): esta rama nunca se alcanza para ellos.
             LayerContent::Group(_) => unreachable!("los grupos no llegan a pintarse aquí"),

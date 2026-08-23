@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fase 0 hecha.
+Estado: **En curso** — Fases 0-2 hechas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -37,9 +37,9 @@ separado por plataforma.
 
 - [x] **Fase 0 — Red de seguridad.** Dejar el árbol verde con el toolchain
       actual y escribir este documento.
-- [ ] **Fase 1 — `canvas-core`.** `command.rs` → `command/`, `align.rs` →
+- [x] **Fase 1 — `canvas-core`.** `command.rs` → `command/`, `align.rs` →
       `geometry/`, `document.rs` → `document/`.
-- [ ] **Fase 2 — `canvas-io` + `canvas-render`.** `export.rs` → `export/`,
+- [x] **Fase 2 — `canvas-io` + `canvas-render`.** `export.rs` → `export/`,
       `blur.rs` → `blur/`, `scene.rs` → `scene/`.
 - [ ] **Fase 3 — `deck.rs` → `deck/`.**
 - [ ] **Fase 4 — `editor/state.rs` → `editor/state/`.**
@@ -95,3 +95,53 @@ Línea base tras la Fase 0: **208 tests en verde**, clippy y fmt limpios.
 
 `PLAN.md` y `PROMPT.md` aparecen borrados sin commitear en el árbol de trabajo
 desde antes de empezar; el refactor no los toca.
+
+### Fase 1
+
+`canvas-core` queda con 285 líneas en su archivo de código más largo (antes
+727). Dos desvíos menores del plan, para no dejar archivos de 25 líneas:
+`SetContent` va con `appearance` en vez de un `content.rs` propio, y
+`Composite` va con `History` en vez de un `composite.rs` propio.
+
+Los tests de cada carpeta quedan en un único `tests.rs`: muchos cruzan varias
+familias a la vez (agrupar y luego deshacer) y repartirlos los haría menos
+legibles. `History::redo` pasa a `pub(super)` para que esos tests sigan
+pudiendo sembrar un comando que falla al rehacer.
+
+### Fase 2
+
+- `canvas-io/src/export.rs` (455 + 146) → `export/{mod,pdf}.rs` +
+  `export/svg/{mod,image,text,shape,util}.rs`. Los ayudantes del SVG
+  (`place_transform_svg`, `hex`, `alpha`, `esc`, `n`) pasan a `pub(super)`.
+- `canvas-render/src/blur.rs` (457) → `blur/{mod,params,engine,passes}.rs`.
+  `blur.wgsl` y `color_filter.wgsl` se mueven a `blur/` con el código que los
+  hace `include_str!`.
+- `canvas-render/src/scene.rs` (453) → `scene/{mod,raster,shape,text}.rs`.
+
+Verificado además con los cinco ejemplos headless de GPU: `text_probe`,
+`export_probe`, `bake_filters`, `bake_blur`, `save_roundtrip`, todos en verde
+sobre GPU real.
+
+#### Excepción documentada: `append_document`
+
+`scene/mod.rs::append_document` se queda en ~180 líneas, por encima del
+objetivo de 80. Es deliberado. Los brazos `LayerContent::Image` y
+`LayerContent::Svg` contienen cuatro `continue` que saltan al bucle exterior,
+así que extraerlos a funciones NO es un movimiento mecánico: cambiaría el flujo
+de control. Solo se extrajo el brazo `Shape` (43 líneas, sin `continue`), que
+sí lo es. Es código GPU sin cobertura de tests unitarios: no es sitio para
+arriesgar.
+
+#### 🐛 Bug preexistente encontrado (NO corregido aquí)
+
+`scene/mod.rs::append_document`, brazos `Image` y `Svg`: cuando la textura de
+la capa todavía no está cargada (`blurred`/`images` no la tienen) o mide 0x0,
+el `continue` salta tanto el `if fade { scene.pop_layer(); }` como el
+`i += 1` del final del bucle. Consecuencias:
+
+1. **Bucle infinito**: `i` nunca avanza, el hilo de render se cuelga.
+2. `push_layer`/`pop_layer` desbalanceados si la capa tenía `opacity < 1.0`.
+
+Es alcanzable mientras una imagen se está cargando de forma asíncrona. Se deja
+tal cual a propósito (el refactor no cambia comportamiento); merece su propio
+arreglo con un test de regresión.
