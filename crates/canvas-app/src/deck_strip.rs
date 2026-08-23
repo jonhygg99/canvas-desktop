@@ -28,17 +28,42 @@ const CELL_MIN: f32 = 64.0;
 /// Lado máximo: por encima, la tira compite con el propio lienzo. Un poco
 /// por encima del ancho por defecto del panel "layers" (220 px, `main.rs`).
 const CELL_MAX: f32 = 240.0;
-/// Hueco alrededor de la miniatura dentro de la celda.
+/// Hueco lateral alrededor de la miniatura dentro de la celda.
 const CELL_PAD: f32 = 8.0;
-/// Alto reservado para el nombre del archivo debajo de la miniatura.
-const LABEL_H: f32 = 18.0;
+/// Gallery uses a 16:9 thumbnail area for every design card.
+const THUMB_ASPECT_RATIO: f32 = 16.0 / 9.0;
+/// Alto reservado para el nombre, colocado encima de la miniatura como en Gallery.
+const LABEL_H: f32 = 20.0;
+const TITLE_TO_THUMB_GAP: f32 = 2.0;
+const CELL_BOTTOM_PAD: f32 = 6.0;
 
 /// Tamaño de celda calculado contra el espacio real del panel, no una
 /// constante — es lo que hace que arrastrar el borde de la tira agrande de
 /// verdad las miniaturas.
 struct StripMetrics {
     cell: egui::Vec2,
-    thumb: f32,
+    thumb: egui::Vec2,
+}
+
+fn strip_cell_metrics(across: f32, vertical_flow: bool) -> StripMetrics {
+    if vertical_flow {
+        let thumb_width = (across - 2.0 * CELL_PAD).max(1.0);
+        let thumb_height = thumb_width / THUMB_ASPECT_RATIO;
+        StripMetrics {
+            cell: egui::vec2(
+                across,
+                LABEL_H + TITLE_TO_THUMB_GAP + thumb_height + CELL_BOTTOM_PAD,
+            ),
+            thumb: egui::vec2(thumb_width, thumb_height),
+        }
+    } else {
+        let thumb_height = (across - LABEL_H - TITLE_TO_THUMB_GAP - CELL_BOTTOM_PAD).max(1.0);
+        let thumb_width = thumb_height * THUMB_ASPECT_RATIO;
+        StripMetrics {
+            cell: egui::vec2(thumb_width + 2.0 * CELL_PAD, across),
+            thumb: egui::vec2(thumb_width, thumb_height),
+        }
+    }
 }
 
 /// Dimensiona la celda contra el espacio que el panel tiene DE VERDAD.
@@ -49,18 +74,12 @@ fn strip_metrics(ui: &egui::Ui, vertical_flow: bool) -> StripMetrics {
     let bar = ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_inner_margin;
     if vertical_flow {
         let across = (ui.available_width() - bar).clamp(CELL_MIN, CELL_MAX);
-        let thumb = across - 2.0 * CELL_PAD;
-        StripMetrics {
-            cell: egui::vec2(across, thumb + CELL_PAD + LABEL_H),
-            thumb,
-        }
+        strip_cell_metrics(across, true)
     } else {
-        let across = (ui.available_height() - bar).clamp(CELL_MIN + CELL_PAD + LABEL_H, CELL_MAX);
-        let thumb = across - CELL_PAD - LABEL_H;
-        StripMetrics {
-            cell: egui::vec2(thumb + 2.0 * CELL_PAD, across),
-            thumb,
-        }
+        let min_across =
+            LABEL_H + TITLE_TO_THUMB_GAP + CELL_MIN / THUMB_ASPECT_RATIO + CELL_BOTTOM_PAD;
+        let across = (ui.available_height() - bar).clamp(min_across, CELL_MAX);
+        strip_cell_metrics(across, false)
     }
 }
 
@@ -122,6 +141,8 @@ pub fn deck_strip_ui(
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // Match Gallery's row rhythm instead of egui's larger default.
+                ui.spacing_mut().item_spacing.y = 4.0;
                 let m = strip_metrics(ui, true);
                 for (idx, slot) in deck.slots.iter().enumerate() {
                     let dirty = cell_dirty(idx, slot);
@@ -178,19 +199,33 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
         egui::StrokeKind::Inside,
     );
-    let plus_size = (m.thumb * 0.4).max(14.0);
+    let name_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(CELL_PAD, 4.0),
+        egui::vec2(rect.width() - 2.0 * CELL_PAD, LABEL_H - 4.0),
+    );
     painter.text(
-        egui::pos2(rect.center().x, rect.top() + 6.0 + m.thumb / 2.0),
+        name_rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        "New canvas",
+        egui::FontId::proportional(12.5),
+        ui.visuals().text_color(),
+    );
+    let thumb_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(CELL_PAD, LABEL_H + TITLE_TO_THUMB_GAP),
+        m.thumb,
+    );
+    painter.rect_stroke(
+        thumb_rect,
+        4.0,
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Inside,
+    );
+    let plus_size = (m.thumb.y * 0.4).max(14.0);
+    painter.text(
+        thumb_rect.center(),
         egui::Align2::CENTER_CENTER,
         "✚",
         egui::FontId::proportional(plus_size),
-        ui.visuals().weak_text_color(),
-    );
-    painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 10.0),
-        egui::Align2::CENTER_CENTER,
-        "New canvas",
-        egui::FontId::proportional(10.5),
         ui.visuals().weak_text_color(),
     );
     response
@@ -227,15 +262,40 @@ fn strip_cell(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
-    let thumb_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.top() + 6.0 + m.thumb / 2.0),
-        egui::Vec2::splat(m.thumb),
+    let name_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(CELL_PAD, 4.0),
+        egui::vec2(rect.width() - 2.0 * CELL_PAD, LABEL_H - 4.0),
     );
-    let glyph_size = (m.thumb * 0.34).max(12.0);
+    let mut name = slot.name.clone();
+    let max_chars = ((rect.width() / 7.0) as usize).max(8);
+    if name.chars().count() > max_chars {
+        name = format!(
+            "{}…",
+            name.chars()
+                .take(max_chars.saturating_sub(1))
+                .collect::<String>()
+        );
+    }
+    painter.text(
+        name_rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(12.5),
+        ui.visuals().text_color(),
+    );
+
+    let thumb_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.left() + CELL_PAD,
+            rect.top() + LABEL_H + TITLE_TO_THUMB_GAP,
+        ),
+        m.thumb,
+    );
+    let glyph_size = (m.thumb.y * 0.34).max(12.0);
     match (&slot.thumb, slot.thumb_failed) {
         (Some(tex), _) => {
             let size = tex.size_vec2();
-            let scale = (m.thumb / size.x).min(m.thumb / size.y).min(1.0);
+            let scale = (m.thumb.x / size.x).max(m.thumb.y / size.y);
             let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
             painter.image(
                 tex.id(),
@@ -273,24 +333,6 @@ fn strip_cell(
         }
     }
 
-    let mut name = slot.name.clone();
-    let max_chars = ((m.cell.x / 7.0) as usize).max(8);
-    if name.chars().count() > max_chars {
-        name = format!(
-            "{}…",
-            name.chars()
-                .take(max_chars.saturating_sub(1))
-                .collect::<String>()
-        );
-    }
-    painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 10.0),
-        egui::Align2::CENTER_CENTER,
-        name,
-        egui::FontId::proportional(10.5),
-        ui.visuals().text_color(),
-    );
-
     // Punto de acento: cambios sin guardar en esta ranura.
     if dirty {
         painter.circle_filled(
@@ -309,4 +351,32 @@ fn strip_cell(
     response
         .clicked()
         .then(|| StripAction::Open(slot.path.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        strip_cell_metrics, CELL_BOTTOM_PAD, LABEL_H, THUMB_ASPECT_RATIO, TITLE_TO_THUMB_GAP,
+    };
+
+    #[test]
+    fn strip_thumbnail_matches_gallery_aspect_ratio() {
+        let metrics = strip_cell_metrics(200.0, true);
+        let ratio = metrics.thumb.x / metrics.thumb.y;
+        assert!((ratio - THUMB_ASPECT_RATIO).abs() < 0.001);
+        assert!(
+            (metrics.cell.y - (LABEL_H + TITLE_TO_THUMB_GAP + metrics.thumb.y + CELL_BOTTOM_PAD))
+                .abs()
+                < 0.001
+        );
+    }
+
+    #[test]
+    fn horizontal_strip_keeps_compact_gallery_geometry() {
+        let metrics = strip_cell_metrics(120.0, false);
+        let ratio = metrics.thumb.x / metrics.thumb.y;
+        assert!((ratio - THUMB_ASPECT_RATIO).abs() < 0.001);
+        assert!((metrics.cell.y - 120.0).abs() < 0.001);
+        assert!((metrics.cell.x - (metrics.thumb.x + 16.0)).abs() < 0.001);
+    }
 }
