@@ -309,6 +309,7 @@ pub fn spawn_gallery_scan(
         let sizes = probe_page_sizes(&folder, files.iter().map(|(p, _)| p.clone()).collect());
         let _ = tx.send(AppMsg::DeckProbed {
             folder: folder.clone(),
+            generation: 0,
             sizes,
         });
         ctx.request_repaint();

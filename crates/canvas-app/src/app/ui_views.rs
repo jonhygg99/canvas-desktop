@@ -618,6 +618,7 @@ pub(super) fn editor_view_ui(
                 surface,
                 tx,
                 settings.new_canvas_format.extension(),
+                settings.sidecar_default,
             );
         });
 

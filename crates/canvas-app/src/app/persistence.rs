@@ -102,7 +102,7 @@ pub(super) fn seed_gallery_from_deck(
 /// disparado por hacer scroll): las capas restauradas se usan de todas
 /// formas y `external_change` queda encendido, para que el banner normal de
 /// «cambió por fuera» aparezca en cuanto el usuario active esa ranura.
-pub(super) fn build_slot_doc(
+pub(crate) fn build_slot_doc(
     path: PathBuf,
     outcome: loader::LoadOutcome,
     metadata: Option<canvas_io::ImageMetadata>,

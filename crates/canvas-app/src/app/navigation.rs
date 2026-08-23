@@ -91,12 +91,8 @@ impl App {
     /// recientes, arrastrar y soltar, segunda instancia).
     pub(super) fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
         if let Some(seed) = self.pending_deck.take() {
-            self.deck = deck::Deck::from_seed(seed, path);
-            self.apply_deck_prefs();
-            // La baraja acaba de nacer con `folder` ya puesto: a diferencia
-            // del sondeo que lanza la galería (demasiado pronto, antes de
-            // que esta `Deck` existiera), este llega a tiempo.
-            self.spawn_deck_probe(ctx);
+            self.initialize_seeded_deck(seed, path);
+            self.start_seeded_deck_preload(ctx);
         } else if let Some(idx) = self.deck.find_by_path(path) {
             self.deck.active = idx;
         } else {
@@ -110,6 +106,41 @@ impl App {
             canvas_io::purge_local_trash(&folder);
         }
     }
+    /// Construye una baraja desde una semilla de Gallery y arranca la misma
+    /// preparación que usa una apertura normal: preferencias, sondeo de
+    /// tamaños y precarga de las páginas cercanas.
+    fn initialize_seeded_deck(&mut self, seed: deck::DeckSeed, active_path: &Path) {
+        self.deck = deck::Deck::from_seed(seed, active_path);
+        self.apply_deck_prefs();
+    }
+
+    /// Arranca el sondeo y las cargas de inmediato, una vez que el llamador
+    /// ya ha fijado la ranura activa definitiva (imagen abierta o provisional).
+    fn start_seeded_deck_preload(&mut self, ctx: &egui::Context) {
+        self.spawn_deck_probe(ctx);
+        self.preload_nearby_slots(ctx);
+    }
+
+    /// Arranca de inmediato las cargas de las páginas cercanas a la activa.
+    /// El editor volverá a pedirlas desde `canvas_view` si hace falta, pero
+    /// aquí ganamos el primer frame de `New design` sin duplicar cargas:
+    /// `request_loads` marca las ranuras como `Loading` antes de devolverlas.
+    fn preload_nearby_slots(&mut self, ctx: &egui::Context) {
+        let Some(folder) = self.deck.folder.clone() else {
+            return;
+        };
+        for path in self.deck.request_loads(&[]) {
+            loader::spawn_load_slot(
+                folder.clone(),
+                path,
+                self.deck.generation(),
+                self.settings.sidecar_default,
+                self.tx.clone(),
+                ctx.clone(),
+            );
+        }
+    }
+
     /// Siembra una `Deck` recién construida con las preferencias persistidas
     /// (eje de apilado, visibilidad de la tira) — `Deck::single`/`from_seed`
     /// no conocen `AppSettings`, así que el llamador las aplica justo
@@ -136,7 +167,13 @@ impl App {
         if paths.is_empty() {
             return;
         }
-        loader::spawn_deck_probe(folder, paths, self.tx.clone(), ctx.clone());
+        loader::spawn_deck_probe(
+            folder,
+            self.deck.generation(),
+            paths,
+            self.tx.clone(),
+            ctx.clone(),
+        );
     }
     /// Alterna el eje de apilado de la baraja activa y lo persiste — la tira
     /// (botón ⇅/⇆) y el menú View (Fase 14e) comparten este único camino.
@@ -175,8 +212,7 @@ impl App {
     fn new_design_in_folder(&mut self, seed: deck::DeckSeed, ctx: &egui::Context) {
         let page = self.settings.last_page_size;
         let ext = self.settings.new_canvas_format.extension();
-        self.deck = deck::Deck::from_seed(seed, Path::new(""));
-        self.apply_deck_prefs();
+        self.initialize_seeded_deck(seed, Path::new(""));
         let Some(idx) = self.deck.push_placeholder(page, ext) else {
             self.new_design(ctx);
             return;
@@ -196,6 +232,11 @@ impl App {
         if let Some(slot) = self.deck.slots.get_mut(idx) {
             slot.content = deck::SlotContent::Active;
         }
+        // La provisional ya es la activa definitiva: la misma preparación
+        // que usa una imagen abierta desde Gallery comienza ahora, sin haber
+        // ocupado antes los huecos de carga con el primer archivo de la
+        // carpeta.
+        self.start_seeded_deck_preload(ctx);
         self.view = View::Editor(Box::new(state));
         self.deck.layout_dirty = true;
         self.sync_title(ctx);

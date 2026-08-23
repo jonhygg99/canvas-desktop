@@ -95,6 +95,7 @@ pub fn canvas_ui(
     // Extensión de `settings.new_canvas_format` — qué crea la zona "+" al
     // final de la baraja cuando se pulsa directamente sobre el lienzo.
     new_canvas_ext: &str,
+    sidecar_default: bool,
 ) -> Option<CanvasAction> {
     // Duplicar/borrar/renombrar tocan disco o el watcher: se arman aquí (en
     // la cabecera de un lienzo, ver más abajo) pero se resuelven en
@@ -679,7 +680,14 @@ pub fn canvas_ui(
     // cargas en vuelo.
     if let Some(folder) = deck.folder.clone() {
         for path in deck.request_loads(&visible) {
-            loader::spawn_load_slot(folder.clone(), path, tx.clone(), ui.ctx().clone());
+            loader::spawn_load_slot(
+                folder.clone(),
+                path,
+                deck.generation(),
+                sidecar_default,
+                tx.clone(),
+                ui.ctx().clone(),
+            );
         }
     }
     // Descarte: libera memoria de ranuras lejanas, limpias y sin guardado en

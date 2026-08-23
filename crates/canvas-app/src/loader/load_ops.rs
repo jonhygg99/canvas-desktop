@@ -8,6 +8,7 @@ use canvas_io::ImageMetadata;
 use eframe::egui;
 
 use super::{AppMsg, LoadOutcome};
+use crate::app::persistence::build_slot_doc;
 
 /// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
 /// editables desde su `.canvas`; un sidecar ilegible degrada a carga plana.
@@ -60,8 +61,16 @@ pub fn spawn_load_design(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) 
 /// apertura: eso sigue siendo `spawn_load_image`/`spawn_load_design` vía
 /// `ImageLoaded`). Misma bifurcación que `App::open_path`: un `.canvas` ES
 /// el documento; una imagen restaura su sidecar si lo tiene.
-pub fn spawn_load_slot(folder: PathBuf, path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+pub fn spawn_load_slot(
+    folder: PathBuf,
+    path: PathBuf,
+    generation: u64,
+    sidecar_default: bool,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
+        let started = std::time::Instant::now();
         let is_canvas = canvas_io::is_canvas_file(&path);
         let result = if is_canvas {
             canvas_io::read_design(&path)
@@ -86,11 +95,28 @@ pub fn spawn_load_slot(folder: PathBuf, path: PathBuf, tx: Sender<AppMsg>, ctx: 
         } else {
             canvas_io::extract_metadata_from_file(&path)
         };
-        let _ = tx.send(AppMsg::SlotLoaded {
+        let prepared = result
+            .and_then(|outcome| {
+                build_slot_doc(
+                    path.clone(),
+                    outcome,
+                    (!metadata.is_empty()).then_some(metadata),
+                    sidecar_default,
+                )
+                .ok_or_else(|| "could not build the background document".to_owned())
+            });
+        tracing::debug!(
+            target: "canvas.preload",
+            path = %path.display(),
+            generation,
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "preload prepared"
+        );
+        let _ = tx.send(AppMsg::SlotPrepared {
             folder,
+            generation,
             path,
-            result,
-            metadata,
+            result: prepared,
         });
         ctx.request_repaint();
     });
@@ -156,13 +182,18 @@ pub(super) fn probe_page_sizes(
 /// coincide y el guardia lo deja pasar.
 pub fn spawn_deck_probe(
     folder: PathBuf,
+    generation: u64,
     paths: Vec<PathBuf>,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
         let sizes = probe_page_sizes(&folder, paths);
-        let _ = tx.send(AppMsg::DeckProbed { folder, sizes });
+        let _ = tx.send(AppMsg::DeckProbed {
+            folder,
+            generation,
+            sizes,
+        });
         ctx.request_repaint();
     });
 }

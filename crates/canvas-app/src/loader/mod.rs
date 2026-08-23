@@ -94,6 +94,7 @@ pub enum AppMsg {
     /// archivo. `None` por archivo si `probe_page_size` falló para ese uno.
     DeckProbed {
         folder: PathBuf,
+        generation: u64,
         sizes: Vec<(PathBuf, Option<(f64, f64)>)>,
     },
     /// Un lienzo de la baraja terminó de cargar en segundo plano (scroll,
@@ -103,11 +104,11 @@ pub enum AppMsg {
     /// por hacer scroll — aquí un hash que no coincide se guarda como
     /// `external_change` en silencio y se muestra como el banner normal en
     /// cuanto la ranura se activa.
-    SlotLoaded {
+    SlotPrepared {
         folder: PathBuf,
+        generation: u64,
         path: PathBuf,
-        result: Result<LoadOutcome, String>,
-        metadata: ImageMetadata,
+        result: Result<crate::deck::SlotDoc, String>,
     },
     /// Nombre reservado en disco para una ranura PROVISIONAL de la baraja
     /// que el usuario acaba de empezar a editar. Solo reserva: el archivo se

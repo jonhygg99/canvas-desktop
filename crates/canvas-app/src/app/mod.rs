@@ -18,7 +18,7 @@ use crate::{deck, editor, export, gallery, menus, paste_hook, settings, watcher}
 mod menu_actions;
 mod messages;
 mod navigation;
-mod persistence;
+pub(crate) mod persistence;
 mod ui_menu;
 mod ui_modals;
 mod ui_views;

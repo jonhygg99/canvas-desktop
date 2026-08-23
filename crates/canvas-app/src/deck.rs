@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use canvas_core::{Document, History, LayerId, Selection};
@@ -114,10 +115,37 @@ const MAX_LOADED_SLOTS: usize = 12;
 /// Presupuesto de píxeles decodificados en RAM, sin contar la activa. Una
 /// foto de 20 MP son ~80 MB en RGBA: esto son unas 6 fotos así.
 const EVICT_BUDGET_BYTES: usize = 512 * 1024 * 1024;
+const MIN_EVICT_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+const MAX_EVICT_BUDGET_BYTES: usize = 1024 * 1024 * 1024;
 /// El rect visible se dilata esta fracción a cada lado antes de decidir qué
 /// cargar/mostrar: evita que una ranura entre y salga de "visible" con un
 /// scroll de un solo píxel.
 const VISIBLE_MARGIN: f64 = 0.5;
+
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Presupuesto adaptativo conservador. Se puede reducir en máquinas con
+/// menos memoria mediante `CANVAS_PRELOAD_BUDGET_MB`; el clamp evita valores
+/// que inutilicen la caché o comprometan la aplicación.
+fn adaptive_evict_budget() -> usize {
+    let configured = std::env::var("CANVAS_PRELOAD_BUDGET_MB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|mb| mb.saturating_mul(1024 * 1024));
+    configured
+        .unwrap_or(EVICT_BUDGET_BYTES)
+        .clamp(MIN_EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES)
+}
+
+fn configured_inflight_limit() -> Option<usize> {
+    std::env::var("CANVAS_PRELOAD_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|value| value.clamp(1, 4))
+}
 
 /// Rect en espacio de baraja (px de página). `f64`: una carpeta de 200 fotos
 /// llega al millón de píxeles acumulados y `f32` empieza a perder precisión
@@ -270,11 +298,18 @@ impl Slot {
 /// (arrastrar y soltar, CLI, recientes): baraja degenerada de una ranura.
 pub struct Deck {
     pub folder: Option<PathBuf>,
+    /// Identifica la instancia de baraja a la que pertenecen las cargas.
+    /// Los resultados de generaciones anteriores se descartan.
+    pub generation: u64,
     pub slots: Vec<Slot>,
     pub active: usize,
     pub sort: GallerySort,
     /// La tira lateral está visible (se oculta además si `slots.len() <= 1`).
     pub strip_visible: bool,
+    /// Las barajas nacidas desde Gallery precargan todas sus páginas en
+    /// segundo plano, no solo las visibles. Así `New design` comparte la
+    /// misma disponibilidad de fondos que abrir una imagen desde Gallery.
+    pub preload_all: bool,
     /// Eje de apilado (vertical u horizontal); el llamador (`App`) lo siembra
     /// desde `settings.deck_axis` al construir la baraja, y lo persiste de
     /// vuelta cuando el usuario lo cambia — `Deck` en sí no conoce ajustes.
@@ -322,10 +357,12 @@ impl Default for Deck {
     fn default() -> Self {
         Self {
             folder: None,
+            generation: 0,
             slots: Vec::new(),
             active: 0,
             sort: GallerySort::default(),
             strip_visible: false,
+            preload_all: false,
             axis: DeckAxis::default(),
             strip_side: StripSide::default(),
             jump_to: None,
@@ -448,8 +485,10 @@ impl Deck {
     pub fn from_seed(seed: DeckSeed, active_path: &Path) -> Self {
         let mut deck = Self {
             folder: Some(seed.folder),
+            generation: next_generation(),
             sort: seed.sort,
             strip_visible: true,
+            preload_all: true,
             ..Self::default()
         };
         for item in seed.items {
@@ -947,6 +986,9 @@ impl Deck {
         let lo = active.saturating_sub(PRELOAD_RADIUS);
         let hi = (active + PRELOAD_RADIUS).min(self.slots.len() - 1);
         let mut candidates: Vec<usize> = visible.iter().copied().chain(lo..=hi).collect();
+        if self.preload_all {
+            candidates.extend(0..self.slots.len());
+        }
         if let Some(j) = jump {
             candidates.push(j);
         }
@@ -959,11 +1001,19 @@ impl Deck {
         candidates.retain(|&i| {
             matches!(self.slots.get(i), Some(s) if matches!(s.content, SlotContent::Idle) && !s.is_placeholder)
         });
-        candidates.sort_by_key(|&i| (Some(i) != jump, i.abs_diff(active)));
+        candidates.sort_by_key(|&i| {
+            let jump_rank = usize::from(Some(i) != jump);
+            let distance = i.abs_diff(active);
+            let visibility_rank = usize::from(!visible.contains(&i));
+            (jump_rank, distance, visibility_rank, i)
+        });
 
         let mut spawned = Vec::new();
+        let memory_pressure = self.loaded_bytes() > adaptive_evict_budget() / 2;
+        let inflight_limit = configured_inflight_limit()
+            .unwrap_or(if memory_pressure { 1 } else { MAX_INFLIGHT_LOADS });
         for i in candidates {
-            if self.inflight >= MAX_INFLIGHT_LOADS {
+            if self.inflight >= inflight_limit {
                 break;
             }
             if let Some(slot) = self.slots.get_mut(i) {
@@ -1000,6 +1050,10 @@ impl Deck {
     /// `forget_scope` (aquí no se acopla `Deck` a `canvas-render` más que
     /// por el tipo del scope).
     pub fn evict(&mut self) -> Vec<FxScope> {
+        self.evict_with_budget(adaptive_evict_budget())
+    }
+
+    pub fn evict_with_budget(&mut self, budget: usize) -> Vec<FxScope> {
         let active = self.active;
         let mut freed = Vec::new();
         loop {
@@ -1008,7 +1062,7 @@ impl Deck {
                 .iter()
                 .filter(|s| matches!(s.content, SlotContent::Ready(_)))
                 .count();
-            if self.loaded_bytes() <= EVICT_BUDGET_BYTES && loaded_count <= MAX_LOADED_SLOTS {
+            if self.loaded_bytes() <= budget && loaded_count <= MAX_LOADED_SLOTS {
                 break;
             }
             let candidate = self
@@ -1048,6 +1102,10 @@ impl Deck {
             freed.push(FxScope(self.slots[idx].id));
         }
         freed
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     fn path_at(&self, idx: usize) -> Option<PathBuf> {
@@ -1498,6 +1556,59 @@ mod tests {
             "el destino del salto pendiente debe cargarse primero, aunque esté lejos"
         );
         assert!(matches!(deck.slots[7].content, SlotContent::Loading));
+    }
+
+    #[test]
+    fn request_loads_prioritises_neighbours_of_an_active_placeholder() {
+        let mut deck = Deck::from_seed(
+            seed(&["a.png", "b.png", "c.png"]),
+            Path::new("a.png"),
+        );
+        let placeholder = deck
+            .push_placeholder((800.0, 600.0), "canvas")
+            .expect("con carpeta");
+        deck.slots[deck.active].content = SlotContent::Idle;
+        deck.active = placeholder;
+        deck.slots[placeholder].content = SlotContent::Active;
+
+        let spawned = deck.request_loads(&[]);
+
+        assert_eq!(
+            spawned,
+            vec![PathBuf::from("c.png"), PathBuf::from("b.png")]
+        );
+        assert!(!spawned.contains(&deck.slots[placeholder].path));
+        assert!(matches!(deck.slots[1].content, SlotContent::Loading));
+        assert!(matches!(deck.slots[2].content, SlotContent::Loading));
+    }
+
+    #[test]
+    fn seeded_decks_get_unique_load_generations() {
+        let first = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+        let second = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+        assert_ne!(first.generation(), second.generation());
+    }
+
+    #[test]
+    fn adaptive_budget_can_be_lowered_for_constrained_runs() {
+        assert!(MIN_EVICT_BUDGET_BYTES <= adaptive_evict_budget());
+        assert!(adaptive_evict_budget() <= MAX_EVICT_BUDGET_BYTES);
+    }
+
+    #[test]
+    fn request_loads_preloads_distant_gallery_pages_in_the_background() {
+        let mut deck = Deck::from_seed(
+            seed(&["a.png", "b.png", "c.png", "d.png", "e.png"]),
+            Path::new("a.png"),
+        );
+        assert!(deck.preload_all);
+        let spawned = deck.request_loads(&[]);
+
+        assert_eq!(spawned.len(), MAX_INFLIGHT_LOADS);
+        assert!(spawned.contains(&PathBuf::from("b.png")));
+        assert!(spawned.contains(&PathBuf::from("c.png")));
+        assert!(matches!(deck.slots[1].content, SlotContent::Loading));
+        assert!(matches!(deck.slots[2].content, SlotContent::Loading));
     }
 
     #[test]

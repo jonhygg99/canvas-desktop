@@ -12,7 +12,6 @@ use crate::{deck, editor, loader};
 use super::{App, Nav, View};
 use loader::AppMsg;
 
-use super::persistence::build_slot_doc;
 
 impl App {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería
@@ -250,59 +249,38 @@ impl App {
                         }
                     }
                 }
-                AppMsg::DeckProbed { folder, sizes } => {
-                    if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                AppMsg::DeckProbed {
+                    folder,
+                    generation,
+                    sizes,
+                } => {
+                    if self.deck.folder.as_deref() == Some(folder.as_path())
+                        && self.deck.generation() == generation
+                    {
                         self.deck.set_probes(sizes);
                     }
                 }
-                AppMsg::SlotLoaded {
+                AppMsg::SlotPrepared {
                     folder,
+                    generation,
                     path,
                     result,
-                    metadata,
                 } => {
-                    // Guarda de obsolescencia: si la baraja ya no es esta
-                    // carpeta (el usuario abrió otra cosa mientras cargaba),
-                    // el mensaje se descarta entero — el `inflight` de la
-                    // baraja NUEVA no tiene nada que ver con esta carga.
-                    if self.deck.folder.as_deref() == Some(folder.as_path()) {
+                    if self.deck.folder.as_deref() == Some(folder.as_path())
+                        && self.deck.generation() == generation
+                    {
                         self.deck.loading_finished();
                         if let Some(idx) = self.deck.find_by_path(&path) {
-                            // Si mientras tanto la ranura dejó de estar
-                            // `Loading` (se activó por otra vía, o ya se
-                            // descartó), no se pisa: esta carga ya no pinta
-                            // nada.
-                            let still_loading =
-                                self.deck.slots.get(idx).is_some_and(|s| {
-                                    matches!(s.content, deck::SlotContent::Loading)
-                                });
+                            let still_loading = self.deck.slots.get(idx).is_some_and(|slot| {
+                                matches!(slot.content, deck::SlotContent::Loading)
+                            });
                             if still_loading {
-                                let metadata = (!metadata.is_empty()).then_some(metadata);
-                                let new_content = match result {
-                                    Ok(outcome) => build_slot_doc(
-                                        path.clone(),
-                                        outcome,
-                                        metadata,
-                                        self.settings.sidecar_default,
-                                    )
-                                    .map_or_else(
-                                        || {
-                                            deck::SlotContent::Failed(
-                                                "could not build the document".to_owned(),
-                                            )
-                                        },
-                                        |doc| deck::SlotContent::Ready(Box::new(doc)),
-                                    ),
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "carga de fondo de {} falló: {e}",
-                                            path.display()
-                                        );
-                                        deck::SlotContent::Failed(e)
-                                    }
-                                };
+                                let content = result.map_or_else(
+                                    deck::SlotContent::Failed,
+                                    |doc| deck::SlotContent::Ready(Box::new(doc)),
+                                );
                                 if let Some(slot) = self.deck.slots.get_mut(idx) {
-                                    slot.content = new_content;
+                                    slot.content = content;
                                 }
                             }
                         }
