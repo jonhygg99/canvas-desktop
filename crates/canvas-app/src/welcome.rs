@@ -1,6 +1,6 @@
 //! Pantalla de bienvenida cuando no hay ningún archivo abierto.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eframe::egui;
 
@@ -52,23 +52,22 @@ pub fn show(
                 action = Some(WelcomeAction::OpenFolder);
             }
 
-            if !recents.is_empty() {
+            let folder_recents: Vec<_> = recents
+                .iter()
+                .filter(|p| p.is_dir())
+                .take(6)
+                .cloned()
+                .collect();
+            if !folder_recents.is_empty() {
                 ui.add_space(18.0);
-                ui.label("Recent");
-                for path in recents.iter().take(6) {
+                ui.label("Recent folders");
+                for path in &folder_recents {
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.display().to_string());
-                    let icon = if Path::new(path).is_dir() {
-                        "📁"
-                    } else if canvas_io::is_canvas_file(path) {
-                        "🖹"
-                    } else {
-                        "🖼"
-                    };
                     if ui
-                        .link(format!("{icon} {name}"))
+                        .link(format!("📁 {name}"))
                         .on_hover_text(path.display().to_string())
                         .clicked()
                     {

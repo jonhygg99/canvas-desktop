@@ -341,15 +341,20 @@ mod native {
             for (item, _) in self.recent_items.drain(..) {
                 let _ = self.recent_menu.remove(&item);
             }
-            for (i, path) in recents.iter().enumerate() {
+            let mut idx = 0;
+            for path in recents {
+                if !path.is_dir() {
+                    continue;
+                }
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                let item = MenuItem::with_id(format!("recent_{i}"), name, true, None);
+                let item = MenuItem::with_id(format!("recent_{idx}"), name, true, None);
                 if self.recent_menu.append(&item).is_ok() {
                     self.recent_items.push((item, path.clone()));
                 }
+                idx += 1;
             }
         }
     }
@@ -396,7 +401,12 @@ pub fn menu_bar_ui(
                 action = Some(MenuAction::OpenFolder);
             }
             ui.menu_button("Open Recent", |ui| {
+                let mut shown = false;
                 for path in recents {
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    shown = true;
                     let name = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
@@ -404,6 +414,9 @@ pub fn menu_bar_ui(
                     if ui.button(name).clicked() {
                         action = Some(MenuAction::OpenRecent(path.clone()));
                     }
+                }
+                if !shown {
+                    ui.add_enabled(false, egui::Button::new("No recent folders"));
                 }
             });
             if ui.button("Close Project").clicked() {

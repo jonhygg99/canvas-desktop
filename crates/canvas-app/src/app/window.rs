@@ -14,6 +14,9 @@ use super::{App, View};
 impl App {
     /// Apunta lo abierto en los recientes: ajustes, menú y Jump List del SO.
     pub(super) fn push_recent(&mut self, path: &std::path::Path) {
+        if !path.is_dir() {
+            return;
+        }
         let path = path.to_owned();
         self.settings.recent_files.retain(|p| p != &path);
         self.settings.recent_files.insert(0, path);
