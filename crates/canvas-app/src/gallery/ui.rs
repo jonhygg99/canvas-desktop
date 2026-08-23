@@ -36,6 +36,64 @@ const TITLE_HEIGHT: f32 = 20.0;
 const TITLE_TO_THUMB_GAP: f32 = 2.0;
 const CARD_BOTTOM_PADDING: f32 = 6.0;
 
+/// Styled "✚" cell for creating a new blank canvas, inserted at the
+/// end of the gallery grid. Its title and thumbnail area match regular
+/// gallery pages.
+fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool {
+    let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return response.clicked();
+    }
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let painter = ui.painter();
+    let name_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(8.0, 4.0),
+        egui::vec2(rect.width() - 16.0, TITLE_HEIGHT - 4.0),
+    );
+    painter.text(
+        name_rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        "New design",
+        egui::FontId::proportional(12.5),
+        ui.visuals().text_color(),
+    );
+
+    let thumbnail_width = rect.width() - THUMB_INSET * 2.0;
+    let thumbnail_height = thumbnail_width / THUMB_ASPECT_RATIO;
+    let thumb_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(THUMB_INSET, TITLE_HEIGHT + TITLE_TO_THUMB_GAP),
+        egui::vec2(thumbnail_width, thumbnail_height),
+    );
+    // Give the add tile the same visual footprint as the regular gallery
+    // thumbnails while keeping its title outside the outlined area.
+    let add_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 2.0, thumb_rect.top()),
+        egui::pos2(rect.right() - 2.0, thumb_rect.bottom()),
+    );
+    if response.hovered() {
+        painter.rect_filled(add_rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    painter.rect_stroke(
+        add_rect,
+        6.0,
+        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+        egui::StrokeKind::Inside,
+    );
+    let plus_size = (thumbnail_height * 0.4).max(18.0);
+    painter.text(
+        add_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "✚",
+        egui::FontId::proportional(plus_size),
+        ui.visuals().weak_text_color(),
+    );
+    response
+        .on_hover_text("Create a new blank canvas in this folder")
+        .clicked()
+}
+
 pub(super) fn gallery_column_count(available_width: f32) -> usize {
     ((available_width + CELL_GAP) / (PREFERRED_CELL_WIDTH + CELL_GAP))
         .floor()
@@ -518,18 +576,20 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         }
         if state.items.is_empty() {
             ui.vertical_centered(|ui| {
-                ui.add_space(40.0);
+                ui.add_space(20.0);
                 ui.label("This folder is empty.");
-                ui.weak("Click ✚ New design to start one, or open an image.");
+                ui.weak("Create a blank canvas or open an image.");
             });
-            return;
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             let columns = gallery_column_count(ui.available_width());
             let cell_size = gallery_cell_size(ui.available_width(), columns);
             ui.spacing_mut().item_spacing.y = ROW_GAP;
-            for row in state.items.chunks(columns) {
+            let row_count = state.items.chunks(columns).len();
+            let mut add_cell_rendered = false;
+            for (row_index, row) in state.items.chunks(columns).enumerate() {
+                let is_last_row = row_index + 1 == row_count;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = CELL_GAP;
                     for item in row {
@@ -543,8 +603,23 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                             action = Some(cell_action);
                         }
                     }
+                    if is_last_row && row.len() < columns {
+                        add_cell_rendered = true;
+                        if gallery_add_cell(ui, cell_size) {
+                            action = Some(GalleryAction::NewDesign);
+                        }
+                    }
                 });
                 ui.add_space(CELL_GAP);
+            }
+
+            if !add_cell_rendered {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = CELL_GAP;
+                    if gallery_add_cell(ui, cell_size) {
+                        action = Some(GalleryAction::NewDesign);
+                    }
+                });
             }
         });
     });
