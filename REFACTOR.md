@@ -1,6 +1,6 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **En curso** — Fases 0-8 hechas.
+Estado: **Terminado** — las ocho fases hechas y verificadas.
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -271,3 +271,39 @@ habría hecho el diff mucho más difícil de revisar.
 
 Efecto secundario bueno: `EditorFrame` baja de 25 préstamos sueltos a 11,
 porque lo que ya viaja agrupado en `App` viaja agrupado también aquí.
+
+### Cierre
+
+Un archivo se salió del plan aprobado y aun así estaba por encima del objetivo:
+`layers_panel.rs` (481) → `layers_panel/{mod,ops,row}.rs`. Se partió también,
+porque el objetivo declarado era del workspace entero, no de la lista de
+archivos.
+
+## Resultado
+
+| | Antes | Después |
+|---|---|---|
+| Archivo de **código** más largo | 1208 (`deck.rs`) | **396** (`app/persistence.rs`) |
+| Función más larga | 705 (`editor_view_ui`) | ~180 (`append_document`, excepción documentada) |
+| Parámetros de `editor_view_ui` | 32 | 6 |
+| Campos planos de `App` | 35 | 15 + 4 sub-estados |
+| Archivos `.rs` en el workspace | 76 | 118 |
+
+Los dos únicos archivos que siguen por encima de 400 líneas son de tests puros
+(`canvas-core/src/command/tests.rs`, 660; `canvas-app/src/deck/tests.rs`, 577),
+exentos por la regla desde el principio.
+
+Verificación final: **208 tests**, `clippy -D warnings` limpio, `fmt --check`
+limpio, los **cinco ejemplos headless de GPU** en verde sobre GPU real, y la
+app arrancando sobre una imagen suelta y sobre una carpeta sin panics.
+
+### Lo que queda pendiente para el usuario
+
+1. **Smoke test manual completo** (el guion de arriba). Un agente puede lanzar
+   la app y comprobar que no revienta, pero no puede hacer clic: guardar,
+   exportar, deshacer, arrastrar capas y saltar de lienzo hay que probarlos a
+   mano.
+2. **El bug de `append_document`** documentado en la Fase 2: sigue ahí, a
+   propósito. Merece su propio arreglo con test de regresión.
+3. `.refactor-tools/` son los scripts de troceado que se usaron. Se dejan
+   commiteados por trazabilidad; se pueden borrar sin más.
