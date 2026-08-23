@@ -3,19 +3,14 @@
 //! Este crate no sabe nada de la UI ni del sistema operativo, y es testeable
 //! sin abrir ninguna ventana.
 
-mod align;
 mod command;
 mod document;
 mod error;
+mod geometry;
 mod layer;
 mod selection;
 mod snap;
 
-pub use align::{
-    align_horizontal, align_vertical, contain_transform, cover_transform, resize_around_center,
-    resize_from_corner, resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform,
-    Corner, HAlign, VAlign,
-};
 pub use command::{
     Command, Composite, Group, History, InsertLayer, RemoveLayer, Rename, Reorder, SetBlur,
     SetContent, SetCrop, SetEffects, SetLocked, SetOpacity, SetPageSize, SetShadow, SetTransform,
@@ -23,6 +18,11 @@ pub use command::{
 };
 pub use document::{Document, Page};
 pub use error::CoreError;
+pub use geometry::{
+    align_horizontal, align_vertical, contain_transform, cover_transform, resize_around_center,
+    resize_from_corner, resize_rotated_from_corner, trim_crop_from_corner, uncrop_transform,
+    Corner, HAlign, VAlign,
+};
 pub use layer::{
     CropRect, Effects, GroupContent, ImageContent, Layer, LayerContent, LayerId, Shadow,
     ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform,

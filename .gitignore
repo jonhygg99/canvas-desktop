@@ -1,3 +1,6 @@
 .devswarm-temp/
 /target
 /Canvas Desktop.app
+
+# scaffolding del refactor
+.refactor-tools/__pycache__/
