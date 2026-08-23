@@ -409,6 +409,19 @@ impl App {
                     match result {
                         Ok(()) if open => {
                             if let Some(path) = created {
+                                // New design comes from the gallery. Carry
+                                // every visible file into the editor deck,
+                                // then activate the page just created.
+                                if let View::Gallery(g) = &mut self.view {
+                                    let kind = if canvas_io::is_canvas_file(&path) {
+                                        crate::gallery::ItemKind::Design
+                                    } else {
+                                        crate::gallery::ItemKind::Image
+                                    };
+                                    let mut seed = deck::DeckSeed::from_gallery(g);
+                                    seed.push_path(path.clone(), kind);
+                                    self.pending_deck = Some(seed);
+                                }
                                 open_after = Some(Nav::Open(path));
                             }
                         }

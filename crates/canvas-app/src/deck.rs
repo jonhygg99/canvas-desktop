@@ -385,6 +385,24 @@ impl DeckSeed {
             items,
         }
     }
+
+    /// Añade un page recién creado a la semilla y deja todos los demás
+    /// archivos de la carpeta disponibles en la baraja del editor.
+    pub fn push_path(&mut self, path: PathBuf, kind: ItemKind) {
+        if !self.items.iter().any(|item| item.path == path) {
+            self.items.push(SeedItem {
+                name: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                path,
+                kind,
+                mtime: None,
+                thumb: None,
+                thumb_failed: false,
+            });
+        }
+    }
 }
 
 fn idle_slot(id: u64, path: PathBuf, mtime: Option<SystemTime>, order_hint: u64) -> Slot {
