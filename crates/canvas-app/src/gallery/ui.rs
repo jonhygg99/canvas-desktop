@@ -26,8 +26,6 @@ fn reveal_in_explorer(path: &Path) {
 #[cfg(not(windows))]
 fn reveal_in_explorer(_path: &Path) {}
 
-const MIN_CELL_WIDTH: f32 = 140.0;
-const PREFERRED_CELL_WIDTH: f32 = 156.0;
 const CELL_GAP: f32 = 8.0;
 const ROW_GAP: f32 = 4.0;
 const THUMB_INSET: f32 = 8.0;
@@ -94,16 +92,11 @@ fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool {
         .clicked()
 }
 
-pub(super) fn gallery_column_count(available_width: f32) -> usize {
-    ((available_width + CELL_GAP) / (PREFERRED_CELL_WIDTH + CELL_GAP))
-        .floor()
-        .max(1.0) as usize
-}
-
 pub(super) fn gallery_cell_size(available_width: f32, columns: usize) -> egui::Vec2 {
+    let columns = columns.max(1);
     let width = ((available_width - CELL_GAP * (columns.saturating_sub(1) as f32))
         / columns as f32)
-        .max(MIN_CELL_WIDTH);
+        .max(1.0);
     let thumbnail_height = (width - THUMB_INSET * 2.0) / THUMB_ASPECT_RATIO;
     egui::vec2(
         width,
@@ -550,6 +543,21 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                     action = Some(GalleryAction::SortChanged(sort));
                 }
                 ui.add_space(12.0);
+                if ui
+                    .small_button("+")
+                    .on_hover_text("Show more designs per line")
+                    .clicked()
+                {
+                    state.gallery_columns = (state.gallery_columns + 1).min(12);
+                }
+                ui.label(format!("{} por línea", state.gallery_columns));
+                if ui
+                    .small_button("−")
+                    .on_hover_text("Show fewer designs per line")
+                    .clicked()
+                {
+                    state.gallery_columns = state.gallery_columns.saturating_sub(1).max(1);
+                }
                 if ui.button("✚ New design").clicked() {
                     action = Some(GalleryAction::NewDesign);
                 }
@@ -583,7 +591,7 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let columns = gallery_column_count(ui.available_width());
+            let columns = state.gallery_columns.clamp(1, 12);
             let cell_size = gallery_cell_size(ui.available_width(), columns);
             ui.spacing_mut().item_spacing.y = ROW_GAP;
             let row_count = state.items.chunks(columns).len();

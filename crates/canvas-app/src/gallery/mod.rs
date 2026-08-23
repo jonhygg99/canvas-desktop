@@ -86,6 +86,8 @@ pub struct GalleryState {
     pub items: Vec<GalleryItem>,
     pub scanned: bool,
     pub sort: GallerySort,
+    /// Número de diseños que se muestran por línea (no cambia los archivos).
+    pub gallery_columns: usize,
     /// Última celda marcada con clic derecho: lo que copia Ctrl+C.
     pub selected: Option<PathBuf>,
     /// Renombrado en curso: ruta y texto editable (solo el nombre base, sin
@@ -150,6 +152,7 @@ impl GalleryState {
             items: Vec::new(),
             scanned: false,
             sort,
+            gallery_columns: 5,
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
@@ -176,6 +179,7 @@ impl GalleryState {
             items: Vec::new(),
             scanned: false,
             sort,
+            gallery_columns: 5,
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
@@ -324,7 +328,7 @@ fn slot_contents() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::ui::{gallery_cell_size, gallery_column_count};
+    use super::ui::gallery_cell_size;
     use super::{next_folder_panel_side, FolderNavigation};
     use crate::deck::StripSide;
     use std::path::PathBuf;
@@ -339,9 +343,7 @@ mod tests {
 
     #[test]
     fn responsive_grid_fills_the_available_width() {
-        let columns = gallery_column_count(900.0);
-        let size = gallery_cell_size(900.0, columns);
-        assert_eq!(columns, 5);
+        let size = gallery_cell_size(900.0, 5);
         assert!((size.x - 173.6).abs() < f32::EPSILON);
         assert!(size.y < size.x);
     }
