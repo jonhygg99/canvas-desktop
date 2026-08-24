@@ -145,8 +145,10 @@ fn folder_display_name(path: &std::path::Path) -> String {
 
 /// Una fila clicable para una carpeta: icono de carpeta a la izquierda,
 /// nombre centrado, botón de chincheta a la derecha (solo visible al
-/// hover), fondo suave al hover, tooltip con la ruta completa. Mismo
-/// ancho que los botones principales.
+/// hover), fondo suave al hover, tooltip con la ruta completa.
+/// La chincheta de la derecha es un botón independiente (no incluido
+/// en el área del clic principal): así recibe sus propios clics y
+/// su propio fondo al hover. Mismo ancho que los botones principales.
 ///
 /// `is_pinned` controla si el icono de chincheta aparece lleno
 /// (anclada) o vacío (no anclada).
@@ -162,45 +164,54 @@ fn recent_folder_ui(
     let pin_sz = 12.0;
     let pad_y = 6.0;
     let gap = 8.0;
+    let pin_hit_area = 24.0; // área clicable generosa para la chincheta
 
     let galley = ui
         .painter()
         .layout_no_wrap(name.to_owned(), font.clone(), visuals.text_color());
     let height = (galley.size().y + pad_y * 2.0).max(28.0);
-    // Ancho con espacio para el pin a la derecha
-    let left_pad = 14.0;
-    let right_pad = 14.0;
     let width = BUTTON_W;
-    let rect = egui::Rect::from_min_size(
+    let body_w = width - pin_hit_area;
+
+    // ── Layout horizontal: cuerpo + pin ──
+    let row_rect = egui::Rect::from_min_size(
         ui.cursor().min,
         egui::vec2(width, height),
     );
-    let (rect, mut resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
-    let hovered = resp.hovered();
-    let clicked = resp.clicked();
+    let (_row_rect, _row_resp) = ui.allocate_exact_size(row_rect.size(), egui::Sense::hover());
 
+    // Fondo al hover de toda la fila
+    let hovered = _row_resp.hovered();
     if hovered {
         ui.painter()
-            .rect_filled(rect, 6.0, visuals.widgets.hovered.weak_bg_fill);
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            .rect_filled(row_rect, 6.0, visuals.widgets.hovered.weak_bg_fill);
     }
 
-    let color = if hovered {
+    // ── Cuerpo (icono + nombre, clicable para abrir) ──
+    let body_rect = egui::Rect::from_min_size(
+        row_rect.left_top(),
+        egui::vec2(body_w, height),
+    );
+    let body_resp = ui.interact(body_rect, ui.next_auto_id(), egui::Sense::click());
+    let body_hovered = body_resp.hovered();
+    let body_clicked = body_resp.clicked();
+
+    let color = if body_hovered {
         visuals.widgets.active.text_color()
     } else {
         visuals.text_color()
     };
 
-    // ── Icono de carpeta ──
-    let folder_icon_x = rect.left() + left_pad + icon_sz / 2.0;
+    // Icono de carpeta
+    let left_pad = 14.0;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(folder_icon_x, rect.center().y),
+        egui::pos2(body_rect.left() + left_pad + icon_sz / 2.0, body_rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
 
-    // ── Nombre ──
-    let text_origin = egui::pos2(icon_rect.right() + gap, rect.center().y);
+    // Nombre
+    let text_origin = egui::pos2(icon_rect.right() + gap, body_rect.center().y);
     ui.painter().text(
         text_origin,
         egui::Align2::LEFT_CENTER,
@@ -209,57 +220,56 @@ fn recent_folder_ui(
         color,
     );
 
-    // ── Chincheta (solo al hover, a la derecha del todo) ──
-    let pin_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - right_pad - pin_sz / 2.0, rect.center().y),
+    // ── Chincheta (widget propio con fondo al hover) ──
+    let pin_area = egui::Rect::from_min_size(
+        egui::pos2(row_rect.left() + body_w, row_rect.top()),
+        egui::vec2(pin_hit_area, height),
+    );
+    let pin_resp = ui.interact(pin_area, ui.next_auto_id(), egui::Sense::click());
+    let pin_hovered = pin_resp.hovered();
+    let pin_clicked = pin_resp.clicked();
+
+    let pin_center = egui::Rect::from_center_size(
+        pin_area.center(),
         egui::vec2(pin_sz, pin_sz),
     );
-    // Usamos icon_button_ui dentro de un child_ui no, pintamos manual:
-    // el pin va pintado aquí mismo y se detecta el clic con press_origin.
-    if hovered {
-        // ¿El ratón está sobre el pin?
-        let over_pin = ui
-            .input(|i| i.pointer.hover_pos())
-            .map_or(false, |p| pin_rect.contains(p));
-        let pin_c = if over_pin {
-            visuals.widgets.active.text_color()
-        } else {
-            color
-        };
-        draw_pin_icon(ui.painter(), pin_rect, pin_c, is_pinned);
 
-        if over_pin {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            if ui.input(|i| {
-                i.pointer.primary_clicked()
-                    && i.pointer.press_origin().map_or(false, |o| pin_rect.contains(o))
-            }) {
-                if is_pinned {
-                    return Some(WelcomeAction::UnpinRecent(path.to_owned()));
-                } else {
-                    return Some(WelcomeAction::PinRecent(path.to_owned()));
-                }
-            }
-        }
-    } else if is_pinned {
-        // Siempre mostrar el pin lleno aunque no haya hover
+    if pin_hovered {
+        // Fondo suave propio
+        ui.painter()
+            .rect_filled(pin_area, 4.0, visuals.widgets.hovered.weak_bg_fill);
         draw_pin_icon(
             ui.painter(),
-            pin_rect,
+            pin_center,
+            visuals.widgets.active.text_color(),
+            is_pinned,
+        );
+    } else if is_pinned {
+        // Siempre visible, apagado
+        draw_pin_icon(
+            ui.painter(),
+            pin_center,
             visuals.widgets.inactive.text_color(),
             true,
         );
+    } else if hovered {
+        // Fila en hover pero no el pin: pin sutil
+        draw_pin_icon(ui.painter(), pin_center, color, false);
     }
 
-    resp = resp.on_hover_text(path.display().to_string());
+    if pin_hovered {
+        let tip = if is_pinned { "Unpin" } else { "Pin" };
+        pin_resp.on_hover_text(tip);
+    }
+    _row_resp.on_hover_text(path.display().to_string());
 
-    // ── Menú contextual ──
+    // ── Menú contextual sobre el cuerpo ──
     let context_action = Rc::new(RefCell::new(None));
     let pin_label = if is_pinned { "Unpin" } else { "Pin" };
     let path_clone = path.to_owned();
     {
         let context_action = context_action.clone();
-        resp.context_menu(move |ui| {
+        body_resp.context_menu(move |ui| {
             if ui.button(pin_label).clicked() {
                 *context_action.borrow_mut() = if is_pinned {
                     Some(WelcomeAction::UnpinRecent(path_clone.clone()))
@@ -279,7 +289,15 @@ fn recent_folder_ui(
     if let Some(a) = context_action.take() {
         return Some(a);
     }
-    if clicked {
+    // Clic en la chincheta → toggle
+    if pin_clicked {
+        if is_pinned {
+            return Some(WelcomeAction::UnpinRecent(path.to_owned()));
+        } else {
+            return Some(WelcomeAction::PinRecent(path.to_owned()));
+        }
+    }
+    if body_clicked {
         return Some(WelcomeAction::OpenRecent(path.to_owned()));
     }
     None
