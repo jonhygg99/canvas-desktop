@@ -242,6 +242,9 @@ pub struct AppSettings {
     pub gallery_folder_panel_side: StripSide,
     /// Archivos y carpetas abiertos recientemente (el más nuevo primero).
     pub recent_files: Vec<PathBuf>,
+    /// Carpetas ancladas: siempre aparecen al principio de la lista de
+    /// recientes aunque no se hayan abierto hace poco.
+    pub pinned_folders: Vec<PathBuf>,
     /// Tema de la interfaz.
     pub theme: ThemeChoice,
     /// Tamaño de página del último documento abierto o creado: lo hereda el
@@ -273,6 +276,7 @@ impl Default for AppSettings {
             gallery_sort: GallerySort::default(),
             gallery_folder_panel_side: StripSide::default(),
             recent_files: Vec::new(),
+            pinned_folders: Vec::new(),
             theme: ThemeChoice::default(),
             last_page_size: (1920.0, 1080.0),
             deck_axis: DeckAxis::default(),

@@ -305,16 +305,20 @@ impl eframe::App for App {
         match &mut self.view {
             View::Welcome { error } => {
                 let error = error.clone();
-                let before_len = self.settings.recent_files.len();
+                let before_recent = self.settings.recent_files.len();
+                let before_pin = self.settings.pinned_folders.len();
                 open_next = views::welcome_view_ui(
                     ui,
                     error.as_deref(),
                     &mut self.settings.recent_files,
+                    &mut self.settings.pinned_folders,
                     &mut self.show_settings,
                     &self.tx,
                     &ctx,
                 );
-                if self.settings.recent_files.len() != before_len {
+                if self.settings.recent_files.len() != before_recent
+                    || self.settings.pinned_folders.len() != before_pin
+                {
                     self.settings.save_in_background();
                     if let Some(m) = self.menus.as_mut() {
                         m.set_recents(&self.settings.recent_files);

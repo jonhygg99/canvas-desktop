@@ -732,3 +732,22 @@ pub fn draw_blur_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
     painter.circle_filled(c + egui::vec2(s * 0.26, 0.0), s * 0.10, color);
     painter.circle_filled(c + egui::vec2(s * 0.02, -s * 0.02), s * 0.16, color);
 }
+
+/// Chincheta (pin): cabeza redonda arriba con la aguja vertical hacia
+/// abajo. Para fijar una carpeta reciente arriba de la lista.
+pub fn draw_pin_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32, filled: bool) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height());
+    let head_c = c - egui::vec2(0.0, s * 0.12);
+    let head_r = s * 0.22;
+    if filled {
+        painter.circle_filled(head_c, head_r, color);
+    } else {
+        painter.circle_stroke(head_c, head_r, stroke(color));
+    }
+    // Aguja
+    painter.line_segment(
+        [head_c + egui::vec2(0.0, head_r), c + egui::vec2(0.0, s * 0.35)],
+        stroke(color),
+    );
+}

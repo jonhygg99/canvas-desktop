@@ -17,12 +17,13 @@ pub(in crate::app) fn welcome_view_ui(
     ui: &mut egui::Ui,
     error: Option<&str>,
     recent_files: &mut Vec<PathBuf>,
+    pinned_folders: &mut Vec<PathBuf>,
     show_settings: &mut bool,
     tx: &Sender<AppMsg>,
     ctx: &egui::Context,
 ) -> Option<Nav> {
     let mut open_next = None;
-    match welcome::show(ui, error, recent_files) {
+    match welcome::show(ui, error, recent_files, pinned_folders) {
         Some(welcome::WelcomeAction::NewProject) => {
             open_next = Some(Nav::NewDesign);
         }
@@ -40,6 +41,14 @@ pub(in crate::app) fn welcome_view_ui(
         }
         Some(welcome::WelcomeAction::RemoveRecent(path)) => {
             recent_files.retain(|p| p != &path);
+        }
+        Some(welcome::WelcomeAction::PinRecent(path)) => {
+            if !pinned_folders.contains(&path) {
+                pinned_folders.insert(0, path);
+            }
+        }
+        Some(welcome::WelcomeAction::UnpinRecent(path)) => {
+            pinned_folders.retain(|p| p != &path);
         }
         None => {}
     }

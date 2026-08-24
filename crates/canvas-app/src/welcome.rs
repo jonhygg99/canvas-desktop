@@ -1,11 +1,14 @@
 //! Pantalla de bienvenida cuando no hay ningún archivo abierto.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_doc_icon, draw_folder_icon, draw_gear_icon, draw_sparkle_icon, icon_text_button_ui,
+    draw_doc_icon, draw_folder_icon, draw_gear_icon, draw_pin_icon, draw_sparkle_icon,
+    icon_text_button_ui,
 };
 
 const BUTTON_W: f32 = 220.0;
@@ -18,9 +21,16 @@ pub enum WelcomeAction {
     OpenSettings,
     OpenRecent(PathBuf),
     RemoveRecent(PathBuf),
+    PinRecent(PathBuf),
+    UnpinRecent(PathBuf),
 }
 
-pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Option<WelcomeAction> {
+pub fn show(
+    ui: &mut egui::Ui,
+    error: Option<&str>,
+    recents: &[PathBuf],
+    pinned: &[PathBuf],
+) -> Option<WelcomeAction> {
     let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
@@ -69,23 +79,34 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
                 action = Some(WelcomeAction::OpenFolder);
             }
 
+            // ── Carpetas ancladas (siempre visibles, primero) ──
+            let show_pinned = !pinned.is_empty();
+            if show_pinned {
+                ui.add_space(24.0);
+                ui.label("Pinned");
+                ui.add_space(8.0);
+                for path in pinned {
+                    let name = folder_display_name(path);
+                    if let Some(a) = recent_folder_ui(ui, path, &name, true) {
+                        action = Some(a);
+                    }
+                }
+            }
+
+            // ── Carpetas recientes (no ancladas) ──
             let folder_recents: Vec<_> = recents
                 .iter()
-                .filter(|p| p.is_dir())
+                .filter(|p| p.is_dir() && !pinned.iter().any(|pin| pin == *p))
                 .take(6)
                 .cloned()
                 .collect();
             if !folder_recents.is_empty() {
-                ui.add_space(24.0);
+                ui.add_space(if show_pinned { 16.0 } else { 24.0 });
                 ui.label("Recent folders");
                 ui.add_space(8.0);
                 for path in &folder_recents {
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| path.display().to_string());
-                    let action_out = recent_folder_ui(ui, path, &name);
-                    if let Some(a) = action_out {
+                    let name = folder_display_name(path);
+                    if let Some(a) = recent_folder_ui(ui, path, &name, false) {
                         action = Some(a);
                     }
                 }
@@ -116,18 +137,29 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
     action
 }
 
-/// Una fila clicable para una carpeta reciente: icono de carpeta a la
-/// izquierda, nombre a la derecha, fondo suave al hover, esquinas
-/// redondeadas, y tooltip con la ruta completa. Mismo ancho que los
-/// botones principales para quedar alineado visualmente.
+fn folder_display_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Una fila clicable para una carpeta: icono de carpeta a la izquierda,
+/// nombre centrado, botón de chincheta a la derecha (solo visible al
+/// hover), fondo suave al hover, tooltip con la ruta completa. Mismo
+/// ancho que los botones principales.
+///
+/// `is_pinned` controla si el icono de chincheta aparece lleno
+/// (anclada) o vacío (no anclada).
 fn recent_folder_ui(
     ui: &mut egui::Ui,
     path: &std::path::Path,
     name: &str,
+    is_pinned: bool,
 ) -> Option<WelcomeAction> {
     let visuals = ui.visuals().clone();
     let font = egui::FontId::proportional(13.0);
     let icon_sz = 14.0;
+    let pin_sz = 12.0;
     let pad_y = 6.0;
     let gap = 8.0;
 
@@ -135,8 +167,9 @@ fn recent_folder_ui(
         .painter()
         .layout_no_wrap(name.to_owned(), font.clone(), visuals.text_color());
     let height = (galley.size().y + pad_y * 2.0).max(28.0);
-    let text_w = galley.size().x;
-    let content_w = icon_sz + gap + text_w;
+    // Ancho con espacio para el pin a la derecha
+    let left_pad = 14.0;
+    let right_pad = 14.0;
     let width = BUTTON_W;
     let rect = egui::Rect::from_min_size(
         ui.cursor().min,
@@ -158,34 +191,92 @@ fn recent_folder_ui(
         visuals.text_color()
     };
 
-    let start_x = rect.left() + (width - content_w) / 2.0;
-
+    // ── Icono de carpeta ──
+    let folder_icon_x = rect.left() + left_pad + icon_sz / 2.0;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(start_x + icon_sz / 2.0, rect.center().y),
+        egui::pos2(folder_icon_x, rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
 
+    // ── Nombre ──
+    let text_origin = egui::pos2(icon_rect.right() + gap, rect.center().y);
     ui.painter().text(
-        egui::pos2(start_x + icon_sz + gap, rect.center().y),
+        text_origin,
         egui::Align2::LEFT_CENTER,
         name,
         font,
         color,
     );
 
+    // ── Chincheta (solo al hover, a la derecha del todo) ──
+    let pin_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - right_pad - pin_sz / 2.0, rect.center().y),
+        egui::vec2(pin_sz, pin_sz),
+    );
+    // Usamos icon_button_ui dentro de un child_ui no, pintamos manual:
+    // el pin va pintado aquí mismo y se detecta el clic con press_origin.
+    if hovered {
+        // ¿El ratón está sobre el pin?
+        let over_pin = ui
+            .input(|i| i.pointer.hover_pos())
+            .map_or(false, |p| pin_rect.contains(p));
+        let pin_c = if over_pin {
+            visuals.widgets.active.text_color()
+        } else {
+            color
+        };
+        draw_pin_icon(ui.painter(), pin_rect, pin_c, is_pinned);
+
+        if over_pin {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if ui.input(|i| {
+                i.pointer.primary_clicked()
+                    && i.pointer.press_origin().map_or(false, |o| pin_rect.contains(o))
+            }) {
+                if is_pinned {
+                    return Some(WelcomeAction::UnpinRecent(path.to_owned()));
+                } else {
+                    return Some(WelcomeAction::PinRecent(path.to_owned()));
+                }
+            }
+        }
+    } else if is_pinned {
+        // Siempre mostrar el pin lleno aunque no haya hover
+        draw_pin_icon(
+            ui.painter(),
+            pin_rect,
+            visuals.widgets.inactive.text_color(),
+            true,
+        );
+    }
+
     resp = resp.on_hover_text(path.display().to_string());
 
-    // ── Menú contextual: eliminar de recientes ──
-    let mut context_action = None;
-    resp.context_menu(|ui| {
-        if ui.button("Remove from recents").clicked() {
-            context_action = Some(WelcomeAction::RemoveRecent(path.to_owned()));
-            ui.close();
-        }
-    });
+    // ── Menú contextual ──
+    let context_action = Rc::new(RefCell::new(None));
+    let pin_label = if is_pinned { "Unpin" } else { "Pin" };
+    let path_clone = path.to_owned();
+    {
+        let context_action = context_action.clone();
+        resp.context_menu(move |ui| {
+            if ui.button(pin_label).clicked() {
+                *context_action.borrow_mut() = if is_pinned {
+                    Some(WelcomeAction::UnpinRecent(path_clone.clone()))
+                } else {
+                    Some(WelcomeAction::PinRecent(path_clone.clone()))
+                };
+                ui.close();
+            }
+            if ui.button("Remove from recents").clicked() {
+                *context_action.borrow_mut() =
+                    Some(WelcomeAction::RemoveRecent(path_clone.clone()));
+                ui.close();
+            }
+        });
+    }
 
-    if let Some(a) = context_action {
+    if let Some(a) = context_action.take() {
         return Some(a);
     }
     if clicked {
