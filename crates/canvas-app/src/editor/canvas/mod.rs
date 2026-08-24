@@ -202,10 +202,12 @@ pub fn canvas_ui(
         state,
         deck,
         ui,
-        rect,
-        &response,
-        &visible,
-        space_down,
+        &picking::PressGeometry {
+            rect,
+            response: &response,
+            visible: &visible,
+            space_down,
+        },
         ctx,
         &mut action,
     );

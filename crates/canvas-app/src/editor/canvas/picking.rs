@@ -13,15 +13,20 @@ use super::super::viewport::{page_to_screen, screen_to_page};
 use super::super::EditorState;
 use super::{CanvasAction, CanvasContext};
 
-#[allow(clippy::too_many_arguments)]
+/// Geometría de la pulsación y el viewport que `handle_press` necesita,
+/// agrupada para reducir la firma de 9 a 6 parámetros (bajo el umbral).
+pub(super) struct PressGeometry<'a> {
+    pub rect: egui::Rect,
+    pub response: &'a egui::Response,
+    pub visible: &'a [usize],
+    pub space_down: bool,
+}
+
 pub(super) fn handle_press(
     state: &mut EditorState,
     deck: &mut Deck,
     ui: &egui::Ui,
-    rect: egui::Rect,
-    response: &egui::Response,
-    visible: &[usize],
-    space_down: bool,
+    geo: &PressGeometry<'_>,
     ctx: &CanvasContext,
     action: &mut Option<CanvasAction>,
 ) {
@@ -38,7 +43,10 @@ pub(super) fn handle_press(
     // OTRO lienzo agarraba y movía una capa del documento activo — la
     // «Position X» que cambiaba sola en el panel de propiedades sin que el
     // usuario tocase ninguna capa.
-    if ui.input(|i| i.pointer.primary_pressed()) && !space_down && response.contains_pointer() {
+    if ui.input(|i| i.pointer.primary_pressed())
+        && !geo.space_down
+        && geo.response.contains_pointer()
+    {
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             // Cabecera de CUALQUIER lienzo visible (activo o no) se
             // comprueba PRIMERO, en espacio de pantalla — antes del hit-test
@@ -47,7 +55,7 @@ pub(super) fn handle_press(
             // `DeckRect`). Un acierto aquí consume la pulsación entera: no
             // cae al hit-test de activación ni a `layer_interaction`.
             let mut header_hit = false;
-            for &idx in visible {
+            for &idx in geo.visible {
                 if header_hit {
                     break;
                 }
@@ -58,9 +66,9 @@ pub(super) fn handle_press(
                 else {
                     continue;
                 };
-                let top_left = page_to_screen(&state.viewport, rect, s_rect.x, s_rect.y);
+                let top_left = page_to_screen(&state.viewport, geo.rect, s_rect.x, s_rect.y);
                 let top_right =
-                    page_to_screen(&state.viewport, rect, s_rect.x + s_rect.w, s_rect.y);
+                    page_to_screen(&state.viewport, geo.rect, s_rect.x + s_rect.w, s_rect.y);
                 let Some(header) = slot_header_layout(top_left.x, top_right.x, top_left.y) else {
                     continue;
                 };
@@ -109,7 +117,7 @@ pub(super) fn handle_press(
             if header_hit {
                 state.press_on_other_slot = true;
             } else {
-                let (dx, dy) = screen_to_page(&state.viewport, rect, pos);
+                let (dx, dy) = screen_to_page(&state.viewport, geo.rect, pos);
                 let target = deck.slots.iter().position(|s| {
                     dx >= s.rect.x
                         && dx <= s.rect.x + s.rect.w
