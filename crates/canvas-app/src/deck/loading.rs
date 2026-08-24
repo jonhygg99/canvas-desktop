@@ -17,7 +17,7 @@ impl Deck {
     /// precarga se quedaría pedido para siempre, porque nada dispararía
     /// jamás su carga. El destino de `jump_to` va primero (es lo que el
     /// usuario está esperando activamente), el resto por cercanía a la
-    /// activa como antes. Respeta `MAX_INFLIGHT_LOADS`. Devuelve las rutas
+    /// activa como antes. Respeta el límite de cargas en vuelo. Devuelve las rutas
     /// para las que `App` debe lanzar `loader::spawn_load_slot`; las marca
     /// `Loading`.
     pub fn request_loads(&mut self, visible: &[usize]) -> Vec<PathBuf> {
@@ -65,7 +65,7 @@ impl Deck {
         let inflight_limit = configured_inflight_limit().unwrap_or(if memory_pressure {
             1
         } else {
-            MAX_INFLIGHT_LOADS
+            max_inflight_loads()
         });
         for i in candidates {
             let is_jump = Some(i) == jump;
@@ -86,7 +86,7 @@ impl Deck {
     }
 
     /// Una carga (con éxito o sin él) terminó: libera un hueco de
-    /// `MAX_INFLIGHT_LOADS`.
+    /// `max_inflight_loads()`.
     /// ¿Es esta respuesta del hilo de disco para ESTA baraja y no para una
     /// anterior? Entre pedir una carga y recibirla el usuario puede haber
     /// cambiado de carpeta o haber provocado un reescaneo, y la respuesta
@@ -109,10 +109,20 @@ impl Deck {
 /// saltar con `PageUp`/`PageDown` el destino inmediato ya está listo.
 pub(super) const PRELOAD_RADIUS: usize = 2;
 
-/// Cargas simultáneas en vuelo. Cuatro permite precargar el radio completo
-/// (PRELOAD_RADIUS + preload_all) sin esperar colas, y da margen para
-/// cargar el destino de un `jump_to` lejano sin bloquear la precarga.
-pub(super) const MAX_INFLIGHT_LOADS: usize = 4;
+/// Cargas simultáneas en vuelo, por defecto. Se adapta al número de
+/// núcleos: con 8+ cores sube a 6, con 4-7 se queda en 4, con menos en 2.
+/// Permite precargar el radio completo sin esperar colas, y da margen
+/// para cargar el destino de un `jump_to` lejano sin bloquear la precarga.
+pub(super) fn max_inflight_loads() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    match cores {
+        0..=3 => 2,
+        4..=7 => 4,
+        _ => 6,
+    }
+}
 
 pub(super) fn next_generation() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);

@@ -19,7 +19,7 @@ use eframe::egui_wgpu::RenderState;
 use crate::loader::{self, AppMsg};
 use crate::{editor, export, settings};
 
-use super::persistence::{is_jpeg_path, start_save};
+use super::persistence::{is_jpeg_path, start_save, SaveContext};
 use super::{App, Nav};
 
 impl App {
@@ -158,17 +158,14 @@ pub(super) fn overwrite_modal_ui(
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            start_save(
-                state,
+            let mut sctx = SaveContext {
                 renderer,
                 rs,
                 tx,
                 ctx,
-                path,
-                false,
-                settings.jpeg_quality,
                 ignore_fs_events_until,
-            );
+            };
+            start_save(state, &mut sctx, path, false, settings.jpeg_quality);
         }
         Choice::SaveAs => {
             *overwrite_prompt = None;

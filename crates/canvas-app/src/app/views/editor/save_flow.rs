@@ -11,7 +11,7 @@ use eframe::egui_wgpu::RenderState;
 use crate::{editor, loader};
 
 use super::super::super::frame::EditorFrame;
-use super::super::super::persistence::{start_save, start_save_design};
+use super::super::super::persistence::{start_save, start_save_design, SaveContext};
 use super::super::super::Nav;
 
 pub(super) fn handle_save(
@@ -65,16 +65,16 @@ pub(super) fn handle_save(
             // avisar, ni SVG/GIF que redirigir, así que se saltan ambos
             // modales.
             match state.doc.source_path.clone() {
-                Some(path) => start_save_design(
-                    state,
-                    f.renderer,
-                    rs,
-                    f.tx,
-                    ctx,
-                    path,
-                    false,
-                    f.ignore_fs_events_until,
-                ),
+                Some(path) => {
+                    let mut sctx = SaveContext {
+                        renderer: f.renderer,
+                        rs,
+                        tx: f.tx,
+                        ctx,
+                        ignore_fs_events_until: f.ignore_fs_events_until,
+                    };
+                    start_save_design(state, &mut sctx, path, false);
+                }
                 None => loader::spawn_pick_design_path(
                     Some(state.file_name()),
                     f.tx.clone(),
@@ -101,17 +101,14 @@ pub(super) fn handle_save(
                         f.save.overwrite_dont_ask = false;
                         f.save.overwrite_prompt = Some(path);
                     } else {
-                        start_save(
-                            state,
-                            f.renderer,
+                        let mut sctx = SaveContext {
+                            renderer: f.renderer,
                             rs,
-                            f.tx,
+                            tx: f.tx,
                             ctx,
-                            path,
-                            false,
-                            f.settings.jpeg_quality,
-                            f.ignore_fs_events_until,
-                        );
+                            ignore_fs_events_until: f.ignore_fs_events_until,
+                        };
+                        start_save(state, &mut sctx, path, false, f.settings.jpeg_quality);
                     }
                 }
                 // Sin origen en disco: cae a «Guardar como…».
@@ -126,28 +123,23 @@ pub(super) fn handle_save(
         // diálogo de diseño o del de imagen (ambos acaban en el mismo
         // `SaveAsPicked`).
         if canvas_io::is_canvas_file(&path) {
-            start_save_design(
-                state,
-                f.renderer,
+            let mut sctx = SaveContext {
+                renderer: f.renderer,
                 rs,
-                f.tx,
+                tx: f.tx,
                 ctx,
-                path,
-                true,
-                f.ignore_fs_events_until,
-            );
+                ignore_fs_events_until: f.ignore_fs_events_until,
+            };
+            start_save_design(state, &mut sctx, path, true);
         } else {
-            start_save(
-                state,
-                f.renderer,
+            let mut sctx = SaveContext {
+                renderer: f.renderer,
                 rs,
-                f.tx,
+                tx: f.tx,
                 ctx,
-                path,
-                true,
-                f.settings.jpeg_quality,
-                f.ignore_fs_events_until,
-            );
+                ignore_fs_events_until: f.ignore_fs_events_until,
+            };
+            start_save(state, &mut sctx, path, true, f.settings.jpeg_quality);
         }
     }
 }

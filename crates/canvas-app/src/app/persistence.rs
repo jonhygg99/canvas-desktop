@@ -4,6 +4,8 @@
 //! la galería al volver del editor, resolución de sidecars).
 
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+use std::time::Instant;
 
 use canvas_render::CanvasRenderer;
 use eframe::egui;
@@ -13,6 +15,18 @@ use crate::loader::{self, AppMsg};
 use crate::{deck, editor, export, gallery, settings};
 
 use super::{App, View};
+
+/// Préstamos que las funciones de guardado necesitan del `App` durante
+/// un frame. Agrupa renderer + RenderState + canal + contexto de egui +
+/// el timestamp del watcher — todo lo que `start_save` y `start_save_design`
+/// recibían suelto, reduciendo los parámetros de 9 a 4.
+pub(in crate::app) struct SaveContext<'a> {
+    pub renderer: &'a mut CanvasRenderer,
+    pub rs: &'a RenderState,
+    pub tx: &'a Sender<AppMsg>,
+    pub ctx: &'a egui::Context,
+    pub ignore_fs_events_until: &'a mut Option<Instant>,
+}
 
 impl App {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no
@@ -138,17 +152,12 @@ pub(crate) fn build_slot_doc(
 /// Hornea la página en la GPU (hilo de UI) y delega codificar+escribir a un
 /// hilo de trabajo. Si el horneado falla, el error queda visible en el panel
 /// y el documento intacto.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_save(
     state: &mut editor::EditorState,
-    renderer: &mut CanvasRenderer,
-    rs: &RenderState,
-    tx: &std::sync::mpsc::Sender<AppMsg>,
-    ctx: &egui::Context,
+    sctx: &mut SaveContext,
     path: PathBuf,
     new_source: bool,
     jpeg_quality: u8,
-    ignore_fs_events_until: &mut Option<std::time::Instant>,
 ) {
     if state.saving {
         return;
@@ -159,10 +168,11 @@ pub(super) fn start_save(
     // baraja): sin vaciarlo antes de hornear, la caché de efectos GPU podría
     // reutilizar la textura de un lienzo distinto guardado previamente si
     // sus `LayerId` coinciden (empiezan en 1 en cada `Document`).
-    renderer.forget_scope(canvas_render::FxScope::default());
-    match renderer.bake_page(
-        &rs.device,
-        &rs.queue,
+    sctx.renderer
+        .forget_scope(canvas_render::FxScope::default());
+    match sctx.renderer.bake_page(
+        &sctx.rs.device,
+        &sctx.rs.queue,
         canvas_render::FxScope::default(),
         &state.doc,
         &state.images,
@@ -171,13 +181,7 @@ pub(super) fn start_save(
         Ok((rgba, width, height)) => {
             state.saving = true;
             state.save_error = None;
-            // Arranca la ventana de gracia YA, no cuando llegue `Saved`: el
-            // watcher corre en otro hilo y puede notificar el cambio en disco
-            // (la escritura empieza aquí mismo, en `spawn_save`) antes de que
-            // el hilo de guardado termine y mande `Saved` — si la ventana se
-            // abriera solo al recibir ese mensaje, ese evento adelantado
-            // llegaría sin filtro y dispararía el banner de "cambió en disco".
-            *ignore_fs_events_until =
+            *sctx.ignore_fs_events_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
             let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
             loader::spawn_save(
@@ -189,8 +193,8 @@ pub(super) fn start_save(
                 state.source_metadata.clone(),
                 new_source,
                 sidecar,
-                tx.clone(),
-                ctx.clone(),
+                sctx.tx.clone(),
+                sctx.ctx.clone(),
             );
         }
         Err(e) => {
@@ -204,16 +208,11 @@ pub(super) fn start_save(
 /// MINIATURA embebida (a escala reducida: nadie necesita 4K en una celda de
 /// 156 px). Si el horneado falla, el diseño se guarda igual sin miniatura:
 /// no es motivo para bloquear el guardado real.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_save_design(
     state: &mut editor::EditorState,
-    renderer: &mut CanvasRenderer,
-    rs: &RenderState,
-    tx: &std::sync::mpsc::Sender<AppMsg>,
-    ctx: &egui::Context,
+    sctx: &mut SaveContext,
     path: PathBuf,
     new_source: bool,
-    ignore_fs_events_until: &mut Option<std::time::Instant>,
 ) {
     if state.saving {
         return;
@@ -229,10 +228,11 @@ pub(super) fn start_save_design(
     let scale = canvas_io::preview_scale(pw, ph);
     // Ver el comentario en `start_save`: vaciar el scope compartido antes de
     // hornear evita reutilizar la textura de efectos de otro lienzo.
-    renderer.forget_scope(canvas_render::FxScope::default());
-    match renderer.bake_page(
-        &rs.device,
-        &rs.queue,
+    sctx.renderer
+        .forget_scope(canvas_render::FxScope::default());
+    match sctx.renderer.bake_page(
+        &sctx.rs.device,
+        &sctx.rs.queue,
         canvas_render::FxScope::default(),
         &state.doc,
         &state.images,
@@ -243,10 +243,9 @@ pub(super) fn start_save_design(
     }
     state.saving = true;
     state.save_error = None;
-    // Ver el comentario en `start_save`: la ventana de gracia debe abrirse
-    // antes de lanzar la escritura, no al recibir `Saved`.
-    *ignore_fs_events_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-    loader::spawn_save_design(path, payload, new_source, tx.clone(), ctx.clone());
+    *sctx.ignore_fs_events_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+    loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());
 }
 
 /// PNG/JPEG hornean en la GPU igual que al guardar. SVG/PDF se generan a

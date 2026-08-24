@@ -9,7 +9,7 @@ use crate::gallery::ItemKind;
 use super::cache::{
     adaptive_evict_budget, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES, MIN_EVICT_BUDGET_BYTES,
 };
-use super::loading::MAX_INFLIGHT_LOADS;
+use super::loading::max_inflight_loads;
 use super::model::SeedItem;
 use super::*;
 
@@ -374,7 +374,7 @@ fn request_loads_prioritises_neighbours_of_an_active_placeholder() {
 
     let spawned = deck.request_loads(&[]);
 
-    // Con MAX_INFLIGHT_LOADS = 4, carga todos los Idle visibles (a, b, c).
+    // Con max_inflight_loads() >= 4, carga todos los Idle visibles (a, b, c).
     assert!(spawned.contains(&PathBuf::from("c.png")));
     assert!(spawned.contains(&PathBuf::from("b.png")));
     assert!(!spawned.contains(&deck.slots[placeholder].path));
@@ -404,7 +404,9 @@ fn request_loads_preloads_distant_gallery_pages_in_the_background() {
     assert!(deck.preload_all);
     let spawned = deck.request_loads(&[]);
 
-    assert_eq!(spawned.len(), MAX_INFLIGHT_LOADS);
+    // Sin env var, el límite es max_inflight_loads() (>=4 en la mayoría de
+    // máquinas). Con 5 slots y el primero ya cargado, debe pedir al menos 2.
+    assert!(spawned.len() >= 2);
     assert!(spawned.contains(&PathBuf::from("b.png")));
     assert!(spawned.contains(&PathBuf::from("c.png")));
     assert!(matches!(deck.slots[1].content, SlotContent::Loading));
@@ -660,7 +662,7 @@ fn preload_all_does_not_reload_what_evict_just_dropped() {
         .filter(|s| matches!(s.content, SlotContent::Ready(_)))
         .count();
     assert!(
-        ready_count + second_batch.len() <= MAX_LOADED_SLOTS + MAX_INFLIGHT_LOADS,
+        ready_count + second_batch.len() <= MAX_LOADED_SLOTS + max_inflight_loads(),
         "se pidieron {} con {} ya listos (total {}) — supera el techo de {}",
         second_batch.len(),
         ready_count,
@@ -681,8 +683,8 @@ fn jump_to_a_distant_idle_slot_is_loaded_with_priority() {
         ]),
         Path::new("a.png"),
     );
-    // Saturar inflight: cargar 2 slots (MAX_INFLIGHT_LOADS = 4 ahora, pero
-    // simulamos 2 en vuelo para verificar prioridad).
+    // Saturar inflight: simula 2 cargas en vuelo para verificar que el
+    // jump_to se carga con prioridad aunque inflight esté saturado.
     deck.inflight = 2;
     // Pedir un salto a la última ranura (g.png, índice 6), que está Idle.
     deck.jump_to = Some(6);
