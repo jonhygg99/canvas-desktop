@@ -7,6 +7,11 @@ use canvas_core::{
 };
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_check_icon, draw_crop_icon, draw_double_arrow_icon, draw_fill_icon, draw_lock_icon,
+    draw_target_icon, draw_triangle_icon, icon_button_ui, icon_text_button_ui, IconDir,
+};
+
 use super::content::content_properties_ui;
 use super::effects::{blur_control, color_adjustments_ui, opacity_control, shadow_ui};
 use super::EditorState;
@@ -92,14 +97,16 @@ pub(super) fn layer_properties_ui(
                 .small_button("0°")
                 .on_hover_text("Reset rotation")
                 .clicked();
-        flip_h = ui
-            .small_button("⇋")
-            .on_hover_text("Flip horizontally")
-            .clicked();
-        flip_v = ui
-            .small_button("⇅")
-            .on_hover_text("Flip vertically")
-            .clicked();
+        flip_h = icon_button_ui(ui, 18.0, true, |p, r, c| {
+            draw_double_arrow_icon(p, r, true, true, c)
+        })
+        .on_hover_text("Flip horizontally")
+        .clicked();
+        flip_v = icon_button_ui(ui, 18.0, true, |p, r, c| {
+            draw_double_arrow_icon(p, r, false, false, c)
+        })
+        .on_hover_text("Flip vertically")
+        .clicked();
     });
     // `track` retiene prestado `commit` hasta su último uso: los botones
     // acumulan en un flag aparte que se fusiona al final.
@@ -125,9 +132,22 @@ pub(super) fn layer_properties_ui(
     // --- Tamaño ---
     ui.horizontal(|ui| {
         ui.label("Size");
-        let lock_icon = if state.aspect_lock { "🔒" } else { "🔓" };
-        if ui
-            .selectable_label(state.aspect_lock, lock_icon)
+        let locked = state.aspect_lock;
+        let (lock_rect, lock_resp) =
+            ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+        if lock_resp.hovered() {
+            ui.painter()
+                .rect_filled(lock_rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        let lock_c = if locked {
+            ui.visuals().strong_text_color()
+        } else if lock_resp.hovered() {
+            ui.visuals().widgets.active.text_color()
+        } else {
+            ui.visuals().widgets.inactive.text_color()
+        };
+        draw_lock_icon(ui.painter(), lock_rect, locked, lock_c);
+        if lock_resp
             .on_hover_text("Locked aspect ratio (hold Shift while dragging to invert)")
             .clicked()
         {
@@ -208,13 +228,26 @@ pub(super) fn layer_properties_ui(
     if is_image {
         ui.label("Crop");
         ui.horizontal(|ui| {
-            let label = if state.crop_mode {
-                "✔ Done"
+            let crop_resp = if state.crop_mode {
+                icon_text_button_ui(
+                    ui,
+                    true,
+                    |p, r, c| draw_check_icon(p, r, c),
+                    "Done",
+                    None,
+                    egui::Vec2::ZERO,
+                )
             } else {
-                "✂ Crop"
+                icon_text_button_ui(
+                    ui,
+                    true,
+                    |p, r, c| draw_crop_icon(p, r, c),
+                    "Crop",
+                    None,
+                    egui::Vec2::ZERO,
+                )
             };
-            if ui
-                .button(label)
+            if crop_resp
                 .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
                 .clicked()
             {
@@ -248,21 +281,48 @@ pub(super) fn layer_properties_ui(
     ui.label("Align to page");
     let mut aligned: Option<Transform> = None;
     ui.horizontal(|ui| {
-        if ui.button("⏴ Left").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_triangle_icon(p, r, IconDir::Left, c),
+            "Left",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
                 canvas_core::HAlign::Left,
             ));
         }
-        if ui.button("↔ Center").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_double_arrow_icon(p, r, true, false, c),
+            "Center",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
                 canvas_core::HAlign::Center,
             ));
         }
-        if ui.button("Right ⏵").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_triangle_icon(p, r, IconDir::Right, c),
+            "Right",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_horizontal(
                 &t,
                 page_w,
@@ -271,21 +331,48 @@ pub(super) fn layer_properties_ui(
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("⏶ Top").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_triangle_icon(p, r, IconDir::Up, c),
+            "Top",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
                 canvas_core::VAlign::Top,
             ));
         }
-        if ui.button("↕ Middle").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_double_arrow_icon(p, r, false, false, c),
+            "Middle",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
                 canvas_core::VAlign::Middle,
             ));
         }
-        if ui.button("Bottom ⏷").clicked() {
+        if icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_triangle_icon(p, r, IconDir::Down, c),
+            "Bottom",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+        {
             aligned = Some(canvas_core::align_vertical(
                 &t,
                 page_h,
@@ -293,7 +380,16 @@ pub(super) fn layer_properties_ui(
             ));
         }
     });
-    if ui.button("◎ Center on page").clicked() {
+    if icon_text_button_ui(
+        ui,
+        true,
+        |p, r, c| draw_target_icon(p, r, c),
+        "Center on page",
+        None,
+        egui::Vec2::ZERO,
+    )
+    .clicked()
+    {
         let centered = canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center);
         aligned = Some(canvas_core::align_vertical(
             &centered,
@@ -301,10 +397,16 @@ pub(super) fn layer_properties_ui(
             canvas_core::VAlign::Middle,
         ));
     }
-    if ui
-        .button("⛶ Cover the page")
-        .on_hover_text("The image fills the whole page keeping its aspect ratio")
-        .clicked()
+    if icon_text_button_ui(
+        ui,
+        true,
+        |p, r, c| draw_fill_icon(p, r, c),
+        "Cover the page",
+        None,
+        egui::Vec2::ZERO,
+    )
+    .on_hover_text("The image fills the whole page keeping its aspect ratio")
+    .clicked()
     {
         aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));
     }

@@ -12,6 +12,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod app_icons;
 mod clipboard;
 mod deck;
 mod deck_strip;

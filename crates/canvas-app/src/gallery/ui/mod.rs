@@ -3,6 +3,10 @@
 
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_close_icon, draw_minus_icon, draw_plus_icon, icon_button_ui, icon_text_button_ui,
+};
+
 use crate::settings::GallerySort;
 
 use super::{copy_to_slot, slot_contents, GalleryAction, GalleryState};
@@ -149,22 +153,29 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                     action = Some(GalleryAction::SortChanged(sort));
                 }
                 ui.add_space(12.0);
-                if ui
-                    .small_button("+")
+                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_plus_icon(p, r, c))
                     .on_hover_text("Show more designs per line")
                     .clicked()
                 {
                     state.gallery_columns = (state.gallery_columns + 1).min(12);
                 }
                 ui.label(format!("{} por línea", state.gallery_columns));
-                if ui
-                    .small_button("−")
+                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_minus_icon(p, r, c))
                     .on_hover_text("Show fewer designs per line")
                     .clicked()
                 {
                     state.gallery_columns = state.gallery_columns.saturating_sub(1).max(1);
                 }
-                if ui.button("✚ New design").clicked() {
+                if icon_text_button_ui(
+                    ui,
+                    true,
+                    |p, r, c| draw_plus_icon(p, r, c),
+                    "New design",
+                    None,
+                    egui::Vec2::ZERO,
+                )
+                .clicked()
+                {
                     action = Some(GalleryAction::NewDesign);
                 }
             });
@@ -172,7 +183,8 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         if let Some(error) = state.op_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
-                if ui.small_button("✕").clicked() {
+                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked()
+                {
                     state.op_error = None;
                 }
             });

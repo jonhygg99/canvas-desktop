@@ -7,7 +7,11 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::deck::{Deck, DeckAxis, Slot, SlotContent};
+use crate::app_icons::{
+    draw_doc_icon, draw_double_arrow_icon, draw_plus_icon, draw_spinner_icon,
+    draw_triangle_icon, draw_warning_icon, icon_button_ui, IconDir,
+};
+use crate::deck::{Deck, DeckAxis, Slot, SlotContent, StripSide};
 use crate::gallery::ItemKind;
 use crate::sidebar;
 
@@ -104,17 +108,29 @@ pub fn deck_strip_ui(
     // ensancha el panel (ya posible, ver `strip_metrics`) se juntan en una.
     ui.horizontal_wrapped(|ui| {
         ui.strong(format!("{} / {}", deck.active + 1, deck.slots.len()));
-        let (icon, hover) = match axis {
-            DeckAxis::Vertical => ("⇅", "Switch to horizontal layout"),
-            DeckAxis::Horizontal => ("⇆", "Switch to vertical layout"),
+        let (vertical, hover) = match axis {
+            DeckAxis::Vertical => (true, "Switch to horizontal layout"),
+            DeckAxis::Horizontal => (false, "Switch to vertical layout"),
         };
-        if ui.small_button(icon).on_hover_text(hover).clicked() {
+        if icon_button_ui(ui, 16.0, true, move |p, r, c| {
+            draw_double_arrow_icon(p, r, !vertical, false, c)
+        })
+        .on_hover_text(hover)
+        .clicked()
+        {
             action = Some(StripAction::ToggleAxis);
         }
-        if ui
-            .small_button(side.glyph())
-            .on_hover_text(format!("Canvases panel: {} (click to move)", side.label()))
-            .clicked()
+        let side_dir = match side {
+            StripSide::Left => IconDir::Left,
+            StripSide::Top => IconDir::Up,
+            StripSide::Right => IconDir::Right,
+            StripSide::Bottom => IconDir::Down,
+        };
+        if icon_button_ui(ui, 16.0, true, move |p, r, c| {
+            draw_triangle_icon(p, r, side_dir, c)
+        })
+        .on_hover_text(format!("Canvases panel: {} (click to move)", side.label()))
+        .clicked()
         {
             action = Some(StripAction::CycleSide);
         }
@@ -219,14 +235,9 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
         egui::StrokeKind::Inside,
     );
-    let plus_size = (m.thumb.y * 0.4).max(14.0);
-    painter.text(
-        thumb_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "✚",
-        egui::FontId::proportional(plus_size),
-        ui.visuals().weak_text_color(),
-    );
+    let plus_size = (m.thumb.y * 0.4).max(20.0);
+    let plus_rect = egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(plus_size, plus_size));
+    draw_plus_icon(painter, plus_rect, ui.visuals().weak_text_color());
     response
         .on_hover_text("Add a blank canvas to this folder")
         .clicked()
@@ -290,7 +301,10 @@ fn strip_cell(
         ),
         m.thumb,
     );
-    let glyph_size = (m.thumb.y * 0.34).max(12.0);
+    let glyph_rect = egui::Rect::from_center_size(
+        thumb_rect.center(),
+        egui::vec2(m.thumb.y * 0.4, m.thumb.y * 0.4),
+    );
     match (&slot.thumb, slot.thumb_failed) {
         (Some(tex), _) => {
             let size = tex.size_vec2();
@@ -304,31 +318,14 @@ fn strip_cell(
             );
         }
         (None, _) if slot.kind == ItemKind::Design => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "🖹",
-                egui::FontId::proportional(glyph_size),
-                ui.visuals().weak_text_color(),
-            );
+            draw_doc_icon(painter, glyph_rect, ui.visuals().weak_text_color());
         }
         (None, true) => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "⚠",
-                egui::FontId::proportional(glyph_size),
-                ui.visuals().error_fg_color,
-            );
+            draw_warning_icon(painter, glyph_rect, ui.visuals().error_fg_color);
         }
         (None, false) => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "⏳",
-                egui::FontId::proportional(glyph_size * 0.8),
-                ui.visuals().weak_text_color(),
-            );
+            let t = ui.input(|i| i.time);
+            draw_spinner_icon(painter, glyph_rect, t, ui.visuals().weak_text_color());
         }
     }
 

@@ -191,6 +191,40 @@ mod tests {
         names.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(names, vec!["apple.png", "banana.png", "cherry.png"]);
     }
+
+    #[test]
+    fn layers_tab_order_swapped_round_trips() {
+        assert_eq!(
+            LayersTabOrder::PageFirst.swapped(),
+            LayersTabOrder::LayersFirst
+        );
+        assert_eq!(
+            LayersTabOrder::LayersFirst.swapped(),
+            LayersTabOrder::PageFirst
+        );
+    }
+}
+
+/// Orden de las pestañas del panel izquierdo del editor (Page/Layers): el
+/// usuario las arrastra para reordenarlas y el orden queda guardado aquí.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum LayersTabOrder {
+    /// «Page» arriba (por defecto).
+    #[default]
+    PageFirst,
+    /// «Layers» arriba.
+    LayersFirst,
+}
+
+impl LayersTabOrder {
+    /// El orden invertido (con dos pestañas, cualquier cruce de un arrastre
+    /// produce exactamente esto).
+    pub fn swapped(self) -> Self {
+        match self {
+            LayersTabOrder::PageFirst => LayersTabOrder::LayersFirst,
+            LayersTabOrder::LayersFirst => LayersTabOrder::PageFirst,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -226,6 +260,8 @@ pub struct AppSettings {
     pub new_canvas_format: NewCanvasFormat,
     /// Panel de capas colapsado en una pestaña fina al borde izquierdo.
     pub layers_collapsed: bool,
+    /// Orden de las pestañas del panel izquierdo (arrastrables con el ratón).
+    pub layers_tab_order: LayersTabOrder,
 }
 
 impl Default for AppSettings {
@@ -244,6 +280,7 @@ impl Default for AppSettings {
             deck_strip_side: StripSide::default(),
             new_canvas_format: NewCanvasFormat::default(),
             layers_collapsed: false,
+            layers_tab_order: LayersTabOrder::default(),
         }
     }
 }
@@ -343,7 +380,7 @@ pub fn settings_window(
                     }
                 });
             ui.weak(
-                "What \"✚ New design\" and the \"+\" canvas create: a real image file \
+                "What \"New design\" and the \"+\" canvas create: a real image file \
                  (with its layers kept editable in a sidecar) or a standalone .canvas design.",
             );
             ui.add_space(10.0);

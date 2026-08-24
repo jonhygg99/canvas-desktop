@@ -8,6 +8,7 @@ use eframe::egui;
 
 use super::shell::reveal_in_explorer;
 
+use crate::app_icons::draw_plus_icon;
 use super::super::{copy_to_slot, GalleryAction, GalleryItem, ItemKind};
 
 pub(super) const CELL_GAP: f32 = 8.0;
@@ -69,12 +70,10 @@ pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool
         egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
         egui::StrokeKind::Inside,
     );
-    let plus_size = (thumbnail_height * 0.4).max(18.0);
-    painter.text(
-        add_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "✚",
-        egui::FontId::proportional(plus_size),
+    let plus_size = (thumbnail_height * 0.4).max(20.0);
+    draw_plus_icon(
+        painter,
+        egui::Rect::from_center_size(add_rect.center(), egui::vec2(plus_size, plus_size)),
         ui.visuals().weak_text_color(),
     );
     response

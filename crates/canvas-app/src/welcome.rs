@@ -4,6 +4,10 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_doc_icon, draw_folder_icon, draw_gear_icon, draw_sparkle_icon, icon_text_button_ui,
+};
+
 pub enum WelcomeAction {
     NewProject,
     OpenFile,
@@ -22,23 +26,41 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
             ui.label("Edit images right on top of your files.");
             ui.add_space(24.0);
 
-            if ui
-                .add(egui::Button::new("✨  New design").min_size(egui::vec2(220.0, 36.0)))
-                .clicked()
+            if icon_text_button_ui(
+                ui,
+                true,
+                |p, r, c| draw_sparkle_icon(p, r, c),
+                "New design",
+                None,
+                egui::vec2(220.0, 36.0),
+            )
+            .clicked()
             {
                 action = Some(WelcomeAction::NewProject);
             }
             ui.add_space(8.0);
-            if ui
-                .add(egui::Button::new("📄  Open file…").min_size(egui::vec2(220.0, 36.0)))
-                .clicked()
+            if icon_text_button_ui(
+                ui,
+                true,
+                |p, r, c| draw_doc_icon(p, r, c),
+                "Open file…",
+                None,
+                egui::vec2(220.0, 36.0),
+            )
+            .clicked()
             {
                 action = Some(WelcomeAction::OpenFile);
             }
             ui.add_space(8.0);
-            if ui
-                .add(egui::Button::new("📁  Open folder…").min_size(egui::vec2(220.0, 36.0)))
-                .clicked()
+            if icon_text_button_ui(
+                ui,
+                true,
+                |p, r, c| draw_folder_icon(p, r, c),
+                "Open folder…",
+                None,
+                egui::vec2(220.0, 36.0),
+            )
+            .clicked()
             {
                 action = Some(WelcomeAction::OpenFolder);
             }
@@ -58,7 +80,7 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.display().to_string());
                     if ui
-                        .link(format!("📁 {name}"))
+                        .link(name)
                         .on_hover_text(path.display().to_string())
                         .clicked()
                     {
@@ -70,7 +92,16 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
             ui.add_space(18.0);
             ui.weak("You can also drag an image or a folder onto this window.");
             ui.add_space(8.0);
-            if ui.small_button("⚙ Settings").clicked() {
+            if icon_text_button_ui(
+                ui,
+                true,
+                |p, r, c| draw_gear_icon(p, r, c),
+                "Settings",
+                None,
+                egui::Vec2::ZERO,
+            )
+            .clicked()
+            {
                 action = Some(WelcomeAction::OpenSettings);
             }
 

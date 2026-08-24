@@ -4,6 +4,9 @@
 use canvas_core::{Command, Composite, Group, LayerId, Page, Reorder, Ungroup};
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_delete_icon, draw_group_icon, draw_ungroup_icon, icon_button_ui, icon_text_button_ui,
+};
 use crate::editor::EditorState;
 
 use super::Drop;
@@ -27,23 +30,34 @@ pub(super) fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             Err(_) => (false, false, false),
         };
 
-        if ui
-            .add_enabled(can_group, egui::Button::new("▣"))
+        if icon_button_ui(ui, 18.0, can_group, |p, r, c| draw_group_icon(p, r, c))
             .on_hover_text("Group (Ctrl+G)")
             .clicked()
+            && can_group
         {
             group_selection(state);
         }
-        if ui
-            .add_enabled(can_ungroup, egui::Button::new("▤"))
+        if icon_button_ui(ui, 18.0, can_ungroup, |p, r, c| draw_ungroup_icon(p, r, c))
             .on_hover_text("Ungroup (Ctrl+Shift+G)")
             .clicked()
+            && can_ungroup
         {
             ungroup_selection(state);
         }
-        if ui
-            .add_enabled(can_delete, egui::Button::new("🗑 Delete"))
-            .clicked()
+        // El rojo de «Delete» es deliberado (destructivo con confirmación
+        // implícita a la Papelera); el resto de botones usa el color del
+        // estado.
+        let del_c = egui::Color32::from_rgb(220, 70, 70);
+        if icon_text_button_ui(
+            ui,
+            can_delete,
+            move |p, r, _| draw_delete_icon(p, r, del_c),
+            "Delete",
+            Some(del_c),
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+            && can_delete
         {
             crate::editor::delete_selected(state);
         }

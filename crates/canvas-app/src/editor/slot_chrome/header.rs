@@ -5,6 +5,8 @@ use eframe::egui;
 
 use crate::deck::{Deck, DeckAxis, Slot};
 
+use crate::app_icons::draw_isolate_icon;
+
 use super::icons::{
     draw_delete_icon, draw_duplicate_icon, draw_lock_icon, draw_triangle_icon, IconDir,
 };
@@ -79,13 +81,7 @@ pub(super) fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_r
     draw_triangle_icon(painter, header.prev, prev_dir, icon_color);
     draw_triangle_icon(painter, header.next, next_dir, icon_color);
     draw_lock_icon(painter, header.lock, slot.locked, icon_color);
-    painter.text(
-        header.isolate.center(),
-        egui::Align2::CENTER_CENTER,
-        "I",
-        egui::FontId::proportional(12.0),
-        icon_color,
-    );
+    draw_isolate_icon(painter, header.isolate, icon_color);
     draw_duplicate_icon(
         painter,
         header.dup,

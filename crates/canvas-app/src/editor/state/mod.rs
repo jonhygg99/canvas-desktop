@@ -8,7 +8,7 @@ use canvas_core::{Document, History, LayerContent, LayerId, Selection, Transform
 use canvas_render::ImageMap;
 
 /// Pestaña activa en el panel lateral izquierdo.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LeftTab {
     Page,
     Layers,

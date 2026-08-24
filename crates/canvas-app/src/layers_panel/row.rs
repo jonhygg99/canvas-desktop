@@ -4,6 +4,10 @@
 use canvas_core::{Command, LayerContent, LayerId, Rename, SetLocked, SetVisible};
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_blur_icon, draw_eye_icon, draw_lock_icon, draw_triangle_icon, icon_button_ui,
+    icon_label_ui, IconDir,
+};
 use crate::editor::EditorState;
 
 use super::{DragLayers, Drop, Row};
@@ -132,8 +136,7 @@ fn row_contents(
         ui.add_space(row.depth as f32 * 10.0);
 
         if row.is_group {
-            let arrow = if row.collapsed { "▸" } else { "▾" };
-            if ui.small_button(arrow).clicked() {
+            if group_arrow_ui(ui, row.collapsed) {
                 if let Ok(layer) = state.doc.layer_mut(row.id) {
                     if let LayerContent::Group(g) = &mut layer.content {
                         g.collapsed = !g.collapsed;
@@ -141,14 +144,14 @@ fn row_contents(
                 }
             }
         } else {
-            ui.add_space(16.0);
+            ui.add_space(GROUP_ARROW_W);
         }
 
-        let eye = if visible { "👁" } else { "🚫" };
-        if ui
-            .small_button(eye)
-            .on_hover_text("Toggle visibility")
-            .clicked()
+        if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+            draw_eye_icon(p, r, visible, c)
+        })
+        .on_hover_text("Toggle visibility")
+        .clicked()
         {
             let mut cmd = SetVisible {
                 layer: row.id,
@@ -160,8 +163,12 @@ fn row_contents(
             }
         }
 
-        let lock = if locked { "🔒" } else { "🔓" };
-        if ui.small_button(lock).on_hover_text("Toggle lock").clicked() {
+        if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+            draw_lock_icon(p, r, locked, c)
+        })
+        .on_hover_text("Toggle lock")
+        .clicked()
+        {
             let mut cmd = SetLocked {
                 layer: row.id,
                 before: locked,
@@ -173,7 +180,8 @@ fn row_contents(
         }
 
         if is_background {
-            ui.label("🌫").on_hover_text("Blurred background");
+            icon_label_ui(ui, GROUP_ARROW_W, |p, r, c| draw_blur_icon(p, r, c))
+                .on_hover_text("Blurred background");
         }
 
         let renaming = state
@@ -198,6 +206,22 @@ fn row_contents(
     });
 }
 
+/// Ancho del botón de plegado de un grupo; también el hueco que deja una
+/// fila sin grupo, para que la columna de la flecha quede alineada.
+const GROUP_ARROW_W: f32 = 18.0;
+
+/// Botón de plegado de grupo: un triángulo relleno de `app_icons` — el
+/// MISMO que usan las cabeceras de los lienzos y el resto de la app —
+/// apuntando a la derecha cuando el grupo está plegado y hacia abajo
+/// cuando está desplegado, con la mecánica estándar de los botones de
+/// icono (fondo suave al hover).
+fn group_arrow_ui(ui: &mut egui::Ui, collapsed: bool) -> bool {
+    let dir = if collapsed { IconDir::Right } else { IconDir::Down };
+    icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+        draw_triangle_icon(p, r, dir, c)
+    })
+    .clicked()
+}
 fn rename_edit_ui(state: &mut EditorState, ui: &mut egui::Ui, id: LayerId) {
     let text_id = egui::Id::new(("layer_row", id.raw())).with("rename");
     let mut cancel = false;

@@ -26,6 +26,11 @@ mod tests;
 use canvas_core::LayerContent;
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_close_icon, draw_delete_icon, draw_floppy_icon, draw_gear_icon, draw_pencil_icon,
+    draw_triangle_icon, icon_button_ui, icon_text_button_ui, IconDir,
+};
+
 use super::EditorState;
 use crate::sidebar;
 
@@ -155,7 +160,17 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         ui.separator();
     }
 
-    if state.from_gallery.is_some() && ui.button("⏴ Back to gallery").clicked() {
+    if state.from_gallery.is_some()
+        && icon_text_button_ui(
+            ui,
+            true,
+            |p, r, c| draw_triangle_icon(p, r, IconDir::Left, c),
+            "Back to gallery",
+            None,
+            egui::Vec2::ZERO,
+        )
+        .clicked()
+    {
         state.return_requested = true;
     }
     file_name_ui(state, ui);
@@ -227,12 +242,16 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     sidebar::section(ui, "File actions", false, |ui| {
         ui.horizontal_wrapped(|ui| {
             let dirty_mark = if state.is_dirty() { " •" } else { "" };
-            if ui
-                .add_enabled(
-                    !state.saving,
-                    egui::Button::new(format!("💾 Save{dirty_mark}")),
-                )
-                .clicked()
+            if icon_text_button_ui(
+                ui,
+                !state.saving,
+                |p, r, c| draw_floppy_icon(p, r, c),
+                &format!("Save{dirty_mark}"),
+                None,
+                egui::Vec2::ZERO,
+            )
+            .clicked()
+                && !state.saving
             {
                 state.save_clicked = true;
             }
@@ -245,14 +264,17 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
             // Va a la Papelera de reciclaje (`trash::delete`), no borrado
             // permanente: recuperable si el usuario se equivoca, así que no
             // hace falta pedir confirmación aparte.
-            if ui
-                .add_enabled(
-                    !state.saving,
-                    egui::Button::new(
-                        egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 70, 70)),
-                    ),
-                )
-                .clicked()
+            let del_c = egui::Color32::from_rgb(220, 70, 70);
+            if icon_text_button_ui(
+                ui,
+                !state.saving,
+                move |p, r, _| draw_delete_icon(p, r, del_c),
+                "Delete",
+                Some(del_c),
+                egui::Vec2::ZERO,
+            )
+            .clicked()
+                && !state.saving
             {
                 state.delete_requested = true;
             }
@@ -276,7 +298,8 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         if let Some(error) = state.save_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
-                if ui.small_button("✕").clicked() {
+                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked()
+                {
                     state.save_error = None;
                 }
             });
@@ -288,7 +311,16 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
     ui.weak("Ctrl+C / Ctrl+V: copy layers, even between designs");
     ui.add_space(4.0);
-    if ui.small_button("⚙ Settings").clicked() {
+    if icon_text_button_ui(
+        ui,
+        true,
+        |p, r, c| draw_gear_icon(p, r, c),
+        "Settings",
+        None,
+        egui::Vec2::ZERO,
+    )
+    .clicked()
+    {
         state.settings_clicked = true;
     }
 }
@@ -335,7 +367,9 @@ fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     } else {
         ui.horizontal(|ui| {
             ui.heading(state.file_name());
-            if state.doc.source_path.is_some() && ui.small_button("✏").clicked() {
+            if state.doc.source_path.is_some()
+                && icon_button_ui(ui, 16.0, true, |p, r, c| draw_pencil_icon(p, r, c)).clicked()
+            {
                 let stem = state
                     .doc
                     .source_path

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
+use crate::app_icons::{draw_plus_icon, icon_text_button_ui};
+
 use crate::deck::StripSide;
 
 use super::super::{GalleryAction, GalleryState};
@@ -298,7 +300,16 @@ fn new_folder_ui(
             }
         }
         None => {
-            if ui.small_button("✚ New folder").clicked() {
+            if icon_text_button_ui(
+                ui,
+                true,
+                |p, r, c| draw_plus_icon(p, r, c),
+                "New folder",
+                None,
+                egui::Vec2::ZERO,
+            )
+            .clicked()
+            {
                 *new_folder_name = Some(String::new());
                 ui.ctx().memory_mut(|m| {
                     m.request_focus(egui::Id::new(("new_folder_input", id_prefix, parent)));

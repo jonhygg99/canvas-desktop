@@ -61,16 +61,6 @@ impl StripSide {
         matches!(self, StripSide::Left | StripSide::Right)
     }
 
-    /// Glifo del botón de la cabecera: apunta al lado ACTUAL.
-    pub fn glyph(self) -> &'static str {
-        match self {
-            StripSide::Left => "◀",
-            StripSide::Top => "▲",
-            StripSide::Right => "▶",
-            StripSide::Bottom => "▼",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             StripSide::Left => "Left",

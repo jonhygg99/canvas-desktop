@@ -5,6 +5,9 @@
 
 use eframe::egui;
 
+use crate::app_icons::{
+    draw_doc_icon, draw_plus_icon, draw_spinner_icon, draw_warning_icon,
+};
 use crate::deck::{Deck, SlotContent};
 use crate::gallery::ItemKind;
 
@@ -56,11 +59,9 @@ pub(super) fn draw_slot_chrome(
         if let SlotContent::Failed(message) = &slot.content {
             // Un fallo de carga de fondo SÍ se explica, aunque haya
             // miniatura: es la única pista de por qué este lienzo no abre.
-            painter.text(
-                screen_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "⚠",
-                egui::FontId::proportional(28.0),
+            draw_warning_icon(
+                ui.painter(),
+                egui::Rect::from_center_size(screen_rect.center(), egui::vec2(40.0, 40.0)),
                 ui.visuals().error_fg_color,
             );
             let mut short = message.clone();
@@ -75,20 +76,16 @@ pub(super) fn draw_slot_chrome(
                 ui.visuals().error_fg_color,
             );
         } else if slot.thumb.is_none() {
-            let glyph = if slot.thumb_failed {
-                "⚠"
+            let glyph_rect =
+                egui::Rect::from_center_size(screen_rect.center(), egui::vec2(40.0, 40.0));
+            if slot.thumb_failed {
+                draw_warning_icon(ui.painter(), glyph_rect, ui.visuals().weak_text_color());
             } else if slot.kind == ItemKind::Design {
-                "🖹"
+                draw_doc_icon(ui.painter(), glyph_rect, ui.visuals().weak_text_color());
             } else {
-                "⏳"
-            };
-            painter.text(
-                screen_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                glyph,
-                egui::FontId::proportional(28.0),
-                ui.visuals().weak_text_color(),
-            );
+                let t = ui.input(|i| i.time);
+                draw_spinner_icon(ui.painter(), glyph_rect, t, ui.visuals().weak_text_color());
+            }
         }
     }
 
@@ -198,11 +195,12 @@ pub(super) fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rec
         egui::StrokeKind::Inside,
     );
     let glyph_size = (screen_rect.width().min(screen_rect.height()) * 0.15).clamp(18.0, 56.0);
-    painter.text(
-        screen_rect.center() - egui::vec2(0.0, glyph_size * 0.4),
-        egui::Align2::CENTER_CENTER,
-        "✚",
-        egui::FontId::proportional(glyph_size),
+    draw_plus_icon(
+        painter,
+        egui::Rect::from_center_size(
+            screen_rect.center() - egui::vec2(0.0, glyph_size * 0.4),
+            egui::vec2(glyph_size, glyph_size),
+        ),
         ui.visuals().weak_text_color(),
     );
     painter.text(
