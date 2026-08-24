@@ -14,13 +14,12 @@ use std::sync::mpsc::Sender;
 
 use canvas_shell::ShellIntegration as _;
 use eframe::egui;
-use eframe::egui_wgpu::RenderState;
 
 use crate::loader::{self, AppMsg};
 use crate::{editor, export, settings};
 
 use super::persistence::{is_jpeg_path, start_save, SaveContext};
-use super::{App, Nav};
+use super::{App, Nav, SaveFlow};
 
 impl App {
     /// Ventana de ajustes (accesible desde la bienvenida y el editor).
@@ -87,22 +86,13 @@ impl App {
 
 /// Modal de aviso de sobrescritura destructiva, mostrado antes del primer
 /// guardado en el sitio de un archivo raster que la app no creó ella misma.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn overwrite_modal_ui(
     state: &mut editor::EditorState,
-    renderer: &mut canvas_render::CanvasRenderer,
-    rs: &RenderState,
-    tx: &Sender<AppMsg>,
-    ctx: &egui::Context,
+    sctx: &mut SaveContext,
+    save: &mut SaveFlow,
     settings: &mut settings::AppSettings,
-    overwrite_prompt: &mut Option<PathBuf>,
-    overwrite_confirmed: &mut bool,
-    overwrite_dont_ask: &mut bool,
-    close_after_save: &mut bool,
-    after_save: &mut Option<Nav>,
-    ignore_fs_events_until: &mut Option<std::time::Instant>,
 ) {
-    let Some(path) = overwrite_prompt.clone() else {
+    let Some(path) = save.overwrite_prompt.clone() else {
         return;
     };
     enum Choice {
@@ -117,7 +107,7 @@ pub(super) fn overwrite_modal_ui(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
     let jpeg_quality = settings.jpeg_quality;
-    let modal = egui::Modal::new(egui::Id::new("overwrite_warning")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::new("overwrite_warning")).show(sctx.ctx, |ui| {
         ui.set_max_width(400.0);
         ui.heading("Overwrite the original file?");
         ui.add_space(6.0);
@@ -131,7 +121,7 @@ pub(super) fn overwrite_modal_ui(
             ));
         }
         ui.add_space(8.0);
-        ui.checkbox(overwrite_dont_ask, "Don't ask again");
+        ui.checkbox(&mut save.overwrite_dont_ask, "Don't ask again");
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if ui.button("Overwrite").clicked() {
@@ -152,33 +142,30 @@ pub(super) fn overwrite_modal_ui(
     match choice {
         Choice::None => {}
         Choice::Overwrite => {
-            *overwrite_prompt = None;
-            *overwrite_confirmed = true;
-            if *overwrite_dont_ask && !settings.skip_overwrite_warning {
+            save.overwrite_prompt = None;
+            save.overwrite_confirmed = true;
+            if save.overwrite_dont_ask && !settings.skip_overwrite_warning {
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            let mut sctx = SaveContext {
-                renderer,
-                rs,
-                tx,
-                ctx,
-                ignore_fs_events_until,
-            };
-            start_save(state, &mut sctx, path, false, settings.jpeg_quality);
+            start_save(state, sctx, path, false, settings.jpeg_quality);
         }
         Choice::SaveAs => {
-            *overwrite_prompt = None;
-            if *overwrite_dont_ask && !settings.skip_overwrite_warning {
+            save.overwrite_prompt = None;
+            if save.overwrite_dont_ask && !settings.skip_overwrite_warning {
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            loader::spawn_pick_save_path(Some(state.file_name()), tx.clone(), ctx.clone());
+            loader::spawn_pick_save_path(
+                Some(state.file_name()),
+                sctx.tx.clone(),
+                sctx.ctx.clone(),
+            );
         }
         Choice::Cancel => {
-            *overwrite_prompt = None;
-            *close_after_save = false;
-            *after_save = None;
+            save.overwrite_prompt = None;
+            save.close_after_save = false;
+            save.after_save = None;
         }
     }
 }
@@ -249,30 +236,24 @@ pub(super) fn readonly_modal_ui(
 
 /// Diálogo de exportación (elegir formato/escala) y arranque del hilo de
 /// export en cuanto el usuario ya eligió también la ruta de destino.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn export_flow_ui(
     state: &mut editor::EditorState,
-    renderer: &mut canvas_render::CanvasRenderer,
-    rs: &RenderState,
-    tx: &Sender<AppMsg>,
-    ctx: &egui::Context,
-    export_dialog: &mut Option<export::ExportDialog>,
-    pending_export_settings: &mut Option<export::ExportSettings>,
-    pending_export: &mut Option<(PathBuf, export::ExportSettings)>,
+    sctx: &mut SaveContext,
+    export: &mut crate::app::ExportFlow,
 ) {
-    if let Some(dialog) = export_dialog {
+    if let Some(dialog) = &mut export.export_dialog {
         let page_size = state
             .doc
             .page()
             .map(|p| (p.width, p.height))
             .unwrap_or((0.0, 0.0));
-        match export::export_modal(dialog, ctx, page_size) {
+        match export::export_modal(dialog, sctx.ctx, page_size) {
             export::ExportChoice::None => {}
             export::ExportChoice::Cancel => {
-                *export_dialog = None;
+                export.export_dialog = None;
             }
             export::ExportChoice::Pick(settings) => {
-                *export_dialog = None;
+                export.export_dialog = None;
                 let stem = state
                     .doc
                     .source_path
@@ -281,12 +262,25 @@ pub(super) fn export_flow_ui(
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "Untitled".to_owned());
                 let suggested = format!("{stem}.{}", settings.format.extension());
-                loader::spawn_pick_export_path(suggested, settings.format, tx.clone(), ctx.clone());
-                *pending_export_settings = Some(settings);
+                loader::spawn_pick_export_path(
+                    suggested,
+                    settings.format,
+                    sctx.tx.clone(),
+                    sctx.ctx.clone(),
+                );
+                export.pending_export_settings = Some(settings);
             }
         }
     }
-    if let Some((path, settings)) = pending_export.take() {
-        super::persistence::start_export(state, renderer, rs, tx, ctx, path, settings);
+    if let Some((path, settings)) = export.pending_export.take() {
+        super::persistence::start_export(
+            state,
+            sctx.renderer,
+            sctx.rs,
+            sctx.tx,
+            sctx.ctx,
+            path,
+            settings,
+        );
     }
 }

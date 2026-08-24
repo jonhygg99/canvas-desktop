@@ -76,22 +76,34 @@ pub fn spawn_pick_design_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx
     });
 }
 
+/// Datos que `spawn_save` necesita para codificar y escribir una imagen
+/// en un hilo de trabajo. Agrupa los 6 parámetros de píxeles/formato que
+/// siempre van juntos, reduciendo la firma de 10 a 5.
+pub struct SaveInput {
+    pub path: PathBuf,
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub jpeg_quality: u8,
+    pub metadata: Option<ImageMetadata>,
+    pub new_source: bool,
+    pub sidecar: Option<CanvasPayload>,
+}
+
 /// Codifica y escribe (atómico) en un hilo de trabajo; el RGBA ya viene
 /// horneado de la GPU.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_save(
-    path: PathBuf,
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    jpeg_quality: u8,
-    metadata: Option<ImageMetadata>,
-    new_source: bool,
-    sidecar: Option<CanvasPayload>,
-    tx: Sender<AppMsg>,
-    ctx: egui::Context,
-) {
+pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
+        let SaveInput {
+            path,
+            rgba,
+            width,
+            height,
+            jpeg_quality,
+            metadata,
+            new_source,
+            sidecar,
+        } = input;
         // La miniatura embebida del sidecar se reduce de este mismo RGBA
         // (ya horneado a tamaño completo): no hace falta una segunda pasada
         // de GPU solo para la celda de la galería.

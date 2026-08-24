@@ -21,28 +21,33 @@ use super::super::slot_chrome::{
 use super::super::EditorState;
 use super::CanvasAction;
 
-#[allow(clippy::too_many_arguments)]
+/// Geometría del frame actual que `paint` necesita, agrupada para no
+/// arrastrar 6 parámetros sueltos.
+pub(super) struct PaintGeometry<'a> {
+    pub rect: egui::Rect,
+    pub slot_rect: egui::Rect,
+    pub visible: &'a [usize],
+    pub page_dims: (f64, f64),
+    pub base_view: Affine,
+    pub surface: &'a CanvasSurface,
+}
+
 pub(super) fn paint(
     state: &mut EditorState,
     deck: &mut Deck,
     ui: &egui::Ui,
-    rect: egui::Rect,
-    slot_rect: egui::Rect,
-    visible: &[usize],
-    page_dims: (f64, f64),
-    base_view: Affine,
-    surface: &CanvasSurface,
+    geo: &PaintGeometry<'_>,
     rs: &RenderState,
     renderer: &mut CanvasRenderer,
     action: &mut Option<CanvasAction>,
 ) {
     let mut scene = vello::Scene::new();
-    for &idx in visible {
+    for &idx in geo.visible {
         let Some(slot) = deck.slots.get(idx) else {
             continue;
         };
         let scope = FxScope(slot.id);
-        let view = base_view * Affine::translate(slot.rect.origin());
+        let view = geo.base_view * Affine::translate(slot.rect.origin());
         if idx == deck.active {
             sync_and_append(
                 &mut scene,
@@ -57,37 +62,37 @@ pub(super) fn paint(
             sync_and_append(&mut scene, renderer, rs, &doc.doc, &doc.images, scope, view);
         }
     }
-    if let Err(e) = surface.render(rs, renderer, &scene) {
+    if let Err(e) = geo.surface.render(rs, renderer, &scene) {
         tracing::error!("fallo renderizando el lienzo: {e}");
     }
 
     ui.painter().image(
-        surface.egui_id(),
-        rect,
+        geo.surface.egui_id(),
+        geo.rect,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,
     );
 
-    for &idx in visible {
-        draw_slot_chrome(state, deck, idx, ui, rect);
+    for &idx in geo.visible {
+        draw_slot_chrome(state, deck, idx, ui, geo.rect);
     }
     if !state.isolate {
-        draw_add_zone(state, deck, ui, rect);
+        draw_add_zone(state, deck, ui, geo.rect);
     }
-    draw_header_tooltips(deck, ui, rect, &state.viewport, visible);
+    draw_header_tooltips(deck, ui, geo.rect, &state.viewport, geo.visible);
 
     if state.show_grid {
-        draw_grid(state, ui, slot_rect, rect, page_dims);
+        draw_grid(state, ui, geo.slot_rect, geo.rect, geo.page_dims);
     }
-    draw_selection_overlay(state, ui, slot_rect, rect);
+    draw_selection_overlay(state, ui, geo.slot_rect, geo.rect);
     if state.show_rulers {
-        draw_rulers(state, ui, slot_rect, rect);
+        draw_rulers(state, ui, geo.slot_rect, geo.rect);
     }
 
     // Renombrado en curso desde una cabecera (si lo hay): `egui::Area` de
     // primer plano, PASO DE UI SEPARADO del `response` gigante de arriba —
     // ver la doc de `draw_rename_overlay`.
-    if let Some(a) = draw_rename_overlay(state, deck, ui, rect) {
+    if let Some(a) = draw_rename_overlay(state, deck, ui, geo.rect) {
         *action = Some(a);
     }
     size_popup_ui(state, ui.ctx());

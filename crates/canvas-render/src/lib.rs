@@ -4,8 +4,16 @@
 mod blur;
 mod scene;
 
-pub use blur::{ColorParams, FxScope};
+pub use blur::{ColorParams, FxScope, SyncLayerRequest};
 pub use scene::{append_document, build_scene, image_data_from_rgba, text_lines, ImageMap};
+
+/// Dimensiones y color base para `render_with_base`, agrupadas para reducir
+/// la firma de 8 a 6 parámetros.
+pub struct RenderDims {
+    pub width: u32,
+    pub height: u32,
+    pub base_color: vello::peniko::Color,
+}
 
 use blur::BlurEngine;
 use canvas_core::LayerId;
@@ -59,11 +67,13 @@ impl CanvasRenderer {
         let outcome = self.blur.sync_layer(
             device,
             queue,
-            scope,
-            layer,
-            source,
-            ColorParams::from(effects),
-            effects.blur_radius,
+            &blur::passes::SyncLayerRequest {
+                scope,
+                layer,
+                source,
+                color: ColorParams::from(effects),
+                radius: effects.blur_radius,
+            },
             &mut |texture| renderer.register_texture(texture),
         );
         match outcome {
@@ -126,23 +136,27 @@ impl CanvasRenderer {
             queue,
             scene,
             target,
-            width,
-            height,
-            palette::css::DIM_GRAY,
+            RenderDims {
+                width,
+                height,
+                base_color: palette::css::DIM_GRAY,
+            },
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_with_base(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &Scene,
         target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        base_color: vello::peniko::Color,
+        render_dims: RenderDims,
     ) -> Result<(), RenderError> {
+        let RenderDims {
+            width,
+            height,
+            base_color,
+        } = render_dims;
         self.renderer
             .render_to_texture(
                 device,
@@ -214,9 +228,11 @@ impl CanvasRenderer {
             queue,
             &scene,
             &view,
-            width,
-            height,
-            vello::peniko::Color::TRANSPARENT,
+            RenderDims {
+                width,
+                height,
+                base_color: vello::peniko::Color::TRANSPARENT,
+            },
         )?;
 
         let rgba = read_texture_rgba(device, queue, &target, width, height)?;

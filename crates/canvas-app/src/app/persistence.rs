@@ -185,14 +185,16 @@ pub(super) fn start_save(
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
             let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
             loader::spawn_save(
-                path,
-                rgba,
-                width,
-                height,
-                jpeg_quality,
-                state.source_metadata.clone(),
-                new_source,
-                sidecar,
+                loader::SaveInput {
+                    path,
+                    rgba,
+                    width,
+                    height,
+                    jpeg_quality,
+                    metadata: state.source_metadata.clone(),
+                    new_source,
+                    sidecar,
+                },
                 sctx.tx.clone(),
                 sctx.ctx.clone(),
             );

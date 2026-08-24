@@ -11,9 +11,10 @@ use vello::wgpu;
 
 mod engine;
 mod params;
-mod passes;
+pub mod passes;
 
 pub use params::ColorParams;
+pub use passes::SyncLayerRequest;
 
 /// Identifica a QUÉ documento pertenece una capa, para la caché de efectos
 /// GPU. Los `LayerId` empiezan en 1 en cada `Document`, así que sin este

@@ -26,7 +26,6 @@ mod save_flow;
 /// deshacer/rehacer global de ese frame. `rs` ya viene resuelto por el
 /// llamador (si `frame.wgpu_render_state()` fuera `None`, el llamador corta
 /// el frame entero antes de entrar aquí, no solo esta vista).
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn editor_view_ui(
     ui: &mut egui::Ui,
     ctx: &egui::Context,

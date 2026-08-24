@@ -9,27 +9,43 @@ use vello::wgpu;
 use super::params::{blur_params_bytes, BlurParams, ColorParams, MAX_RADIUS};
 use super::{BlurEngine, FxScope, FxSync, LayerFx};
 
+/// Petición de sincronización de efectos GPU para una capa, agrupada para
+/// reducir la firma de `sync_layer` de 9 a 5 parámetros.
+pub struct SyncLayerRequest<'a> {
+    pub scope: FxScope,
+    pub layer: LayerId,
+    pub source: &'a ImageData,
+    pub color: ColorParams,
+    pub radius: f32,
+}
+
+/// Recursos GPU que `run_pass` necesita, agrupados para reducir su firma de
+/// 8 a 3 parámetros.
+struct PassInput<'a> {
+    pipeline: &'a wgpu::RenderPipeline,
+    bind_layout: &'a wgpu::BindGroupLayout,
+    sampler: &'a wgpu::Sampler,
+    from: &'a wgpu::Texture,
+    to: &'a wgpu::Texture,
+    params: &'a [u8],
+}
+
 impl BlurEngine {
     /// Sincroniza los efectos GPU de una capa de `scope`. Ver `FxSync` para
     /// qué debe hacer el llamador con el resultado.
     ///
     /// `register` registra la textura de salida en vello y devuelve su handle
     /// (se inyecta para no acoplar este módulo al `Renderer`).
-    #[allow(clippy::too_many_arguments)]
     pub fn sync_layer(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        scope: FxScope,
-        layer: LayerId,
-        source: &ImageData,
-        color: ColorParams,
-        radius: f32,
+        request: &SyncLayerRequest<'_>,
         register: &mut dyn FnMut(wgpu::Texture) -> ImageData,
     ) -> FxSync {
-        let blur_active = radius > 0.0;
-        let key = (scope, layer);
-        if !blur_active && color.is_identity() {
+        let blur_active = request.radius > 0.0;
+        let key = (request.scope, request.layer);
+        if !blur_active && request.color.is_identity() {
             return match self.cache.remove(&key) {
                 Some(b) => FxSync::Removed(b.image),
                 None => FxSync::Unchanged,
@@ -37,7 +53,7 @@ impl BlurEngine {
         }
 
         let entry = self.cache.entry(key).or_insert_with(|| {
-            let (w, h) = (source.width, source.height);
+            let (w, h) = (request.source.width, request.source.height);
             let size = wgpu::Extent3d {
                 width: w,
                 height: h,
@@ -61,7 +77,7 @@ impl BlurEngine {
             );
             queue.write_texture(
                 src.as_image_copy(),
-                source.data.data(),
+                request.source.data.data(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * w),
@@ -90,8 +106,8 @@ impl BlurEngine {
             }
         });
 
-        if entry.last != Some((color, radius)) {
-            let color_active = !color.is_identity();
+        if entry.last != Some((request.color, request.radius)) {
+            let color_active = !request.color.is_identity();
             // Cadena: color (src→mid_a) → blur H (x→mid_b) → blur V (mid_b→out);
             // sin blur, el color pinta directamente en out.
             if color_active {
@@ -103,17 +119,19 @@ impl BlurEngine {
                 run_pass(
                     device,
                     queue,
-                    &self.color_pipeline,
-                    &self.bind_layout,
-                    &self.sampler,
-                    &entry.src,
-                    target,
-                    &color.to_bytes(),
+                    &PassInput {
+                        pipeline: &self.color_pipeline,
+                        bind_layout: &self.bind_layout,
+                        sampler: &self.sampler,
+                        from: &entry.src,
+                        to: target,
+                        params: &request.color.to_bytes(),
+                    },
                 );
             }
             if blur_active {
-                let sigma = (radius / 3.0).max(0.1);
-                let taps = (radius.ceil() as i32).clamp(1, MAX_RADIUS);
+                let sigma = (request.radius / 3.0).max(0.1);
+                let taps = (request.radius.ceil() as i32).clamp(1, MAX_RADIUS);
                 let blur_input = if color_active {
                     &entry.mid_a
                 } else {
@@ -122,63 +140,57 @@ impl BlurEngine {
                 run_pass(
                     device,
                     queue,
-                    &self.blur_pipeline,
-                    &self.bind_layout,
-                    &self.sampler,
-                    blur_input,
-                    &entry.mid_b,
-                    &blur_params_bytes(&BlurParams {
-                        dir: [1.0, 0.0],
-                        sigma,
-                        radius: taps,
-                    }),
+                    &PassInput {
+                        pipeline: &self.blur_pipeline,
+                        bind_layout: &self.bind_layout,
+                        sampler: &self.sampler,
+                        from: blur_input,
+                        to: &entry.mid_b,
+                        params: &blur_params_bytes(&BlurParams {
+                            dir: [1.0, 0.0],
+                            sigma,
+                            radius: taps,
+                        }),
+                    },
                 );
                 run_pass(
                     device,
                     queue,
-                    &self.blur_pipeline,
-                    &self.bind_layout,
-                    &self.sampler,
-                    &entry.mid_b,
-                    &entry.out,
-                    &blur_params_bytes(&BlurParams {
-                        dir: [0.0, 1.0],
-                        sigma,
-                        radius: taps,
-                    }),
+                    &PassInput {
+                        pipeline: &self.blur_pipeline,
+                        bind_layout: &self.bind_layout,
+                        sampler: &self.sampler,
+                        from: &entry.mid_b,
+                        to: &entry.out,
+                        params: &blur_params_bytes(&BlurParams {
+                            dir: [0.0, 1.0],
+                            sigma,
+                            radius: taps,
+                        }),
+                    },
                 );
             }
-            entry.last = Some((color, radius));
+            entry.last = Some((request.color, request.radius));
             return FxSync::Rebaked(entry.image.clone());
         }
         FxSync::Unchanged
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_pass(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    pipeline: &wgpu::RenderPipeline,
-    bind_layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    from: &wgpu::Texture,
-    to: &wgpu::Texture,
-    params: &[u8],
-) {
+fn run_pass(device: &wgpu::Device, queue: &wgpu::Queue, input: &PassInput<'_>) {
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fx params"),
-        size: params.len() as u64,
+        size: input.params.len() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&buffer, 0, params);
+    queue.write_buffer(&buffer, 0, input.params);
 
-    let from_view = from.create_view(&Default::default());
-    let to_view = to.create_view(&Default::default());
+    let from_view = input.from.create_view(&Default::default());
+    let to_view = input.to.create_view(&Default::default());
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("fx bind"),
-        layout: bind_layout,
+        layout: input.bind_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -186,7 +198,7 @@ fn run_pass(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
+                resource: wgpu::BindingResource::Sampler(input.sampler),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -215,7 +227,7 @@ fn run_pass(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(input.pipeline);
         pass.set_bind_group(0, &bind, &[]);
         pass.draw(0..3, 0..1);
     }

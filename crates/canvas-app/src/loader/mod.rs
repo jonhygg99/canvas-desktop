@@ -32,7 +32,7 @@ pub use load_ops::{
 };
 pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_reserve_canvas_path, spawn_save,
-    spawn_save_design,
+    spawn_save_design, SaveInput,
 };
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
