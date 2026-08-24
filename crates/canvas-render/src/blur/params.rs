@@ -176,4 +176,36 @@ mod tests {
         // El slider de la UI llega a 100; el kernel debe soportarlo.
         const { assert!(MAX_RADIUS >= 100) };
     }
+    /// `ImageData` creados con píxeles distintos tienen `Blob::id()` distinto:
+    /// es la base para detectar si los píxeles de origen cambiaron y hay que
+    /// re-subir la textura `src` en `sync_layer`.
+    #[test]
+    fn image_data_from_rgba_gets_distinct_blob_ids() {
+        use crate::image_data_from_rgba;
+        let a = image_data_from_rgba(vec![0u8; 4], 1, 1);
+        let b = image_data_from_rgba(vec![255u8; 4], 1, 1);
+        // `Blob::id()` es un identificador único por instancia de Blob: dos
+        // `ImageData` distintos siempre tienen ids distintos, sin importar
+        // si los píxeles coinciden. Es lo que `sync_layer` usa para detectar
+        // que los píxeles de origen cambiaron (un nuevo `ImageData` se creó).
+        assert_ne!(
+            a.data.id(),
+            b.data.id(),
+            "dos ImageData distintos deben tener ids distintos"
+        );
+    }
+
+    /// `ImageData` del mismo contenido pero distinto tamaño tienen ids
+    /// distintos: el id cubre todo el `ImageData`, no solo los bytes.
+    #[test]
+    fn different_dimensions_produce_different_ids() {
+        use crate::image_data_from_rgba;
+        let small = image_data_from_rgba(vec![0u8; 4], 1, 1);
+        let big = image_data_from_rgba(vec![0u8; 16], 2, 2);
+        assert_ne!(
+            small.data.id(),
+            big.data.id(),
+            "distinto tamaño debe producir id distinto"
+        );
+    }
 }

@@ -98,6 +98,7 @@ impl BlurEngine {
             let image = register(out.clone());
             LayerFx {
                 src,
+                src_blob_id: request.source.data.id(),
                 mid_a,
                 mid_b,
                 out,
@@ -106,7 +107,33 @@ impl BlurEngine {
             }
         });
 
-        if entry.last != Some((request.color, request.radius)) {
+        // Si los píxeles de origen cambiaron (el `Blob::id()` es distinto),
+        // re-subir `src` y forzar un re-horneado. Sin esto, editar una imagen
+        // (pegado, reemplazo) sin tocar el slider de blur dejaba la textura
+        // procesada mostrando los píxeles antiguos — la caché solo invalidaba
+        // cuando cambiaban los parámetros de efecto, no el contenido.
+        let source_changed = entry.src_blob_id != request.source.data.id();
+        if source_changed {
+            let (w, h) = (request.source.width, request.source.height);
+            let size = wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            };
+            queue.write_texture(
+                entry.src.as_image_copy(),
+                request.source.data.data(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * w),
+                    rows_per_image: None,
+                },
+                size,
+            );
+            entry.src_blob_id = request.source.data.id();
+        }
+
+        if source_changed || entry.last != Some((request.color, request.radius)) {
             let color_active = !request.color.is_identity();
             // Cadena: color (src→mid_a) → blur H (x→mid_b) → blur V (mid_b→out);
             // sin blur, el color pinta directamente en out.

@@ -30,6 +30,13 @@ pub struct FxScope(pub u64);
 struct LayerFx {
     /// Imagen original subida a GPU (una vez).
     src: wgpu::Texture,
+    /// `Blob::id()` de los píxeles que se subieron a `src`. Si cambia,
+    /// los píxeles de origen cambiaron (edición, pegado, reemplazo) y hay
+    /// que re-subir `src` y forzar un re-horneado — sin esto, la textura
+    /// procesada seguiría mostrando los píxeles antiguos hasta que los
+    /// efectos cambiaran, lo cual puede no ocurrir nunca (un slider de
+    /// blur quieto + imagen editada = caché eternamente estancada).
+    src_blob_id: u64,
     /// Intermedias de la cadena (color y pasada horizontal del blur).
     mid_a: wgpu::Texture,
     mid_b: wgpu::Texture,
