@@ -5,14 +5,13 @@
 //! Movido tal cual desde `canvas_ui`, en el mismo orden.
 
 use eframe::egui;
-use eframe::egui_wgpu::RenderState;
 
 use crate::deck::{Deck, MoveDir};
 
 use super::super::slot_chrome::slot_header_layout;
 use super::super::viewport::{page_to_screen, screen_to_page};
 use super::super::EditorState;
-use super::CanvasAction;
+use super::{CanvasAction, CanvasContext};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_press(
@@ -23,8 +22,7 @@ pub(super) fn handle_press(
     response: &egui::Response,
     visible: &[usize],
     space_down: bool,
-    new_canvas_ext: &str,
-    _rs: &RenderState,
+    ctx: &CanvasContext,
     action: &mut Option<CanvasAction>,
 ) {
     // Pulsación sobre un lienzo que no es el activo: lo activa (el
@@ -141,8 +139,8 @@ pub(super) fn handle_press(
                     // aquí mismo — es una operación puramente en memoria, no
                     // toca disco ni el watcher, así que no hace falta pasar
                     // por `main.rs`.
-                    if let Some(idx) =
-                        deck.push_placeholder((deck.add_zone.w, deck.add_zone.h), new_canvas_ext)
+                    if let Some(idx) = deck
+                        .push_placeholder((deck.add_zone.w, deck.add_zone.h), ctx.new_canvas_ext)
                     {
                         deck.jump_to = Some(idx);
                         deck.jump_reframe = true;

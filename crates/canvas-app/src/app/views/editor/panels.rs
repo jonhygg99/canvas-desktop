@@ -93,17 +93,15 @@ pub(super) fn show_panels(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            canvas_action = editor::canvas_ui(
-                state,
-                f.deck,
-                ui,
+            let mut ctx = editor::canvas::CanvasContext {
                 rs,
-                f.renderer,
-                f.surface,
-                f.tx,
-                f.settings.new_canvas_format.extension(),
-                f.settings.sidecar_default,
-            );
+                renderer: f.renderer,
+                surface: f.surface,
+                tx: f.tx,
+                new_canvas_ext: f.settings.new_canvas_format.extension(),
+                sidecar_default: f.settings.sidecar_default,
+            };
+            canvas_action = editor::canvas_ui(state, f.deck, ui, &mut ctx);
         });
 
     (strip_action, canvas_action)

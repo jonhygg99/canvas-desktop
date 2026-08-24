@@ -207,6 +207,25 @@ pub(super) fn resolve(
             }
         }
     }
+    // Si `jump_to` se fijó en este frame (clic de tira, teclado, Save all,
+    // deshacer global), `canvas_ui` ya corrió su `request_loads` ANTES de
+    // que se fijara — el slot destino quedó sin pedir. Se lanza una segunda
+    // pasada aquí para que el destino se empiece a cargar en el mismo frame,
+    // no en el siguiente. Sin esto, cada salto a una casilla lejana suma un
+    // frame de latencia visible.
+    if let Some(folder) = f.deck.folder.clone() {
+        let gen = f.deck.generation();
+        for path in f.deck.request_loads(&[]) {
+            loader::spawn_load_slot(
+                folder.clone(),
+                path,
+                gen,
+                f.settings.sidecar_default,
+                f.tx.clone(),
+                ctx.clone(),
+            );
+        }
+    }
     // Aplica el salto si el destino ya está listo y el editor está ocioso;
     // si no, la petición queda pendiente y se reintenta en los próximos
     // frames — llamar aquí siempre, no solo cuando `deck_target` trae algo

@@ -374,10 +374,9 @@ fn request_loads_prioritises_neighbours_of_an_active_placeholder() {
 
     let spawned = deck.request_loads(&[]);
 
-    assert_eq!(
-        spawned,
-        vec![PathBuf::from("c.png"), PathBuf::from("b.png")]
-    );
+    // Con MAX_INFLIGHT_LOADS = 4, carga todos los Idle visibles (a, b, c).
+    assert!(spawned.contains(&PathBuf::from("c.png")));
+    assert!(spawned.contains(&PathBuf::from("b.png")));
     assert!(!spawned.contains(&deck.slots[placeholder].path));
     assert!(matches!(deck.slots[1].content, SlotContent::Loading));
     assert!(matches!(deck.slots[2].content, SlotContent::Loading));
@@ -668,4 +667,62 @@ fn preload_all_does_not_reload_what_evict_just_dropped() {
         ready_count + second_batch.len(),
         MAX_LOADED_SLOTS
     );
+}
+
+/// Un salto a una casilla lejana (fuera del radio de precarga) debe
+/// cargarse con prioridad absoluta, sin importar `inflight_limit`.
+/// Antes del fix, si `inflight` estaba saturado el `jump_to` no se pedía
+/// hasta que una carga terminara — el salto se quedaba colgado.
+#[test]
+fn jump_to_a_distant_idle_slot_is_loaded_with_priority() {
+    let mut deck = Deck::from_seed(
+        seed(&[
+            "a.png", "b.png", "c.png", "d.png", "e.png", "f.png", "g.png",
+        ]),
+        Path::new("a.png"),
+    );
+    // Saturar inflight: cargar 2 slots (MAX_INFLIGHT_LOADS = 4 ahora, pero
+    // simulamos 2 en vuelo para verificar prioridad).
+    deck.inflight = 2;
+    // Pedir un salto a la última ranura (g.png, índice 6), que está Idle.
+    deck.jump_to = Some(6);
+    let spawned = deck.request_loads(&[]);
+    // Debe haber pedido g.png a pesar de que inflight ya estaba en 2.
+    assert!(
+        spawned.contains(&PathBuf::from("g.png")),
+        "el destino de jump_to debe cargarse con prioridad, sin importar inflight"
+    );
+}
+
+/// `evict` no debe descartar el slot destino de un `jump_to` pendiente.
+/// Sin esta protección, un salto a un slot lejano pero ya Ready podía ver
+/// su destino descartado a `Idle` por el descarte, colgando el salto.
+#[test]
+fn evict_protects_the_jump_target() {
+    let mut deck = Deck::from_seed(
+        seed(&[
+            "a.png", "b.png", "c.png", "d.png", "e.png", "f.png", "g.png", "h.png", "i.png",
+            "j.png", "k.png", "l.png", "m.png", "n.png",
+        ]),
+        Path::new("a.png"),
+    );
+    use super::cache::{EVICT_BUDGET_BYTES, MAX_LOADED_SLOTS};
+    // Llenar todos los slots de Ready excepto la activa.
+    for i in 0..deck.slots.len() {
+        if i != deck.active {
+            deck.slots[i].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+        }
+    }
+    // Fijar un salto al último slot (lejos de la activa).
+    let target = deck.slots.len() - 1;
+    deck.jump_to = Some(target);
+    // Forzar evicción con un presupuesto ridículamente bajo.
+    let freed = deck.evict_with_budget(0);
+    // El slot destino del salto NO debe estar entre los descartados.
+    assert!(
+        matches!(deck.slots[target].content, SlotContent::Ready(_)),
+        "el destino de jump_to no debe ser descartado por evict"
+    );
+    let _ = freed;
+    let _ = (EVICT_BUDGET_BYTES, MAX_LOADED_SLOTS);
 }

@@ -16,6 +16,20 @@ use crate::deck::{Deck, DeckRect, SlotContent};
 use crate::loader::{self, AppMsg};
 use crate::surface::CanvasSurface;
 
+/// Contexto de render/IO que `canvas_ui` necesita del `App`. Agrupa los
+/// préstamos que van SIEMPRE juntos al lienzo (renderer, surface, canal de
+/// mensajes, configuración) en un solo struct para no arrastrarlos sueltos
+/// como parámetros — mismo espíritu que `EditorFrame`, pero para la parte
+/// que `canvas_ui` usa dentro del `CentralPanel`.
+pub(crate) struct CanvasContext<'a> {
+    pub rs: &'a RenderState,
+    pub renderer: &'a mut CanvasRenderer,
+    pub surface: &'a mut Option<CanvasSurface>,
+    pub tx: &'a Sender<AppMsg>,
+    pub new_canvas_ext: &'a str,
+    pub sidecar_default: bool,
+}
+
 use super::interaction::layer_interaction;
 use super::properties_panel::size_popup_ui;
 use super::viewport::screen_to_page;
@@ -56,19 +70,11 @@ pub enum CanvasAction {
 /// El lienzo: gestiona zoom/paneo, carga perezosa/descarte de la baraja, y
 /// renderiza en una sola escena todos los lienzos visibles (el activo con
 /// `state.doc`/`state.images`; el resto con su propio `SlotDoc`).
-#[allow(clippy::too_many_arguments)]
 pub fn canvas_ui(
     state: &mut EditorState,
     deck: &mut Deck,
     ui: &mut egui::Ui,
-    rs: &RenderState,
-    renderer: &mut CanvasRenderer,
-    surface_slot: &mut Option<CanvasSurface>,
-    tx: &Sender<AppMsg>,
-    // Extensión de `settings.new_canvas_format` — qué crea la zona "+" al
-    // final de la baraja cuando se pulsa directamente sobre el lienzo.
-    new_canvas_ext: &str,
-    sidecar_default: bool,
+    ctx: &mut CanvasContext,
 ) -> Option<CanvasAction> {
     // Duplicar/borrar/renombrar tocan disco o el watcher: se arman aquí (en
     // la cabecera de un lienzo, ver más abajo) pero se resuelven en
@@ -200,8 +206,7 @@ pub fn canvas_ui(
         &response,
         &visible,
         space_down,
-        new_canvas_ext,
-        rs,
+        ctx,
         &mut action,
     );
 
@@ -225,7 +230,12 @@ pub fn canvas_ui(
     let ppp = ui.ctx().pixels_per_point();
     let width = (rect.width() * ppp).round().max(1.0) as u32;
     let height = (rect.height() * ppp).round().max(1.0) as u32;
-    let surface = CanvasSurface::ensure(surface_slot, rs, width, height);
+    // Se separan los campos de `ctx` aquí para que el préstamo de
+    // `surface` (que vive tanto como `ctx.surface`) no bloquee el resto
+    // del frame: `paint` más abajo necesita `ctx.renderer`/`ctx.rs` a la
+    // vez que `surface` sigue vivo.
+    let surface_slot = &mut *ctx.surface;
+    let surface = CanvasSurface::ensure(surface_slot, ctx.rs, width, height);
 
     // Transformación del espacio de BARAJA a píxeles físicos del lienzo, sin
     // desplazar por ninguna ranura en particular: cada lienzo visible añade
@@ -244,8 +254,8 @@ pub fn canvas_ui(
                 folder.clone(),
                 path,
                 deck.generation(),
-                sidecar_default,
-                tx.clone(),
+                ctx.sidecar_default,
+                ctx.tx.clone(),
                 ui.ctx().clone(),
             );
         }
@@ -253,7 +263,7 @@ pub fn canvas_ui(
     // Descarte: libera memoria de ranuras lejanas, limpias y sin guardado en
     // curso, por encima del presupuesto.
     for scope in deck.evict() {
-        renderer.forget_scope(scope);
+        ctx.renderer.forget_scope(scope);
     }
 
     // Una sola escena para todos los lienzos visibles ya cargados (activo o
@@ -271,8 +281,8 @@ pub fn canvas_ui(
         page_dims,
         base_view,
         surface,
-        rs,
-        renderer,
+        ctx.rs,
+        ctx.renderer,
         &mut action,
     );
 

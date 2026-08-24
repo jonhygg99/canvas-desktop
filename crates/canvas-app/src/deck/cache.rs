@@ -49,6 +49,7 @@ impl Deck {
                 .enumerate()
                 .filter(|(i, s)| {
                     *i != active
+                        && Some(*i) != self.jump_to
                         && i.abs_diff(active) > PRELOAD_RADIUS
                         // Una provisional está LIMPIA por construcción
                         // (`mark_saved` al nacer en `push_placeholder`), así

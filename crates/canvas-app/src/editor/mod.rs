@@ -10,7 +10,7 @@ pub(super) const HANDLE_SIZE: f32 = 9.0;
 /// `slot_chrome`.
 pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 
-mod canvas;
+pub(crate) mod canvas;
 mod interaction;
 mod layer_ops;
 

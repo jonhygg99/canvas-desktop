@@ -30,9 +30,15 @@ impl Deck {
         let hi = (active + PRELOAD_RADIUS).min(self.slots.len() - 1);
         let mut candidates: Vec<usize> = visible.iter().copied().chain(lo..=hi).collect();
         if self.preload_all {
+            // Radio de precarga simetrico a ambos lados de la activa,
+            // hasta el mismo techo que `evict` permite (MAX_LOADED_SLOTS).
+            // Antes usaba `budget / 2` (5 a cada lado), lo que dejaba slots
+            // a 6+ posiciones sin cargar; un salto ahi se colgaba
+            // esperando. Con `budget` (11 a cada lado) toda la ventana
+            // que `evict` retiene esta cubierta.
             let budget = MAX_LOADED_SLOTS.saturating_sub(1);
-            let lo_budget = active.saturating_sub(budget / 2);
-            let hi_budget = (active + budget / 2 + 1).min(self.slots.len());
+            let lo_budget = active.saturating_sub(budget);
+            let hi_budget = (active + budget + 1).min(self.slots.len());
             candidates.extend(lo_budget..hi_budget);
         }
         if let Some(j) = jump {
@@ -62,7 +68,12 @@ impl Deck {
             MAX_INFLIGHT_LOADS
         });
         for i in candidates {
-            if self.inflight >= inflight_limit {
+            let is_jump = Some(i) == jump;
+            // Un salto pendiente tiene prioridad absoluta: se carga SIEMPRE,
+            // sin importar `inflight_limit`. Sin esto, un salto a una
+            // casilla lejana (fuera del radio de precarga) se queda colgado
+            // esperando a que terminen las cargas en vuelo.
+            if !is_jump && self.inflight >= inflight_limit {
                 break;
             }
             if let Some(slot) = self.slots.get_mut(i) {
@@ -98,9 +109,10 @@ impl Deck {
 /// saltar con `PageUp`/`PageDown` el destino inmediato ya está listo.
 pub(super) const PRELOAD_RADIUS: usize = 2;
 
-/// Cargas simultáneas en vuelo. Más de dos solo hace competir a los hilos
-/// por el disco sin acelerar nada.
-pub(super) const MAX_INFLIGHT_LOADS: usize = 2;
+/// Cargas simultáneas en vuelo. Cuatro permite precargar el radio completo
+/// (PRELOAD_RADIUS + preload_all) sin esperar colas, y da margen para
+/// cargar el destino de un `jump_to` lejano sin bloquear la precarga.
+pub(super) const MAX_INFLIGHT_LOADS: usize = 4;
 
 pub(super) fn next_generation() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
