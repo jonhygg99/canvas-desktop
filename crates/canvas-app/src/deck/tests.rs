@@ -605,3 +605,67 @@ fn a_deck_without_a_folder_accepts_nothing() {
     assert!(deck.folder.is_none());
     assert!(!deck.accepts_response(Path::new(r"C:\folder"), deck.generation()));
 }
+
+/// Regresión del bucle infinito de recargas: con `preload_all` y más
+/// ranuras que `MAX_LOADED_SLOTS`, antes `request_loads` pedía TODAS las
+/// ranuras `Idle` cada frame. Como `evict` descarta por encima de
+/// `MAX_LOADED_SLOTS`, un slot recién cargado y luego descartado volvía a
+/// `Idle` y se re-pedía en el frame siguiente — cientos de recargas por
+/// segundo, la app se quedaba «cargando» para siempre. Ahora
+/// `request_loads` limita su radio de precarga al mismo techo que `evict`,
+/// así lo que se carga no se descarta de inmediato.
+#[test]
+fn preload_all_does_not_reload_what_evict_just_dropped() {
+    use super::cache::MAX_LOADED_SLOTS;
+    // Carpetas con muchos más archivos que el techo de caché.
+    let names: Vec<&str> = (0..(MAX_LOADED_SLOTS * 4))
+        .map(|i| Box::leak(format!("f{i}.png").into_boxed_str()) as &str)
+        .collect();
+    let mut deck = Deck::from_seed(seed(&names), Path::new("f0.png"));
+    assert!(deck.preload_all);
+
+    // Simula dos frames completos: pedir, recibir, pedir de nuevo.
+    // Tras el primer ciclo algunos slots quedan Ready. El segundo ciclo
+    // NO debe volver a pedir ninguno de los ya Ready (ni de los que
+    // `evict` descartaría): el número de cargas pedidas en el segundo
+    // frame debe ser MENOR que en el primero (progresó, no bucle).
+    let first_batch = deck.request_loads(&[]);
+    // Marca las primeras cargas como Ready (simula respuesta exitosa).
+    for path in &first_batch {
+        let idx = deck.find_by_path(path).unwrap();
+        deck.slots[idx].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+        deck.loading_finished();
+    }
+    // `evict` descarta lo que exceda MAX_LOADED_SLOTS.
+    let _ = deck.evict();
+    let second_batch = deck.request_loads(&[]);
+
+    // El segundo frame no debe re-pedido nada que ya estaba cargado.
+    for path in &first_batch {
+        let still_there = deck
+            .find_by_path(path)
+            .is_some_and(|i| matches!(deck.slots[i].content, SlotContent::Ready(_)));
+        if still_there {
+            assert!(
+                !second_batch.contains(path),
+                "slot ya Ready se volvió a pedir — bucle de recarga"
+            );
+        }
+    }
+    // Y tampoco debe pedir tantos como para que evict los tire enseguida:
+    // la suma de Ready + Loading actuales + pedidos nuevos no debe superar
+    // de lejos el techo (el bucle venía de pasarse).
+    let ready_count = deck
+        .slots
+        .iter()
+        .filter(|s| matches!(s.content, SlotContent::Ready(_)))
+        .count();
+    assert!(
+        ready_count + second_batch.len() <= MAX_LOADED_SLOTS + MAX_INFLIGHT_LOADS,
+        "se pidieron {} con {} ya listos (total {}) — supera el techo de {}",
+        second_batch.len(),
+        ready_count,
+        ready_count + second_batch.len(),
+        MAX_LOADED_SLOTS
+    );
+}

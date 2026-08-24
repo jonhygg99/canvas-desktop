@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::cache::adaptive_evict_budget;
+use super::cache::{adaptive_evict_budget, MAX_LOADED_SLOTS};
 use super::model::SlotContent;
 use super::Deck;
 
@@ -30,7 +30,10 @@ impl Deck {
         let hi = (active + PRELOAD_RADIUS).min(self.slots.len() - 1);
         let mut candidates: Vec<usize> = visible.iter().copied().chain(lo..=hi).collect();
         if self.preload_all {
-            candidates.extend(0..self.slots.len());
+            let budget = MAX_LOADED_SLOTS.saturating_sub(1);
+            let lo_budget = active.saturating_sub(budget / 2);
+            let hi_budget = (active + budget / 2 + 1).min(self.slots.len());
+            candidates.extend(lo_budget..hi_budget);
         }
         if let Some(j) = jump {
             candidates.push(j);
