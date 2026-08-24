@@ -130,7 +130,7 @@ impl App {
             }
             A::Delete => {
                 if let View::Editor(state) = &mut self.view {
-                    clipboard::delete_selected(state);
+                    editor::delete_selected(state);
                 }
             }
             A::SelectAll => {

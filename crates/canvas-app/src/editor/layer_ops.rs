@@ -1,7 +1,7 @@
-//! Operaciones puras de orden (z-order) y alineación de capas: no tocan
-//! egui, solo el documento a través de comandos deshacibles.
+//! Operaciones puras sobre capas — orden (z-order), alineación y borrado:
+//! no tocan egui, solo el documento a través de comandos deshacibles.
 
-use canvas_core::{Command, LayerId, Reorder, SetTransform, Transform};
+use canvas_core::{Command, Composite, LayerId, RemoveLayer, Reorder, SetTransform, Transform};
 
 use super::EditorState;
 
@@ -71,4 +71,53 @@ pub(super) fn apply_alignment(state: &mut EditorState, sel: LayerId, after: Tran
     })) {
         tracing::error!("alinear falló: {e}");
     }
+}
+
+/// Borra las capas seleccionadas como UN solo paso de deshacer, saltandose las
+/// bloqueadas (por si mismas o por su grupo).
+///
+/// Es el unico borrado de capas de la app: lo usan el menu, el menu
+/// contextual, la tecla `Delete`, `Ctrl+X` y el boton del panel de capas.
+/// Tenerlo en un solo sitio es lo que evita que una via respete el bloqueo y
+/// otra no, que es justo lo que pasaba antes.
+///
+/// Las bloqueadas siguen seleccionadas al terminar: no han desaparecido, asi
+/// que deseleccionarlas seria mentir sobre lo que acaba de ocurrir.
+pub(crate) fn delete_selected(state: &mut EditorState) {
+    let Ok(page) = state.doc.page() else {
+        return;
+    };
+    let roots: Vec<LayerId> = state
+        .selection
+        .roots(page)
+        .into_iter()
+        .filter(|&id| !page.effective_locked(id))
+        .collect();
+    if roots.is_empty() {
+        return;
+    }
+    let mut cmds: Vec<Box<dyn Command>> = Vec::new();
+    for id in roots {
+        let mut cmd = RemoveLayer::new(id);
+        if cmd.apply(&mut state.doc).is_ok() {
+            cmds.push(Box::new(cmd));
+        }
+    }
+    if !cmds.is_empty() {
+        state.push_undo_step(Box::new(Composite::new("Quitar capas", cmds)));
+    }
+    state.forget_deleted_selection();
+}
+
+/// ¿Queda algo que borrar de verdad? Las capas bloqueadas no cuentan: con solo
+/// bloqueadas seleccionadas, el boton de borrar debe verse deshabilitado en
+/// vez de no hacer nada al pulsarlo.
+pub(crate) fn has_deletable_selection(state: &EditorState) -> bool {
+    state.doc.page().is_ok_and(|page| {
+        state
+            .selection
+            .roots(page)
+            .into_iter()
+            .any(|id| !page.effective_locked(id))
+    })
 }

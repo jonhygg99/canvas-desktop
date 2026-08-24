@@ -13,12 +13,17 @@ pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 mod canvas;
 mod interaction;
 mod layer_ops;
+
+#[cfg(test)]
+#[path = "layer_ops_tests.rs"]
+mod layer_ops_tests;
 mod overlay;
 mod properties_panel;
 mod slot_chrome;
 mod viewport;
 
 pub use canvas::{canvas_ui, CanvasAction};
+pub(crate) use layer_ops::{delete_selected, has_deletable_selection};
 pub use properties_panel::properties_ui;
 pub use viewport::Viewport;
 

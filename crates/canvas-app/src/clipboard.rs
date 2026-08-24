@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-use canvas_core::{Command, Composite, InsertLayer, LayerId, RemoveLayer, Selection};
+use canvas_core::{Command, Composite, InsertLayer, LayerId, Selection};
 use canvas_render::image_data_from_rgba;
 
 use crate::editor::EditorState;
@@ -119,35 +119,7 @@ pub fn copy(state: &EditorState) {
 /// es su propio paso de deshacer).
 pub fn cut(state: &mut EditorState) {
     copy(state);
-    delete_selected(state);
-}
-
-/// Borra las capas seleccionadas (sin tocar las bloqueadas), como un solo
-/// paso de deshacer.
-pub fn delete_selected(state: &mut EditorState) {
-    let Ok(page) = state.doc.page() else {
-        return;
-    };
-    let roots: Vec<LayerId> = state
-        .selection
-        .roots(page)
-        .into_iter()
-        .filter(|&id| !page.effective_locked(id))
-        .collect();
-    if roots.is_empty() {
-        return;
-    }
-    let mut cmds: Vec<Box<dyn Command>> = Vec::new();
-    for id in roots {
-        let mut cmd = RemoveLayer::new(id);
-        if cmd.apply(&mut state.doc).is_ok() {
-            cmds.push(Box::new(cmd));
-        }
-    }
-    if !cmds.is_empty() {
-        state.push_undo_step(Box::new(Composite::new("Quitar capas", cmds)));
-    }
-    state.forget_deleted_selection();
+    crate::editor::delete_selected(state);
 }
 
 /// Pega un `ClipboardDoc` ya deserializado: reasigna ids, desplaza el

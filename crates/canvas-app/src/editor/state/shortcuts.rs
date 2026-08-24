@@ -122,7 +122,7 @@ impl EditorState {
                 || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::Backspace))
         });
         if delete {
-            crate::clipboard::delete_selected(self);
+            crate::editor::delete_selected(self);
         }
 
         // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un
