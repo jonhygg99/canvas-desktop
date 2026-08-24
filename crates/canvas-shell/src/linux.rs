@@ -31,7 +31,11 @@ impl ShellIntegration for LinuxShell {
         let dir = applications_dir()?;
         std::fs::create_dir_all(&dir).map_err(|e| ShellError::Registry(e.to_string()))?;
         let path = dir.join(DESKTOP_FILE_NAME);
-        let mime_types: Vec<&str> = ASSOC_EXTENSIONS
+        // MIME type por extensión. `jpg` y `jpeg` producen el mismo MIME
+        // (`image/jpeg`), así que se deduplican para no escribirlo dos veces
+        // en `MimeType=` (freedesktop.org lo acepta, pero queda feo y algunos
+        // validadores lo marcan como warning).
+        let mut mime_types: Vec<&str> = ASSOC_EXTENSIONS
             .iter()
             .map(|ext| match *ext {
                 "jpg" | "jpeg" => "image/jpeg",
@@ -44,6 +48,8 @@ impl ShellIntegration for LinuxShell {
                 _ => "application/octet-stream",
             })
             .collect();
+        mime_types.sort();
+        mime_types.dedup();
 
         let exe_str = exe.to_string_lossy();
         let mut content = String::new();
