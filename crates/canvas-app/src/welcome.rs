@@ -12,12 +12,7 @@ pub enum WelcomeAction {
     OpenRecent(PathBuf),
 }
 
-pub fn show(
-    ui: &mut egui::Ui,
-    error: Option<&str>,
-    recents: &[PathBuf],
-    page_size: (f64, f64),
-) -> Option<WelcomeAction> {
+pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Option<WelcomeAction> {
     let mut action = None;
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
@@ -27,12 +22,8 @@ pub fn show(
             ui.label("Edit images right on top of your files.");
             ui.add_space(24.0);
 
-            let (w, h) = page_size;
             if ui
-                .add(
-                    egui::Button::new(format!("✨  New design ({} × {})", w as i64, h as i64))
-                        .min_size(egui::vec2(220.0, 36.0)),
-                )
+                .add(egui::Button::new("✨  New design").min_size(egui::vec2(220.0, 36.0)))
                 .clicked()
             {
                 action = Some(WelcomeAction::NewProject);

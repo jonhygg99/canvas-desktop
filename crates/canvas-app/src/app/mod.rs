@@ -309,7 +309,6 @@ impl eframe::App for App {
                     ui,
                     error.as_deref(),
                     &self.settings.recent_files,
-                    self.settings.last_page_size,
                     &mut self.show_settings,
                     &self.tx,
                     &ctx,

@@ -17,13 +17,12 @@ pub(in crate::app) fn welcome_view_ui(
     ui: &mut egui::Ui,
     error: Option<&str>,
     recent_files: &[PathBuf],
-    last_page_size: (f64, f64),
     show_settings: &mut bool,
     tx: &Sender<AppMsg>,
     ctx: &egui::Context,
 ) -> Option<Nav> {
     let mut open_next = None;
-    match welcome::show(ui, error, recent_files, last_page_size) {
+    match welcome::show(ui, error, recent_files) {
         Some(welcome::WelcomeAction::NewProject) => {
             open_next = Some(Nav::NewDesign);
         }
