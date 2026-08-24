@@ -125,7 +125,13 @@ pub fn append_document(
         view,
         &page_rect,
     );
-    let mut open: Vec<(usize, bool)> = Vec::new();
+    // Pila de grupos abiertos: (índice del último descendiente, si se
+    // empujó una capa de opacidad). La profundidad de anidamiento real de
+    // grupos es casi siempre ≤ 5; pre-reservar 8 evita la primera
+    // reallocación (que ocurriría en el 4º `push` con la estrategia de
+    // crecimiento por defecto de `Vec`). En el hot path de render esto se
+    // llama por cada slot visible por frame.
+    let mut open: Vec<(usize, bool)> = Vec::with_capacity(8);
     let mut i = 0usize;
     while i < page.layers.len() {
         while open.last().is_some_and(|&(end, _)| i > end) {
