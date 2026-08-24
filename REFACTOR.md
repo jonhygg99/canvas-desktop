@@ -100,9 +100,14 @@ Tras cerrar el refactor, se hizo una pasada de optimización y cobertura:
       `Vec::with_capacity(8)` para la pila de grupos abiertos (profundidad
       típica ≤ 5). Evita reallocaciones durante el primer segundo de render.
 
-- [x] **Tests nuevos (208 → 299).** +15 tests de integración del shell
-      (`tests/integration.rs`), +4 del bucle de instancia única, +2 de
-      `Blob::id()` en `blur/params.rs`.
+- [x] **Tests nuevos (208 → 299 + 7 GPU).** +15 tests de integración del
+      shell (`tests/integration.rs`), +4 del bucle de instancia única, +2 de
+      `Blob::id()` en `blur/params.rs`, +7 tests de integración GPU en
+      `tests/gpu_bake.rs` (marcados `#[ignore]` — requieren adaptador wgpu;
+      replican `bake_blur` y `save_roundtrip` con imagen sintética y assertions
+      sobre píxeles horneados: blur cambia píxeles, blur sobre sólido es
+      identidad, round-trip bake+save+reload, estabilidad de caché entre
+      frames, `forget_scope` + re-bake, escala 2x).
 
 ## Verificación al final de cada fase
 
