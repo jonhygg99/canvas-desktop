@@ -202,16 +202,20 @@ fn recent_folder_ui(
         visuals.text_color()
     };
 
+    let content_w = icon_sz + gap + galley.size().x;
+    // Centrar icono+texto dentro del ancho total de la fila (la
+    // chincheta va a la derecha del todo, no desplaza el centro).
+    let content_start_x = row_rect.left() + (width - content_w) / 2.0;
+
     // Icono de carpeta
-    let left_pad = 14.0;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(body_rect.left() + left_pad + icon_sz / 2.0, body_rect.center().y),
+        egui::pos2(content_start_x + icon_sz / 2.0, row_rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
 
     // Nombre
-    let text_origin = egui::pos2(icon_rect.right() + gap, body_rect.center().y);
+    let text_origin = egui::pos2(icon_rect.right() + gap, row_rect.center().y);
     ui.painter().text(
         text_origin,
         egui::Align2::LEFT_CENTER,
