@@ -137,6 +137,9 @@ pub(super) fn show_panels(
         .exact_size(width)
         .resizable(false)
         .show(ui, |ui| {
+            // El frame NONE no pinta el fondo del panel; lo hacemos aquí.
+            ui.painter()
+                .rect_filled(ui.min_rect(), 0.0, ui.visuals().panel_fill);
             if width < midpoint {
                 let new_order = layers_panel::vertical_tab_strip_ui(
                     ui,
