@@ -103,6 +103,7 @@ impl AppMenus {
         let canvases_axis_item = MenuItem::with_id("canvases_axis", "Canvases Axis", false, None);
         let canvases_side_item =
             MenuItem::with_id("canvases_side", "Canvases Panel Side", false, None);
+        let layers_panel_item = MenuItem::with_id("layers_panel", "Layers Panel", false, None);
         let add_canvas_item = MenuItem::with_id("add_canvas", "Add Canvas", false, None);
         let full_screen_item = MenuItem::with_id("full_screen", "Full Screen", true, None);
 
@@ -122,6 +123,7 @@ impl AppMenus {
                 &canvases_panel_item,
                 &canvases_axis_item,
                 &canvases_side_item,
+                &layers_panel_item,
                 &add_canvas_item,
                 &PredefinedMenuItem::separator(),
                 &full_screen_item,
@@ -154,6 +156,7 @@ impl AppMenus {
             canvases_panel_item,
             canvases_axis_item,
             canvases_side_item,
+            layers_panel_item,
             add_canvas_item,
             cut_item,
             copy_item,

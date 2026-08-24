@@ -70,6 +70,7 @@ impl AppMenus {
             "canvases_panel" => Some(MenuAction::ToggleCanvasesPanel),
             "canvases_axis" => Some(MenuAction::ToggleCanvasesAxis),
             "canvases_side" => Some(MenuAction::CycleCanvasesSide),
+            "layers_panel" => Some(MenuAction::ToggleLayersPanel),
             "add_canvas" => Some(MenuAction::AddCanvas),
             "full_screen" => Some(MenuAction::FullScreen),
             "cut" => Some(MenuAction::Cut),

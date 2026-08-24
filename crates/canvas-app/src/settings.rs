@@ -224,6 +224,8 @@ pub struct AppSettings {
     /// Formato en el que nace un lienzo en blanco nuevo. PNG por defecto: un
     /// raster real y visible, no el diseño autónomo `.canvas` de antes.
     pub new_canvas_format: NewCanvasFormat,
+    /// Panel de capas colapsado en una pestaña fina al borde izquierdo.
+    pub layers_collapsed: bool,
 }
 
 impl Default for AppSettings {
@@ -241,6 +243,7 @@ impl Default for AppSettings {
             deck_strip_visible: true,
             deck_strip_side: StripSide::default(),
             new_canvas_format: NewCanvasFormat::default(),
+            layers_collapsed: false,
         }
     }
 }

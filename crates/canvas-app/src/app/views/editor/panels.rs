@@ -80,11 +80,30 @@ pub(super) fn show_panels(
     // central): deshabilita también los paneles, no solo los gestos sobre
     // el propio lienzo — "no se puede editar" sin matizar por qué vía.
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
+    let was_collapsed = f.settings.layers_collapsed;
+    let panel_width = if f.settings.layers_collapsed {
+        32.0
+    } else {
+        220.0
+    };
     egui::Panel::left("layers")
-        .default_size(220.0)
+        .default_size(panel_width)
         .show(ui, |ui| {
-            ui.add_enabled_ui(!locked, |ui| layers_panel::layers_panel_ui(state, ui));
+            if f.settings.layers_collapsed {
+                layers_panel::collapsed_tab_ui(
+                    ui,
+                    &mut state.active_left_tab,
+                    &mut f.settings.layers_collapsed,
+                );
+            } else {
+                ui.add_enabled_ui(!locked, |ui| {
+                    layers_panel::left_panel_ui(state, ui, &mut f.settings.layers_collapsed);
+                });
+            }
         });
+    if was_collapsed != f.settings.layers_collapsed {
+        f.settings.save_in_background();
+    }
     egui::Panel::right("properties")
         .default_size(260.0)
         .show(ui, |ui| {

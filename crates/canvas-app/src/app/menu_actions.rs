@@ -99,6 +99,10 @@ impl App {
             }
             A::ToggleCanvasesAxis => self.toggle_deck_axis(),
             A::CycleCanvasesSide => self.cycle_strip_side(),
+            A::ToggleLayersPanel => {
+                self.settings.layers_collapsed = !self.settings.layers_collapsed;
+                self.settings.save_in_background();
+            }
             A::AddCanvas => self.add_canvas(),
             A::FullScreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));

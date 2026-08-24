@@ -18,7 +18,7 @@ mod layer_ops;
 #[path = "layer_ops_tests.rs"]
 mod layer_ops_tests;
 mod overlay;
-mod properties_panel;
+pub(crate) mod properties_panel;
 mod slot_chrome;
 mod viewport;
 
@@ -27,7 +27,7 @@ pub(crate) use layer_ops::{delete_selected, has_deletable_selection};
 pub use properties_panel::properties_ui;
 pub use viewport::Viewport;
 
-mod state;
+pub(crate) mod state;
 
 pub use state::{DeckNav, EditorState};
 pub(crate) use state::{DeleteRecord, GlobalStep};

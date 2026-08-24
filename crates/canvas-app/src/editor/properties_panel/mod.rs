@@ -17,7 +17,7 @@ mod layer_common;
 #[cfg(test)]
 #[path = "opacity_tests.rs"]
 mod opacity_tests;
-mod page;
+pub(crate) mod page;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -32,7 +32,6 @@ use crate::sidebar;
 pub(in crate::editor) use page::size_popup_ui;
 
 use layer_common::layer_properties_ui;
-use page::page_ui;
 
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
@@ -168,11 +167,6 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         "{} × {} px",
         page_dims.0 as i64, page_dims.1 as i64
     ));
-    ui.separator();
-
-    sidebar::section(ui, "Page", true, |ui| {
-        page_ui(state, ui);
-    });
 
     sidebar::section(ui, "Insert", false, |ui| {
         ui.horizontal_wrapped(|ui| {

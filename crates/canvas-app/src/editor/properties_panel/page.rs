@@ -8,7 +8,7 @@ use super::effects::blur_control;
 use super::EditorState;
 
 /// Sección «Página»: resolución (campos + presets) y fondo desenfocado.
-pub(super) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+pub(crate) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let Ok(page) = state.doc.page() else { return };
     let original = (page.width, page.height);
     let mut w = original.0;

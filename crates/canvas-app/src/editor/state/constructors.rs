@@ -12,6 +12,7 @@ use canvas_render::{image_data_from_rgba, ImageMap};
 use super::super::interaction::Gesture;
 use super::super::Viewport;
 use super::EditorState;
+use super::LeftTab;
 
 impl EditorState {
     /// Constructor común: los tres puntos de entrada (imagen nueva, proyecto
@@ -49,6 +50,8 @@ impl EditorState {
             save_clicked: false,
             save_as_clicked: false,
             settings_clicked: false,
+            layers_panel_toggle: false,
+            active_left_tab: LeftTab::Layers,
             sidecar_enabled: true,
             is_design: false,
             source_metadata: None,

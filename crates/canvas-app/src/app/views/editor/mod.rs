@@ -115,6 +115,10 @@ pub(in crate::app) fn editor_view_ui(
     if std::mem::take(&mut state.settings_clicked) {
         *f.show_settings = true;
     }
+    if std::mem::take(&mut state.layers_panel_toggle) {
+        f.settings.layers_collapsed = !f.settings.layers_collapsed;
+        f.settings.save_in_background();
+    }
     // El checkbox del sidecar en el editor ES el valor por defecto
     // persistido: cambiarlo ahí lo recuerda para el futuro. En un diseño el
     // checkbox ni se muestra: no debe tocar el ajuste.

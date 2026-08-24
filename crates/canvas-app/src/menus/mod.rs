@@ -57,6 +57,8 @@ pub enum MenuAction {
     SelectAll,
     Group,
     Ungroup,
+    /// Muestra/oculta el panel de capas (plegable a pestaña).
+    ToggleLayersPanel,
 }
 
 #[cfg(windows)]

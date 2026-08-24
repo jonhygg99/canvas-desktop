@@ -222,6 +222,12 @@ pub fn menu_bar_ui(
                 action = Some(MenuAction::CycleCanvasesSide);
             }
             if ui
+                .add_enabled(editor_open, egui::Button::new("Layers Panel"))
+                .clicked()
+            {
+                action = Some(MenuAction::ToggleLayersPanel);
+            }
+            if ui
                 .add_enabled(editor_open, egui::Button::new("Add Canvas"))
                 .clicked()
             {

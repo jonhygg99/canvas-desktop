@@ -7,6 +7,13 @@ use std::path::PathBuf;
 use canvas_core::{Document, History, LayerContent, LayerId, Selection, Transform};
 use canvas_render::ImageMap;
 
+/// Pestaña activa en el panel lateral izquierdo.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeftTab {
+    Page,
+    Layers,
+}
+
 use super::interaction::Gesture;
 use super::Viewport;
 
@@ -72,6 +79,10 @@ pub struct EditorState {
     pub save_as_clicked: bool,
     /// Botón «Settings» del panel pulsado; la app abre la ventana de ajustes.
     pub settings_clicked: bool,
+    /// Atajo de teclado (Ctrl+\) para plegar/desplegar el panel de capas.
+    pub layers_panel_toggle: bool,
+    /// Pestaña activa en el panel izquierdo.
+    pub active_left_tab: LeftTab,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,

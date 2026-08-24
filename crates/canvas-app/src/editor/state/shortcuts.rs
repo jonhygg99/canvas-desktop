@@ -60,6 +60,14 @@ impl EditorState {
             return;
         }
 
+        // Ctrl+\ pliega/despliega el panel de capas.
+        let toggle_layers = ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Backslash))
+        });
+        if toggle_layers {
+            self.layers_panel_toggle = true;
+        }
+
         // Ctrl+Shift+G (desagrupar) antes que Ctrl+G (agrupar): mismo patrón
         // que redo/undo arriba, lo más específico primero.
         let ungroup = ctx.input_mut(|i| {
