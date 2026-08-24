@@ -27,12 +27,6 @@ pub struct Viewport {
     /// Desplazamiento del origen de la página, en puntos, relativo al lienzo.
     pub pan: egui::Vec2,
     pub(super) needs_fit: bool,
-    /// Centrar este rect (en espacio de baraja) en el próximo frame, sin
-    /// tocar el zoom: saltar a otro lienzo de la baraja por la tira o el
-    /// teclado. `canvas_ui` lo consume en cuanto conoce el tamaño real del
-    /// lienzo — un clic directo sobre un lienzo visible no lo usa, porque
-    /// si ya se ve no hace falta recentrar la vista.
-    pub(super) center_request: Option<DeckRect>,
     /// Qué volver a ajustar si el área de dibujo cambia de tamaño (ventana
     /// maximizada/restaurada, un panel lateral arrastrado). `Off` tras
     /// cualquier zoom o paneo manual.
@@ -47,7 +41,6 @@ impl Default for Viewport {
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             needs_fit: true,
-            center_request: None,
             auto_fit: AutoFit::Active,
             last_avail: egui::Vec2::ZERO,
         }
@@ -100,12 +93,6 @@ impl Viewport {
     /// Vuelve a ajustar el lienzo activo a la ventana en el próximo frame.
     pub fn request_fit(&mut self) {
         self.needs_fit = true;
-    }
-
-    /// Pide centrar `target` (en espacio de baraja) en cuanto se conozca el
-    /// tamaño real del lienzo, sin tocar el zoom.
-    pub(crate) fn request_center(&mut self, target: DeckRect) {
-        self.center_request = Some(target);
     }
 
     /// ¿Cambió el tamaño del área de dibujo desde el frame anterior? Sella
@@ -364,17 +351,5 @@ mod tests {
         vp.note_size(egui::vec2(1000.4, 800.0));
         // Desde 1000.4, otro salto de 0.4 sigue por debajo del umbral.
         assert!(!vp.note_size(egui::vec2(1000.8, 800.0)));
-    }
-
-    #[test]
-    fn request_center_is_a_pending_request_not_an_immediate_move() {
-        let mut vp = Viewport::default();
-        let before = vp.pan;
-        vp.request_center(rect(500.0, 0.0, 800.0, 600.0));
-        assert_eq!(
-            vp.pan, before,
-            "no debe mover la vista hasta el próximo frame"
-        );
-        assert!(vp.center_request.is_some());
     }
 }

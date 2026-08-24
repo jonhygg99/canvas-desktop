@@ -63,12 +63,14 @@ pub struct Deck {
     /// de deshacer intacto, así que no hace falta preguntar por cambios sin
     /// guardar para saltar dentro de la misma baraja.
     pub jump_to: Option<usize>,
-    /// Si el salto pendiente, al aplicarse, debe recentrar la vista. Un clic
-    /// directo sobre un lienzo (siempre visible, es lo que se acaba de
-    /// pulsar) no lo necesita; un salto por la tira o el teclado sí, porque
-    /// el destino puede no estar a la vista. Quien fija `jump_to` fija
-    /// también esto explícitamente, no queda implícito.
-    pub jump_center: bool,
+    /// Si el salto pendiente, al aplicarse, debe REENCUADRAR el lienzo nuevo
+    /// (ajustar el zoom a la ventana y centrarlo) en vez de dejarlo donde
+    /// caiga. Hoy todos los caminos de salto (tira, clic directo, teclado,
+    /// «añadir lienzo», Save all, deshacer/rehacer global) lo piden — un
+    /// lienzo recién activado debe verse entero y centrado, mismo encuadre
+    /// que `Ctrl+0` — pero el campo se mantiene explícito: quien fija
+    /// `jump_to` fija también esto, no queda implícito.
+    pub jump_reframe: bool,
     /// La geometría necesita recalcularse (llegaron sondas nuevas, cambió
     /// el orden…).
     pub layout_dirty: bool,
@@ -104,7 +106,7 @@ impl Default for Deck {
             axis: DeckAxis::default(),
             strip_side: StripSide::default(),
             jump_to: None,
-            jump_center: false,
+            jump_reframe: false,
             // Arranca sucio a propósito: el primer `canvas_ui` siempre
             // dispone la baraja al menos una vez, aunque solo haya una
             // ranura (da igual el resultado — `relayout` con una ranura es

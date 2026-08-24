@@ -204,7 +204,7 @@ impl App {
         {
             Some(idx) => {
                 self.deck.jump_to = Some(idx);
-                self.deck.jump_center = true;
+                self.deck.jump_reframe = true;
             }
             None => tracing::info!("«Add canvas» sin efecto: la baraja no tiene carpeta"),
         }

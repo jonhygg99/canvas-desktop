@@ -57,7 +57,7 @@ pub fn apply_jump(deck: &mut Deck, state: &mut crate::editor::EditorState) -> bo
     };
     if target >= deck.slots.len() || target == deck.active {
         deck.jump_to = None;
-        deck.jump_center = false;
+        deck.jump_reframe = false;
         return false;
     }
     if !state.is_idle() {
@@ -72,7 +72,7 @@ pub fn apply_jump(deck: &mut Deck, state: &mut crate::editor::EditorState) -> bo
             deck.slots[target].name
         );
         deck.jump_to = None;
-        deck.jump_center = false;
+        deck.jump_reframe = false;
         return false;
     }
     if !matches!(deck.slots[target].content, SlotContent::Ready(_)) {

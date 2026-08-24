@@ -26,18 +26,11 @@ pub(super) fn apply_camera(
     rect: egui::Rect,
     response: &egui::Response,
 ) -> Camera {
-    // Salto pedido por la tira, el teclado, un clic directo sobre otro
-    // lienzo o "Añadir lienzo": centra sobre el nuevo lienzo activo sin
-    // tocar el zoom. También arma `AutoFit::Active` — sin esto, si el modo
-    // seguía en `All` (el usuario acababa de pulsar `Ctrl+Alt+0`), el
-    // primer redimensionado después de este centrado volvía a encajar TODA
-    // la baraja (`resized` más abajo) y deshacía el centrado, con el efecto
-    // de "vuelve a la vista de siempre" — el nuevo centrado puntual pasa a
-    // ser la referencia, no una excepción que el próximo resize revierta.
-    if let Some(target) = state.viewport.center_request.take() {
-        state.viewport.center_on(target, rect.size());
-        state.viewport.auto_fit = AutoFit::Active;
-    }
+    // Un salto de baraja (tira, clic directo, teclado…) deja `needs_fit`
+    // pendiente (`viewport.request_fit` desde `deck_nav`): el encuadre del
+    // lienzo nuevo ocurre aquí abajo, en la rama `fit_active || needs_fit`
+    // — que además arma `AutoFit::Active`, igual que lo hacía el salto de
+    // antes de que los saltos pasaran a reencuadrar.
 
     // Ajustar el lienzo activo: Ctrl/Cmd+0 o primer frame. Ajustar TODA la
     // baraja: Ctrl+Alt+0 (más específico primero, mismo patrón que

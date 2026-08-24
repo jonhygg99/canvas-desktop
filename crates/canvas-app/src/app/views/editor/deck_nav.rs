@@ -60,7 +60,7 @@ pub(super) fn resolve(
                 f.settings.new_canvas_format.extension(),
             ) {
                 f.deck.jump_to = Some(idx);
-                f.deck.jump_center = true;
+                f.deck.jump_reframe = true;
             }
         }
         None => {}
@@ -162,10 +162,9 @@ pub(super) fn resolve(
         if let Some(idx) = f.deck.find_by_path(&target) {
             f.deck.jump_to = Some(idx);
             // Por la tira o el teclado: el destino puede no estar a la
-            // vista, así que sí hace falta recentrar (a diferencia de un
-            // clic directo sobre el propio lienzo, que ya deja `jump_to`
-            // sin esto).
-            f.deck.jump_center = true;
+            // vista, así que sí hace falta reencuadrar (zoom de ajuste +
+            // centrado).
+            f.deck.jump_reframe = true;
         }
     } else if let Some(&next_id) = f.save.save_all_queue.first() {
         // «Save all»: sin una navegación más prioritaria este frame, salta
@@ -174,7 +173,7 @@ pub(super) fn resolve(
             match f.deck.find_by_id(next_id) {
                 Some(idx) => {
                     f.deck.jump_to = Some(idx);
-                    f.deck.jump_center = true;
+                    f.deck.jump_reframe = true;
                 }
                 // Desapareció (renombrada/borrada) mientras esperaba turno:
                 // se salta sin más.
@@ -197,7 +196,7 @@ pub(super) fn resolve(
         match f.deck.find_by_id(id) {
             Some(idx) => {
                 f.deck.jump_to = Some(idx);
-                f.deck.jump_center = true;
+                f.deck.jump_reframe = true;
             }
             // El diseño desapareció (archivo borrado) mientras esperaba
             // turno: se descarta ese paso, sin encadenar automáticamente
@@ -212,9 +211,9 @@ pub(super) fn resolve(
     // si no, la petición queda pendiente y se reintenta en los próximos
     // frames — llamar aquí siempre, no solo cuando `deck_target` trae algo
     // nuevo, es lo que reintenta un salto que aún esperaba a que su carga
-    // terminase. Recentra la vista SOLO si quien pidió el salto lo marcó
-    // (`jump_center`): un clic directo sobre el propio lienzo ya se ve,
-    // recentrar ahí sería mover la cámara sin que el usuario lo pidiera.
+    // terminase. Reencuadra la vista (zoom de ajuste + centrado, el mismo
+    // encuadre que `Ctrl+0`) si quien pidió el salto lo marcó
+    // (`jump_reframe`): el lienzo recién activado entra entero y centrado.
     //
     // NUNCA mientras haya un modal de guardado pendiente
     // (`f.save.overwrite_prompt`/`f.save.readonly_prompt`): `is_idle()` ya cubre
@@ -231,9 +230,13 @@ pub(super) fn resolve(
         || f.deck_ops.materializing.is_some();
     if !save_modal_pending
         && deck::apply_jump(f.deck, state)
-        && std::mem::take(&mut f.deck.jump_center)
+        && std::mem::take(&mut f.deck.jump_reframe)
     {
-        state.viewport.request_center(f.deck.active_rect());
+        // El salto ya fijÃ³ `deck.active`; `needs_fit` hace que el prÃ³ximo
+        // `apply_camera` encuadre el lienzo nuevo a la ventana y arme el
+        // reajuste automÃ¡tico â€” el mismo camino que `Ctrl+0`/el primer
+        // frame de un documento reciÃ©n abierto.
+        state.viewport.request_fit();
     }
     // «Save all»: si la activa ya es la ranura que tocaba, dispara su
     // guardado — mismo camino que Ctrl+S, un frame más tarde (el bloque de

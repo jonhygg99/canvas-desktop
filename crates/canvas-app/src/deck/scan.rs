@@ -67,16 +67,16 @@ impl Deck {
             // lienzo — NO en `DeckRect::ZERO`. `layout_dirty=true` (abajo)
             // dispara un `relayout()` de verdad en el próximo `canvas_ui`,
             // pero quien llama a `push_placeholder` normalmente encadena
-            // `jump_to`/`jump_center` y centra la cámara EN ESTE MISMO
-            // frame (`deck::apply_jump` + `request_center` en `main.rs`,
+            // `jump_to`/`jump_reframe` y reencuadra la cámara EN ESTE MISMO
+            // frame (`deck::apply_jump` + `request_fit` en `main.rs`,
             // después de `canvas_ui`) — con `DeckRect::ZERO` esa lectura
-            // encontraba un rect en el origen de la baraja (el del PRIMER
+            // encontraba un rect en el origen de la baraja (el primero
             // lienzo apilado) en vez del de esta ranura, y la cámara
-            // centraba ahí: "añadir salta al primer lienzo". El tamaño
+            // encuadraba ahí: "añadir salta al primer lienzo". El tamaño
             // puede no coincidir exacto si el llamador pidió uno distinto
             // al de `add_zone` (el botón de la tira usa
             // `settings.last_page_size`) — se autocorrige con el próximo
-            // `relayout()`, y para entonces el centrado ya apuntó al sitio
+            // `relayout()`, y para entonces el encuadre ya apuntó al sitio
             // correcto.
             rect: self.add_zone,
             // NUNCA `Idle`: `request_loads` mandaría a cargar de disco un
@@ -129,7 +129,7 @@ impl Deck {
         state.put_slot(*incoming);
         self.active = target;
         self.jump_to = None;
-        self.jump_center = true;
+        self.jump_reframe = true;
         self.layout_dirty = true;
         true
     }

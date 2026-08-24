@@ -7,7 +7,7 @@ use eframe::egui;
 
 use std::path::{Path, PathBuf};
 
-use crate::deck::{Deck, DeckAxis, DeckRect, DeckSeed, SeedItem};
+use crate::deck::{Deck, DeckAxis, DeckSeed, SeedItem};
 use crate::editor::EditorState;
 use crate::gallery::ItemKind;
 use crate::settings::GallerySort;
@@ -201,18 +201,15 @@ fn ctrl_alt_zero_is_not_swallowed_by_the_plain_ctrl_zero_branch() {
 }
 
 #[test]
-fn a_pending_center_request_is_consumed_and_arms_the_active_refit() {
-    // Sin armar `Active`, el primer redimensionado posterior volvería a
-    // encajar TODA la baraja y desharía el centrado.
+fn a_pending_fit_request_reframes_the_active_canvas_on_jump() {
+    // Un salto de baraja (tira «Canvases», clic directo sobre otro lienzo,
+    // teclado…) deja `request_fit` pendiente: el próximo frame debe
+    // REENCUADRAR el lienzo activo (zoom de ajuste + centrado, como
+    // `Ctrl+0`), no limitarse a mantener el zoom — eso es lo que antes
+    // dejaba el lienzo nuevo pequeño o recortado («no me hace auto foco»).
     let mut state = ready_state();
-    state.viewport.auto_fit = AutoFit::All;
-    state.viewport.request_center(DeckRect {
-        x: 0.0,
-        y: 700.0,
-        w: 800.0,
-        h: 600.0,
-    });
     let before = state.viewport.zoom;
+    state.viewport.request_fit();
 
     run(
         &mut state,
@@ -221,12 +218,15 @@ fn a_pending_center_request_is_consumed_and_arms_the_active_refit() {
         false,
     );
 
+    assert!(!state.viewport.needs_fit, "la petición no se consumió");
     assert!(
-        state.viewport.center_request.is_none(),
-        "la petición no se consumió"
+        state.viewport.auto_fit == AutoFit::Active,
+        "el reencuadre debe armar el reajuste automático"
     );
-    assert!(state.viewport.auto_fit == AutoFit::Active);
-    assert_eq!(state.viewport.zoom, before, "centrar no debe tocar el zoom");
+    assert_ne!(
+        state.viewport.zoom, before,
+        "un reencuadre debe ajustar el zoom, no solo centrar"
+    );
 }
 
 #[test]
@@ -466,4 +466,43 @@ fn holding_space_is_reported_to_the_rest_of_the_frame() {
     );
     assert!(camera.space_down);
     assert!(!camera.panning, "sin arrastrar, espacio solo no es paneo");
+}
+
+#[test]
+fn a_strip_jump_reframes_the_new_active_canvas() {
+    // Flujo real de un salto por la tira Â«CanvasesÂ»: el clic fija
+    // `jump_to` + `jump_reframe`, `deck_nav::resolve` aplica el salto
+    // (`apply_jump`) y pide el reencuadre (`request_fit`), y `apply_camera`
+    // lo ejecuta en el siguiente frame del Ã¡rea de dibujo.
+    let mut state = ready_state();
+    let mut deck = deck_of_two();
+    // La ranura destino debe estar cargada (`Ready`) para que el salto se
+    // aplique; en la app eso lo garantiza la carga perezosa de la baraja.
+    deck.slots[1].content = crate::deck::SlotContent::Ready(Box::new(state.take_slot()));
+    deck.jump_to = Some(1);
+    deck.jump_reframe = true;
+    assert!(
+        crate::deck::apply_jump(&mut deck, &mut state),
+        "el salto debe aplicarse"
+    );
+    assert_eq!(deck.active, 1);
+    state.viewport.request_fit();
+
+    run(
+        &mut state,
+        &deck,
+        raw(Vec::new(), egui::Modifiers::NONE),
+        false,
+    );
+
+    assert!(
+        !state.viewport.needs_fit,
+        "el reencuadre pendiente no se consumiÃ³"
+    );
+    assert!(state.viewport.auto_fit == AutoFit::Active);
+    assert!(
+        (state.viewport.zoom - 1.0).abs() > 1e-3,
+        "el reencuadre debe ajustar el zoom al lienzo nuevo: {}",
+        state.viewport.zoom
+    );
 }

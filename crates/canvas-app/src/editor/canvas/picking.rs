@@ -96,7 +96,7 @@ pub(super) fn handle_press(
                 } else if header.isolate.contains(pos) {
                     if idx != deck.active {
                         deck.jump_to = Some(idx);
-                        deck.jump_center = true;
+                        deck.jump_reframe = true;
                     }
                     state.isolate = !state.isolate;
                     header_hit = true;
@@ -122,11 +122,11 @@ pub(super) fn handle_press(
                     if idx != deck.active {
                         deck.jump_to = Some(idx);
                         // A petición del usuario: cambiar de activo desde el
-                        // área central SIEMPRE centra la vista sobre él, en
-                        // vez de dejarlo donde cayera (antes solo la tira o
-                        // el teclado pedían recentrado) — así no hace falta
-                        // ir a buscarlo tras el salto.
-                        deck.jump_center = true;
+                        // área central SIEMPRE reencuadra la vista sobre él
+                        // (zoom de ajuste + centrado, el mismo encuadre que
+                        // `Ctrl+0`), en vez de dejarlo donde cayera — así no
+                        // hace falta ir a buscarlo tras el salto.
+                        deck.jump_reframe = true;
                         state.press_on_other_slot = true;
                     }
                 } else if deck.folder.is_some()
@@ -145,7 +145,7 @@ pub(super) fn handle_press(
                         deck.push_placeholder((deck.add_zone.w, deck.add_zone.h), new_canvas_ext)
                     {
                         deck.jump_to = Some(idx);
-                        deck.jump_center = true;
+                        deck.jump_reframe = true;
                         state.press_on_other_slot = true;
                     }
                 }
