@@ -305,14 +305,21 @@ impl eframe::App for App {
         match &mut self.view {
             View::Welcome { error } => {
                 let error = error.clone();
+                let before_len = self.settings.recent_files.len();
                 open_next = views::welcome_view_ui(
                     ui,
                     error.as_deref(),
-                    &self.settings.recent_files,
+                    &mut self.settings.recent_files,
                     &mut self.show_settings,
                     &self.tx,
                     &ctx,
                 );
+                if self.settings.recent_files.len() != before_len {
+                    self.settings.save_in_background();
+                    if let Some(m) = self.menus.as_mut() {
+                        m.set_recents(&self.settings.recent_files);
+                    }
+                }
             }
             View::Loading { path } => {
                 views::loading_view_ui(ui, path);

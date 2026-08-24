@@ -16,7 +16,7 @@ use super::super::Nav;
 pub(in crate::app) fn welcome_view_ui(
     ui: &mut egui::Ui,
     error: Option<&str>,
-    recent_files: &[PathBuf],
+    recent_files: &mut Vec<PathBuf>,
     show_settings: &mut bool,
     tx: &Sender<AppMsg>,
     ctx: &egui::Context,
@@ -37,6 +37,9 @@ pub(in crate::app) fn welcome_view_ui(
         }
         Some(welcome::WelcomeAction::OpenRecent(path)) => {
             open_next = Some(Nav::Open(path));
+        }
+        Some(welcome::WelcomeAction::RemoveRecent(path)) => {
+            recent_files.retain(|p| p != &path);
         }
         None => {}
     }

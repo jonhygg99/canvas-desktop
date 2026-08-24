@@ -17,6 +17,7 @@ pub enum WelcomeAction {
     OpenFolder,
     OpenSettings,
     OpenRecent(PathBuf),
+    RemoveRecent(PathBuf),
 }
 
 pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Option<WelcomeAction> {
@@ -83,8 +84,9 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_else(|| path.display().to_string());
-                    if recent_folder_ui(ui, path, &name) {
-                        action = Some(WelcomeAction::OpenRecent(path.clone()));
+                    let action_out = recent_folder_ui(ui, path, &name);
+                    if let Some(a) = action_out {
+                        action = Some(a);
                     }
                 }
             }
@@ -118,7 +120,11 @@ pub fn show(ui: &mut egui::Ui, error: Option<&str>, recents: &[PathBuf]) -> Opti
 /// izquierda, nombre a la derecha, fondo suave al hover, esquinas
 /// redondeadas, y tooltip con la ruta completa. Mismo ancho que los
 /// botones principales para quedar alineado visualmente.
-fn recent_folder_ui(ui: &mut egui::Ui, path: &std::path::Path, name: &str) -> bool {
+fn recent_folder_ui(
+    ui: &mut egui::Ui,
+    path: &std::path::Path,
+    name: &str,
+) -> Option<WelcomeAction> {
     let visuals = ui.visuals().clone();
     let font = egui::FontId::proportional(13.0);
     let icon_sz = 14.0;
@@ -131,13 +137,12 @@ fn recent_folder_ui(ui: &mut egui::Ui, path: &std::path::Path, name: &str) -> bo
     let height = (galley.size().y + pad_y * 2.0).max(28.0);
     let text_w = galley.size().x;
     let content_w = icon_sz + gap + text_w;
-    // Centrado dentro del ancho del botón
     let width = BUTTON_W;
     let rect = egui::Rect::from_min_size(
         ui.cursor().min,
         egui::vec2(width, height),
     );
-    let (rect, resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
     let hovered = resp.hovered();
     let clicked = resp.clicked();
 
@@ -155,14 +160,12 @@ fn recent_folder_ui(ui: &mut egui::Ui, path: &std::path::Path, name: &str) -> bo
 
     let start_x = rect.left() + (width - content_w) / 2.0;
 
-    // Icono de carpeta
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(start_x + icon_sz / 2.0, rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
 
-    // Nombre de la carpeta
     ui.painter().text(
         egui::pos2(start_x + icon_sz + gap, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -171,7 +174,22 @@ fn recent_folder_ui(ui: &mut egui::Ui, path: &std::path::Path, name: &str) -> bo
         color,
     );
 
-    resp.on_hover_text(path.display().to_string());
+    resp = resp.on_hover_text(path.display().to_string());
 
-    clicked
+    // ── Menú contextual: eliminar de recientes ──
+    let mut context_action = None;
+    resp.context_menu(|ui| {
+        if ui.button("Remove from recents").clicked() {
+            context_action = Some(WelcomeAction::RemoveRecent(path.to_owned()));
+            ui.close();
+        }
+    });
+
+    if let Some(a) = context_action {
+        return Some(a);
+    }
+    if clicked {
+        return Some(WelcomeAction::OpenRecent(path.to_owned()));
+    }
+    None
 }
