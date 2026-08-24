@@ -170,6 +170,19 @@ fn hidden_attribute_is_detected_on_windows() {
 
 #[test]
 fn nonexistent_path_is_not_hidden() {
+    // On Unix, hidden is a filename convention (.-prefix), so we must use
+    // a non-dotfile name to test the "nonexistent → not hidden" case.
+    // On Windows, metadata() fails for any nonexistent path and returns
+    // false, so even a dotfile would work — but we keep the test
+    // consistent across platforms.
+    assert!(!is_hidden(Path::new("/Z/no/existe/archivo")));
+}
+
+#[cfg(windows)]
+#[test]
+fn nonexistent_dotfile_is_not_hidden_on_windows() {
+    // On Windows, hidden status comes from FILE_ATTRIBUTE_HIDDEN metadata.
+    // A nonexistent file has no metadata, so it's never hidden.
     assert!(!is_hidden(Path::new("/Z/no/existe/.archivo")));
 }
 
