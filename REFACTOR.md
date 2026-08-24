@@ -1,6 +1,9 @@
 # Refactorización modular de Canvas Desktop
 
-Estado: **Terminado** — las ocho fases hechas y verificadas.
+Estado: **Terminado + post-optimización** — las ocho fases del refactor
+hechas y verificadas, seguidas de una fase de optimización (structs de
+agrupación de parámetros, hot-path de render, shell real multiplataforma,
+ampliación de tests).
 
 Objetivo: ≤ 400 líneas de código por archivo (tests aparte) y ≤ 80 líneas por
 función, aplicando SRP a los archivos que hoy acumulan varias
@@ -30,8 +33,9 @@ Líneas de código (sin contar los bloques `#[cfg(test)]`):
 | `canvas-app/src/editor/slot_chrome.rs` | 579 | 0 | 2 |
 | `canvas-render/src/blur.rs` | 457 | 0 | 3 |
 
-`canvas-shell` no entra en el plan: su archivo mayor son 258 líneas y ya está
-separado por plataforma.
+`canvas-shell` no entró en el plan original: su archivo mayor eran 258 líneas
+y ya estaba separado por plataforma. La post-optimización le dio
+implementaciones reales a `linux.rs` y `macos.rs` (ver más abajo).
 
 ## Fases
 
@@ -47,6 +51,58 @@ separado por plataforma.
 - [x] **Fase 6 — `canvas_ui` → `editor/canvas/`.**
 - [x] **Fase 7 — `EditorFrame` + `editor_view_ui` → `app/views/editor/`.**
 - [x] **Fase 8 — `App` en sub-estados + `app/messages/`.**
+
+## Post-optimización (commits `32a3994`–`029c841`)
+
+Tras cerrar el refactor, se hizo una pasada de optimización y cobertura:
+
+- [x] **Structs de agrupación — eliminar los 14 `#[allow(too_many_arguments)]`.**
+      En vez de suprimir el lint, cada función larga recibe un struct que
+      agrupa sus parámetros.Resultado: **0 `#[allow]` en código de producción**
+      (queda 1 en `examples/verify_live_blur_update.rs`).
+
+      | Struct | Función | Params antes → después |
+      |---|---|---|
+      | `CanvasContext` | `canvas_ui` | 10 → 4 |
+      | `SaveContext` | `start_save`/`start_save_design` | 9 → 5 |
+      | `PaintGeometry` | `paint` | 12 → 7 |
+      | `PressGeometry` | `handle_press` | 9 → 6 |
+      | `SaveInput` | `spawn_save` | 10 → 3 |
+      | `SyncLayerRequest` | `sync_layer` | 9 → 5 |
+      | `PassInput` | `run_pass` | 8 → 3 |
+      | `RenderDims` | `render_with_base` | 8 → 6 |
+      | `RenderRefs` | `sync_and_append` | 7 → 6 |
+      | `SaveFlow`/`ExportFlow` | `overwrite_modal_ui`/`export_flow_ui` | 12 → 4 / 8 → 3 |
+
+- [x] **Shell real para Linux y macOS.** `linux.rs` instala un `.desktop`
+      en `~/.local/share/applications/` con `MimeType=` (deduplicado) y
+      ejecuta `update-desktop-database`. `macos.rs` genera un `Info.plist`
+      con `CFBundleDocumentTypes` + `UTExportedTypeDeclarations` y registra
+      con `lsregister`. Verificado por cross-compile desde Windows:
+      `cargo check -p canvas-shell --target x86_64-unknown-linux-gnu` y
+      `--target x86_64-apple-darwin`.
+
+- [x] **`MAX_INFLIGHT_LOADS` dinámico.** La constante fija pasa a
+      `max_inflight_loads()`, que se adapta al número de núcleos (2/4/6
+      según cores). Tests actualizados.
+
+- [x] **Hot path de render.** Tres optimizaciones en el bucle de pintado:
+      1. `CanvasSurface` guarda una `vello::Scene` persistente;
+         `scene_mut()` hace `reset()` en vez de `Scene::new()` por frame.
+      2. `sync_and_append` itera `page.layers` directamente en vez de
+         `collect::<Vec<_>>()` por frame por slot visible.
+      3. `sync_layer` trackea `src_blob_id` (`Blob::id()`) para detectar
+         cuándo cambiaron los píxeles de origen y re-subir la textura GPU
+         solo en ese caso. Antes, editar una imagen sin tocar el slider de
+         blur dejaba la textura procesada con píxeles antiguos.
+
+- [x] **`append_document`: pre-reservar pila de grupos.** `Vec::new()` →
+      `Vec::with_capacity(8)` para la pila de grupos abiertos (profundidad
+      típica ≤ 5). Evita reallocaciones durante el primer segundo de render.
+
+- [x] **Tests nuevos (208 → 299).** +15 tests de integración del shell
+      (`tests/integration.rs`), +4 del bucle de instancia única, +2 de
+      `Blob::id()` en `blur/params.rs`.
 
 ## Verificación al final de cada fase
 
@@ -93,8 +149,9 @@ comportamiento:
 
 Línea base tras la Fase 0: **208 tests en verde**, clippy y fmt limpios.
 
-`PLAN.md` y `PROMPT.md` aparecen borrados sin commitear en el árbol de trabajo
-desde antes de empezar; el refactor no los toca.
+`PLAN.md` y `PROMPT.md` fueron borrados del repo y commiteados durante la
+post-optimización. Las decisiones de arquitectura que vivían en `PLAN.md`
+migraron a `CLAUDE.md` y a este archivo.
 
 ### Fase 1
 
@@ -281,21 +338,25 @@ archivos.
 
 ## Resultado
 
-| | Antes | Después |
-|---|---|---|
-| Archivo de **código** más largo | 1208 (`deck.rs`) | **396** (`app/persistence.rs`) |
-| Función más larga | 705 (`editor_view_ui`) | ~180 (`append_document`, excepción documentada) |
-| Parámetros de `editor_view_ui` | 32 | 6 |
-| Campos planos de `App` | 35 | 15 + 4 sub-estados |
-| Archivos `.rs` en el workspace | 76 | 118 |
+| | Antes | Después del refactor | Tras post-optimización |
+|---|---|---|---|
+| Archivo de **código** más largo | 1208 (`deck.rs`) | 396 (`app/persistence.rs`) | 396 (`app/persistence.rs`) |
+| Función más larga | 705 (`editor_view_ui`) | ~180 (`append_document`, excepción documentada) | ~180 (sin cambios) |
+| Parámetros de `editor_view_ui` | 32 | 6 | 6 |
+| Campos planos de `App` | 35 | 15 + 4 sub-estados | 15 + 4 sub-estados |
+| Archivos `.rs` en el workspace | 76 | 118 | 120 |
+| `#[allow(too_many_arguments)]` | 14 | 14 (sin tocar) | **0** |
+| Tests | 208 | 208 | **299** |
+| Shell real | Windows | Windows | Windows + Linux + macOS |
 
 Los dos únicos archivos que siguen por encima de 400 líneas son de tests puros
 (`canvas-core/src/command/tests.rs`, 660; `canvas-app/src/deck/tests.rs`, 577),
 exentos por la regla desde el principio.
 
-Verificación final: **208 tests**, `clippy -D warnings` limpio, `fmt --check`
+Verificación final: **299 tests**, `clippy -D warnings` limpio, `fmt --check`
 limpio, los **cinco ejemplos headless de GPU** en verde sobre GPU real, y la
 app arrancando sobre una imagen suelta y sobre una carpeta sin panics.
+Cross-compile del shell verificado para Linux y macOS desde Windows.
 
 ### Lo que queda pendiente para el usuario
 
@@ -303,8 +364,9 @@ app arrancando sobre una imagen suelta y sobre una carpeta sin panics.
    la app y comprobar que no revienta, pero no puede hacer clic: guardar,
    exportar, deshacer, arrastrar capas y saltar de lienzo hay que probarlos a
    mano.
-2. `.refactor-tools/` son los scripts de troceado que se usaron. Se dejan
-   commiteados por trazabilidad; se pueden borrar sin más.
+2. **Shell real en Linux/macOS**: el código compila y la lógica está testada,
+   pero el registro real (`update-desktop-database`, `lsregister`) solo se
+   puede verificar en el OS nativo.
 
 ## Bug de `append_document` (corregido)
 

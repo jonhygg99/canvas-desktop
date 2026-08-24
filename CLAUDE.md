@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Canvas Desktop — a native (no Electron, no webview, no JS) Canva-like design
 editor written in Rust, on `winit` + `wgpu` + `egui` + `vello`. Windows is the
-primary target; macOS/Linux shell integration are compilable stubs for now.
-Docs and code comments are in Spanish; keep new comments/UI strings
-consistent with the surrounding language (UI strings are English per PLAN.md
-Fase 1, comments are Spanish).
+primary target; macOS/Linux shell integration are real implementations (Linux
+installs a `.desktop` entry; macOS generates an `Info.plist` and registers via
+`lsregister`). Docs and code comments are in Spanish; keep new comments/UI
+strings consistent with the surrounding language (UI strings are English,
+comments are Spanish).
 
 ## Commands
 
@@ -23,6 +24,10 @@ cargo run -p canvas-app -- C:\path\to\folder          # open a gallery
 cargo test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
+
+# Cross-platform shell compile-check (from any OS; no linker needed)
+cargo check -p canvas-shell --target x86_64-unknown-linux-gnu
+cargo check -p canvas-shell --target x86_64-apple-darwin
 
 # Headless GPU examples (real render, no window) — used to verify GPU-dependent
 # behavior that unit tests can't cover
@@ -39,6 +44,10 @@ There is no single-test shorthand beyond normal cargo filtering, e.g.
 `cargo test -p canvas-core snap`. `crates/canvas-io/tests/kill_during_save.rs`
 spawns a real child process and kills it mid-write to verify atomic save
 survives a crash — don't "fix" it by mocking the filesystem.
+`crates/canvas-shell/tests/integration.rs` tests cross-platform path
+normalization (argv parsing, hidden-file detection, `ShellEvent`).
+`crates/canvas-shell/src/single_instance.rs` has unit tests that use a
+unique-per-PID socket name to avoid colliding with a real instance.
 
 **Golden rule (from PLAN.md): every phase is verified by running the app, not
 just by compiling.** For UI/interaction changes, actually run `cargo run -p
@@ -55,7 +64,7 @@ crates/
 ├─ canvas-core/     # Document/Page/Layer model + undo history. No UI, no OS. Has unit tests.
 ├─ canvas-render/   # Scene → vello; GPU blur/color-filter shaders (WGSL); offscreen bake + readback
 ├─ canvas-io/       # Load (EXIF-aware), atomic save (ReplaceFileW), sidecar, thumbnails, export
-├─ canvas-shell/    # OS-open normalization → OpenPath; per-OS integration (windows.rs real, linux/macos stubs)
+├─ canvas-shell/    # OS-open normalization → OpenPath; per-OS integration (all three real)
 └─ canvas-app/      # `canvas-desktop` binary: eframe/egui + vello, Welcome/Gallery/Editor states
 ```
 
@@ -68,6 +77,12 @@ adding code:
 - **≤ 400 lines of code per file, ≤ 80 per function.** Tests don't count
   toward it. Two files are over on purpose and say so in their doc comment:
   `scene/mod.rs::append_document` and the orchestrators below.
+- **Zero `#[allow(clippy::too_many_arguments)]` in production code.** When a
+  function accumulates too many parameters, group them into a struct
+  (`CanvasContext`, `SaveContext`, `PaintGeometry`, `SyncLayerRequest`,
+  `PassInput`, `RenderDims`, `PressGeometry`, `RenderRefs`, `SaveInput`,
+  etc.) instead of suppressing the lint. The only remaining `#[allow]` is in
+  `examples/verify_live_blur_update.rs`, not in crate code.
 - **Tests live in a `tests.rs` next to the code they cover**, one per folder
   (`command/tests.rs`, `deck/tests.rs`, …), or in a `*_tests.rs` sibling
   wired with `#[path]` when the module is a directory. They're kept together
@@ -144,6 +159,15 @@ canvas-render/src/
   opacity layers at the end of each turn. **Never `continue` out of its
   body** — that skips both the `i += 1` and the `pop_layer`. Missing textures
   go through `drawable_image() -> Option<_>` and an `if let` instead.
+- **Hot path optimizations.** `CanvasSurface` owns a persistent `vello::Scene`
+  reused across frames via `scene_mut()` (which calls `reset()`, not `new()`),
+  avoiding a per-frame allocation. `append_document` pre-reserves its group
+  stack with `Vec::with_capacity(8)` (typical group nesting depth ≤ 5).
+  `sync_and_append` iterates `page.layers` directly instead of collecting
+  into a throwaway `Vec`. `sync_layer` tracks `src_blob_id` (from
+  `Blob::id()`) to detect when the source pixels changed and only re-uploads
+  the GPU texture on actual change — editing an image without touching the
+  blur slider no longer leaves stale pixels in the processed texture.
 
 ### canvas-io
 
@@ -179,13 +203,25 @@ canvas-io/src/
 
 ### canvas-shell
 - `ShellIntegration` trait normalizes OS-level "open" events into
-  `OpenPath`. `windows.rs` is the real implementation (ProgID
-  `CanvasDesktop.Image`, `OpenWithProgids` per extension, folder context
-  menu, `SHChangeNotify`); `linux.rs`/`macos.rs` compile but return
-  `NotImplemented`.
+  `OpenPath`. All three platform implementations are real:
+  - **`windows.rs`**: ProgID `CanvasDesktop.Image`, `OpenWithProgids` per
+    extension, folder context menu, `SHChangeNotify`.
+  - **`linux.rs`**: installs a `.desktop` entry in
+    `~/.local/share/applications/` (or `$XDG_DATA_HOME`) with `MimeType=`,
+    deduplicated, and runs `update-desktop-database`. `unregister` removes
+    the file.
+  - **`macos.rs`**: generates an `Info.plist` with `CFBundleDocumentTypes`
+    + `UTExportedTypeDeclarations` in a temp dir and registers it via
+    `lsregister`. `unregister` calls `lsregister -u`.
+  Cross-compile verification: `cargo check -p canvas-shell --target
+  x86_64-unknown-linux-gnu` / `x86_64-apple-darwin` from any OS.
 - Single-instance enforcement (`single_instance.rs`, via `interprocess`): a
   second launch forwards its path(s) to the already-running primary over a
   local socket and exits with code 0 rather than opening a second window.
+  `acquire_instance_with_name` takes a socket name parameter (used by tests
+  with a unique-per-PID name); `acquire_instance` uses the production
+  constant. `accept_one_sync` accepts one connection synchronously (test
+  helper).
 
 ### canvas-app
 
@@ -204,7 +240,8 @@ canvas-app/src/
 │  └─ menu_actions.rs  navigation.rs  persistence.rs  ui_menu.rs
 │     ui_modals.rs  window.rs
 ├─ deck/          # mod.rs (Deck) · model.rs · geometry.rs · layout.rs
-│                 # cache.rs (eviction budget) · loading.rs (scheduler)
+│                 # cache.rs (eviction budget) · loading.rs (scheduler,
+│                 #               max_inflight_loads() = dynamic by core count)
 │                 # scan.rs (disk sync) · nav.rs
 ├─ editor/
 │  ├─ canvas/     # mod.rs = canvas_ui, orchestration only; context_menu ·
@@ -229,7 +266,15 @@ canvas-app/src/
   `std::sync::mpsc` channels into `AppMsg`. `main.rs` is just the entry
   point.
 - `App`'s fields are grouped by domain into `SaveFlow` / `ExportFlow` /
-  `DeckOps` / `MenuMirror` rather than sitting flat.
+  `DeckOps` / `MenuMirror` rather than sitting flat. `SaveFlow` and
+  `ExportFlow` are passed directly to `overwrite_modal_ui` / `export_flow_ui`
+  instead of unpacking their fields.
+- **Parameter-grouping structs are the convention for long signatures.**
+  Instead of `#[allow(too_many_arguments)]`, extract a struct: `CanvasContext`
+  (canvas_ui), `SaveContext` (start_save/start_save_design), `PaintGeometry`
+  (paint), `PressGeometry` (handle_press), `SaveInput` (spawn_save),
+  `SyncLayerRequest` + `PassInput` (blur passes), `RenderDims`
+  (render_with_base), `RenderRefs` (sync_and_append).
 - **`EditorFrame` (`app/frame.rs`) exists because `&mut App` is impossible
   there**: `editor_view_ui` runs while `state` is borrowed out of
   `self.view`, so it takes independent `&'a mut` borrows of the *other*
@@ -260,16 +305,16 @@ canvas-app/src/
   with `cargo tree -i usvg` after touching either.
 - `arboard`'s `image-data` feature is pinned to match what `egui-winit`
   already pulls in transitively, to avoid duplicating the crate.
+- **Test count: 299** (`cargo test --workspace`). The count is a sanity
+  checkpoint — a drop means a regression in test coverage.
 
 ## Where the plan lives
 
-`PLAN.md` tracks phases done/pending and records "decisions taken, don't
-reopen without reason" — check it before re-litigating an architectural
-choice (e.g. why groups use `parent_id` instead of nested layers, why crop is
-"trim at the edges" rather than destructive). `PROMPT.md` is the original
-product spec this plan was derived from.
-
 `REFACTOR.md` is the companion for the *structural* decisions: the phase log
 of the split into modules, why a few files are deliberately over the size
-target, and the known-bug notes found along the way. Read it before undoing a
-module boundary.
+target, the known-bug notes found along the way, and the post-refactor
+optimization log (parameter-grouping structs, hot-path render optimizations,
+shell implementations, test additions). Read it before undoing a module
+boundary or re-litigating an architectural choice (e.g. why groups use
+`parent_id` instead of nested layers, why crop is "trim at the edges" rather
+than destructive).
