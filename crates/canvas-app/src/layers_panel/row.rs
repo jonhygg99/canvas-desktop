@@ -101,10 +101,11 @@ pub(super) fn row_ui(
             }
         }
 
-        // ── Clic / doble clic de selección ──
+        // ── Clic / doble clic de selección (solo sobre la etiqueta;
+        // los botones del prefijo gestionan sus propios clics).
         if !renaming {
             let click =
-                ui.interact(full_rect, row_id.with("click"), egui::Sense::click());
+                ui.interact(drag_resp.rect, row_id.with("click"), egui::Sense::click());
             if click.double_clicked() {
                 state.rename_edit = Some((row.id, name.clone(), name));
                 ui.memory_mut(|m| m.request_focus(row_id.with("rename")));
