@@ -7,6 +7,78 @@ use eframe::egui;
 
 use super::EditorState;
 
+/// Slider de opacidad de la capa (0-100 %), con consolidación en un solo paso
+/// de deshacer al soltar.
+///
+/// `Layer::opacity` NO forma parte de `Effects`: el renderer la honra
+/// estructuralmente con un `push_layer`, no con un shader, y se hereda por la
+/// cadena de grupos (`Page::effective_opacity`). Por eso vale también para un
+/// grupo, a diferencia del resto de esta sección.
+///
+/// A diferencia de `blur_control`, pinta su propia etiqueta: se dibuja antes
+/// del retorno temprano de los grupos, así que tiene que poder no pintar nada
+/// si la capa ya no existe.
+pub(super) fn opacity_control(state: &mut EditorState, ui: &mut egui::Ui, target: LayerId) {
+    let Ok(layer) = state.doc.layer(target) else {
+        return;
+    };
+    let current = layer.opacity;
+    let mut pct = current * 100.0;
+
+    ui.label("Opacity");
+    let r = ui.add(
+        egui::Slider::new(&mut pct, 0.0..=100.0)
+            .suffix(" %")
+            .fixed_decimals(0),
+    );
+    if r.changed() {
+        set_opacity_live(state, target, pct / 100.0);
+    }
+    if r.drag_stopped() || r.lost_focus() {
+        commit_opacity(state);
+    }
+}
+
+/// Aplica la opacidad EN VIVO durante el arrastre: muta el documento
+/// directamente y recuerda el valor original la primera vez, para que todo el
+/// gesto acabe siendo un solo paso de deshacer (mismo criterio que el resto de
+/// gestos continuos del editor).
+pub(super) fn set_opacity_live(state: &mut EditorState, target: LayerId, after: f32) {
+    let after = after.clamp(0.0, 1.0);
+    let Ok(layer) = state.doc.layer(target) else {
+        return;
+    };
+    if (after - layer.opacity).abs() <= f32::EPSILON {
+        return;
+    }
+    let original = layer.opacity;
+    // Solo la PRIMERA vez del gesto: si no, cada frame del arrastre pisaría el
+    // valor de partida y el deshacer devolvería al penúltimo, no al inicial.
+    if state.opacity_edit.is_none() {
+        state.opacity_edit = Some((target, original));
+    }
+    if let Ok(l) = state.doc.layer_mut(target) {
+        l.opacity = after;
+    }
+}
+
+/// Consolida el ajuste de opacidad en curso en UN paso de deshacer. Lo llaman
+/// el propio slider al soltarlo y el panel cuando cambia la capa seleccionada
+/// sin haberlo soltado.
+pub(super) fn commit_opacity(state: &mut EditorState) {
+    let Some((id, before)) = state.opacity_edit.take() else {
+        return;
+    };
+    let after = state.doc.layer(id).map(|l| l.opacity).unwrap_or(before);
+    if (after - before).abs() > f32::EPSILON {
+        state.push_undo_step(Box::new(canvas_core::SetOpacity {
+            layer: id,
+            before,
+            after,
+        }));
+    }
+}
+
 /// Slider de desenfoque (no destructivo) de una capa, con consolidación en un
 /// solo paso de deshacer al soltar. Se usa tanto en la sección de la capa
 /// seleccionada como junto al checkbox del fondo desenfocado.

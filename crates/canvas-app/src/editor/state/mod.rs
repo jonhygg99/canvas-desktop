@@ -45,6 +45,8 @@ pub struct EditorState {
     /// panel de capas (otro módulo) necesita fijarla como fila no arrastrable
     /// y excluirla de "Agrupar".
     pub(crate) background_layer: Option<LayerId>,
+    /// Ajuste de opacidad en curso (slider): capa y opacidad original.
+    pub(super) opacity_edit: Option<(LayerId, f32)>,
     /// Ajuste de desenfoque en curso (slider): capa y radio original.
     pub(super) blur_edit: Option<(LayerId, f32)>,
     /// Ajuste de color en curso (sliders): capa y efectos originales, para
@@ -210,6 +212,7 @@ impl EditorState {
         matches!(self.gesture, Gesture::None)
             && self.panel_edit.is_none()
             && self.page_edit.is_none()
+            && self.opacity_edit.is_none()
             && self.blur_edit.is_none()
             && self.color_edit.is_none()
             && self.content_edit.is_none()

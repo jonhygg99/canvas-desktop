@@ -36,6 +36,7 @@ impl EditorState {
             size_popup: None,
             replace_url_popup: None,
             background_layer,
+            opacity_edit: None,
             blur_edit: None,
             color_edit: None,
             content_edit: None,

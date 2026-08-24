@@ -8,7 +8,7 @@ use canvas_core::{
 use eframe::egui;
 
 use super::content::content_properties_ui;
-use super::effects::{blur_control, color_adjustments_ui, shadow_ui};
+use super::effects::{blur_control, color_adjustments_ui, opacity_control, shadow_ui};
 use super::EditorState;
 
 /// Campos de posición/tamaño/escala y botones de alineación de una capa.
@@ -18,6 +18,13 @@ pub(super) fn layer_properties_ui(
     sel: LayerId,
     (page_w, page_h): (f64, f64),
 ) {
+    // --- Opacidad ---
+    // Va la primera y FUERA del retorno temprano de los grupos de abajo: es la
+    // única propiedad de esta sección que también significa algo para un grupo
+    // (el render multiplica la suya por la de sus ancestros).
+    opacity_control(state, ui, sel);
+    ui.add_space(8.0);
+
     let Ok(layer) = state.doc.layer(sel) else {
         return;
     };

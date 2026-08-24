@@ -12,7 +12,11 @@ mod content;
 mod content_shape;
 mod content_text;
 mod effects;
+
 mod layer_common;
+#[cfg(test)]
+#[path = "opacity_tests.rs"]
+mod opacity_tests;
 mod page;
 
 use canvas_core::LayerContent;
@@ -65,6 +69,9 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
                 }
             }
         }
+    }
+    if matches!(&state.opacity_edit, Some((id, _)) if Some(*id) != current) {
+        effects::commit_opacity(state);
     }
     if matches!(&state.blur_edit, Some((id, _)) if Some(*id) != current) {
         if let Some((id, before)) = state.blur_edit.take() {
