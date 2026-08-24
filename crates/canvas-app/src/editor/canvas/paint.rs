@@ -4,7 +4,7 @@
 //!
 //! Movido tal cual desde `canvas_ui`, en el mismo orden.
 
-use canvas_core::{Document, LayerId};
+use canvas_core::Document;
 use canvas_render::{CanvasRenderer, FxScope, ImageMap};
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
@@ -21,6 +21,13 @@ use super::super::slot_chrome::{
 use super::super::EditorState;
 use super::CanvasAction;
 
+/// Préstamos de render que `sync_and_append` necesita, agrupados para
+/// reducir la firma de 7 a 5 parámetros (bajo el umbral de clippy).
+struct RenderRefs<'a> {
+    renderer: &'a mut CanvasRenderer,
+    rs: &'a RenderState,
+}
+
 /// Geometría del frame actual que `paint` necesita, agrupada para no
 /// arrastrar 6 parámetros sueltos.
 pub(super) struct PaintGeometry<'a> {
@@ -29,45 +36,45 @@ pub(super) struct PaintGeometry<'a> {
     pub visible: &'a [usize],
     pub page_dims: (f64, f64),
     pub base_view: Affine,
-    pub surface: &'a CanvasSurface,
+    pub surface: &'a mut CanvasSurface,
 }
 
 pub(super) fn paint(
     state: &mut EditorState,
     deck: &mut Deck,
     ui: &egui::Ui,
-    geo: &PaintGeometry<'_>,
+    geo: &mut PaintGeometry<'_>,
     rs: &RenderState,
     renderer: &mut CanvasRenderer,
     action: &mut Option<CanvasAction>,
 ) {
-    let mut scene = vello::Scene::new();
-    for &idx in geo.visible {
-        let Some(slot) = deck.slots.get(idx) else {
-            continue;
-        };
-        let scope = FxScope(slot.id);
-        let view = geo.base_view * Affine::translate(slot.rect.origin());
-        if idx == deck.active {
-            sync_and_append(
-                &mut scene,
-                renderer,
-                rs,
-                &state.doc,
-                &state.images,
-                scope,
-                view,
-            );
-        } else if let SlotContent::Ready(doc) = &slot.content {
-            sync_and_append(&mut scene, renderer, rs, &doc.doc, &doc.images, scope, view);
+    // Reutiliza la `Scene` del surface entre frames (evita una allocación
+    // por frame — el buffer interno de vello puede crecer a varios KB).
+    // Se separa el préstamo mutable de `scene_mut` del inmutable de
+    // `render`: se llena la escena en un bloque y luego se renderiza.
+    let surface = &mut *geo.surface;
+    {
+        let scene = surface.scene_mut();
+        for &idx in geo.visible {
+            let Some(slot) = deck.slots.get(idx) else {
+                continue;
+            };
+            let scope = FxScope(slot.id);
+            let view = geo.base_view * Affine::translate(slot.rect.origin());
+            let mut rref = RenderRefs { renderer, rs };
+            if idx == deck.active {
+                sync_and_append(scene, &mut rref, &state.doc, &state.images, scope, view);
+            } else if let SlotContent::Ready(doc) = &slot.content {
+                sync_and_append(scene, &mut rref, &doc.doc, &doc.images, scope, view);
+            }
         }
     }
-    if let Err(e) = geo.surface.render(rs, renderer, &scene) {
+    if let Err(e) = surface.render(rs, renderer, surface.scene_ref()) {
         tracing::error!("fallo renderizando el lienzo: {e}");
     }
 
     ui.painter().image(
-        geo.surface.egui_id(),
+        surface.egui_id(),
         geo.rect,
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
         egui::Color32::WHITE,
@@ -103,25 +110,33 @@ pub(super) fn paint(
 /// bucle de `canvas_ui` se llama con `renderer`/`scene` prestados de forma
 /// disjunta en cada iteración, y un cierre que capturase ambos a la vez
 /// complicaría el préstamo sin necesidad.
-#[allow(clippy::too_many_arguments)]
+///
+/// Antes hacía `page.layers.iter().map(...).collect::<Vec<_>>()` para luego
+/// iterar sobre ese `Vec` — una allocación por frame por slot visible que
+/// no aportaba nada: se itera directamente sobre `page.layers` y se clona
+/// solo el `Effects` (que es `Copy`) cuando hace falta.
 fn sync_and_append(
     scene: &mut vello::Scene,
-    renderer: &mut CanvasRenderer,
-    rs: &RenderState,
+    rref: &mut RenderRefs<'_>,
     doc: &Document,
     images: &ImageMap,
     scope: FxScope,
     view: Affine,
 ) {
     if let Ok(page) = doc.page() {
-        let fx_targets: Vec<(LayerId, canvas_core::Effects)> =
-            page.layers.iter().map(|l| (l.id, l.effects)).collect();
-        for (id, effects) in fx_targets {
-            if let Some(source) = images.get(&id) {
-                renderer.sync_layer_effects(&rs.device, &rs.queue, scope, id, source, &effects);
+        for layer in &page.layers {
+            if let Some(source) = images.get(&layer.id) {
+                rref.renderer.sync_layer_effects(
+                    &rref.rs.device,
+                    &rref.rs.queue,
+                    scope,
+                    layer.id,
+                    source,
+                    &layer.effects,
+                );
             }
         }
     }
-    let blurred = renderer.blur_overrides(scope);
+    let blurred = rref.renderer.blur_overrides(scope);
     canvas_render::append_document(scene, doc, images, &blurred, view, true);
 }

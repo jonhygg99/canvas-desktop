@@ -10,6 +10,11 @@ pub struct CanvasSurface {
     texture: wgpu::Texture,
     egui_id: egui::TextureId,
     size: [u32; 2],
+    /// Buffer de escena reutilizado entre frames. `vello::Scene::reset()`
+    /// vacía el contenido sin dealocar la capacidad ya reservada — evita
+    /// una allocación por frame (la `Scene` puede crecer a varios KB con
+    /// muchos caminos de forma).
+    scene: vello::Scene,
 }
 
 impl CanvasSurface {
@@ -52,10 +57,24 @@ impl CanvasSurface {
                 texture,
                 egui_id,
                 size: [width, height],
+                scene: vello::Scene::new(),
             });
         }
         slot.as_mut()
             .unwrap_or_else(|| unreachable!("recién asegurado"))
+    }
+
+    /// Devuelve la `Scene` reutilizable de este frame. El llamador la
+    /// llena con `append_document` y luego llama `render`.
+    pub fn scene_mut(&mut self) -> &mut vello::Scene {
+        self.scene.reset();
+        &mut self.scene
+    }
+
+    /// Devuelve la `Scene` ya llena para renderizar (préstamo inmutable,
+    /// compatible con `render` que toma `&self`).
+    pub fn scene_ref(&self) -> &vello::Scene {
+        &self.scene
     }
 
     pub fn render(

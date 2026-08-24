@@ -271,7 +271,7 @@ pub fn canvas_ui(
     // `Painter` normal de egui (más abajo, en `draw_slot_chrome`) — ya están
     // en GPU desde la galería, no hace falta subirlas de nuevo a vello.
 
-    let geo = paint::PaintGeometry {
+    let mut geo = paint::PaintGeometry {
         rect,
         slot_rect,
         visible: &visible,
@@ -279,7 +279,7 @@ pub fn canvas_ui(
         base_view,
         surface,
     };
-    paint(state, deck, ui, &geo, ctx.rs, ctx.renderer, &mut action);
+    paint(state, deck, ui, &mut geo, ctx.rs, ctx.renderer, &mut action);
 
     size_popup_ui(state, ui.ctx());
     action
