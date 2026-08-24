@@ -133,6 +133,7 @@ pub(super) fn show_panels(
     // completo con título y elementos.
     let midpoint = (COLLAPSED_WIDTH + EXPANDED_WIDTH) * 0.5;
     egui::Panel::left("layers")
+        .frame(egui::Frame::NONE)
         .exact_size(width)
         .resizable(false)
         .show(ui, |ui| {
