@@ -5,8 +5,7 @@ use canvas_core::{Command, LayerContent, LayerId, Rename, SetLocked, SetVisible}
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_blur_icon, draw_eye_icon, draw_lock_icon, draw_triangle_icon, icon_button_ui,
-    icon_label_ui, IconDir,
+    draw_blur_icon, draw_eye_icon, draw_lock_icon, draw_triangle_icon, icon_label_ui, IconDir,
 };
 use crate::editor::EditorState;
 
@@ -147,12 +146,11 @@ fn row_contents(
             ui.add_space(GROUP_ARROW_W);
         }
 
-        if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+        let (eye_clicked, eye_resp) = hover_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
             draw_eye_icon(p, r, visible, c)
-        })
-        .on_hover_text("Toggle visibility")
-        .clicked()
-        {
+        });
+        eye_resp.on_hover_text("Toggle visibility");
+        if eye_clicked {
             let mut cmd = SetVisible {
                 layer: row.id,
                 before: visible,
@@ -163,12 +161,11 @@ fn row_contents(
             }
         }
 
-        if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+        let (lock_clicked, lock_resp) = hover_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
             draw_lock_icon(p, r, locked, c)
-        })
-        .on_hover_text("Toggle lock")
-        .clicked()
-        {
+        });
+        lock_resp.on_hover_text("Toggle lock");
+        if lock_clicked {
             let mut cmd = SetLocked {
                 layer: row.id,
                 before: locked,
@@ -210,6 +207,41 @@ fn row_contents(
 /// fila sin grupo, para que la columna de la flecha quede alineada.
 const GROUP_ARROW_W: f32 = 18.0;
 
+/// Botón de icono con `Sense::hover()` y detección manual del clic
+/// (comprobando que `press_origin` esté dentro del rect). Funciona
+/// incluso dentro de `dnd_drag_source`, donde `Sense::click()` no
+/// recibe el evento porque el drag lo consume.
+/// Devuelve `(clicked, response)` para que el llamador pueda encadenar
+/// `.on_hover_text()` sobre el response.
+fn hover_button_ui(
+    ui: &mut egui::Ui,
+    size: f32,
+    enabled: bool,
+    draw: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
+) -> (bool, egui::Response) {
+    let visuals = ui.visuals().clone();
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let hovered = enabled && resp.hovered();
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
+    }
+    let color = if !enabled {
+        visuals.weak_text_color()
+    } else if hovered {
+        visuals.widgets.active.text_color()
+    } else {
+        visuals.widgets.inactive.text_color()
+    };
+    draw(&ui.painter(), rect, color);
+    let clicked = ui.input(|i| {
+        i.pointer.primary_clicked()
+            && i.pointer.press_origin().map_or(false, |o| rect.contains(o))
+    });
+    (clicked, resp)
+}
+
 /// Botón de plegado de grupo: un triángulo relleno de `app_icons` — el
 /// MISMO que usan las cabeceras de los lienzos y el resto de la app —
 /// apuntando a la derecha cuando el grupo está plegado y hacia abajo
@@ -217,10 +249,10 @@ const GROUP_ARROW_W: f32 = 18.0;
 /// icono (fondo suave al hover).
 fn group_arrow_ui(ui: &mut egui::Ui, collapsed: bool) -> bool {
     let dir = if collapsed { IconDir::Right } else { IconDir::Down };
-    icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+    hover_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
         draw_triangle_icon(p, r, dir, c)
     })
-    .clicked()
+    .0
 }
 fn rename_edit_ui(state: &mut EditorState, ui: &mut egui::Ui, id: LayerId) {
     let text_id = egui::Id::new(("layer_row", id.raw())).with("rename");
