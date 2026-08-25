@@ -31,7 +31,12 @@ pub fn section<R>(
 ) -> egui::containers::collapsing_header::CollapsingResponse<R> {
     egui::CollapsingHeader::new(text)
         .default_open(default_open)
-        .show_unindented(ui, add_contents)
+        .show_unindented(ui, |ui| {
+            // El clip_rect sí está acotado al área visible del panel.
+            let w = (ui.clip_rect().width() - 16.0).max(100.0);
+            ui.spacing_mut().slider_width = w;
+            add_contents(ui)
+        })
 }
 
 #[cfg(test)]
