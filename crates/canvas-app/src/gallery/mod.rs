@@ -29,30 +29,6 @@ pub struct GalleryItem {
     pub failed: bool,
 }
 
-fn sibling_folders(folder: &Path) -> Vec<PathBuf> {
-    let Some(parent) = folder.parent() else {
-        return Vec::new();
-    };
-    let mut folders: Vec<PathBuf> = std::fs::read_dir(parent)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter(|path| {
-            !path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        })
-        .collect();
-    folders.sort_by(|a, b| {
-        crate::settings::natural_cmp(
-            &a.file_name().unwrap_or_default().to_string_lossy(),
-            &b.file_name().unwrap_or_default().to_string_lossy(),
-        )
-    });
-    folders
-}
 fn child_folders(folder: &Path) -> Vec<PathBuf> {
     let mut folders: Vec<PathBuf> = std::fs::read_dir(folder)
         .into_iter()
@@ -75,7 +51,6 @@ fn child_folders(folder: &Path) -> Vec<PathBuf> {
     folders
 }
 struct FolderLists {
-    siblings: Vec<PathBuf>,
     children: Vec<PathBuf>,
 }
 pub struct GalleryState {
@@ -94,7 +69,6 @@ pub struct GalleryState {
     /// extensión — cambiarla rompería la detección de imagen/diseño).
     pub rename_edit: Option<(PathBuf, String)>,
     pub new_folder_inside: Option<String>,
-    pub new_folder_sibling: Option<String>,
     pub folder_rename_edit: Option<(PathBuf, String)>,
     /// Último fallo de una operación de archivos (crear/duplicar/pegar/
     /// renombrar/borrar), visible hasta que el usuario lo descarta.
@@ -145,7 +119,6 @@ impl GalleryState {
             folder_panel_side,
             navigation: FolderNavigation::new(folder.clone()),
             folders: Box::new(FolderLists {
-                siblings: sibling_folders(&folder),
                 children: child_folders(&folder),
             }),
             folder,
@@ -156,7 +129,6 @@ impl GalleryState {
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
-            new_folder_sibling: None,
             folder_rename_edit: None,
             op_error: None,
         }
@@ -173,7 +145,6 @@ impl GalleryState {
             folder_panel_side,
             navigation,
             folders: Box::new(FolderLists {
-                siblings: sibling_folders(&folder),
                 children: child_folders(&folder),
             }),
             items: Vec::new(),
@@ -183,25 +154,17 @@ impl GalleryState {
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
-            new_folder_sibling: None,
             folder_rename_edit: None,
             op_error: None,
         }
     }
-    /// Vuelve a sondear las carpetas (Inside y Siblings). Útil tras crear
-    /// o borrar una subcarpeta desde el panel.
     /// ¿Tiene que rescanearse esta galería porque cambió algo en `changed`?
-    ///
-    /// Sí si es la carpeta que se está mostrando, y también si es su carpeta
-    /// PADRE: el panel lateral lista las hermanas, que salen justo de ahí, así
-    /// que crear o borrar una carpeta un nivel más arriba también se ve.
     pub fn is_affected_by(&self, changed: &Path) -> bool {
         self.folder == changed || self.folder.parent() == Some(changed)
     }
 
     pub fn refresh_folder_lists(&mut self) {
         *self.folders = FolderLists {
-            siblings: sibling_folders(&self.folder),
             children: child_folders(&self.folder),
         };
     }
