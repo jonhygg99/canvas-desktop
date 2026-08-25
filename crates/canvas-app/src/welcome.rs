@@ -79,11 +79,9 @@ pub fn show(
                 action = Some(WelcomeAction::OpenFolder);
             }
 
-            // ── Carpetas ancladas (siempre visibles, primero) ──
+            // ── Carpetas ancladas + recientes, con scroll ──
             let show_pinned = !pinned.is_empty();
             let max_visible = 5;
-            // Altura estimada por fila: 28 px de altura + ~2 px de espaciado
-            // implícito de egui = redondeamos a 30.
             let row_h = 30.0;
 
             let all_recents: Vec<_> = recents
@@ -97,39 +95,62 @@ pub fn show(
             if total_items > 0 {
                 let scroll_h = (row_h * (total_items.min(max_visible)) as f32)
                     .max(row_h * 3.0);
+                let scroll_w = BUTTON_W + 18.0;
 
                 ui.add_space(24.0);
                 ui.label("Recent folders");
                 ui.add_space(8.0);
 
-                egui::ScrollArea::vertical()
-                    .id_salt("welcome_recents_scroll")
-                    .max_height(scroll_h)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_min_width(BUTTON_W);
-                        if show_pinned {
-                            for path in pinned {
-                                let name = folder_display_name(path);
-                                if let Some(a) =
-                                    recent_folder_ui(ui, path, &name, true)
-                                {
-                                    action = Some(a);
+                // El label se centra solo gracias a vertical_centered.
+                // Para el scroll, reservamos un rect centrado y pintamos
+                // en un Ui hijo con ese max_rect para que la barra de
+                // scroll quede pegada al contenido.
+                let avail_w = ui.available_width();
+                let ox = ((avail_w - scroll_w) / 2.0).max(0.0);
+                let rect = egui::Rect::from_min_size(
+                    ui.cursor().min + egui::vec2(ox, 0.0),
+                    egui::vec2(scroll_w, scroll_h),
+                );
+                let _ = ui.allocate_rect(rect, egui::Sense::hover());
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(rect),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("welcome_recents_scroll")
+                            .max_height(scroll_h)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_min_width(BUTTON_W);
+                                if show_pinned {
+                                    for path in pinned {
+                                        let name =
+                                            folder_display_name(path);
+                                        if let Some(a) =
+                                            recent_folder_ui(
+                                                ui, path, &name, true,
+                                            )
+                                        {
+                                            action = Some(a);
+                                        }
+                                    }
+                                    if !all_recents.is_empty() {
+                                        ui.add_space(4.0);
+                                    }
                                 }
-                            }
-                            if !all_recents.is_empty() {
-                                ui.add_space(4.0);
-                            }
-                        }
-                        for path in &all_recents {
-                            let name = folder_display_name(path);
-                            if let Some(a) =
-                                recent_folder_ui(ui, path, &name, false)
-                            {
-                                action = Some(a);
-                            }
-                        }
-                    });
+                                for path in &all_recents {
+                                    let name =
+                                        folder_display_name(path);
+                                    if let Some(a) =
+                                        recent_folder_ui(
+                                            ui, path, &name, false,
+                                        )
+                                    {
+                                        action = Some(a);
+                                    }
+                                }
+                            });
+                    },
+                );
             }
 
             ui.add_space(18.0);
