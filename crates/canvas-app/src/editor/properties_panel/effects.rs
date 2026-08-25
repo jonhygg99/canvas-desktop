@@ -144,7 +144,6 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
     let mut commit = false;
     let mut reset = false;
 
-    ui.label("Adjustments");
     let mut slider =
         |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
             ui.horizontal(|ui| {
