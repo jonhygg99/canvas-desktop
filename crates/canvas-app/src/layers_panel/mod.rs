@@ -277,7 +277,7 @@ pub(crate) fn vertical_tab_strip_ui(
     // Rectos de las pestañas, en el orden de los ajustes.
     let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(3);
     let mut y = strip_rect.top() + top_margin;
-    for (i, tab) in ordered_tabs(order).iter().enumerate() {
+    for (_i, tab) in ordered_tabs(order).iter().enumerate() {
         // Separador antes de Insert
         if *tab == LeftTab::Insert {
             y += TAB_GAP;  // espacio extra como separador visual

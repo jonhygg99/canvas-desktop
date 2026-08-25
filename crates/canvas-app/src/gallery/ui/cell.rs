@@ -125,13 +125,13 @@ pub(super) fn gallery_cell(
         rect.left_top() + egui::vec2(8.0, 4.0),
         egui::vec2(rect.width() - 16.0, TITLE_HEIGHT - 4.0),
     );
-    let name_response = (!renaming).then(|| {
-        ui.interact(
-            name_rect,
-            egui::Id::new(("gallery_name", item.path.clone())),
-            egui::Sense::click(),
-        )
-    });
+    // Check hover/click on the name area via pointer position instead of a
+    // separate `ui.interact()`. A second interact registered *after* the
+    // main `response` steals events (including secondary clicks) within the
+    // overlapping rect — which breaks the context menu on right-click.
+    let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+    let hovering_name = (!renaming)
+        && pointer_pos.map(|pos| name_rect.contains(pos)).unwrap_or(false);
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -220,14 +220,12 @@ pub(super) fn gallery_cell(
     }
 
     let mut action = None;
-    let name_clicked = name_response.as_ref().is_some_and(|name| name.clicked());
-    if let Some(name_response) = &name_response {
-        if name_response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-        }
-        if name_response.clicked() {
-            begin_rename(item, rename_edit, ui.ctx());
-        }
+    let name_clicked = hovering_name;
+    if hovering_name {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+    }
+    if name_clicked && response.clicked() {
+        begin_rename(item, rename_edit, ui.ctx());
     }
 
     if renaming {

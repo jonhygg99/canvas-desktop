@@ -10,6 +10,8 @@ use super::MenuAction;
 pub struct AppMenus;
 
 impl AppMenus {
+    #[allow(dead_code)] // solo se llama en Windows (muda); aquí existe para
+    // reflejar la misma API pública.
     pub fn install(_hwnd: isize) -> Option<Self> {
         None
     }
