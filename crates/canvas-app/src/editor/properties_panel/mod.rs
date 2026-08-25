@@ -22,8 +22,6 @@ pub(crate) mod page;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
-
-use canvas_core::LayerContent;
 use eframe::egui;
 
 use crate::app_icons::{
@@ -182,51 +180,6 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         "{} × {} px",
         page_dims.0 as i64, page_dims.1 as i64
     ));
-
-    sidebar::section(ui, "Insert", false, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("T Text").clicked() {
-                state.insert_layer_centered(
-                    "Text",
-                    500.0,
-                    120.0,
-                    LayerContent::Text(canvas_core::TextContent::default()),
-                );
-            }
-            if ui.small_button("R").on_hover_text("Rectangle").clicked() {
-                state.insert_layer_centered(
-                    "Rectangle",
-                    320.0,
-                    220.0,
-                    LayerContent::Shape(canvas_core::ShapeContent::default()),
-                );
-            }
-            if ui.small_button("O").on_hover_text("Ellipse").clicked() {
-                state.insert_layer_centered(
-                    "Ellipse",
-                    280.0,
-                    280.0,
-                    LayerContent::Shape(canvas_core::ShapeContent {
-                        kind: canvas_core::ShapeKind::Ellipse,
-                        ..Default::default()
-                    }),
-                );
-            }
-            if ui.small_button("L").on_hover_text("Line").clicked() {
-                state.insert_layer_centered(
-                    "Line",
-                    400.0,
-                    24.0,
-                    LayerContent::Shape(canvas_core::ShapeContent {
-                        kind: canvas_core::ShapeKind::Line,
-                        stroke: [30, 30, 30, 255],
-                        stroke_width: 6.0,
-                        ..Default::default()
-                    }),
-                );
-            }
-        });
-    });
 
     sidebar::section(ui, "Layer", true, |ui| {
         if let Some(sel) = state.selection.primary() {

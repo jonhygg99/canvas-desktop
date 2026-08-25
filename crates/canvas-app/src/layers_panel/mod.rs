@@ -90,6 +90,50 @@ pub fn left_panel_ui(
             };
             sidebar::title(ui, tab_name);
             ui.add_space(6.0);
+            sidebar::section(ui, "Insert", false, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("T Text").clicked() {
+                        state.insert_layer_centered(
+                            "Text",
+                            500.0,
+                            120.0,
+                            LayerContent::Text(canvas_core::TextContent::default()),
+                        );
+                    }
+                    if ui.small_button("R").on_hover_text("Rectangle").clicked() {
+                        state.insert_layer_centered(
+                            "Rectangle",
+                            320.0,
+                            220.0,
+                            LayerContent::Shape(canvas_core::ShapeContent::default()),
+                        );
+                    }
+                    if ui.small_button("O").on_hover_text("Ellipse").clicked() {
+                        state.insert_layer_centered(
+                            "Ellipse",
+                            280.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Ellipse,
+                                ..Default::default()
+                            }),
+                        );
+                    }
+                    if ui.small_button("L").on_hover_text("Line").clicked() {
+                        state.insert_layer_centered(
+                            "Line",
+                            400.0,
+                            24.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Line,
+                                stroke: [30, 30, 30, 255],
+                                stroke_width: 6.0,
+                                ..Default::default()
+                            }),
+                        );
+                    }
+                });
+            });
             match state.active_left_tab {
                 LeftTab::Page => {
                     page_ui(state, ui);
