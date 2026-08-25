@@ -61,9 +61,15 @@ pub(crate) enum Nav {
 }
 
 /// La shell eframe; `inner` se comparte con los callbacks de las ventanas
-/// hijas.
+/// hijas. Los menús nativos (muda, Windows) viven AQUÍ, fuera del `Arc`:
+/// sus `Rc` internos romperían `Send`/`Sync` en el closure de
+/// `show_viewport_deferred` de las ventanas hijas. Solo la ventana raíz los
+/// tiene; las hijas dibujan la barra de respaldo egui.
 pub(crate) struct App {
     inner: Arc<Mutex<AppInner>>,
+    /// Menús nativos (muda, Windows); `None` si no se pudieron instalar o en
+    /// plataformas sin ellos.
+    pub(crate) menus: Option<menus::AppMenus>,
 }
 
 /// Estado de la app completa, accesible desde cualquier ventana. Aunque hay
@@ -84,9 +90,6 @@ pub(crate) struct AppInner {
     pub(crate) settings: settings::AppSettings,
     /// Directorio de caché de miniaturas (si se pudo crear).
     pub(crate) thumb_cache: Option<PathBuf>,
-    /// Menús nativos (muda, Windows); `None` si no se pudieron instalar o en
-    /// plataformas sin ellos. Solo la ventana raíz los tiene.
-    pub(crate) menus: Option<menus::AppMenus>,
     /// Resultado del último registro/desregistro del Explorador.
     pub(crate) shell_status: String,
     /// Espejo del estado de los menús nativos.
@@ -189,6 +192,9 @@ pub(crate) struct MenuMirror {
     /// Último estado de `History::can_undo`/`can_redo` comunicado al menú.
     pub(crate) menus_can_undo: bool,
     pub(crate) menus_can_redo: bool,
+    /// Última lista de recientes comunicada al menú (para no llamar
+    /// `set_recents` en cada frame).
+    pub(crate) menus_recents: Vec<PathBuf>,
 }
 
 impl App {
@@ -241,6 +247,7 @@ impl App {
         }
 
         // Menú nativo (Windows): necesita el HWND de la ventana recién creada.
+        // Vive en `App` (fuera del `Arc` compartido), no en `AppInner`.
         #[cfg_attr(not(windows), allow(unused_mut))]
         let mut native_menus = None;
         #[cfg(windows)]
@@ -253,15 +260,19 @@ impl App {
             }
         }
 
+        let settings = settings::AppSettings::load();
+        if let Some(m) = native_menus.as_mut() {
+            m.set_recents(&settings.recent_files);
+        }
+
         let ws0 = Arc::new(Mutex::new(Workspace::new(egui::ViewportId::ROOT)));
         let mut inner = AppInner {
             workspaces: vec![Arc::clone(&ws0)],
             me: None,
             renderer,
             rs,
-            settings: settings::AppSettings::load(),
+            settings,
             thumb_cache: window::thumbnail_cache_dir(),
-            menus: native_menus,
             shell_status: String::new(),
             menu_mirror: MenuMirror::default(),
             applied_theme: None,
@@ -283,9 +294,6 @@ impl App {
         // se descarta. Una ruta explícita (argv o «Abrir con» del SO) sí abre.
         let _ = std::mem::take(&mut inner.settings.workspaces);
 
-        if let Some(m) = inner.menus.as_mut() {
-            m.set_recents(&inner.settings.recent_files);
-        }
         let path_to_open = initial_path;
         if let Some(path) = path_to_open {
             if path.exists() {
@@ -303,7 +311,68 @@ impl App {
         // lee hasta el primer frame, y las ventanas hijas nacen en él).
         let inner_arc = Arc::new(Mutex::new(inner));
         inner_arc.lock().unwrap().me = Some(Arc::clone(&inner_arc));
-        Ok(Self { inner: inner_arc })
+        Ok(Self {
+            inner: inner_arc,
+            menus: native_menus,
+        })
+    }
+}
+
+impl App {
+    /// Sondear clics del menú nativo (solo existe en la raíz de Windows) y
+    /// aplicarlos sobre el workspace raíz. Se ejecuta antes del frame raíz;
+    /// el resto de ventanas no tiene menú nativo. `menus` se pasa aparte (no
+    /// `&mut self`) porque `inner` ya presta `self.inner` — borrows disjuntos
+    /// de campos.
+    fn poll_native_menu(
+        menus: &Option<menus::AppMenus>,
+        inner: &mut AppInner,
+        ctx: &egui::Context,
+    ) {
+        while let Some(action) = menus.as_ref().and_then(|m| m.poll()) {
+            let Some(ws0) = inner.workspaces.first().cloned() else {
+                continue;
+            };
+            let mut ws0 = ws0.lock().unwrap();
+            inner.handle_menu_action(&mut ws0, action, ctx);
+        }
+    }
+
+    /// Refleja el estado del editor de la RAÍZ en el menú nativo (ítems
+    /// habilitados y recientes), solo cuando cambió (espejo `MenuMirror`).
+    /// Mismo patrón de borrows disjuntos que `poll_native_menu`.
+    fn sync_native_menu(menus: &mut Option<menus::AppMenus>, inner: &mut AppInner) {
+        let Some(menus) = menus.as_mut() else {
+            return;
+        };
+        let Some(ws0) = inner.workspaces.first().cloned() else {
+            return;
+        };
+        let (editor_open, can_undo, can_redo) = {
+            let ws0 = ws0.lock().unwrap();
+            match &ws0.view {
+                View::Editor(state) => (true, state.can_undo(), state.can_redo()),
+                _ => (false, false, false),
+            }
+        };
+        if editor_open != inner.menu_mirror.menus_editor_open {
+            inner.menu_mirror.menus_editor_open = editor_open;
+            menus.set_editor_enabled(editor_open);
+        }
+        if (can_undo, can_redo)
+            != (
+                inner.menu_mirror.menus_can_undo,
+                inner.menu_mirror.menus_can_redo,
+            )
+        {
+            inner.menu_mirror.menus_can_undo = can_undo;
+            inner.menu_mirror.menus_can_redo = can_redo;
+            menus.set_undo_redo(can_undo, can_redo);
+        }
+        if inner.menu_mirror.menus_recents != inner.settings.recent_files {
+            inner.menu_mirror.menus_recents = inner.settings.recent_files.clone();
+            menus.set_recents(&inner.settings.recent_files);
+        }
     }
 }
 
@@ -311,7 +380,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut inner = self.inner.lock().unwrap();
+        App::poll_native_menu(&self.menus, &mut inner, &ctx);
         inner.root_frame(ui, &ctx);
+        App::sync_native_menu(&mut self.menus, &mut inner);
     }
 
     /// Al salir (cierre de la raíz, Alt+F4 del SO) se persiste el estado de

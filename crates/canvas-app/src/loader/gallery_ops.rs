@@ -419,6 +419,17 @@ mod tests {
         fs::write(dir.path().join("photo.png"), b"not decoded here").unwrap();
         fs::write(dir.path().join("design.canvas"), b"standalone design").unwrap();
         fs::write(dir.path().join(".hidden.png"), b"hidden").unwrap();
+        // En Windows un archivo «oculto» es el que lleva el atributo, no el
+        // que empieza por punto (ver `canvas_shell::is_hidden`): marcar el
+        // atributo para que el test signifique lo mismo en todas las
+        // plataformas (mismo patrón que `canvas-shell/tests/integration.rs`).
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("attrib")
+                .arg("+h")
+                .arg(dir.path().join(".hidden.png"))
+                .status();
+        }
         fs::create_dir(dir.path().join("subfolder")).unwrap();
         fs::create_dir(dir.path().join(canvas_io::SIDECAR_DIR)).unwrap();
 

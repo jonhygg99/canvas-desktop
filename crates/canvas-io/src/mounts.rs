@@ -92,12 +92,15 @@ mod tests {
             PathBuf::from("/Users/x/Library/CloudStorage/GoogleDrive-a@b.com/Otros ordenadores");
         let error = std::io::Error::from_raw_os_error(1);
         let message = describe_read_dir_error(&drive, &error);
-        assert!(message.contains("Operation not permitted"));
+        // El texto del error crudo varía por SO (Unix: «Operation not
+        // permitted»; Windows: otro mensaje para el código 1): lo estable es
+        // el «os error N».
+        assert!(message.contains("os error 1"));
         assert!(message.contains("cloud-storage mount"));
 
         let local = PathBuf::from("/Users/x/Material");
         let message = describe_read_dir_error(&local, &error);
-        assert!(message.contains("Operation not permitted"));
+        assert!(message.contains("os error 1"));
         assert!(!message.contains("cloud-storage mount"));
     }
 

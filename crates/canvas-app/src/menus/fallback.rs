@@ -5,10 +5,14 @@ use std::path::PathBuf;
 
 use super::MenuAction;
 
-/// Fallback sin menú nativo (macOS/Linux hasta sus fases): la app pinta una
-/// barra de menús egui con `menu_bar_ui`.
+/// Fallback sin menú nativo (macOS/Linux): la app pinta una barra de menús
+/// egui con `menu_bar_ui`. Solo existe fuera de Windows (en Windows el menú
+/// nativo es `native::AppMenus`); el struct se retira del cfg para no
+/// compilar código muerto en Windows.
+#[cfg(not(windows))]
 pub struct AppMenus;
 
+#[cfg(not(windows))]
 impl AppMenus {
     #[allow(dead_code)] // solo se llama en Windows (muda); aquí existe para
                         // reflejar la misma API pública.

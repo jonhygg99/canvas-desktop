@@ -56,9 +56,8 @@ impl AppInner {
                     || self.settings.pinned_folders.len() != before_pin
                 {
                     self.settings.save_in_background();
-                    if let Some(m) = self.menus.as_mut() {
-                        m.set_recents(&self.settings.recent_files);
-                    }
+                    // El menú nativo (si existe) se entera del cambio vía el
+                    // espejo de `App::sync_native_menu` al final del frame.
                 }
             }
             View::Loading { path } => {

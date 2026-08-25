@@ -66,14 +66,20 @@ pub enum MenuAction {
 }
 
 #[cfg(windows)]
-#[cfg(windows)]
 mod native;
 
-#[cfg(not(windows))]
+// El fallback egui también se compila en Windows: las ventanas HIJAS de la
+// multi-ventana dibujan esta barra (el menú nativo no se puede clonar a
+// otras ventanas). El struct `AppMenus` dummy que contiene solo existe fuera
+// de Windows; ver `fallback.rs`.
 mod fallback;
 
 #[cfg(windows)]
 pub use native::AppMenus;
 
 #[cfg(not(windows))]
-pub use fallback::{menu_bar_ui, AppMenus};
+pub use fallback::AppMenus;
+
+// Barra de respaldo egui, usada en TODAS las plataformas: como menú
+// principal fuera de Windows y en las ventanas hijas de Windows.
+pub use fallback::menu_bar_ui;

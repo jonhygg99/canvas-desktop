@@ -22,9 +22,8 @@ impl AppInner {
         self.settings.recent_files.insert(0, path);
         self.settings.recent_files.truncate(10);
         self.settings.save_in_background();
-        if let Some(m) = self.menus.as_mut() {
-            m.set_recents(&self.settings.recent_files);
-        }
+        // El menú nativo (si existe) se entera del cambio vía el espejo de
+        // `App::sync_native_menu` al final del frame raíz.
         let recents = self.settings.recent_files.clone();
         std::thread::spawn(move || {
             if let Err(e) = canvas_shell::platform().update_jump_list(&recents) {
