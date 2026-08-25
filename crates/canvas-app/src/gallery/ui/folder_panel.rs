@@ -8,7 +8,7 @@ use std::rc::Rc;
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_delete_icon, draw_folder_icon, draw_plus_icon, icon_text_button_ui,
+    draw_folder_icon, draw_plus_icon, icon_text_button_ui,
 };
 
 use crate::deck::StripSide;
@@ -32,8 +32,7 @@ fn folder_name(folder: &Path) -> String {
 }
 
 /// Una fila de carpeta estilizada: icono de carpeta + nombre, fondo al
-/// hover, icono de borrar a la izquierda (hover), doble clic para
-/// renombrar, menú contextual con Rename y Delete.
+/// hover, doble clic para renombrar, menú contextual con Rename y Delete.
 fn gallery_folder_row_ui(
     ui: &mut egui::Ui,
     path: &Path,
@@ -44,10 +43,9 @@ fn gallery_folder_row_ui(
     let visuals = ui.visuals().clone();
     let font = egui::FontId::proportional(13.0);
     let icon_sz = 14.0;
-    let trash_sz = 13.0;
     let pad_y = 5.0;
     let gap = 8.0;
-    let side_area = 24.0;
+    let left_pad = 6.0;
 
     let galley = ui
         .painter()
@@ -58,7 +56,6 @@ fn gallery_folder_row_ui(
     let (row_rect, row_resp) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let hovered = row_resp.hovered();
-    let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
     // Fondo al hover
     if hovered {
@@ -74,31 +71,8 @@ fn gallery_folder_row_ui(
         visuals.text_color()
     };
 
-    // ── Zona borrar (izquierda) ──
-    let trash_area = egui::Rect::from_min_size(
-        row_rect.left_top() + egui::vec2(2.0, 0.0),
-        egui::vec2(side_area, height),
-    );
-    let over_trash = hovered && hover_pos.map_or(false, |p| trash_area.contains(p));
-    if over_trash {
-        ui.painter()
-            .rect_filled(trash_area, 3.0, visuals.widgets.hovered.weak_bg_fill);
-    }
-    if hovered {
-        let trash_c = if over_trash {
-            visuals.widgets.active.text_color()
-        } else {
-            color
-        };
-        draw_delete_icon(
-            ui.painter(),
-            egui::Rect::from_center_size(trash_area.center(), egui::vec2(trash_sz, trash_sz)),
-            trash_c,
-        );
-    }
-
-    // ── Contenido: icono carpeta + nombre ──
-    let content_start_x = row_rect.left() + side_area + 6.0;
+    // ── Icono carpeta + nombre ──
+    let content_start_x = row_rect.left() + left_pad;
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(content_start_x + icon_sz / 2.0, row_rect.center().y),
         egui::vec2(icon_sz, icon_sz),
@@ -107,30 +81,10 @@ fn gallery_folder_row_ui(
     let text_origin = egui::pos2(icon_rect.right() + gap, row_rect.center().y);
     ui.painter().text(text_origin, egui::Align2::LEFT_CENTER, name, font, color);
 
-    // Tooltip
-    if over_trash {
-        row_resp.clone().on_hover_text("Remove folder");
-    } else {
-        row_resp.clone().on_hover_text(path.display().to_string());
-    }
+    row_resp.clone().on_hover_text(path.display().to_string());
 
     // ── Clic ──
     if row_resp.clicked() {
-        if hover_pos.map_or(false, |p| trash_area.contains(p)) {
-            let fname = folder_name(path);
-            let confirmed = rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Warning)
-                .set_title("Delete folder")
-                .set_description(format!(
-                    "Move \"{fname}\" to the trash?\nThis deletes all files inside it.",
-                ))
-                .set_buttons(rfd::MessageButtons::OkCancel)
-                .show();
-            if confirmed == rfd::MessageDialogResult::Ok {
-                return Some(GalleryAction::DeleteFolder(path.to_owned()));
-            }
-            return None;
-        }
         if !is_current {
             return Some(GalleryAction::OpenFolder(path.to_owned()));
         }
