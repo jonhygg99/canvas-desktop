@@ -7,8 +7,8 @@ use std::rc::Rc;
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_doc_icon, draw_folder_icon, draw_gear_icon, draw_pin_icon, draw_sparkle_icon,
-    icon_text_button_ui,
+    draw_delete_icon, draw_doc_icon, draw_folder_icon, draw_gear_icon, draw_pin_icon,
+    draw_sparkle_icon, icon_text_button_ui,
 };
 
 const BUTTON_W: f32 = 220.0;
@@ -143,17 +143,12 @@ fn folder_display_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Una fila clicable para una carpeta: icono de carpeta a la izquierda,
-/// nombre centrado, botón de chincheta a la derecha (solo visible al
-/// hover), fondo suave al hover, tooltip con la ruta completa.
-///
-/// Solo se asigna UN área (`Sense::hover()`): los clics se deciden
-/// por `press_origin` (cuerpo vs chincheta). Así `vertical_centered`
-/// centra la fila entera sin que los `ui.interact` internos
-/// descoloquen el layout.
-///
-/// `is_pinned` controla si el icono de chincheta aparece lleno
-/// (anclada) o vacío (no anclada).
+/// Una fila clicable para una carpeta: icono de borrar a la izquierda,
+/// icono de carpeta + nombre centrados, chincheta a la derecha. Los
+/// iconos de borrar y chincheta solo se ven al hover (salvo pin fijo).
+/// Cada zona de clic se decide por `hover_pos()` al hacer clic.
+/// Una sola asignación `Sense::click()` para que `vertical_centered`
+/// centre la fila correctamente.
 fn recent_folder_ui(
     ui: &mut egui::Ui,
     path: &std::path::Path,
@@ -164,18 +159,17 @@ fn recent_folder_ui(
     let font = egui::FontId::proportional(13.0);
     let icon_sz = 14.0;
     let pin_sz = 12.0;
+    let trash_sz = 13.0;
     let pad_y = 6.0;
     let gap = 8.0;
-    let pin_hit_area = 24.0;
+    let side_area = 24.0; // ancho de cada zona de icono lateral
 
     let galley = ui
         .painter()
         .layout_no_wrap(name.to_owned(), font.clone(), visuals.text_color());
     let height = (galley.size().y + pad_y * 2.0).max(28.0);
     let width = BUTTON_W;
-    let body_w = width - pin_hit_area;
 
-    // Única asignación: `vertical_centered` la centra como un solo bloque.
     let (row_rect, row_resp) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let hovered = row_resp.hovered();
@@ -193,7 +187,30 @@ fn recent_folder_ui(
         visuals.text_color()
     };
 
-    // Icono + texto centrados dentro del ancho completo
+    // ── Zona borrar (izquierda) ──
+    let trash_area = egui::Rect::from_min_size(
+        row_rect.left_top(),
+        egui::vec2(side_area, height),
+    );
+    let over_trash = hovered && hover_pos.map_or(false, |p| trash_area.contains(p));
+    if over_trash {
+        ui.painter()
+            .rect_filled(trash_area, 4.0, visuals.widgets.hovered.weak_bg_fill);
+    }
+    if hovered {
+        let trash_c = if over_trash {
+            visuals.widgets.active.text_color()
+        } else {
+            color
+        };
+        draw_delete_icon(
+            ui.painter(),
+            egui::Rect::from_center_size(trash_area.center(), egui::vec2(trash_sz, trash_sz)),
+            trash_c,
+        );
+    }
+
+    // ── Contenido centrado (icono carpeta + nombre) ──
     let content_w = icon_sz + gap + galley.size().x;
     let content_start_x = row_rect.left() + (width - content_w) / 2.0;
     let icon_rect = egui::Rect::from_center_size(
@@ -202,18 +219,12 @@ fn recent_folder_ui(
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
     let text_origin = egui::pos2(icon_rect.right() + gap, row_rect.center().y);
-    ui.painter().text(
-        text_origin,
-        egui::Align2::LEFT_CENTER,
-        name,
-        font,
-        color,
-    );
+    ui.painter().text(text_origin, egui::Align2::LEFT_CENTER, name, font, color);
 
-    // ── Chincheta ──
+    // ── Zona chincheta (derecha) ──
     let pin_area = egui::Rect::from_min_size(
-        egui::pos2(row_rect.left() + body_w, row_rect.top()),
-        egui::vec2(pin_hit_area, height),
+        egui::pos2(row_rect.right() - side_area, row_rect.top()),
+        egui::vec2(side_area, height),
     );
     let over_pin = hover_pos.map_or(false, |p| pin_area.contains(p));
 
@@ -242,15 +253,21 @@ fn recent_folder_ui(
         );
     }
 
-    if over_pin {
+    // ── Tooltip ──
+    if over_trash {
+        row_resp.clone().on_hover_text("Remove");
+    } else if over_pin {
         let tip = if is_pinned { "Unpin" } else { "Pin" };
         row_resp.clone().on_hover_text(tip);
     } else {
         row_resp.clone().on_hover_text(path.display().to_string());
     }
 
-    // ── Clic: decidir por la posición del puntero al clic ──
+    // ── Clic ──
     if row_resp.clicked() {
+        if hover_pos.map_or(false, |p| trash_area.contains(p)) {
+            return Some(WelcomeAction::RemoveRecent(path.to_owned()));
+        }
         if hover_pos.map_or(false, |p| pin_area.contains(p)) {
             return if is_pinned {
                 Some(WelcomeAction::UnpinRecent(path.to_owned()))
@@ -276,7 +293,7 @@ fn recent_folder_ui(
                 };
                 ui.close();
             }
-            if ui.button("Remove from recents").clicked() {
+            if ui.button("Remove").clicked() {
                 *context_action.borrow_mut() =
                     Some(WelcomeAction::RemoveRecent(path_clone.clone()));
                 ui.close();
