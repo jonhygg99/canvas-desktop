@@ -177,8 +177,8 @@ pub(super) fn layer_properties_ui(
         let mut reset_rotation = false;
         let mut flip_h = false;
         let mut flip_v = false;
+        ui.label("Rotation");
         ui.horizontal(|ui| {
-            ui.label("Rotation");
             if track(
                 ui.add(
                     egui::DragValue::new(&mut t.rotation)
