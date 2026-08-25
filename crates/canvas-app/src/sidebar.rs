@@ -28,31 +28,21 @@ pub fn section<R>(
     text: &str,
     default_open: bool,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> (
-    egui::Response,
-    egui::InnerResponse<()>,
-    Option<egui::InnerResponse<R>>,
-) {
-    // Cabecera con el título más grande (por defecto el CollapsingHeader usa
-    // TextStyle::Button, ~13px): pintamos la flecha por defecto y un label
-    // propio en negrita a 15px. La id se deriva del texto, igual que hace
-    // `CollapsingHeader::new(text)` con `make_persistent_id`, así el estado
-    // abierto/cerrado se conserva entre frames.
-    let id = ui.make_persistent_id(text);
-    egui::containers::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        id,
-        default_open,
+) -> egui::containers::collapsing_header::CollapsingResponse<R> {
+    // El `CollapsingHeader` por defecto hace clicable TODA la fila (flecha +
+    // texto) con `Sense::click()` sobre el rect completo — usar un título
+    // personalizado con `show_header` dejaría el texto sin reacción. Por eso
+    // pasamos el título como `RichText` (negrita, 15px) al propio
+    // `CollapsingHeader`, que conserva el clic en toda la fila y pinta el
+    // texto con la fuente que le damos.
+    egui::CollapsingHeader::new(
+        egui::RichText::new(text)
+            .size(15.0)
+            .strong()
+            .color(ui.visuals().strong_text_color()),
     )
-    .show_header(ui, |ui| {
-        ui.label(
-            egui::RichText::new(text)
-                .size(15.0)
-                .strong()
-                .color(ui.visuals().strong_text_color()),
-        );
-    })
-    .body_unindented(add_contents)
+    .default_open(default_open)
+    .show_unindented(ui, add_contents)
 }
 
 /// Estira un slider hasta casi el borde del panel dejando hueco para el
