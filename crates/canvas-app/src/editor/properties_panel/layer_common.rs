@@ -173,6 +173,7 @@ pub(super) fn layer_properties_ui(
             ui.label("Y");
             changed |= track(ui.add(egui::DragValue::new(&mut t.y).speed(1.0).max_decimals(1)));
         });
+        ui.add_space(6.0);
         let mut reset_rotation = false;
         let mut flip_h = false;
         let mut flip_v = false;
@@ -220,7 +221,9 @@ pub(super) fn layer_properties_ui(
             changed = true;
             force_commit = true;
         }
+        ui.add_space(6.0);
         ui.separator();
+        ui.add_space(6.0);
         // Alineación respecto a la página (antes desplegable "Align" propio).
         ui.horizontal(|ui| {
             if icon_text_button_ui(
@@ -272,6 +275,7 @@ pub(super) fn layer_properties_ui(
                 ));
             }
         });
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             if icon_text_button_ui(
                 ui,
@@ -322,6 +326,7 @@ pub(super) fn layer_properties_ui(
                 ));
             }
         });
+        ui.add_space(4.0);
         if icon_text_button_ui(
             ui,
             true,
