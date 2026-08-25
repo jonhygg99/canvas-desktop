@@ -25,7 +25,7 @@ pub(super) fn opacity_control(state: &mut EditorState, ui: &mut egui::Ui, target
     let current = layer.opacity;
     let mut pct = current * 100.0;
 
-    ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
+
     ui.label("Opacity");
     let r = ui.add(
         egui::Slider::new(&mut pct, 0.0..=100.0)
@@ -90,7 +90,7 @@ pub(super) fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: L
         .map(|l| l.effects.blur_radius)
         .unwrap_or(0.0);
     let mut blur = current_blur;
-    ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
+
     let r = ui.add(
         egui::Slider::new(&mut blur, 0.0..=100.0)
             .suffix(" px")
@@ -147,7 +147,7 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
     let mut slider =
         |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
             // Etiqueta encima y el slider a ancho completo debajo.
-            ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
+        
             ui.label(label);
             let mut pct = *value * 100.0;
             let r = ui.add(

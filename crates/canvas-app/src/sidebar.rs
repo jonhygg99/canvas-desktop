@@ -29,9 +29,16 @@ pub fn section<R>(
     default_open: bool,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::containers::collapsing_header::CollapsingResponse<R> {
+    // Capturamos el ancho del panel ANTES de que el CollapsingHeader
+    // cree el Ui hijo sin sangrado, donde max_rect y available_width
+    // pueden verse inflados por el ScrollArea padre.
+    let w = ui.available_width();
     egui::CollapsingHeader::new(text)
         .default_open(default_open)
-        .show_unindented(ui, add_contents)
+        .show_unindented(ui, |ui| {
+            ui.spacing_mut().slider_width = (w - 16.0).max(100.0);
+            add_contents(ui)
+        })
 }
 
 #[cfg(test)]
