@@ -180,6 +180,24 @@ impl App {
         initial_path: Option<PathBuf>,
         instance: Option<canvas_shell::InstanceListener>,
     ) -> Result<Self> {
+        // egui 0.35 solo trae Ubuntu-Light: `RichText::strong()` solo cambia
+        // el COLOR, no el grosor. Para títulos de verdad en negrita (secciones
+        // del panel de propiedades) registramos la variante Bold de la misma
+        // familia Ubuntu y la usamos vía `FontFamily::Name("Ubuntu-Bold")`.
+        {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "Ubuntu-Bold".to_owned(),
+                egui::FontData::from_static(include_bytes!("../../assets/fonts/Ubuntu-Bold.ttf"))
+                    .into(),
+            );
+            fonts.families.insert(
+                egui::FontFamily::Name("Ubuntu-Bold".into()),
+                vec!["Ubuntu-Bold".to_owned()],
+            );
+            cc.egui_ctx.set_fonts(fonts);
+        }
+
         let rs = cc
             .wgpu_render_state
             .as_ref()

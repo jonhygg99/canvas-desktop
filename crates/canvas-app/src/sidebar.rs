@@ -32,17 +32,24 @@ pub fn section<R>(
     // El `CollapsingHeader` por defecto hace clicable TODA la fila (flecha +
     // texto) con `Sense::click()` sobre el rect completo — usar un título
     // personalizado con `show_header` dejaría el texto sin reacción. Por eso
-    // pasamos el título como `RichText` (negrita, 15px) al propio
-    // `CollapsingHeader`, que conserva el clic en toda la fila y pinta el
-    // texto con la fuente que le damos.
-    egui::CollapsingHeader::new(
-        egui::RichText::new(text)
-            .size(15.0)
-            .strong()
-            .color(ui.visuals().strong_text_color()),
-    )
-    .default_open(default_open)
-    .show_unindented(ui, add_contents)
+    // pasamos el título como `RichText` al propio `CollapsingHeader`, que
+    // conserva el clic en toda la fila y pinta el texto con la fuente que le
+    // damos.
+    //
+    // La negrita real necesita la familia "Ubuntu-Bold" registrada en
+    // `App::new` (egui 0.35 no trae negrita y `RichText::strong()` solo
+    // cambia el color). En contextos sin registrar (tests, previews) cae a la
+    // fuente proporcional por defecto.
+    let bold_family = egui::FontFamily::Name("Ubuntu-Bold".into());
+    let families = ui.ctx().fonts(|f| f.families());
+    let title = if families.contains(&bold_family) {
+        egui::RichText::new(text).size(15.0).family(bold_family)
+    } else {
+        egui::RichText::new(text).size(15.0)
+    };
+    egui::CollapsingHeader::new(title)
+        .default_open(default_open)
+        .show_unindented(ui, add_contents)
 }
 
 /// Estira un slider hasta casi el borde del panel dejando hueco para el
