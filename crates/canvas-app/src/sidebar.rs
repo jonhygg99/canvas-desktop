@@ -31,15 +31,7 @@ pub fn section<R>(
 ) -> egui::containers::collapsing_header::CollapsingResponse<R> {
     egui::CollapsingHeader::new(text)
         .default_open(default_open)
-        .show_unindented(ui, |ui| {
-            // Los sliders de egui por defecto miden 100px y quedan cortos.
-            // Usamos el ancho máximo del rect de la sección (estable, sin
-            // depender del cursor como `available_width`) para que lleguen
-            // casi hasta el borde del panel, con un pequeño margen.
-            let w = (ui.max_rect().width() - 8.0).max(100.0);
-            ui.spacing_mut().slider_width = w;
-            add_contents(ui)
-        })
+        .show_unindented(ui, add_contents)
 }
 
 #[cfg(test)]
