@@ -68,7 +68,9 @@ pub fn icon_text_button_ui(
     let visuals = ui.visuals().clone();
     let font = egui::FontId::proportional(13.0);
     let base = color_override.unwrap_or(visuals.text_color());
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), base);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), base);
     let icon_sz = 14.0;
     let pad_x = 7.0;
     let gap = 5.0;
@@ -330,10 +332,8 @@ pub fn draw_delete_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     let stroke = egui::Stroke::new(1.2, color);
     let w = rect.width() * 0.42;
     let h = rect.height() * 0.4;
-    let body = egui::Rect::from_center_size(
-        rect.center() + egui::vec2(0.0, h * 0.2),
-        egui::vec2(w, h),
-    );
+    let body =
+        egui::Rect::from_center_size(rect.center() + egui::vec2(0.0, h * 0.2), egui::vec2(w, h));
     painter.rect_stroke(body, 0.5, stroke, egui::StrokeKind::Outside);
     painter.line_segment(
         [
@@ -463,10 +463,7 @@ pub fn draw_gear_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
     for i in 0..8 {
         let a = std::f32::consts::TAU * i as f32 / 8.0;
         let d = egui::vec2(a.cos(), a.sin());
-        painter.line_segment(
-            [c + d * r_in, c + d * r_out],
-            egui::Stroke::new(1.6, color),
-        );
+        painter.line_segment([c + d * r_in, c + d * r_out], egui::Stroke::new(1.6, color));
     }
 }
 
@@ -483,8 +480,16 @@ pub fn draw_pencil_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
         color,
         egui::Stroke::NONE,
     ));
-    let eraser = egui::Rect::from_center_size(a + egui::vec2(-s * 0.12, s * 0.02), egui::vec2(s * 0.18, s * 0.22));
-    painter.rect_stroke(eraser, 1.0, egui::Stroke::new(1.2, color), egui::StrokeKind::Outside);
+    let eraser = egui::Rect::from_center_size(
+        a + egui::vec2(-s * 0.12, s * 0.02),
+        egui::vec2(s * 0.18, s * 0.22),
+    );
+    painter.rect_stroke(
+        eraser,
+        1.0,
+        egui::Stroke::new(1.2, color),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// Cerrar / descartar (X).
@@ -492,14 +497,8 @@ pub fn draw_close_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::C
     let c = rect.center();
     let s = rect.width().min(rect.height()) * 0.36;
     let st = egui::Stroke::new(1.6, color);
-    painter.line_segment(
-        [c - egui::vec2(s, s), c + egui::vec2(s, s)],
-        st,
-    );
-    painter.line_segment(
-        [c + egui::vec2(-s, s), c + egui::vec2(s, -s)],
-        st,
-    );
+    painter.line_segment([c - egui::vec2(s, s), c + egui::vec2(s, s)], st);
+    painter.line_segment([c + egui::vec2(-s, s), c + egui::vec2(s, -s)], st);
 }
 
 /// Confirmar (✓).
@@ -572,10 +571,7 @@ pub fn draw_warning_icon(painter: &egui::Painter, rect: egui::Rect, color: egui:
     let top = egui::pos2(c.x, rect.top() + s * 0.08);
     let bl = egui::pos2(rect.left() + s * 0.08, rect.bottom() - s * 0.08);
     let br = egui::pos2(rect.right() - s * 0.08, rect.bottom() - s * 0.08);
-    painter.add(egui::Shape::line(
-        vec![top, bl, br, top],
-        stroke(color),
-    ));
+    painter.add(egui::Shape::line(vec![top, bl, br, top], stroke(color)));
     let cx = c.x;
     painter.line_segment(
         [
@@ -659,14 +655,8 @@ pub fn draw_fill_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
         let (sx, sy) = corner;
         let base = rect.center() + egui::vec2(sx * s * 0.34, sy * s * 0.34);
         let d = egui::vec2(sx * s * 0.22, sy * s * 0.22);
-        painter.line_segment(
-            [base - egui::vec2(d.x, 0.0), base],
-            st,
-        );
-        painter.line_segment(
-            [base - egui::vec2(0.0, d.y), base],
-            st,
-        );
+        painter.line_segment([base - egui::vec2(d.x, 0.0), base], st);
+        painter.line_segment([base - egui::vec2(0.0, d.y), base], st);
     };
     corner((1.0, 1.0));
     corner((1.0, -1.0));
@@ -684,11 +674,17 @@ pub fn draw_crop_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
     painter.circle_stroke(b, s * 0.11, stroke(color));
     let st = egui::Stroke::new(1.4, color);
     painter.line_segment(
-        [a + egui::vec2(s * 0.10, -s * 0.08), b + egui::vec2(-s * 0.10, s * 0.08)],
+        [
+            a + egui::vec2(s * 0.10, -s * 0.08),
+            b + egui::vec2(-s * 0.10, s * 0.08),
+        ],
         st,
     );
     painter.line_segment(
-        [a + egui::vec2(-s * 0.12, s * 0.06), b + egui::vec2(s * 0.12, -s * 0.06)],
+        [
+            a + egui::vec2(-s * 0.12, s * 0.06),
+            b + egui::vec2(s * 0.12, -s * 0.06),
+        ],
         st,
     );
 }
@@ -698,9 +694,15 @@ pub fn draw_crop_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
 pub fn draw_isolate_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let c = rect.center();
     let s = rect.width().min(rect.height());
-    let outer = egui::Rect::from_center_size(c + egui::vec2(s * 0.12, s * 0.12), egui::vec2(s * 0.40, s * 0.40));
+    let outer = egui::Rect::from_center_size(
+        c + egui::vec2(s * 0.12, s * 0.12),
+        egui::vec2(s * 0.40, s * 0.40),
+    );
     painter.rect_stroke(outer, 1.0, stroke(color), egui::StrokeKind::Outside);
-    let inner = egui::Rect::from_center_size(c - egui::vec2(s * 0.12, s * 0.12), egui::vec2(s * 0.34, s * 0.34));
+    let inner = egui::Rect::from_center_size(
+        c - egui::vec2(s * 0.12, s * 0.12),
+        egui::vec2(s * 0.34, s * 0.34),
+    );
     painter.rect_stroke(inner, 1.0, stroke(color), egui::StrokeKind::Outside);
 }
 
@@ -715,7 +717,12 @@ pub fn draw_blur_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Co
 
 /// Chincheta (pin): cabeza redonda arriba con la aguja vertical hacia
 /// abajo. Para fijar una carpeta reciente arriba de la lista.
-pub fn draw_pin_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32, filled: bool) {
+pub fn draw_pin_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    color: egui::Color32,
+    filled: bool,
+) {
     let c = rect.center();
     let s = rect.width().min(rect.height());
     let head_c = c - egui::vec2(0.0, s * 0.12);
@@ -727,7 +734,10 @@ pub fn draw_pin_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Col
     }
     // Aguja
     painter.line_segment(
-        [head_c + egui::vec2(0.0, head_r), c + egui::vec2(0.0, s * 0.35)],
+        [
+            head_c + egui::vec2(0.0, head_r),
+            c + egui::vec2(0.0, s * 0.35),
+        ],
         stroke(color),
     );
 }

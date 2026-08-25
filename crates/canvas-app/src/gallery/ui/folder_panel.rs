@@ -7,9 +7,7 @@ use std::rc::Rc;
 
 use eframe::egui;
 
-use crate::app_icons::{
-    draw_folder_icon, draw_plus_icon, icon_text_button_ui,
-};
+use crate::app_icons::{draw_folder_icon, draw_plus_icon, icon_text_button_ui};
 
 use crate::deck::StripSide;
 
@@ -79,7 +77,8 @@ fn gallery_folder_row_ui(
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
     let text_origin = egui::pos2(icon_rect.right() + gap, row_rect.center().y);
-    ui.painter().text(text_origin, egui::Align2::LEFT_CENTER, name, font, color);
+    ui.painter()
+        .text(text_origin, egui::Align2::LEFT_CENTER, name, font, color);
 
     row_resp.clone().on_hover_text(path.display().to_string());
 
@@ -110,8 +109,7 @@ fn gallery_folder_row_ui(
                 *context_action.borrow_mut() = Some((path_clone.clone(), stem));
                 ui.close();
             }
-            let del_label = egui::RichText::new("Delete")
-                .color(ui.visuals().warn_fg_color);
+            let del_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
             if ui.button(del_label).clicked() {
                 *context_action.borrow_mut() = Some((path_clone.clone(), "__DELETE__".to_owned()));
                 ui.close();
@@ -181,6 +179,7 @@ fn folder_button_list(
 
 fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
+    let cloud_folder = canvas_io::is_cloud_storage_path(&state.folder);
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
         ui.strong("Folders");
@@ -244,7 +243,22 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     &mut action,
                 );
                 ui.add_space(2.0);
-                if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
+                if let Some(error) = &state.folders.read_error {
+                    ui.colored_label(ui.visuals().warn_fg_color, "Could not list folders.")
+                        .on_hover_text(error.clone());
+                    if ui
+                        .small_button("Retry")
+                        .on_hover_text("List this folder's subfolders again.")
+                        .clicked()
+                    {
+                        state.refresh_folder_lists();
+                    }
+                    #[cfg(target_os = "macos")]
+                    if cloud_folder && ui.small_button("Grant access…").clicked() {
+                        super::open_full_disk_access_pane();
+                        state.note_settings_opened();
+                    }
+                } else if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
                     ui.weak("No subfolders");
                 } else if !state.folders.children.is_empty() {
                     folder_button_list(
@@ -271,7 +285,23 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
+                    if let Some(error) = &state.folders.read_error {
+                        ui.colored_label(ui.visuals().warn_fg_color, "Could not list folders.")
+                            .on_hover_text(error.clone());
+                        if ui
+                            .small_button("Retry")
+                            .on_hover_text("List this folder's subfolders again.")
+                            .clicked()
+                        {
+                            state.refresh_folder_lists();
+                        }
+                        #[cfg(target_os = "macos")]
+                        if cloud_folder && ui.small_button("Grant access…").clicked() {
+                            super::open_full_disk_access_pane();
+                            state.note_settings_opened();
+                        }
+                    } else if state.folders.children.is_empty() && state.new_folder_inside.is_none()
+                    {
                         ui.weak("No subfolders");
                     } else if !state.folders.children.is_empty() {
                         folder_button_list(

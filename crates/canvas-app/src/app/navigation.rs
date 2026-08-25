@@ -9,24 +9,20 @@ use eframe::egui;
 
 use crate::{deck, editor, gallery, loader, settings};
 
-use super::{App, Nav, View};
+use super::{AppInner, Nav, View, Workspace};
 
 use super::persistence::{resolve_canvas_sidecar, seed_gallery_from_deck};
 
-impl App {
-    /// Punto único de entrada para abrir algo, venga de argv, diálogo,
-    /// arrastrar y soltar, un clic en la galería o una segunda instancia.
-    pub(super) fn open_path(&mut self, path: PathBuf, ctx: &egui::Context) {
-        // Un sidecar `foto.png.canvas` se abre como su imagen `foto.png`
-        // (que a su vez restaura las capas del sidecar automáticamente).
+impl AppInner {
+    /// Punto único de entrada para abrir algo en UN workspace, venga de
+    /// argv, diálogo, arrastrar y soltar, un clic en la galería o una
+    /// segunda instancia.
+    pub(crate) fn open_path(&mut self, ws: &mut Workspace, path: PathBuf, ctx: &egui::Context) {
         let path = resolve_canvas_sidecar(path);
         if path.is_dir() {
-            // Si la baraja ya tenía esta misma carpeta (se volvió del
-            // editor), siembra la rejilla con sus miniaturas ya en GPU: el
-            // reescaneo que sigue solo detecta cambios en disco, no repuebla
-            // desde ⏳.
+            let path = gallery::normalize_folder(path);
             let gallery_state = seed_gallery_from_deck(
-                &self.deck,
+                &ws.deck,
                 path.clone(),
                 self.settings.gallery_sort,
                 self.settings.gallery_folder_panel_side,
@@ -34,130 +30,106 @@ impl App {
             loader::spawn_gallery_scan(
                 path.clone(),
                 self.thumb_cache.clone(),
-                self.tx.clone(),
+                ws.tx.clone(),
                 ctx.clone(),
             );
             self.push_recent(&path);
-            self.view = View::Gallery(Box::new(gallery_state));
+            ws.view = View::Gallery(Box::new(gallery_state));
         } else if canvas_io::is_canvas_file(&path) {
-            // Diseño autónomo: el `.canvas` ES el documento. Qué baraja usar
-            // (semilla de galería, la ya activa, o una degenerada de una
-            // ranura) se decide en `resolve_deck` cuando la carga termine.
-            loader::spawn_load_design(path.clone(), self.tx.clone(), ctx.clone());
+            loader::spawn_load_design(path.clone(), ws.tx.clone(), ctx.clone());
             self.push_recent(&path);
-            self.view = View::Loading { path };
+            ws.view = View::Loading { path };
         } else if canvas_io::is_image_file(&path) {
-            loader::spawn_load_image(path.clone(), true, self.tx.clone(), ctx.clone());
+            loader::spawn_load_image(path.clone(), true, ws.tx.clone(), ctx.clone());
             self.push_recent(&path);
-            self.view = View::Loading { path };
+            ws.view = View::Loading { path };
         } else {
-            self.view = View::Welcome {
+            ws.view = View::Welcome {
                 error: Some(format!(
                     "\"{}\" is not a supported image format.",
                     path.display()
                 )),
             };
         }
-        self.sync_title(ctx);
+        self.sync_title(ctx, ws);
     }
-    /// Documento nuevo en blanco (desde la bienvenida o el menú File):
-    /// hereda el tamaño de página del último documento abierto o creado, y
-    /// nace en el formato elegido en Ajustes (`new_canvas_format`).
-    pub(super) fn new_design(&mut self, ctx: &egui::Context) {
-        self.deck = deck::Deck::default();
-        self.apply_deck_prefs();
+
+    /// Documento nuevo en blanco en un workspace.
+    pub(crate) fn new_design(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
+        ws.deck = deck::Deck::default();
+        self.apply_deck_prefs(ws);
         let (w, h) = self.settings.last_page_size;
         let state = if self.settings.new_canvas_format == settings::NewCanvasFormat::Canvas {
             let mut state = editor::EditorState::new_blank(w, h);
-            // Sin efecto real (`is_design` ignora `sidecar_enabled`), pero
-            // deja el checkbox del panel en el valor que el usuario espera
-            // si en algún momento deja de ser un diseño autónomo.
             state.sidecar_enabled = self.settings.sidecar_default;
             state
         } else {
-            // `new_blank_image` fuerza `sidecar_enabled = true` — NO se
-            // sobrescribe con `sidecar_default` aquí: un raster en blanco sin
-            // sidecar perdería sus capas en el primer guardado.
             editor::EditorState::new_blank_image(w, h)
         };
-        self.view = View::Editor(Box::new(state));
-        self.sync_title(ctx);
+        ws.view = View::Editor(Box::new(state));
+        self.sync_title(ctx, ws);
     }
-    /// Decide qué baraja usar al terminar de cargar `path` en el editor: la
-    /// semilla que dejó un clic de galería (`pending_deck`), la baraja ya
-    /// activa si `path` es uno de sus lienzos (navegación por la tira o el
-    /// teclado dentro del propio editor, que no toca `pending_deck`), o una
-    /// baraja degenerada de una sola ranura en cualquier otro caso (CLI,
-    /// recientes, arrastrar y soltar, segunda instancia).
-    pub(super) fn resolve_deck(&mut self, path: &Path, ctx: &egui::Context) {
-        if let Some(seed) = self.deck_ops.pending_deck.take() {
-            self.initialize_seeded_deck(seed, path);
-            self.start_seeded_deck_preload(ctx);
-        } else if let Some(idx) = self.deck.find_by_path(path) {
-            self.deck.active = idx;
+
+    /// Decide qué baraja usar al terminar de cargar `path` en el editor.
+    pub(crate) fn resolve_deck(&mut self, ws: &mut Workspace, path: &Path, ctx: &egui::Context) {
+        if let Some(seed) = ws.deck_ops.pending_deck.take() {
+            self.initialize_seeded_deck(ws, seed, path);
+            self.start_seeded_deck_preload(ws, ctx);
+        } else if let Some(idx) = ws.deck.find_by_path(path) {
+            ws.deck.active = idx;
         } else {
-            self.deck = deck::Deck::single(path.to_path_buf());
-            self.apply_deck_prefs();
+            ws.deck = deck::Deck::single(path.to_path_buf());
+            self.apply_deck_prefs(ws);
         }
-        // Limpieza defensiva: si esta carpeta se cerró en falso la vez
-        // anterior (crash, apagón) con algo sin deshacer en su papelera
-        // propia (`GlobalStep::Delete`), no se queda ahí para siempre.
-        if let Some(folder) = self.deck.folder.clone() {
+        if let Some(folder) = ws.deck.folder.clone() {
             canvas_io::purge_local_trash(&folder);
         }
     }
-    /// Construye una baraja desde una semilla de Gallery y arranca la misma
-    /// preparación que usa una apertura normal: preferencias, sondeo de
-    /// tamaños y precarga de las páginas cercanas.
-    fn initialize_seeded_deck(&mut self, seed: deck::DeckSeed, active_path: &Path) {
-        self.deck = deck::Deck::from_seed(seed, active_path);
-        self.apply_deck_prefs();
+
+    fn initialize_seeded_deck(
+        &mut self,
+        ws: &mut Workspace,
+        seed: deck::DeckSeed,
+        active_path: &Path,
+    ) {
+        ws.deck = deck::Deck::from_seed(seed, active_path);
+        self.apply_deck_prefs(ws);
     }
 
-    /// Arranca el sondeo y las cargas de inmediato, una vez que el llamador
-    /// ya ha fijado la ranura activa definitiva (imagen abierta o provisional).
-    fn start_seeded_deck_preload(&mut self, ctx: &egui::Context) {
-        self.spawn_deck_probe(ctx);
-        self.preload_nearby_slots(ctx);
+    fn start_seeded_deck_preload(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
+        self.spawn_deck_probe(ctx, ws);
+        self.preload_nearby_slots(ws, ctx);
     }
 
-    /// Arranca de inmediato las cargas de las páginas cercanas a la activa.
-    /// El editor volverá a pedirlas desde `canvas_view` si hace falta, pero
-    /// aquí ganamos el primer frame de `New design` sin duplicar cargas:
-    /// `request_loads` marca las ranuras como `Loading` antes de devolverlas.
-    fn preload_nearby_slots(&mut self, ctx: &egui::Context) {
-        let Some(folder) = self.deck.folder.clone() else {
+    fn preload_nearby_slots(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
+        let Some(folder) = ws.deck.folder.clone() else {
             return;
         };
-        for path in self.deck.request_loads(&[]) {
+        for path in ws.deck.request_loads(&[]) {
             loader::spawn_load_slot(
                 folder.clone(),
                 path,
-                self.deck.generation(),
+                ws.deck.generation(),
                 self.settings.sidecar_default,
-                self.tx.clone(),
+                ws.tx.clone(),
                 ctx.clone(),
             );
         }
     }
 
-    /// Siembra una `Deck` recién construida con las preferencias persistidas
-    /// (eje de apilado, visibilidad de la tira) — `Deck::single`/`from_seed`
-    /// no conocen `AppSettings`, así que el llamador las aplica justo
-    /// después de construirla, antes del primer `relayout`.
-    pub(super) fn apply_deck_prefs(&mut self) {
-        self.deck.axis = self.settings.deck_axis;
-        self.deck.strip_visible = self.settings.deck_strip_visible;
-        self.deck.strip_side = self.settings.deck_strip_side;
+    /// Aplica preferencias persistidas a una baraja recién construida.
+    pub(crate) fn apply_deck_prefs(&mut self, ws: &mut Workspace) {
+        ws.deck.axis = self.settings.deck_axis;
+        ws.deck.strip_visible = self.settings.deck_strip_visible;
+        ws.deck.strip_side = self.settings.deck_strip_side;
     }
+
     /// Sondea el tamaño real de las ranuras cuyo tamaño aún se desconoce.
-    /// No hace nada con una baraja degenerada (`Deck::single`: sin carpeta,
-    /// sin hermanos que necesiten sondeo) ni cuando ya se conocen todos.
-    pub(super) fn spawn_deck_probe(&self, ctx: &egui::Context) {
-        let Some(folder) = self.deck.folder.clone() else {
+    pub(crate) fn spawn_deck_probe(&self, ctx: &egui::Context, ws: &Workspace) {
+        let Some(folder) = ws.deck.folder.clone() else {
             return;
         };
-        let paths: Vec<PathBuf> = self
+        let paths: Vec<PathBuf> = ws
             .deck
             .slots
             .iter()
@@ -169,55 +141,54 @@ impl App {
         }
         loader::spawn_deck_probe(
             folder,
-            self.deck.generation(),
+            ws.deck.generation(),
             paths,
-            self.tx.clone(),
+            ws.tx.clone(),
             ctx.clone(),
         );
     }
-    /// Alterna el eje de apilado de la baraja activa y lo persiste — la tira
-    /// (botón ⇅/⇆) y el menú View (Fase 14e) comparten este único camino.
-    pub(super) fn toggle_deck_axis(&mut self) {
-        self.deck.axis = self.deck.axis.toggled();
-        self.deck.layout_dirty = true;
-        self.settings.deck_axis = self.deck.axis;
-        self.settings.save_in_background();
-    }
-    /// Mueve la tira al siguiente lado y lo persiste — el botón de la propia
-    /// tira y el menú View comparten este único camino.
-    pub(super) fn cycle_strip_side(&mut self) {
-        self.deck.strip_side = self.deck.strip_side.cycled();
-        self.settings.deck_strip_side = self.deck.strip_side;
+
+    /// Alterna el eje de apilado de la baraja activa y lo persiste.
+    pub(crate) fn toggle_deck_axis(&mut self, ws: &mut Workspace) {
+        ws.deck.axis = ws.deck.axis.toggled();
+        ws.deck.layout_dirty = true;
+        self.settings.deck_axis = ws.deck.axis;
         self.settings.save_in_background();
     }
 
-    /// Añade un lienzo en blanco al final de la baraja y salta a él. No hace
-    /// nada con una baraja degenerada (`Deck::single`: un archivo suelto no
-    /// tiene carpeta donde crear un hermano) — es el único camino a esta
-    /// función cuando la tira está oculta (un solo archivo en la carpeta,
-    /// donde la celda "+" todavía no existe).
-    pub(super) fn add_canvas(&mut self) {
+    /// Mueve la tira al siguiente lado y lo persiste.
+    pub(crate) fn cycle_strip_side(&mut self, ws: &mut Workspace) {
+        ws.deck.strip_side = ws.deck.strip_side.cycled();
+        self.settings.deck_strip_side = ws.deck.strip_side;
+        self.settings.save_in_background();
+    }
+
+    /// Añade un lienzo en blanco al final de la baraja activa y salta a él.
+    pub(crate) fn add_canvas(&mut self, ws: &mut Workspace) {
         let ext = self.settings.new_canvas_format.extension();
-        match self
-            .deck
-            .push_placeholder(self.settings.last_page_size, ext)
-        {
+        match ws.deck.push_placeholder(self.settings.last_page_size, ext) {
             Some(idx) => {
-                self.deck.jump_to = Some(idx);
-                self.deck.jump_reframe = true;
+                ws.deck.jump_to = Some(idx);
+                ws.deck.jump_reframe = true;
             }
             None => tracing::info!("«Add canvas» sin efecto: la baraja no tiene carpeta"),
         }
     }
-    fn new_design_in_folder(&mut self, seed: deck::DeckSeed, ctx: &egui::Context) {
+
+    fn new_design_in_folder(
+        &mut self,
+        ws: &mut Workspace,
+        seed: deck::DeckSeed,
+        ctx: &egui::Context,
+    ) {
         let page = self.settings.last_page_size;
         let ext = self.settings.new_canvas_format.extension();
-        self.initialize_seeded_deck(seed, Path::new(""));
-        let Some(idx) = self.deck.push_placeholder(page, ext) else {
-            self.new_design(ctx);
+        self.initialize_seeded_deck(ws, seed, Path::new(""));
+        let Some(idx) = ws.deck.push_placeholder(page, ext) else {
+            self.new_design(ws, ctx);
             return;
         };
-        for (slot_index, slot) in self.deck.slots.iter_mut().enumerate() {
+        for (slot_index, slot) in ws.deck.slots.iter_mut().enumerate() {
             if slot_index != idx && matches!(slot.content, deck::SlotContent::Active) {
                 slot.content = deck::SlotContent::Idle;
             }
@@ -227,40 +198,31 @@ impl App {
         } else {
             editor::EditorState::new_blank_image(page.0, page.1)
         };
-        state.from_gallery = self.deck.folder.clone();
-        self.deck.active = idx;
-        if let Some(slot) = self.deck.slots.get_mut(idx) {
+        state.from_gallery = ws.deck.folder.clone();
+        ws.deck.active = idx;
+        if let Some(slot) = ws.deck.slots.get_mut(idx) {
             slot.content = deck::SlotContent::Active;
         }
-        // La provisional ya es la activa definitiva: la misma preparación
-        // que usa una imagen abierta desde Gallery comienza ahora, sin haber
-        // ocupado antes los huecos de carga con el primer archivo de la
-        // carpeta.
-        self.start_seeded_deck_preload(ctx);
-        self.view = View::Editor(Box::new(state));
-        self.deck.layout_dirty = true;
-        self.sync_title(ctx);
+        self.start_seeded_deck_preload(ws, ctx);
+        ws.view = View::Editor(Box::new(state));
+        ws.deck.layout_dirty = true;
+        self.sync_title(ctx, ws);
     }
 
-    pub(super) fn navigate(&mut self, nav: Nav, ctx: &egui::Context) {
-        // Se abandona la carpeta activa (galería o baraja del editor), si
-        // había una: purga su papelera propia — cualquier `Ctrl+Z` pendiente
-        // sobre un borrado ya perdió su ventana, porque el `EditorState` que
-        // lo llevaba (`global_undo`) está a punto de descartarse con el
-        // cambio de vista de más abajo.
-        let leaving_folder = match &self.view {
+    /// Aplica una navegación diferida sobre un workspace.
+    pub(crate) fn navigate(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
+        let leaving_folder = match &ws.view {
             View::Gallery(g) => Some(g.folder.clone()),
-            View::Editor(_) => self.deck.folder.clone(),
+            View::Editor(_) => ws.deck.folder.clone(),
             _ => None,
         };
         if let Some(folder) = leaving_folder {
             canvas_io::purge_local_trash(&folder);
         }
         match nav {
-            Nav::Open(path) => self.open_path(path, ctx),
+            Nav::Open(path) => self.open_path(ws, path, ctx),
             Nav::OpenGallery { path, navigation } => {
-                // Defensivo (crash-recovery): restos de un cierre en falso
-                // de la sesión anterior en ESTA carpeta, si los hay.
+                let path = gallery::normalize_folder(path);
                 canvas_io::purge_local_trash(&path);
                 let gallery_state = gallery::GalleryState::with_navigation(
                     path.clone(),
@@ -271,35 +233,31 @@ impl App {
                 loader::spawn_gallery_scan(
                     path.clone(),
                     self.thumb_cache.clone(),
-                    self.tx.clone(),
+                    ws.tx.clone(),
                     ctx.clone(),
                 );
                 self.push_recent(&path);
-                self.view = View::Gallery(Box::new(gallery_state));
-                self.sync_title(ctx);
+                ws.view = View::Gallery(Box::new(gallery_state));
+                self.sync_title(ctx, ws);
             }
             Nav::CloseProject => {
-                self.deck = deck::Deck::default();
-                self.deck_ops.pending_deck = None;
-                self.watcher = None;
-                self.view = View::Welcome { error: None };
-                self.sync_title(ctx);
+                ws.deck = deck::Deck::default();
+                ws.deck_ops.pending_deck = None;
+                ws.watcher = None;
+                ws.view = View::Welcome { error: None };
+                self.sync_title(ctx, ws);
             }
-            Nav::NewDesign => self.new_design(ctx),
-            Nav::NewDesignInFolder { seed } => self.new_design_in_folder(seed, ctx),
+            Nav::NewDesign => self.new_design(ws, ctx),
+            Nav::NewDesignInFolder { seed } => self.new_design_in_folder(ws, seed, ctx),
         }
     }
-    /// Navega, pero si hay algún lienzo con cambios sin guardar delante
-    /// pregunta primero (Save / Discard / Cancel). «Save» solo guarda el
-    /// documento ACTIVO — sigue siendo el único camino de guardado que
-    /// funciona fuera del editor (`Ctrl+Alt+S`/«Save all» es una acción del
-    /// editor, no de esta navegación); el texto lo dice explícitamente
-    /// cuando hay más de un lienzo sucio, para que abrir algo distinto
-    /// nunca pierda trabajo en silencio.
-    pub(super) fn request_nav(&mut self, nav: Nav, ctx: &egui::Context) {
-        let names = self.dirty_canvas_names();
+
+    /// Navega un workspace, pero si hay algún lienzo con cambios sin guardar
+    /// delante pregunta primero (Save / Discard / Cancel).
+    pub(crate) fn request_nav(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
+        let names = ws.dirty_canvas_names();
         if names.is_empty() {
-            self.navigate(nav, ctx);
+            self.navigate(ws, nav, ctx);
             return;
         }
         let target = match &nav {
@@ -339,15 +297,15 @@ impl App {
             .show();
         match choice {
             rfd::MessageDialogResult::Yes => {
-                self.save.save_requested = true;
-                self.save.after_save = Some(nav);
+                ws.save.save_requested = true;
+                ws.save.after_save = Some(nav);
             }
             rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                self.save.save_requested = true;
-                self.save.after_save = Some(nav);
+                ws.save.save_requested = true;
+                ws.save.after_save = Some(nav);
             }
-            rfd::MessageDialogResult::No => self.navigate(nav, ctx),
-            rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(nav, ctx),
+            rfd::MessageDialogResult::No => self.navigate(ws, nav, ctx),
+            rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(ws, nav, ctx),
             _ => {}
         }
     }

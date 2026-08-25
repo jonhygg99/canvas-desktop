@@ -1,31 +1,43 @@
-//! El tipo `App` (estado de la ventana eframe), sus vistas (`View`/`Nav`),
-//! el constructor, y el bucle de `impl eframe::App::ui` que ensambla el
-//! frame entero: menús, la baraja/lienzo del editor o la galería/bienvenida,
-//! y los modales (guardar, sobrescribir, cerrar).
+//! La app: `App` es la cáscara eframe (una por proceso), y `AppInner` es el
+//! estado real — compartido entre las ventanas nativas del conmutador por
+//! `Arc<Mutex<…>>`. Cada ventana es un `Workspace` (ver `workspace.rs`).
+//!
+//! - La ventana raíz se pinta desde `impl eframe::App::ui`; el resto se
+//!   crean con `Context::show_viewport_deferred`, cuyos callbacks corren en
+//!   sus propias pasadas del bucle de eventos (mismo hilo, nunca anidados),
+//!   así que los `Mutex` nunca compiten de verdad — solo existen para que
+//!   los callbacks `'static` compilen.
+//! - El `RenderState` de wgpu es UNO para todo el proceso (eframe crea un
+//!   único device/renderer y cada ventana solo es una surface más); se clona
+//!   al arrancar y lo usan también las ventanas hijas.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use canvas_render::CanvasRenderer;
 use eframe::egui;
 
 use crate::loader::AppMsg;
-use crate::surface::CanvasSurface;
-use crate::{deck, editor, export, gallery, menus, paste_hook, settings, watcher};
+use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
 mod frame;
 mod menu_actions;
 mod messages;
 mod navigation;
 pub(crate) mod persistence;
+mod switcher;
 mod ui_menu;
 mod ui_modals;
 mod views;
 mod window;
+mod workspace;
+mod ws_frame;
 
-enum View {
+pub(crate) use workspace::Workspace;
+
+pub(crate) enum View {
     Welcome { error: Option<String> },
     Loading { path: PathBuf },
     Gallery(Box<gallery::GalleryState>),
@@ -33,9 +45,9 @@ enum View {
 }
 
 /// Navegación diferida: qué hacer cuando termine el guardado en curso o al
-/// final del frame (para no pelear con el préstamo de `self.view`).
+/// final del frame (para no pelear con el préstamo de `ws.view`).
 #[derive(Clone)]
-enum Nav {
+pub(crate) enum Nav {
     Open(PathBuf),
     OpenGallery {
         path: PathBuf,
@@ -48,130 +60,135 @@ enum Nav {
     },
 }
 
+/// La shell eframe; `inner` se comparte con los callbacks de las ventanas
+/// hijas.
 pub(crate) struct App {
-    renderer: CanvasRenderer,
-    surface: Option<CanvasSurface>,
-    view: View,
-    tx: Sender<AppMsg>,
-    rx: Receiver<AppMsg>,
-    last_title: String,
-    /// Directorio de caché de miniaturas (si se pudo crear).
-    thumb_cache: Option<PathBuf>,
-    /// Baraja de lienzos del editor abierto: todos los archivos de su
-    /// carpeta de origen, para saltar entre ellos sin volver a la galería.
-    /// Sobrevive al cambio de vista (a diferencia de `GalleryState`, que se
-    /// destruye), así que también sirve para sembrar la rejilla al volver.
-    deck: deck::Deck,
-    /// Ajustes persistidos del usuario.
-    settings: settings::AppSettings,
-    /// Ventana de ajustes visible.
-    show_settings: bool,
-    /// Resultado del último registro/desregistro del Explorador.
-    shell_status: String,
-    /// Menús nativos (muda en Windows); `None` si no se pudieron instalar.
-    menus: Option<menus::AppMenus>,
-    /// Ventana «About» visible.
-    show_about: bool,
-    /// Último tema aplicado a egui (para no reaplicar cada frame).
-    applied_theme: Option<settings::ThemeChoice>,
-    /// Watcher `notify` del archivo abierto en el editor, si lo hay.
-    watcher: Option<watcher::DocWatcher>,
-    /// Ventana de gracia tras un guardado propio: los eventos del watcher
-    /// hasta este instante son nuestros y se descartan.
-    ignore_fs_events_until: Option<std::time::Instant>,
-    /// Estado del camino de guardado.
-    save: SaveFlow,
-    /// Estado del camino de exportacion.
-    export: ExportFlow,
-    /// Contabilidad de la baraja que cruza con el disco.
-    deck_ops: DeckOps,
-    /// Espejo del estado de los menus nativos.
-    menu_mirror: MenuMirror,
+    inner: Arc<Mutex<AppInner>>,
 }
 
-/// Todo lo que hace falta para llevar un guardado a termino: lo pedido, lo
-/// diferido, los modales de aviso y el lote de «Save all».
+/// Estado de la app completa, accesible desde cualquier ventana. Aunque hay
+/// un solo hilo de UI, los campos guardan lo que era de `App` pero ahora es
+/// compartido por `Arc`.
+pub(crate) struct AppInner {
+    /// Todas las ventanas; la 0 es la raíz (no se puede cerrar sin salir).
+    pub(crate) workspaces: Vec<Arc<Mutex<Workspace>>>,
+    /// Manejar compartido con el que los callbacks de las ventanas hijas
+    /// recuperan el `AppInner` original (un ciclo `Arc` que se rompe en
+    /// `on_exit`).
+    pub(crate) me: Option<Arc<Mutex<AppInner>>>,
+    /// Renderer de vello, compartido (el device wgpu es único).
+    pub(crate) renderer: CanvasRenderer,
+    /// `RenderState` de egui-wgpu clonado: las ventanas hijas no reciben
+    /// `Frame`, pero registran sus texturas nativas en este mismo renderer.
+    pub(crate) rs: eframe::egui_wgpu::RenderState,
+    pub(crate) settings: settings::AppSettings,
+    /// Directorio de caché de miniaturas (si se pudo crear).
+    pub(crate) thumb_cache: Option<PathBuf>,
+    /// Menús nativos (muda, Windows); `None` si no se pudieron instalar o en
+    /// plataformas sin ellos. Solo la ventana raíz los tiene.
+    pub(crate) menus: Option<menus::AppMenus>,
+    /// Resultado del último registro/desregistro del Explorador.
+    pub(crate) shell_status: String,
+    /// Espejo del estado de los menús nativos.
+    pub(crate) menu_mirror: MenuMirror,
+    /// Último tema aplicado (para no reaplicar cada frame).
+    pub(crate) applied_theme: Option<settings::ThemeChoice>,
+    /// Conmutador rápido (Ctrl+Tab / Ctrl+`).
+    pub(crate) switcher: switcher::SwitcherState,
+    /// Índice del workspace enfocado, refrescado cada frame raíz.
+    pub(crate) focused: usize,
+    /// Canal global: mensajes que no pertenecen a ninguna ventana (segunda
+    /// instancia, registro de shell).
+    pub(crate) shell_rx: Receiver<AppMsg>,
+    pub(crate) shell_tx: Sender<AppMsg>,
+    /// Siguiente id de workspace a repartir.
+    pub(crate) next_ws_id: u64,
+    /// Último instante en que se persistieron los workspaces (throttle de
+    /// geometría; también se fuerza al crear/cerrar y en `on_exit`).
+    pub(crate) last_workspaces_save: Option<std::time::Instant>,
+    /// Se creó/cerró un workspace y hay que persistir la lista al final del
+    /// frame raíz. No se persiste en el momento: `new_workspace` puede
+    /// llamarse con el lock del workspace actual tomado, y persistir
+    /// bloquea TODOS los workspaces (`std::sync::Mutex` no reentrante →
+    /// deadlock, el «File ▸ New Window se congela»).
+    pub(crate) workspaces_dirty: bool,
+    /// Ctrl+V con bitmap (hook de mensajes del SO): se consume en la ventana
+    /// enfocada.
+    pub(crate) paste_this_frame: bool,
+    /// Foco pendiente para una ventana recién CREADA: el viewport de la
+    /// ventana no existe hasta `spawn_child_viewports` del mismo frame, así
+    /// que `focus_workspace` inmediato perdería el comando. Se consume en
+    /// `root_frame` justo después de crear las hijas.
+    pub(crate) pending_focus: Option<usize>,
+}
+
+/// Todo lo que hace falta para llevar un guardado a término: lo pedido, lo
+/// diferido, los modales de aviso y el lote de «Save all». Uno por workspace.
+#[derive(Default)]
 pub(super) struct SaveFlow {
     /// «Guardar como…» elegido, pendiente de hornear (necesita la GPU).
-    pending_save_as: Option<PathBuf>,
+    pub(super) pending_save_as: Option<PathBuf>,
     /// Guardar solicitado desde el diálogo de cierre.
-    save_requested: bool,
+    pub(super) save_requested: bool,
     /// Cerrar la ventana en cuanto termine el guardado en curso.
-    close_after_save: bool,
+    pub(super) close_after_save: bool,
     /// El usuario ya confirmó el cierre: no volver a preguntar.
-    allow_close: bool,
+    pub(super) allow_close: bool,
     /// Navegación pendiente para cuando termine el guardado en curso.
-    after_save: Option<Nav>,
+    pub(super) after_save: Option<Nav>,
     /// El usuario ya confirmó la sobrescritura destructiva en esta sesión.
-    overwrite_confirmed: bool,
+    pub(super) overwrite_confirmed: bool,
     /// Sobrescritura pendiente de confirmar en el modal (ruta del original).
-    overwrite_prompt: Option<PathBuf>,
+    pub(super) overwrite_prompt: Option<PathBuf>,
     /// Estado del checkbox «Don't ask again» mientras el modal está abierto.
-    overwrite_dont_ask: bool,
+    pub(super) overwrite_dont_ask: bool,
     /// El original no admite sobrescritura (SVG/GIF): modal que redirige a
     /// «Save as…».
-    readonly_prompt: Option<PathBuf>,
+    pub(super) readonly_prompt: Option<PathBuf>,
     /// «Save all»: ids (estables) de las ranuras sucias que faltan por
-    /// guardar, el activo excluido — ese se guarda aparte, sin saltar,
-    /// nada más pulsar. Se procesa una por frame: salta a ella (si no es ya
-    /// la activa) y pulsa "Guardar" por su cuenta, reutilizando EXACTAMENTE
-    /// el camino de Ctrl+S (mismo aviso de sobrescritura, que gracias a
-    /// `overwrite_confirmed` solo pregunta una vez por lote).
-    save_all_queue: Vec<u64>,
-    /// Ya se pulsó "Guardar" para la ranura al frente de `save_all_queue`.
-    /// Si sigue sucia y no hay un guardado en curso la próxima vez que se
-    /// mira, ese intento falló — se usa para abortar el lote en vez de
-    /// reintentar sin fin (no se puede usar `save_error` para esto: es un
-    /// campo de propósito general, podría traer un error de otra cosa).
-    save_all_attempted: bool,
+    /// guardar, el activo excluido.
+    pub(super) save_all_queue: Vec<u64>,
+    /// Ya se pulsó «Guardar» para la ranura al frente de `save_all_queue`.
+    pub(super) save_all_attempted: bool,
 }
 
-/// El dialogo de exportacion y lo que queda pendiente de el.
+/// El diálogo de exportación y lo que queda pendiente de él. Uno por
+/// ventana.
+#[derive(Default)]
 pub(super) struct ExportFlow {
     /// Diálogo de exportación visible.
-    export_dialog: Option<export::ExportDialog>,
+    pub(super) export_dialog: Option<export::ExportDialog>,
     /// Ajustes ya elegidos en el diálogo, pendientes de la ruta de archivo.
-    pending_export_settings: Option<export::ExportSettings>,
-    /// Ruta y ajustes de exportación, pendiente de hornear (necesita la GPU).
-    pending_export: Option<(PathBuf, export::ExportSettings)>,
+    pub(super) pending_export_settings: Option<export::ExportSettings>,
+    /// Ruta y ajustes de exportación, pendientes de hornear (necesita la GPU).
+    pub(super) pending_export: Option<(PathBuf, export::ExportSettings)>,
 }
 
-/// Contabilidad de la baraja que no cabe en `Deck` porque cruza con el disco:
-/// la semilla pendiente de la galeria, las reservas de nombre en vuelo y los
-/// borrados que todavia se pueden deshacer.
+/// Contabilidad de la baraja que no cabe en `Deck` porque cruza con el
+/// disco. Uno por ventana.
+#[derive(Default)]
 pub(super) struct DeckOps {
     /// Semilla capturada de la galería justo antes de navegar a un lienzo
     /// suyo; `resolve_deck` la consume en cuanto la carga termina.
-    pending_deck: Option<deck::DeckSeed>,
+    pub(super) pending_deck: Option<deck::DeckSeed>,
     /// Id de la ranura provisional cuya reserva de nombre está en vuelo.
-    /// Cerrojo de un solo disparo: la detección de «el usuario la ha
-    /// editado» se cumple en TODOS los frames a partir del primero, y sin
-    /// esto lanzaría un hilo de reserva por frame.
-    materializing: Option<u64>,
-    /// Id de una ranura provisional cuya reserva FALLÓ (carpeta de solo
-    /// lectura, disco lleno). Sigue estando sucia, así que la detección
-    /// volvería a cumplirse cada frame: se abandona en vez de reintentar sin
-    /// fin, mismo criterio que `save_all_attempted` con un lote fallido.
-    materialize_blocked: Option<u64>,
-    /// Rutas cuyo borrado en curso (`spawn_document_delete`) fue pedido
-    /// directamente por el usuario (botón «Delete», o «Delete» desde la
-    /// cabecera de un lienzo de fondo) — NO el borrado que ya ocurre como
-    /// consecuencia de deshacer una creación (`pending_delete_from_undo`).
-    /// El valor es el sidecar que tenía, si tenía uno — hay que anotarlo
-    /// ANTES de borrar, porque una vez borrado ya no queda en disco para
-    /// que `canvas_io::find_sidecar` lo encuentre. `AppMsg::DocumentDeleted`
-    /// la consulta para decidir si ese borrado se apila como
-    /// `GlobalStep::Delete` (deshacible) o no.
-    undoable_deletes: HashMap<PathBuf, Option<PathBuf>>,
+    pub(super) materializing: Option<u64>,
+    /// Id de una ranura provisional cuya reserva FALLÓ.
+    pub(super) materialize_blocked: Option<u64>,
+    /// Rutas cuyo borrado en curso se pidió directamente por el usuario,
+    /// con el sidecar que tenían (para apilar `GlobalStep::Delete`).
+    pub(super) undoable_deletes: std::collections::HashMap<PathBuf, Option<PathBuf>>,
 }
 
-/// Ultimo estado comunicado a los menus nativos, para no reenviarlo cada frame.
-struct MenuMirror {
+/// Último estado comunicado a los menús nativos, para no reenviarlo cada
+/// frame.
+#[derive(Default)]
+pub(crate) struct MenuMirror {
     /// Último estado «hay editor abierto» comunicado al menú.
-    menus_editor_open: bool,
+    pub(crate) menus_editor_open: bool,
     /// Último estado de `History::can_undo`/`can_redo` comunicado al menú.
-    menus_can_undo: bool,
-    menus_can_redo: bool,
+    pub(crate) menus_can_undo: bool,
+    pub(crate) menus_can_redo: bool,
 }
 
 impl App {
@@ -201,14 +218,16 @@ impl App {
         let rs = cc
             .wgpu_render_state
             .as_ref()
-            .context("eframe no ha inicializado wgpu (¿backend glow activo?)")?;
+            .context("eframe no ha inicializado wgpu (¿backend glow activo?)?")?
+            .clone();
         let renderer = CanvasRenderer::new(&rs.device)?;
-        let (tx, rx) = channel();
+        let (shell_tx, shell_rx) = channel();
 
         // Rutas de segundas instancias: un hilo acepta conexiones del socket
-        // local y las convierte en mensajes para la UI.
+        // local y las convierte en mensajes para la UI (canal global, no de
+        // ningún workspace: se resuelven contra la ventana ENFOCADA).
         if let Some(listener) = instance {
-            let tx = tx.clone();
+            let tx = shell_tx.clone();
             let ctx = cc.egui_ctx.clone();
             listener.spawn_accept_loop(move |line| {
                 let line = line.trim().to_owned();
@@ -234,180 +253,289 @@ impl App {
             }
         }
 
-        let mut app = Self {
+        let ws0 = Arc::new(Mutex::new(Workspace::new(egui::ViewportId::ROOT)));
+        let mut inner = AppInner {
+            workspaces: vec![Arc::clone(&ws0)],
+            me: None,
             renderer,
-            surface: None,
-            view: View::Welcome { error: None },
-            tx,
-            rx,
-            last_title: String::new(),
-            thumb_cache: window::thumbnail_cache_dir(),
-            deck: deck::Deck::default(),
+            rs,
             settings: settings::AppSettings::load(),
-            show_settings: false,
-            shell_status: String::new(),
+            thumb_cache: window::thumbnail_cache_dir(),
             menus: native_menus,
-            show_about: false,
+            shell_status: String::new(),
+            menu_mirror: MenuMirror::default(),
             applied_theme: None,
-            watcher: None,
-            ignore_fs_events_until: None,
-            save: SaveFlow {
-                pending_save_as: None,
-                save_requested: false,
-                close_after_save: false,
-                allow_close: false,
-                after_save: None,
-                overwrite_confirmed: false,
-                overwrite_prompt: None,
-                overwrite_dont_ask: false,
-                readonly_prompt: None,
-                save_all_queue: Vec::new(),
-                save_all_attempted: false,
-            },
-            export: ExportFlow {
-                export_dialog: None,
-                pending_export_settings: None,
-                pending_export: None,
-            },
-            deck_ops: DeckOps {
-                pending_deck: None,
-                materializing: None,
-                materialize_blocked: None,
-                undoable_deletes: HashMap::new(),
-            },
-            menu_mirror: MenuMirror {
-                menus_editor_open: false,
-                menus_can_undo: false,
-                menus_can_redo: false,
-            },
+            switcher: switcher::SwitcherState::default(),
+            focused: 0,
+            shell_rx,
+            shell_tx,
+            next_ws_id: 1,
+            last_workspaces_save: None,
+            workspaces_dirty: false,
+            paste_this_frame: false,
+            pending_focus: None,
         };
-        if let Some(m) = app.menus.as_mut() {
-            m.set_recents(&app.settings.recent_files);
+
+        // La app arranca SIEMPRE en la home (bienvenida) de la única ventana
+        // raíz, con su tamaño por defecto: ni las ventanas hijas ni las
+        // carpetas/documentos de la sesión anterior se restauran. La lista
+        // sigue persistiéndose en `settings.json` como historial, pero aquí
+        // se descarta. Una ruta explícita (argv o «Abrir con» del SO) sí abre.
+        let _ = std::mem::take(&mut inner.settings.workspaces);
+
+        if let Some(m) = inner.menus.as_mut() {
+            m.set_recents(&inner.settings.recent_files);
         }
-        if let Some(path) = initial_path {
-            app.open_path(path, &cc.egui_ctx);
+        let path_to_open = initial_path;
+        if let Some(path) = path_to_open {
+            if path.exists() {
+                let ws0 = Arc::clone(&inner.workspaces[0]);
+                let mut ws0 = ws0.lock().unwrap();
+                inner.open_path(&mut ws0, path, &cc.egui_ctx);
+            } else {
+                tracing::info!("ruta inicial inexistente, se ignora: {}", path.display());
+            }
         }
-        Ok(app)
+        inner.persist_workspaces_now();
+
+        // El Arc que comparten las ventanas; se patcha `me` con el Arc
+        // definitivo una vez creado (`None` mientras se construye; nadie lo
+        // lee hasta el primer frame, y las ventanas hijas nacen en él).
+        let inner_arc = Arc::new(Mutex::new(inner));
+        inner_arc.lock().unwrap().me = Some(Arc::clone(&inner_arc));
+        Ok(Self { inner: inner_arc })
     }
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        // Se consume siempre, en cualquier vista, para que no quede pegado
-        // de un frame a otro si no había ningún editor abierto para leerlo.
-        let paste_requested = paste_hook::take_request();
+        let mut inner = self.inner.lock().unwrap();
+        inner.root_frame(ui, &ctx);
+    }
 
-        // Tema (System/Light/Dark) según los ajustes; solo al cambiar.
+    /// Al salir (cierre de la raíz, Alt+F4 del SO) se persiste el estado de
+    /// las ventanas como historial en `settings.json`; ya no se restaura al
+    /// arrancar: la app siempre abre en la home.
+    fn on_exit(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.persist_workspaces_now();
+        }
+    }
+}
+
+impl AppInner {
+    /// Crea un workspace nuevo (ventana) con la bienvenida y lo añade a la
+    /// lista. `from_root` indica si el usuario lo pidió desde el menú de una
+    /// ventana (se persiste ya) o es uno restaurado del arranque.
+    pub(crate) fn new_workspace(&mut self) -> Arc<Mutex<Workspace>> {
+        let id = self.next_ws_id;
+        self.next_ws_id += 1;
+        let viewport = egui::ViewportId::from_hash_of(("canvas-ws", id));
+        let ws = Arc::new(Mutex::new(Workspace::new(viewport)));
+        self.workspaces.push(Arc::clone(&ws));
+        // La persistencia se difiere al final del frame raíz: llamar aquí
+        // `persist_workspaces_now` bloquearía TODOS los workspaces, y si
+        // este método se invoca con el del frame actual ya lockeado (menú
+        // «New Window», Ctrl+N/Ctrl+T) el hilo se bloquearía a sí mismo.
+        self.workspaces_dirty = true;
+        ws
+    }
+
+    /// Persiste la lista de workspaces (documento activo + geometría) en los
+    /// ajustes. Se llama al crear/cerrar una ventana, con throttle para la
+    /// geometría en vivo, y en `on_exit`.
+    pub(crate) fn persist_workspaces_now(&mut self) {
+        self.settings.workspaces = self
+            .workspaces
+            .iter()
+            .map(|ws| {
+                let ws = ws.lock().unwrap();
+                settings::StoredWorkspace {
+                    path: ws.persisted_path(),
+                    pos: ws.geometry.map(|(p, _)| [p.x, p.y]),
+                    size: ws.geometry.map(|(_, s)| [s.x, s.y]),
+                }
+            })
+            .collect();
+        self.settings.save_in_background();
+        self.last_workspaces_save = Some(std::time::Instant::now());
+    }
+
+    /// Persiste la geometría con un throttle corto (no spam de hilos de
+    /// escritura por cada píxel de un arrastre de ventana).
+    pub(crate) fn maybe_persist_workspaces(&mut self) {
+        let due = self
+            .last_workspaces_save
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(2));
+        if due {
+            self.persist_workspaces_now();
+        }
+    }
+
+    /// Libera los recursos GPU del workspace que se cierra y lo retira de la
+    /// lista. Solo para ventanas hijas (la raíz no se retira nunca).
+    pub(crate) fn close_workspace(&mut self, index: usize) {
+        debug_assert!(index > 0, "la raíz no se cierra por esta vía");
+        // La textura nativa (register_native_texture) vive en el registry del
+        // renderer COMPARTIDO: hay que liberarla a mano o la GPU perdería
+        // slots con cada ventana cerrada.
+        let ws = self.workspaces.remove(index);
+        if let Ok(ws) = ws.lock() {
+            if let Some(surface) = &ws.surface {
+                self.rs.renderer.write().free_texture(&surface.egui_id());
+            }
+        }
+        if self.focused >= self.workspaces.len() {
+            self.focused = 0;
+        }
+        self.persist_workspaces_now();
+    }
+
+    /// Enfoca (trae al frente) la ventana de un workspace.
+    pub(crate) fn focus_workspace(&mut self, idx: usize, ctx: &egui::Context) {
+        let Some(ws_arc) = self.workspaces.get(idx) else {
+            return;
+        };
+        self.focused = idx;
+        let viewport = ws_arc.lock().unwrap().viewport;
+        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+        // La ventana objetivo se repinta sola al recibir el foco; la paleta
+        // se cierra en el frame siguiente.
+        ctx.request_repaint_of(viewport);
+    }
+
+    /// Refresca `self.focused` contra el estado real de las ventanas (el SO
+    /// manda: Alt+Tab etc. no pasan por aquí).
+    fn update_focused(&mut self, ctx: &egui::Context) {
+        self.focused = ctx
+            .input(|i| {
+                i.raw
+                    .viewports
+                    .iter()
+                    .find(|(_, info)| info.focused == Some(true))
+                    .and_then(|(id, _)| {
+                        self.workspaces
+                            .iter()
+                            .position(|ws| ws.lock().unwrap().viewport == *id)
+                    })
+                    .unwrap_or(0)
+            })
+            .min(self.workspaces.len().saturating_sub(1));
+    }
+
+    /// El frame de cada arranque: tema, foco, mensajes, la ventana raíz y
+    /// la creación de las hijas.
+    fn root_frame(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if self.applied_theme != Some(self.settings.theme) {
             ctx.set_theme(self.settings.theme.to_egui());
             self.applied_theme = Some(self.settings.theme);
         }
+        self.update_focused(ctx);
+        self.paste_this_frame = paste_hook::take_request();
+        self.drain_all(ctx);
 
-        self.sync_and_show_menu(ui, &ctx);
+        let ws0_arc = Arc::clone(&self.workspaces[0]);
+        let mut ws0 = ws0_arc.lock().unwrap();
+        let paste = self.paste_this_frame;
+        self.ws_frame(ui, ctx, &mut ws0, 0, true, paste);
+        drop(ws0);
 
-        self.handle_messages(&ctx);
-        self.handle_dropped_files(&ctx);
-        self.confirm_close(&ctx);
+        self.spawn_child_viewports(ctx);
+        if let Some(idx) = self.pending_focus.take() {
+            self.focus_workspace(idx, ctx);
+        }
+        self.finish_root_frame(ctx);
+    }
 
-        // Navegación diferida (clic en galería, volver desde el editor).
-        let mut open_next: Option<Nav> = None;
-        // Acción del menú contextual del lienzo (clic derecho): `state`
-        // pide prestado `self.view` mutable durante toda la rama
-        // `View::Editor` de más abajo, así que `self.handle_menu_action`
-        // (que necesita `&mut self` entero) no se puede llamar ahí dentro
-        // — se captura aquí y se resuelve DESPUÉS de este `match`, una vez
-        // liberado el préstamo.
-        let mut pending_menu_action: Option<menus::MenuAction> = None;
+    /// Tras los frames: retira las ventanas que pidieron cerrarse y
+    /// persiste (throttleado) la geometría.
+    fn finish_root_frame(&mut self, ctx: &egui::Context) {
+        let mut changed = false;
+        let mut i = 1;
+        while i < self.workspaces.len() {
+            if self.workspaces[i].lock().unwrap().close_requested {
+                self.close_workspace(i);
+                changed = true;
+            } else {
+                i += 1;
+            }
+        }
+        if changed {
+            // El conmutador pudo quedar apuntando a una ventana retirada.
+            if self.focused >= self.workspaces.len() {
+                self.focused = 0;
+            }
+            self.switcher.selected = self
+                .switcher
+                .selected
+                .min(self.workspaces.len().saturating_sub(1));
+            let _ = ctx;
+        }
+        if self.workspaces_dirty {
+            self.workspaces_dirty = false;
+            self.persist_workspaces_now();
+        }
+        self.maybe_persist_workspaces();
+    }
 
-        match &mut self.view {
-            View::Welcome { error } => {
-                let error = error.clone();
-                let before_recent = self.settings.recent_files.len();
-                let before_pin = self.settings.pinned_folders.len();
-                open_next = views::welcome_view_ui(
-                    ui,
-                    error.as_deref(),
-                    &mut self.settings.recent_files,
-                    &mut self.settings.pinned_folders,
-                    &mut self.show_settings,
-                    &self.tx,
-                    &ctx,
-                );
-                if self.settings.recent_files.len() != before_recent
-                    || self.settings.pinned_folders.len() != before_pin
-                {
-                    self.settings.save_in_background();
-                    if let Some(m) = self.menus.as_mut() {
-                        m.set_recents(&self.settings.recent_files);
+    /// Crea (o mantiene) las ventanas hijas con `show_viewport_deferred`.
+    /// Hay que llamarla cada frame con los MISMOS `ViewportId`, o la ventana
+    /// se cierra.
+    fn spawn_child_viewports(&self, ctx: &egui::Context) {
+        if self.workspaces.len() <= 1 {
+            return;
+        }
+        let me = Arc::clone(
+            self.me
+                .as_ref()
+                .expect("me se parchea en App::new antes del primer frame"),
+        );
+        for (i, ws_arc) in self.workspaces.iter().enumerate().skip(1) {
+            let ws = ws_arc.lock().unwrap();
+            if ws.close_requested {
+                continue;
+            }
+            let viewport = ws.viewport;
+            let mut builder = egui::ViewportBuilder::default().with_title(ws.label());
+            if let Some((pos, size)) = ws.geometry {
+                builder = builder
+                    .with_position([pos.x, pos.y])
+                    .with_inner_size([size.x, size.y]);
+            }
+            let ws_arc = Arc::clone(ws_arc);
+            let child_ctx = ctx.clone();
+            let me = Arc::clone(&me);
+            let idx = i;
+            ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
+                if class == egui::ViewportClass::Deferred {
+                    let mut inner = me.lock().unwrap();
+                    if let Some(ws_cur) = inner.workspaces.get(idx) {
+                        if Arc::ptr_eq(ws_cur, &ws_arc) {
+                            let mut ws = ws_arc.lock().unwrap();
+                            inner.child_frame(ui, &child_ctx, &mut ws, idx);
+                        }
                     }
                 }
-            }
-            View::Loading { path } => {
-                views::loading_view_ui(ui, path);
-            }
-            View::Gallery(g) => {
-                open_next = views::gallery_view_ui(
-                    g,
-                    ui,
-                    &mut self.settings,
-                    &mut self.deck_ops.pending_deck,
-                    &self.tx,
-                    &ctx,
-                );
-            }
-            View::Editor(state) => {
-                // Si no hay estado de wgpu (backend glow activo), se corta
-                // el frame ENTERO aquí — no solo esta vista — igual que
-                // antes de este refactor.
-                let Some(rs) = frame.wgpu_render_state().cloned() else {
-                    return;
-                };
-                let mut frame = frame::EditorFrame {
-                    deck: &mut self.deck,
-                    renderer: &mut self.renderer,
-                    surface: &mut self.surface,
-                    tx: &self.tx,
-                    settings: &mut self.settings,
-                    show_settings: &mut self.show_settings,
-                    watcher: &mut self.watcher,
-                    ignore_fs_events_until: &mut self.ignore_fs_events_until,
-                    save: &mut self.save,
-                    export: &mut self.export,
-                    deck_ops: &mut self.deck_ops,
-                };
-                let (nav, action) =
-                    views::editor_view_ui(ui, &ctx, &rs, state, paste_requested, &mut frame);
-                open_next = nav;
-                pending_menu_action = action;
-            }
+            });
         }
+    }
 
-        // Resuelve la acción del menú contextual del lienzo capturada más
-        // arriba (ver el porqué del aplazamiento en su declaración):
-        // reutiliza el mismo camino que ya usa la barra de menú, sin
-        // duplicar ninguna lógica.
-        if let Some(action) = pending_menu_action {
-            self.handle_menu_action(action, &ctx);
+    /// El frame de una ventana hija: drena su propio canal (#por si se repintó
+    /// sin que el UI pasara antes) y pinta lo mismo que la raíz.
+    fn child_frame(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        ws: &mut Workspace,
+        idx: usize,
+    ) {
+        let mut open_after = None;
+        self.drain_ws(ws, ctx, &mut open_after);
+        if let Some(nav) = open_after {
+            self.navigate(ws, nav, ctx);
         }
-
-        self.settings_window_ui(&ctx);
-
-        if let Some(nav) = open_next {
-            self.navigate(nav, &ctx);
-        }
-
-        self.about_window_ui(&ctx);
-
-        // Mantén el watcher `notify` apuntando al archivo abierto (si lo hay).
-        let desired = match &self.view {
-            View::Editor(state) => state.doc.source_path.clone(),
-            _ => None,
-        };
-        if self.watcher.as_ref().map(|w| w.path.as_path()) != desired.as_deref() {
-            self.watcher = desired.and_then(|p| watcher::watch(&p, self.tx.clone(), ctx.clone()));
-        }
-
-        self.sync_title(&ctx);
+        let paste = paste_hook::take_request();
+        self.ws_frame(ui, ctx, ws, idx, false, paste);
     }
 }

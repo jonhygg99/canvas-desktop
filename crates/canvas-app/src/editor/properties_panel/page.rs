@@ -86,7 +86,6 @@ pub(crate) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             }
         }
     }
-
 }
 
 /// Selector compartido para la página y el cuadro contextual Size.

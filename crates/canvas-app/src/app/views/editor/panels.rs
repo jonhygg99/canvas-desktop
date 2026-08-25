@@ -19,24 +19,10 @@ pub(super) fn show_panels(
     Option<deck_strip::StripAction>,
     Option<editor::CanvasAction>,
 ) {
-    // Tira de lienzos de la baraja: solo con más de un archivo en la
-    // carpeta de origen. Va antes que "layers" para quedar pegada al borde
-    // exterior de la ventana.
     let mut strip_action = None;
-    // Acción pedida desde la cabecera de un lienzo del área central
-    // (renombrar/duplicar/borrar) — se llena dentro del `CentralPanel` de
-    // más abajo, se resuelve junto a `strip_action`.
     let mut canvas_action = None;
     if f.deck.is_visible() && !state.isolate {
         let active_dirty = state.is_dirty();
-        // Ids DISTINTOS por lado (no el mismo panel reetiquetado): así el
-        // tamaño recordado de la tira a la izquierda (ancho) no se aplica
-        // como alto al moverla arriba, y viceversa — mismo criterio que ya
-        // separa "layers" de "properties". `.resizable(true)` es
-        // obligatorio en Top/Bottom (egui los crea con `resizable(false)`
-        // por defecto) e inofensivo-pero-explícito en Left/Right. Orden
-        // importa: `.default_size` ENSANCHA el rango si se llama después
-        // de `.size_range`, así que va primero.
         match f.deck.strip_side {
             deck::StripSide::Left => {
                 egui::Panel::left("deck_strip_left")
@@ -76,35 +62,27 @@ pub(super) fn show_panels(
             }
         }
     }
-    // Diseño bloqueado (`Slot::locked`, cabecera del lienzo en el área
-    // central): deshabilita también los paneles, no solo los gestos sobre
-    // el propio lienzo — "no se puede editar" sin matizar por qué vía.
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
     let layers_collapsed_before = f.settings.layers_collapsed;
-    // Panel de capas con animación manual del ancho: un único panel
-    // cuyo `exact_size` se interpola entre 36 px (colapsado) y 220 px
-    // (expandido) con ease-out cúbico de 0,2 s, igual que el
-    // intercambio de pestañas. El estado de la animación vive en el
-    // `data` de egui; el contenido se elige por umbral de ancho. Así
-    // hay un solo panel, una sola rama, y el clic que cambia
-    // `layers_collapsed` no puede rebotar porque la otra vista jamás
-    // se ejecuta en el mismo frame.
     const COLLAPSED_WIDTH: f32 = 36.0;
     const EXPANDED_WIDTH: f32 = 220.0;
     const PANEL_ANIM_SECS: f64 = 0.2;
 
     let anim_salt = egui::Id::new("layers_panel_anim");
-    type AnimState = (bool, f64, bool); // (target_collapsed, start_time, started)
+    type AnimState = (bool, f64, bool);
     let mut anim: Option<AnimState> = ui.data_mut(|d| d.get_temp(anim_salt).unwrap_or(None));
     let now: f64 = ui.input(|i| i.time);
     let target_collapsed = f.settings.layers_collapsed;
 
-    // Si el objetivo cambió, arrancar (o reiniciar) la animación.
-    if anim.map_or(true, |(t, _, _)| t != target_collapsed) {
+    if anim.is_none_or(|(t, _, _)| t != target_collapsed) {
         anim = Some((target_collapsed, now, false));
     }
 
-    let mut width = if target_collapsed { COLLAPSED_WIDTH } else { EXPANDED_WIDTH };
+    let mut width = if target_collapsed {
+        COLLAPSED_WIDTH
+    } else {
+        EXPANDED_WIDTH
+    };
     if let Some((target, start, started)) = &mut anim {
         if !*started {
             *start = now;
@@ -117,7 +95,7 @@ pub(super) fn show_panels(
             // animación nueva» y el panel rebotaría sin fin.
         } else {
             let t = (elapsed / PANEL_ANIM_SECS) as f32;
-            let ease = 1.0 - (1.0 - t).powi(3); // ease-out cúbico
+            let ease = 1.0 - (1.0 - t).powi(3);
             if *target {
                 width = EXPANDED_WIDTH + (COLLAPSED_WIDTH - EXPANDED_WIDTH) * ease;
             } else {
@@ -128,16 +106,12 @@ pub(super) fn show_panels(
     }
     ui.data_mut(|d| d.insert_temp(anim_salt, anim));
 
-    // Un solo panel, ancho animado. Por debajo de la mitad del
-    // recorrido se muestra la tira de iconos; por encima, el panel
-    // completo con título y elementos.
     let midpoint = (COLLAPSED_WIDTH + EXPANDED_WIDTH) * 0.5;
     egui::Panel::left("layers")
         .frame(egui::Frame::NONE)
         .exact_size(width)
         .resizable(false)
         .show(ui, |ui| {
-            // El frame NONE no pinta el fondo del panel; lo hacemos aquí.
             ui.painter()
                 .rect_filled(ui.min_rect(), 0.0, ui.visuals().panel_fill);
             if width < midpoint {

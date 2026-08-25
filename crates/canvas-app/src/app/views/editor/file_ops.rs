@@ -1,8 +1,6 @@
 //! Operaciones sobre el ARCHIVO del lienzo activo, pedidas desde el panel:
 //! renombrar, borrar, y materializar una ranura provisional (un lienzo nuevo
 //! que todavia no existe en disco) en cuanto el usuario la edita.
-//!
-//! Movido tal cual desde `editor_view_ui`, en el mismo orden.
 
 use std::time::Instant;
 
@@ -65,11 +63,6 @@ pub(super) fn handle_file_ops(
     // respuesta de este mismo frame ya está aplicada) y ANTES del bloque de
     // guardado (el `save_clicked` que la respuesta deja preparado se
     // consume ese mismo frame, más abajo).
-    // La extensión a reservar es la del nombre YA asomado en la ranura
-    // (`push_placeholder` la fijó al crearla), no la del ajuste actual: si
-    // el usuario cambió `new_canvas_format` mientras esta provisional
-    // seguía sin editar, el nombre que se ve en la tira («1.png») y el que
-    // se reserva de verdad deben seguir siendo el mismo.
     let placeholder = f
         .deck
         .slots

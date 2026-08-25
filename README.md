@@ -63,6 +63,15 @@ El canvas mínimo funcionando de punta a punta:
 - **Instancia única**: abrir un segundo archivo con la app ya abierta lo
   envía a la ventana existente por un socket local (`interprocess`); el
   segundo proceso sale con código 0.
+- **Varias ventanas (workspaces)**: cada ventana es un workspace
+  independiente y propia vista (bienvenida / galería / editor), baraja
+  de lienzos, historial de guardado y superficie GPU. `File ▸ New Window`
+  o `Ctrl+N` (Cmd en macOS) abren una nueva al instante; `Ctrl+T` (Cmd+T)
+  abre una nueva con el selector de carpeta ya abierto. `Ctrl+Tab` /
+  `Ctrl+Shift+Tab` ciclan entre ventanas y ``Ctrl+` `` abre la paleta de
+  salto. La lista de workspaces se guarda en `settings.json` al salir como
+  historial, pero al reabrir la app arranca fresca en la **home** de una única
+  ventana; lo que sí se abre directo es una ruta por argumento o «Abrir con».
 - **Vigilancia del archivo** (`notify`): si el archivo abierto cambia en
   disco por fuera, un banner ofrece «Reload / Keep mine». Los guardados
   propios no disparan el aviso.
@@ -94,6 +103,50 @@ cargo run -p canvas-app -- C:\ruta\a\carpeta
 
 En desarrollo, los flags que cuela cargo (todo lo que empiece por `-`) se
 filtran y solo se aceptan rutas que existan en disco.
+
+Para lanzar varias ventanas en paralelo mientras depuras (saltando el
+reenvío de instancia única): `CANVAS_DESKTOP_MULTI_INSTANCE=1 cargo run`.
+
+### macOS: carpetas en la nube requieren Full Disk Access
+
+Las carpetas de Google Drive, iCloud Drive, Dropbox o OneDrive viven en
+`~/Library/CloudStorage/…`, un montaje virtual que **macOS protege con
+permisos (TCC)**. Si lanzas la app desde una terminal sin *Full Disk
+Access*, leer esas carpetas falla con:
+
+```
+Could not read this folder.
+/Users/tu/usuario/Library/CloudStorage/GoogleDrive-…/Mi carpeta:
+Operation not permitted (os error 1)
+```
+
+mientras las carpetas locales funcionan con normalidad. Es el sistema
+operativo bloqueando al proceso, no un fallo de la app: los ejecutables
+sueltos nunca reciben el diálogo de consentimiento, solo el error.
+
+**Soluciones** (elige una):
+
+- Concede acceso a tu terminal: *System Settings › Privacy & Security ›
+  Full Disk Access* → «+» → añade Terminal/iTerm → reinicia la terminal.
+  Después `cargo run` podrá leer las carpetas de la nube sin más.
+- O lanza la app fuera del contexto de la terminal, vía LaunchServices:
+  `open target/debug/canvas-desktop`. Así corre como app gráfica con sus
+  propios permisos (doble clic en Finder equivale). Si macOS pregunta por
+  el acceso a la carpeta, dale a **Permitir**.
+- O empaqueta el `.app` firmado ad-hoc con identidad estable:
+  `./packaging/macos/make_app.sh` y luego `open "dist/Canvas Desktop.app"`.
+  El Designated Requirement se fija al identificador del bundle, así que
+  los permisos concedidos sobreviven a recompilar.
+
+Dos detalles a tener en cuenta:
+
+- La app reintenta automáticamente los fallos transitorios del montaje
+  (típicos mientras el proveedor hidrata contenido solo-en-la-nube) y,
+  si una carpeta no se puede leer, muestra en pantalla el motivo junto
+  a una pista accionable para montajes de nube.
+- Con la instancia única activa, abrir algo nuevo lo recibe la ventana
+  ya abierta: importan los permisos de quien lanzó ESA primera instancia.
+  Si ves errores que no esperabas, ciérrala y relanza desde tu contexto.
 
 ### Controles
 

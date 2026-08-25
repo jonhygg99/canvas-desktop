@@ -14,6 +14,10 @@ use crate::{deck::StripSide, settings::GallerySort};
 
 pub use ui::{next_folder_panel_side, show};
 
+/// Espera minima tras abrir Ajustes antes de fiarnos del foco: descarta el
+/// parpadeo de foco que provoca el propio `open` al lanzar Ajustes.
+const PERMISSION_RETRY_MIN: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ItemKind {
     Image,
@@ -29,10 +33,16 @@ pub struct GalleryItem {
     pub failed: bool,
 }
 
-fn child_folders(folder: &Path) -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = std::fs::read_dir(folder)
-        .into_iter()
-        .flatten()
+pub(crate) fn normalize_folder(folder: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&folder).unwrap_or(folder)
+}
+
+/// Lee las subcarpetas directas de `folder`: read_dir resiliente, ocultos
+/// fuera, orden natural. El error sale como String listo para la UI.
+pub(crate) fn read_child_folders(folder: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = canvas_io::read_dir_resilient(folder)
+        .map_err(|e| canvas_io::describe_read_dir_error(folder, &e))?;
+    let mut folders: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
@@ -48,10 +58,32 @@ fn child_folders(folder: &Path) -> Vec<PathBuf> {
             &b.file_name().unwrap_or_default().to_string_lossy(),
         )
     });
-    folders
+    Ok(folders)
+}
+
+/// Lista las subcarpetas de `folder`. Ante un fallo de lectura (p. ej. un
+/// montaje de nube que responde EPERM mientras hidrata contenido
+/// solo-en-linea) NO devuelve una lista vacia silenciosa: guarda el error
+/// para que el panel pueda explicar por que no hay carpetas.
+fn child_folders(folder: &Path) -> FolderLists {
+    match read_child_folders(folder) {
+        Ok(children) => FolderLists {
+            children,
+            read_error: None,
+        },
+        Err(error) => {
+            tracing::warn!(folder = %folder.display(), error = %error, "folder listing failed");
+            FolderLists {
+                children: Vec::new(),
+                read_error: Some(error),
+            }
+        }
+    }
 }
 struct FolderLists {
     children: Vec<PathBuf>,
+    /// Por que no se pudo listar (carpetas vacias ≠ carpeta ilegible).
+    read_error: Option<String>,
 }
 pub struct GalleryState {
     pub folder: PathBuf,
@@ -60,6 +92,8 @@ pub struct GalleryState {
     folders: Box<FolderLists>,
     pub items: Vec<GalleryItem>,
     pub scanned: bool,
+    /// Error de lectura de la carpeta, si el escaneo no pudo abrirla.
+    pub scan_error: Option<String>,
     pub sort: GallerySort,
     /// Número de diseños que se muestran por línea (no cambia los archivos).
     pub gallery_columns: usize,
@@ -73,6 +107,16 @@ pub struct GalleryState {
     /// Último fallo de una operación de archivos (crear/duplicar/pegar/
     /// renombrar/borrar), visible hasta que el usuario lo descarta.
     pub op_error: Option<String>,
+    /// Instante en que el usuario abrio Ajustes para dar permiso (macOS):
+    /// al recuperar la ventana el foco se reintenta el escaneo una sola vez.
+    pub(crate) settings_opened_at: Option<std::time::Instant>,
+    /// Foco de la ventana en el frame anterior (detecta el regreso).
+    focus_was_up: bool,
+    /// Bucle automatico de listado (montajes de nube) en marcha.
+    pub(crate) folders_auto_refreshing: bool,
+    /// Ciclos automaticos disponibles: se rearma con acciones del usuario
+    /// (Retry / ↻ / abrir carpeta) para no ciclar eternamente en segundo plano.
+    folders_auto_refresh_armed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -115,15 +159,15 @@ impl FolderNavigation {
 }
 impl GalleryState {
     pub fn new(folder: PathBuf, sort: GallerySort, folder_panel_side: StripSide) -> Self {
+        let folder = normalize_folder(folder);
         Self {
             folder_panel_side,
             navigation: FolderNavigation::new(folder.clone()),
-            folders: Box::new(FolderLists {
-                children: child_folders(&folder),
-            }),
+            folders: Box::new(child_folders(&folder)),
             folder,
             items: Vec::new(),
             scanned: false,
+            scan_error: None,
             sort,
             gallery_columns: 5,
             selected: None,
@@ -131,6 +175,10 @@ impl GalleryState {
             new_folder_inside: None,
             folder_rename_edit: None,
             op_error: None,
+            settings_opened_at: None,
+            focus_was_up: true,
+            folders_auto_refreshing: false,
+            folders_auto_refresh_armed: true,
         }
     }
 
@@ -140,15 +188,15 @@ impl GalleryState {
         navigation: FolderNavigation,
         folder_panel_side: StripSide,
     ) -> Self {
+        let folder = normalize_folder(folder);
         Self {
             folder: folder.clone(),
             folder_panel_side,
             navigation,
-            folders: Box::new(FolderLists {
-                children: child_folders(&folder),
-            }),
+            folders: Box::new(child_folders(&folder)),
             items: Vec::new(),
             scanned: false,
+            scan_error: None,
             sort,
             gallery_columns: 5,
             selected: None,
@@ -156,6 +204,10 @@ impl GalleryState {
             new_folder_inside: None,
             folder_rename_edit: None,
             op_error: None,
+            settings_opened_at: None,
+            focus_was_up: true,
+            folders_auto_refreshing: false,
+            folders_auto_refresh_armed: true,
         }
     }
     /// ¿Tiene que rescanearse esta galería porque cambió algo en `changed`?
@@ -164,9 +216,34 @@ impl GalleryState {
     }
 
     pub fn refresh_folder_lists(&mut self) {
-        *self.folders = FolderLists {
-            children: child_folders(&self.folder),
-        };
+        // Accion del usuario: rearma los ciclos automaticos de listado.
+        self.folders_auto_refresh_armed = true;
+        *self.folders = child_folders(&self.folder);
+    }
+
+    /// Condiciones para lanzar el bucle automatico de listado (montaje de
+    /// nube, error presente, armado y sin bucle en marcha). Al dispararse
+    /// desarma y marca el bucle: un ciclo acotado por visita, sin relanzarse
+    /// eternamente; `refresh_folder_lists` lo rearma tras accion del usuario.
+    pub(crate) fn take_folder_auto_refresh(&mut self, cloud_folder: bool) -> bool {
+        let due = cloud_folder
+            && self.folders_auto_refresh_armed
+            && !self.folders_auto_refreshing
+            && self.folders.read_error.is_some();
+        if due {
+            self.folders_auto_refresh_armed = false;
+            self.folders_auto_refreshing = true;
+        }
+        due
+    }
+
+    /// Aplica el resultado de un reintento en segundo plano del listado
+    /// (children + error) y libera el bucle. Encapsula `FolderLists`, que es
+    /// privado para los modulos fuera del arbol de `gallery`.
+    pub(crate) fn apply_folders_refresh(&mut self, children: Vec<PathBuf>, error: Option<String>) {
+        self.folders.children = children;
+        self.folders.read_error = error;
+        self.folders_auto_refreshing = false;
     }
 
     pub fn navigation_to_folder(&mut self, folder: PathBuf) -> (PathBuf, FolderNavigation) {
@@ -187,7 +264,14 @@ impl GalleryState {
     /// cargadas (por ruta) y descartando los ítems que hayan desaparecido
     /// del disco: un rescaneo tras crear/duplicar/pegar no hace parpadear
     /// toda la cuadrícula de vuelta a ⏳.
+    pub fn set_scan_error(&mut self, error: String) {
+        self.items.clear();
+        self.scanned = true;
+        self.scan_error = Some(error);
+    }
+
     pub fn merge_files(&mut self, files: Vec<(PathBuf, Option<SystemTime>)>) {
+        self.scan_error = None;
         let mut old: HashMap<PathBuf, (Option<egui::TextureHandle>, bool)> = self
             .items
             .drain(..)
@@ -244,6 +328,25 @@ impl GalleryState {
         }
     }
 
+    /// El usuario abrio Ajustes desde esta galeria para dar permiso.
+    pub(crate) fn note_settings_opened(&mut self) {
+        self.settings_opened_at = Some(std::time::Instant::now());
+    }
+
+    /// Un solo disparo: true la PRIMERA vez que, tras abrir Ajustes, la
+    /// ventana recupera el foco (borde de subida) pasada la espera minima.
+    /// Actualiza siempre el seguimiento de foco del frame.
+    pub(crate) fn take_permission_retry_if_due(&mut self, focused_now: bool) -> bool {
+        let due = matches!(self.settings_opened_at, Some(t) if t.elapsed() >= PERMISSION_RETRY_MIN)
+            && focused_now
+            && !self.focus_was_up;
+        if due {
+            self.settings_opened_at = None;
+        }
+        self.focus_was_up = focused_now;
+        due
+    }
+
     /// Entrega una miniatura llegada de un hilo de trabajo (por ruta: el
     /// orden puede haber cambiado desde que se lanzó el escaneo).
     pub fn set_thumb(&mut self, path: &std::path::Path, tex: Option<egui::TextureHandle>) {
@@ -262,6 +365,8 @@ pub enum GalleryAction {
     OpenFolder(PathBuf),
     Back,
     Forward,
+    /// Reabrir la carpeta actual tras conceder permisos en Ajustes (macOS).
+    RetryScan,
     SortChanged(GallerySort),
     /// Botón «✚ New design» de la cabecera.
     NewDesign,
@@ -345,6 +450,77 @@ mod tests {
     fn a_gallery_ignores_its_own_subfolder() {
         let g = open_at("raiz");
         assert!(!g.is_affected_by(Path::new("raiz/hijo")));
+    }
+
+    #[test]
+    fn folder_listing_reports_unreadable_folders_instead_of_silent_empty() {
+        let g = open_at("no/such/folder");
+        assert!(g.folders.children.is_empty());
+        let error = g
+            .folders
+            .read_error
+            .as_deref()
+            .expect("an unreadable folder must report why");
+        assert!(error.contains("no/such/folder"));
+    }
+
+    #[test]
+    fn folder_listing_lists_real_subfolders_sorted_naturally() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(dir.path().join("b2")).unwrap();
+        std::fs::create_dir(dir.path().join("b10")).unwrap();
+        std::fs::create_dir(dir.path().join(".hidden")).unwrap();
+
+        let g = GalleryState::new(dir.path().to_path_buf(), GallerySort::Name, StripSide::Left);
+        let names: Vec<_> = g
+            .folders
+            .children
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["b2", "b10"]);
+        assert!(g.folders.read_error.is_none());
+    }
+
+    #[test]
+    fn permission_retry_fires_once_on_focus_regain_after_delay() {
+        let mut g = open_at("x");
+        assert!(!g.take_permission_retry_if_due(true));
+
+        g.note_settings_opened();
+        // Ajustes roba el foco a la ventana:
+        assert!(!g.take_permission_retry_if_due(false));
+        // Envejece la marca mas alla de la espera minima:
+        g.settings_opened_at = Some(std::time::Instant::now() - super::PERMISSION_RETRY_MIN);
+        assert!(!g.take_permission_retry_if_due(false));
+        // La ventana recupera el foco: UN disparo.
+        assert!(g.take_permission_retry_if_due(true));
+        assert!(!g.take_permission_retry_if_due(true));
+        assert!(!g.take_permission_retry_if_due(false));
+    }
+
+    #[test]
+    fn folder_auto_refresh_runs_one_bounded_cycle_until_user_rearms() {
+        let mut g = open_at("x"); // carpeta inexistente: read_error presente
+        let cloud = true;
+
+        assert!(g.take_folder_auto_refresh(cloud));
+        // Sin bucle duplicado mientras esta en marcha:
+        assert!(!g.take_folder_auto_refresh(cloud));
+        // Un intento FALLIDO del bucle libera el bucle pero NO rearma:
+        g.apply_folders_refresh(Vec::new(), Some("still denied".to_owned()));
+        assert!(g.folders.read_error.is_some());
+        assert!(!g.folders_auto_refreshing);
+        // Agotado el ciclo NO se relanza solo...
+        assert!(!g.take_folder_auto_refresh(cloud));
+        // ...hasta que una accion del usuario rearma (Retry / ↻ / abrir).
+        g.refresh_folder_lists();
+        assert!(g.take_folder_auto_refresh(cloud));
+
+        // En carpetas locales no hay bucle automatico.
+        let mut local = open_at("x");
+        local.refresh_folder_lists();
+        assert!(!local.take_folder_auto_refresh(false));
     }
 
     #[test]

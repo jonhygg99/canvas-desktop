@@ -50,6 +50,7 @@ impl AppMenus {
         }
         match event.id.0.as_str() {
             "new" => Some(MenuAction::NewDesign),
+            "new_window" => Some(MenuAction::NewWindow),
             "open" => Some(MenuAction::OpenFile),
             "open_folder" => Some(MenuAction::OpenFolder),
             "close_project" => Some(MenuAction::CloseProject),

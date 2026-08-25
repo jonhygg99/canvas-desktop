@@ -1,5 +1,5 @@
 //! Vista del editor. `editor_view_ui` es una funcion libre, no un metodo de
-//! `App`: se llama mientras `state` sigue prestado de `self.view`, asi que
+//! la app: se llama mientras `state` sigue prestado de `ws.view`, asi que
 //! recibe el resto del estado de la ventana en un `EditorFrame`.
 //!
 //! Este archivo es SOLO orquestacion: llama a los submodulos EN EL MISMO orden
@@ -44,7 +44,7 @@ pub(in crate::app) fn editor_view_ui(
     // ANTES de `handle_shortcuts` (que puede disparar un Ctrl+Z ese mismo
     // frame) y de cualquier edición que ocurra más abajo en `canvas_ui`.
     // Barato de refrescar cada frame; más simple que perseguir cada sitio
-    // donde `f.deck.active`/`self.view` pueden cambiar.
+    // donde `f.deck.active`/`ws.view` pueden cambiar.
     state.active_slot_id = f.deck.slots.get(f.deck.active).map_or(0, |s| s.id);
     state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
 
@@ -76,7 +76,7 @@ pub(in crate::app) fn editor_view_ui(
                         "Cancel".to_owned(),
                     ))
                     .show();
-                // Igual que en confirm_close: en Windows el resultado llega
+                // Igual que en confirm_window_close: en Windows el resultado llega
                 // como Yes/No/Cancel, no Custom.
                 match choice {
                     rfd::MessageDialogResult::Yes => {

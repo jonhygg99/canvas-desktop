@@ -25,6 +25,14 @@ use folder_panel::show_folder_panel;
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
 
+    // Reintento unico tras dar permiso en Ajustes (macOS): al volver el
+    // foco a la ventana relanzamos la apertura de la misma carpeta.
+    let focused_now = ui.ctx().input(|i| i.viewport().focused.unwrap_or(true));
+    if state.take_permission_retry_if_due(focused_now) {
+        state.refresh_folder_lists();
+        action = Some(GalleryAction::RetryScan);
+    }
+
     if !ui.ctx().text_edit_focused() {
         let (back, forward, parent) = ui.ctx().input(|i| {
             (
@@ -183,8 +191,7 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         if let Some(error) = state.op_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
-                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked()
-                {
+                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked() {
                     state.op_error = None;
                 }
             });
@@ -198,6 +205,47 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                 ui.add(egui::Spinner::new().size(28.0));
                 ui.label("Scanning for images…");
             });
+            return;
+        }
+        if let Some(error) = &state.scan_error {
+            let cloud_folder = canvas_io::is_cloud_storage_path(&state.folder);
+            // Propio del closure: asi pedir &mut state dentro (marcar el
+            // reintento al abrir Ajustes) no pelea con el borrow del error.
+            let error = error.clone();
+            let mut retry_clicked = false;
+            // Sin `move`: el closure deja ver `retry_clicked` (y &mut state)
+            // para poder senalar el reintento hacia fuera del bloque.
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.colored_label(ui.visuals().error_fg_color, "Could not read this folder.");
+                ui.label(error.as_str());
+                ui.add_space(8.0);
+                if ui
+                    .button("Retry")
+                    .on_hover_text("Rescan this folder.")
+                    .clicked()
+                {
+                    retry_clicked = true;
+                }
+                #[cfg(target_os = "macos")]
+                if cloud_folder {
+                    ui.add_space(8.0);
+                    if ui
+                        .button("Open Privacy & Security settings")
+                        .on_hover_text(
+                            "Opens the Full Disk Access pane: grant disk access to \
+                            the app or terminal that launched Canvas Desktop.",
+                        )
+                        .clicked()
+                    {
+                        state.note_settings_opened();
+                        open_full_disk_access_pane();
+                    }
+                }
+            });
+            if retry_clicked {
+                action = Some(GalleryAction::RetryScan);
+            }
             return;
         }
         if state.items.is_empty() {
@@ -250,4 +298,15 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         });
     });
     action
+}
+
+/// Abre el panel «Full Disk Access» de Ajustes del Sistema. Solo macOS:
+/// el fallo tipico con carpetas de nube es que el proceso que lanzo la app
+/// no tiene permiso de disco, y los binarios sueltos nunca reciben el
+/// dialogo de consentimiento — asi que llevamos al usuario directo al panel.
+#[cfg(target_os = "macos")]
+fn open_full_disk_access_pane() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.settings.privacy.security.FullDiskAccess")
+        .spawn();
 }

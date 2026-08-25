@@ -33,10 +33,10 @@ pub(super) fn reveal_in_explorer(path: &Path) {
 #[cfg(target_os = "linux")]
 pub(super) fn reveal_in_explorer(path: &Path) {
     let dir = path.parent().unwrap_or(path);
-    if let Err(e) = std::process::Command::new("xdg-open")
-        .arg(dir)
-        .spawn()
-    {
-        tracing::debug!("no se pudo abrir el gestor de archivos en {}: {e}", dir.display());
+    if let Err(e) = std::process::Command::new("xdg-open").arg(dir).spawn() {
+        tracing::debug!(
+            "no se pudo abrir el gestor de archivos en {}: {e}",
+            dir.display()
+        );
     }
 }

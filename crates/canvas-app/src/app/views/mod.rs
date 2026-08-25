@@ -1,6 +1,5 @@
 //! Contenido de cada vista (`View::Welcome`/`Loading`/`Gallery`/`Editor`)
-//! dentro del `CentralPanel` del frame.
-
+//! dentro del `CentralPanel` del frame de una ventana.
 mod editor;
 mod gallery;
 mod loading;

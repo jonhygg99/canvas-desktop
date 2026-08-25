@@ -222,7 +222,8 @@ canvas-io/src/
   x86_64-unknown-linux-gnu` / `x86_64-apple-darwin` from any OS.
 - Single-instance enforcement (`single_instance.rs`, via `interprocess`): a
   second launch forwards its path(s) to the already-running primary over a
-  local socket and exits with code 0 rather than opening a second window.
+  local socket and exits with code 0 rather than opening a second window
+  (dev escape: `CANVAS_DESKTOP_MULTI_INSTANCE=1` runs standalone instead).
   `acquire_instance_with_name` takes a socket name parameter (used by tests
   with a unique-per-PID name); `acquire_instance` uses the production
   constant. `accept_one_sync` accepts one connection synchronously (test

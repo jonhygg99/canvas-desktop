@@ -11,7 +11,7 @@ pub struct AppMenus;
 
 impl AppMenus {
     #[allow(dead_code)] // solo se llama en Windows (muda); aquí existe para
-    // reflejar la misma API pública.
+                        // reflejar la misma API pública.
     pub fn install(_hwnd: isize) -> Option<Self> {
         None
     }
@@ -35,6 +35,9 @@ pub fn menu_bar_ui(
     let mut action = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button("File", |ui| {
+            if ui.button("New Window").clicked() {
+                action = Some(MenuAction::NewWindow);
+            }
             if ui.button("New Design").clicked() {
                 action = Some(MenuAction::NewDesign);
             }

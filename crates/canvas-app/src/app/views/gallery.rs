@@ -37,6 +37,13 @@ pub(in crate::app) fn gallery_view_ui(
             let (path, navigation) = g.navigation_to_folder(folder);
             open_next = Some(Nav::OpenGallery { path, navigation });
         }
+        // Reintento tras dar permiso en Ajustes (macOS): mismo camino que
+        // abrir la carpeta (relanza el escaneo completo); como ya estamos
+        // en ella, navigation_to_folder no duplica el historial.
+        Some(gallery::GalleryAction::RetryScan) => {
+            let (path, navigation) = g.navigation_to_folder(g.folder.clone());
+            open_next = Some(Nav::OpenGallery { path, navigation });
+        }
         Some(gallery::GalleryAction::Back) => {
             if let Some((path, navigation)) = g.navigation_back() {
                 open_next = Some(Nav::OpenGallery { path, navigation });
@@ -116,5 +123,13 @@ pub(in crate::app) fn gallery_view_ui(
         }
         None => {}
     }
+
+    // Reintento automatico del listado en montajes de nube: si el error
+    // persiste, hay un ciclo disponible y ningun bucle en marcha, se lanza
+    // con backoff (un solo ciclo por visita hasta nueva accion del usuario).
+    if g.take_folder_auto_refresh(canvas_io::is_cloud_storage_path(&g.folder)) {
+        loader::spawn_folders_auto_refresh(g.folder.clone(), tx.clone(), ctx.clone());
+    }
+
     open_next
 }

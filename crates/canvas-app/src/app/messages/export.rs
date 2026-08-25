@@ -2,19 +2,24 @@
 
 use std::path::PathBuf;
 
-use super::super::{App, View};
+use super::super::{AppInner, View, Workspace};
 
-impl App {
-    pub(super) fn on_export_path_picked(&mut self, path: Option<PathBuf>) {
-        if let (Some(path), Some(settings)) = (path, self.export.pending_export_settings.take()) {
-            self.export.pending_export = Some((path, settings));
+impl AppInner {
+    pub(super) fn on_export_path_picked(&mut self, ws: &mut Workspace, path: Option<PathBuf>) {
+        if let (Some(path), Some(settings)) = (path, ws.export.pending_export_settings.take()) {
+            ws.export.pending_export = Some((path, settings));
         } else {
-            self.export.pending_export_settings = None;
+            ws.export.pending_export_settings = None;
         }
     }
 
-    pub(super) fn on_exported(&mut self, path: PathBuf, result: Result<(), String>) {
-        if let View::Editor(state) = &mut self.view {
+    pub(super) fn on_exported(
+        &mut self,
+        ws: &mut Workspace,
+        path: PathBuf,
+        result: Result<(), String>,
+    ) {
+        if let View::Editor(state) = &mut ws.view {
             state.exporting = false;
             match result {
                 Ok(()) => tracing::info!("exportado OK: {}", path.display()),

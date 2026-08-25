@@ -265,6 +265,28 @@ pub struct AppSettings {
     pub layers_collapsed: bool,
     /// Orden de las pestañas del panel izquierdo (arrastrables con el ratón).
     pub layers_tab_order: LayersTabOrder,
+    /// Workspaces abiertos en la última sesión, para restaurarlos al
+    /// arrancar. El orden es el de creación (la ventana 0 es la raíz). Se
+    /// vuelve a escribir cada vez que un workspace se abre o se cierra, y al
+    /// cerrar la app (`App::on_exit`).
+    pub workspaces: Vec<StoredWorkspace>,
+}
+
+/// Un workspace tal y como queda en `settings.json` para restaurarlo en la
+/// siguiente sesión: qué documento (o `None` = bienvenida) estaba activo y
+/// la última geometría conocida de su ventana (en puntos lógicos, los
+/// mismos que usa egui). Solo se restaura el documento ACTIVO — la baraja
+/// de hermanos de la carpeta no viaja aquí.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct StoredWorkspace {
+    /// Documento abierto (imagen/diseño/carpeta) o `None` para la
+    /// bienvenida.
+    pub path: Option<PathBuf>,
+    /// Esquina superior izquierda de la ventana, en puntos. `None` = no se
+    /// conoce (el SO decide).
+    pub pos: Option<[f32; 2]>,
+    /// Tamaño interior de la ventana, en puntos. `None` = por defecto.
+    pub size: Option<[f32; 2]>,
 }
 
 impl Default for AppSettings {
@@ -285,6 +307,7 @@ impl Default for AppSettings {
             new_canvas_format: NewCanvasFormat::default(),
             layers_collapsed: false,
             layers_tab_order: LayersTabOrder::default(),
+            workspaces: Vec::new(),
         }
     }
 }

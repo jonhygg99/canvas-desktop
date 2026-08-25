@@ -1,13 +1,11 @@
 //! Modales del editor (sobrescritura destructiva, origen de solo lectura,
 //! diálogo de exportación) y las ventanas flotantes de Ajustes/About.
 //!
-//! Los tres primeros son funciones libres, no métodos de `App`: se llaman
-//! desde dentro de la rama `View::Editor` de `ui_views::editor_view_ui`,
-//! donde `state` sigue prestado de `self.view` — igual que `editor::canvas_ui`,
-//! reciben cada campo de `App` que necesitan por separado en vez de `&mut
-//! self` entero. Ajustes/About sí son métodos: se llaman después de que el
-//! `match` de la vista activa termina, así que `&mut self` está libre otra
-//! vez.
+//! Los tres primeros son funciones libres, no métodos de `AppInner`: se
+//! llaman desde dentro de la rama `View::Editor` de `editor_view_ui`, donde
+//! `state` sigue prestado de `ws.view`. Ajustes/About sí son métodos: se
+//! llaman después de que el `match` de la vista activa termina, así que
+//! `&mut self` está libre otra vez (y `ws` también).
 
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -19,19 +17,20 @@ use crate::loader::{self, AppMsg};
 use crate::{editor, export, settings};
 
 use super::persistence::{is_jpeg_path, start_save, SaveContext};
-use super::{App, Nav, SaveFlow};
+use super::{AppInner, Nav, SaveFlow, Workspace};
 
-impl App {
-    /// Ventana de ajustes (accesible desde la bienvenida y el editor).
-    pub(super) fn settings_window_ui(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
+impl AppInner {
+    /// Ventana de ajustes (accesible desde la bienvenida y el editor) — en la
+    /// ventana que la abrió.
+    pub(super) fn settings_window_ui(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
+        if !ws.show_settings {
             return;
         }
         let before = self.settings.clone();
         let action = settings::settings_window(
             ctx,
             &mut self.settings,
-            &mut self.show_settings,
+            &mut ws.show_settings,
             &self.shell_status,
         );
         if self.settings != before {
@@ -39,7 +38,7 @@ impl App {
         }
         if let Some(action) = action {
             self.shell_status = "Working…".to_owned();
-            let tx = self.tx.clone();
+            let tx = self.shell_tx.clone();
             let ctx2 = ctx.clone();
             std::thread::spawn(move || {
                 let shell = canvas_shell::platform();
@@ -67,13 +66,13 @@ impl App {
         }
     }
 
-    /// Ventana «About» (menú Help).
-    pub(super) fn about_window_ui(&mut self, ctx: &egui::Context) {
-        if !self.show_about {
+    /// Ventana «About» (menú Help) — en la ventana que la abrió.
+    pub(super) fn about_window_ui(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
+        if !ws.show_about {
             return;
         }
         egui::Window::new("About Canvas Desktop")
-            .open(&mut self.show_about)
+            .open(&mut ws.show_about)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -135,7 +134,6 @@ pub(super) fn overwrite_modal_ui(
             }
         });
     });
-    // Clic fuera o Esc equivalen a cancelar.
     if modal.should_close() && matches!(choice, Choice::None) {
         choice = Choice::Cancel;
     }

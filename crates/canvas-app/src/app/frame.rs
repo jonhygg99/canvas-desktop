@@ -1,12 +1,10 @@
-//! El contexto que necesita la vista del editor durante un frame.
+//! Contextos de préstamo de un frame: `EditorFrame` agrupa los préstamos
+//! disjuntos de `AppInner` y del `Workspace` que la vista del editor necesita
+//! `&mut` a la vez (se construye en `ws_frame`, donde ambos están en scope).
 //!
-//! `editor_view_ui` se llama mientras `state` sigue prestado de `self.view`
-//! (dentro de `match &mut self.view { View::Editor(state) => … }`), asi que no
-//! puede recibir `&mut App`. Antes recibia los 25 campos sueltos, uno por
-//! parametro; `EditorFrame` los agrupa sin perder nada: siguen siendo
-//! prestamos independientes de campos DISTINTOS de `App`, asi que el
-//! comprobador de prestamos los deja usar a la vez, cosa que un `&mut self`
-//! no permitiria.
+//! Es el MISMO patrón que antes del refactor: la vista se llama mientras
+//! `ws.view` sigue prestado, así que recibe cada campo por separado en vez
+//! de `&mut Workspace` entero.
 
 use std::sync::mpsc::Sender;
 use std::time::Instant;

@@ -77,7 +77,13 @@ pub fn left_panel_ui(
     sidebar::compact(ui);
     let mut new_order = None;
     ui.horizontal(|ui| {
-        new_order = vertical_tab_strip_ui(ui, &mut state.active_left_tab, layers_collapsed, order, false);
+        new_order = vertical_tab_strip_ui(
+            ui,
+            &mut state.active_left_tab,
+            layers_collapsed,
+            order,
+            false,
+        );
         ui.separator();
         // El nombre de la pestaña activa es también el TÍTULO del menú:
         // la tira quedó solo con iconos, y el título vuelve aquí, encima
@@ -280,7 +286,7 @@ pub(crate) fn vertical_tab_strip_ui(
     for (_i, tab) in ordered_tabs(order).iter().enumerate() {
         // Separador antes de Insert
         if *tab == LeftTab::Insert {
-            y += TAB_GAP;  // espacio extra como separador visual
+            y += TAB_GAP; // espacio extra como separador visual
         }
         let rect = egui::Rect::from_min_size(
             egui::pos2(strip_rect.left(), y),
@@ -430,8 +436,11 @@ pub(crate) fn vertical_tab_strip_ui(
                     pos + egui::vec2(0.0, -10.0),
                     egui::vec2(STRIP_WIDTH - 6.0, tab_h - 6.0),
                 );
-                ui.painter()
-                    .rect_filled(ghost, 6.0, egui::Color32::from_rgba_unmultiplied(0, 122, 255, 40));
+                ui.painter().rect_filled(
+                    ghost,
+                    6.0,
+                    egui::Color32::from_rgba_unmultiplied(0, 122, 255, 40),
+                );
                 draw_vertical_tab(
                     ui.painter(),
                     ghost,
@@ -470,14 +479,14 @@ pub(crate) fn vertical_tab_strip_ui(
                             // saltarse la posición inicial, y
                             // `request_repaint` mantiene el glide en marcha
                             // aunque no haya input.
-                        anim = Some(TabSwapAnim {
-                            start: now,
-                            started: false,
-                            dragged: d.tab,
-                            // El fantasma se dibuja 10 px por encima del
-                            // puntero: el vuelo sale exactamente de ahí.
-                            release_pos: pos + egui::vec2(0.0, -10.0),
-                        });
+                            anim = Some(TabSwapAnim {
+                                start: now,
+                                started: false,
+                                dragged: d.tab,
+                                // El fantasma se dibuja 10 px por encima del
+                                // puntero: el vuelo sale exactamente de ahí.
+                                release_pos: pos + egui::vec2(0.0, -10.0),
+                            });
                         }
                     }
                 }
@@ -573,4 +582,3 @@ mod tests {
         assert!(order.contains(&LeftTab::Insert));
     }
 }
-

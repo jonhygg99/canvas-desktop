@@ -8,8 +8,8 @@ use eframe::egui;
 
 use super::shell::reveal_in_explorer;
 
-use crate::app_icons::draw_plus_icon;
 use super::super::{copy_to_slot, GalleryAction, GalleryItem, ItemKind};
+use crate::app_icons::draw_plus_icon;
 
 pub(super) const CELL_GAP: f32 = 8.0;
 
@@ -131,7 +131,9 @@ pub(super) fn gallery_cell(
     // overlapping rect — which breaks the context menu on right-click.
     let pointer_pos = ui.input(|i| i.pointer.interact_pos());
     let hovering_name = (!renaming)
-        && pointer_pos.map(|pos| name_rect.contains(pos)).unwrap_or(false);
+        && pointer_pos
+            .map(|pos| name_rect.contains(pos))
+            .unwrap_or(false);
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();

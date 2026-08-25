@@ -15,6 +15,10 @@ use std::path::PathBuf;
 /// Acción de menú, común a la implementación nativa y al fallback egui.
 #[derive(Clone)]
 pub enum MenuAction {
+    /// Abre una ventana nueva (workspace) con la bienvenida. También se
+    /// puede usar desde la propia bienvenida para tener varias ventanas a la
+    /// vez.
+    NewWindow,
     NewDesign,
     OpenFile,
     OpenFolder,

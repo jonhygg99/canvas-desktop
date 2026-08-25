@@ -20,8 +20,8 @@ use canvas_io::{ImageMetadata, LoadedImage, RestoredDocument};
 
 pub use export_ops::{spawn_export_raster, spawn_export_vector, spawn_pick_export_path};
 pub use gallery_ops::{
-    spawn_document_delete, spawn_document_rename, spawn_gallery_op, spawn_gallery_scan,
-    spawn_restore_from_trash, spawn_single_thumb,
+    spawn_document_delete, spawn_document_rename, spawn_folders_auto_refresh, spawn_gallery_op,
+    spawn_gallery_scan, spawn_restore_from_trash, spawn_single_thumb,
 };
 pub use image_import::{
     spawn_load_image_as_layer, spawn_load_replacement_image_from_url, spawn_pick_replacement_image,
@@ -82,6 +82,17 @@ pub enum AppMsg {
         folder: PathBuf,
         /// (ruta, fecha de modificación si se pudo leer)
         files: Vec<(PathBuf, Option<std::time::SystemTime>)>,
+    },
+    GalleryScanFailed {
+        folder: PathBuf,
+        error: String,
+    },
+    /// Resultado de un reintento en segundo plano del listado de
+    /// subcarpetas (montajes de nube que fallan de forma transitoria).
+    FoldersRefreshed {
+        folder: PathBuf,
+        children: Vec<PathBuf>,
+        error: Option<String>,
     },
     GalleryThumb {
         folder: PathBuf,

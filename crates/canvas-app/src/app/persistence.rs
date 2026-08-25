@@ -14,12 +14,10 @@ use eframe::egui_wgpu::RenderState;
 use crate::loader::{self, AppMsg};
 use crate::{deck, editor, export, gallery, settings};
 
-use super::{App, View};
+use super::{AppInner, View, Workspace};
 
-/// Préstamos que las funciones de guardado necesitan del `App` durante
-/// un frame. Agrupa renderer + RenderState + canal + contexto de egui +
-/// el timestamp del watcher — todo lo que `start_save` y `start_save_design`
-/// recibían suelto, reduciendo los parámetros de 9 a 4.
+/// Préstamos que las funciones de guardado necesitan del `AppInner` y del
+/// workspace durante un frame.
 pub(in crate::app) struct SaveContext<'a> {
     pub renderer: &'a mut CanvasRenderer,
     pub rs: &'a RenderState,
@@ -28,16 +26,12 @@ pub(in crate::app) struct SaveContext<'a> {
     pub ignore_fs_events_until: &'a mut Option<Instant>,
 }
 
-impl App {
+impl AppInner {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no
-    /// índice — el orden puede cambiar entre frames). El documento ACTIVO,
-    /// si está sucio, se guarda aparte y de inmediato (no necesita saltar);
-    /// la cola solo lleva lo demás. Deja fuera SVG/GIF: no se pueden
-    /// sobrescribir y un lote no tiene un destino automático razonable para
-    /// ellos sin preguntar archivo por archivo — el usuario los guarda
-    /// individualmente activándolos, donde `Ctrl+S` ya redirige a «Save as…».
-    pub(super) fn start_save_all(&mut self) {
-        let View::Editor(state) = &mut self.view else {
+    /// índice). El documento ACTIVO, si está sucio, se guarda aparte y de
+    /// inmediato; la cola solo lleva lo demás. Deja fuera SVG/GIF.
+    pub(crate) fn start_save_all(&mut self, ws: &mut Workspace) {
+        let View::Editor(state) = &mut ws.view else {
             return;
         };
         if state.is_dirty()
@@ -49,31 +43,23 @@ impl App {
         {
             state.save_clicked = true;
         }
-        self.save.save_all_queue = self
+        ws.save.save_all_queue = ws
             .deck
             .slots
             .iter()
             .filter(|s| {
-                // Una provisional sucia la escribe su propio camino de
-                // materialización (que además le reserva un nombre antes de
-                // guardar); dejarla entrar aquí sería una segunda escritura
-                // sobre una ruta solo «asomada», nunca reservada.
                 !s.is_placeholder
                     && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
                     && canvas_io::can_overwrite(&s.path)
             })
             .map(|s| s.id)
             .collect();
-        self.save.save_all_attempted = false;
+        ws.save.save_all_attempted = false;
     }
 }
 
 /// Al volver a la galería desde el editor, siembra la rejilla con lo que ya
-/// tenía la baraja (miniaturas ya subidas a GPU): evita el parpadeo de ⏳ que
-/// antes hacía falta esperar a que el reescaneo (que se lanza de todas
-/// formas, para detectar archivos nuevos o borrados por fuera) volviera a
-/// decodificarlo todo. Si la baraja pertenece a otra carpeta, la rejilla
-/// arranca vacía como siempre.
+/// tenía la baraja (miniaturas ya subidas a GPU).
 pub(super) fn seed_gallery_from_deck(
     deck: &deck::Deck,
     folder: PathBuf,
@@ -85,9 +71,6 @@ pub(super) fn seed_gallery_from_deck(
         g.items = deck
             .slots
             .iter()
-            // Una ranura provisional no tiene archivo detrás todavía: una
-            // miniatura suya en la rejilla sería una casilla que nunca
-            // termina de cargar y que no se puede abrir.
             .filter(|s| !s.is_placeholder)
             .map(|s| gallery::GalleryItem {
                 path: s.path.clone(),
@@ -105,17 +88,7 @@ pub(super) fn seed_gallery_from_deck(
 }
 
 /// Construye el `SlotDoc` de una carga de fondo de la baraja, reutilizando
-/// los constructores de `EditorState` (evita duplicar la lógica de
-/// restaurar capas desde el sidecar): se arma un `EditorState` efímero y se
-/// cosecha con `take_slot()` — sus campos de sesión (viewport, gestos…) se
-/// tiran, solo interesaban los del documento. `None` si el documento no
-/// pudo construirse (p. ej. una imagen sin píxeles válidos).
-///
-/// A diferencia de `AppMsg::ImageLoaded`, un sidecar cuyo hash no coincide
-/// con la imagen NUNCA abre el diálogo interactivo aquí (sería un modal
-/// disparado por hacer scroll): las capas restauradas se usan de todas
-/// formas y `external_change` queda encendido, para que el banner normal de
-/// «cambió por fuera» aparezca en cuanto el usuario active esa ranura.
+/// los constructores de `EditorState`.
 pub(crate) fn build_slot_doc(
     path: PathBuf,
     outcome: loader::LoadOutcome,
@@ -150,8 +123,7 @@ pub(crate) fn build_slot_doc(
 }
 
 /// Hornea la página en la GPU (hilo de UI) y delega codificar+escribir a un
-/// hilo de trabajo. Si el horneado falla, el error queda visible en el panel
-/// y el documento intacto.
+/// hilo de trabajo.
 pub(super) fn start_save(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
@@ -163,11 +135,6 @@ pub(super) fn start_save(
         return;
     }
     tracing::info!("guardando en {}", path.display());
-    // Este scope es compartido entre TODOS los guardados/exportaciones (no
-    // hay uno por lienzo aquí, a diferencia del renderizado en vivo de la
-    // baraja): sin vaciarlo antes de hornear, la caché de efectos GPU podría
-    // reutilizar la textura de un lienzo distinto guardado previamente si
-    // sus `LayerId` coinciden (empiezan en 1 en cada `Document`).
     sctx.renderer
         .forget_scope(canvas_render::FxScope::default());
     match sctx.renderer.bake_page(
@@ -206,10 +173,7 @@ pub(super) fn start_save(
     }
 }
 
-/// Guarda un diseño autónomo. La GPU solo interviene para hornear la
-/// MINIATURA embebida (a escala reducida: nadie necesita 4K en una celda de
-/// 156 px). Si el horneado falla, el diseño se guarda igual sin miniatura:
-/// no es motivo para bloquear el guardado real.
+/// Guarda un diseño autónomo.
 pub(super) fn start_save_design(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
@@ -220,7 +184,7 @@ pub(super) fn start_save_design(
         return;
     }
     tracing::info!("guardando diseño en {}", path.display());
-    state.is_design = true; // «Save as… → .canvas» convierte el documento.
+    state.is_design = true;
     let mut payload = state.sidecar_payload();
     let (pw, ph) = state
         .doc
@@ -228,8 +192,6 @@ pub(super) fn start_save_design(
         .map(|p| (p.width, p.height))
         .unwrap_or((0.0, 0.0));
     let scale = canvas_io::preview_scale(pw, ph);
-    // Ver el comentario en `start_save`: vaciar el scope compartido antes de
-    // hornear evita reutilizar la textura de efectos de otro lienzo.
     sctx.renderer
         .forget_scope(canvas_render::FxScope::default());
     match sctx.renderer.bake_page(
@@ -250,17 +212,13 @@ pub(super) fn start_save_design(
     loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());
 }
 
-/// PNG/JPEG hornean en la GPU igual que al guardar. SVG/PDF se generan a
-/// mano a partir del documento, pero primero hay que sincronizar los
-/// efectos GPU (desenfoque, ajustes de color) y tomar las texturas ya
-/// procesadas — lo mismo que hace `bake_page` por dentro — para que el SVG
-/// lleve los píxeles TAL Y COMO se ven en el lienzo, sin reimplementar los
-/// efectos como filtros SVG.
+/// PNG/JPEG hornean en la GPU igual que al guardar; SVG/PDF se generan a
+/// mano a partir del documento.
 pub(super) fn start_export(
     state: &mut editor::EditorState,
     renderer: &mut CanvasRenderer,
     rs: &RenderState,
-    tx: &std::sync::mpsc::Sender<AppMsg>,
+    tx: &Sender<AppMsg>,
     ctx: &egui::Context,
     path: PathBuf,
     settings: export::ExportSettings,
@@ -270,9 +228,6 @@ pub(super) fn start_export(
     }
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
-    // Ver el comentario en `start_save`: vaciar el scope compartido antes de
-    // sincronizar efectos evita reutilizar la textura de otro lienzo (cubre
-    // ambas ramas de abajo, con y sin `bake_page`).
     renderer.forget_scope(canvas_render::FxScope::default());
 
     if settings.format.needs_bake() {
@@ -359,18 +314,11 @@ pub(super) fn is_jpeg_path(path: &std::path::Path) -> bool {
 
 /// `foto.png.canvas` (hermano legacy) o `.canvas/foto.png.canvas` (ubicación
 /// actual) → `foto.png` si esa imagen existe; cualquier otra ruta se
-/// devuelve tal cual. Punto de entrada para abrir un sidecar directamente
-/// desde el Explorador (doble clic, "Abrir con"). El guard exige que `inner`
-/// sea además una imagen (no solo un archivo cualquiera) para que un diseño
-/// autónomo con nombre `Untitled.canvas` (cuyo `inner` es `Untitled`, sin
-/// extensión) nunca se confunda con el sidecar de otra cosa.
+/// devuelve tal cual.
 pub(super) fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
     if !canvas_io::is_canvas_file(&path) {
         return path;
     }
-    // Ubicación actual: `<carpeta>/.canvas/foto.png.canvas`. `file_stem()`
-    // quita solo la extensión `.canvas` y deja `foto.png`; el abuelo de
-    // `path` es la carpeta real de la imagen.
     let in_sidecar_dir = path
         .parent()
         .and_then(|p| p.file_name())
@@ -386,7 +334,6 @@ pub(super) fn resolve_canvas_sidecar(path: PathBuf) -> PathBuf {
         }
         return path;
     }
-    // Hermano legacy: `with_extension("")` quita solo la última extensión.
     let inner = path.with_extension("");
     if canvas_io::is_image_file(&inner) && inner.is_file() {
         return inner;

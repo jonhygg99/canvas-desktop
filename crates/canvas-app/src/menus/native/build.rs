@@ -18,7 +18,9 @@ impl AppMenus {
         let ctrl_shift = Modifiers::CONTROL | Modifiers::SHIFT;
         let ctrl_alt = Modifiers::CONTROL | Modifiers::ALT;
 
-        let new_item = MenuItem::with_id("new", "New Design", true, accel(ctrl, Code::KeyN));
+        let new_item = MenuItem::with_id("new", "New Design", true, accel(ctrl_shift, Code::KeyN));
+        let new_window_item =
+            MenuItem::with_id("new_window", "New Window", true, accel(ctrl, Code::KeyN));
         let open_item = MenuItem::with_id("open", "Open…", true, accel(ctrl, Code::KeyO));
         let open_folder_item = MenuItem::with_id(
             "open_folder",
@@ -42,6 +44,7 @@ impl AppMenus {
             true,
             &[
                 &new_item,
+                &new_window_item,
                 &open_item,
                 &open_folder_item,
                 &recent_menu,

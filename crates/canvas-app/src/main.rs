@@ -69,14 +69,23 @@ fn main() -> Result<()> {
     let initial_paths = canvas_shell::open_paths_from_args(std::env::args());
 
     // Instancia única: si ya hay una app viva, se le envían las rutas por el
-    // socket local y este proceso sale con código 0.
-    let instance = match canvas_shell::acquire_instance(&initial_paths) {
-        canvas_shell::InstanceRole::Secondary => {
-            tracing::info!("instancia ya abierta: rutas reenviadas, saliendo");
-            return Ok(());
+    // socket local y este proceso sale con código 0. En desarrollo,
+    // `CANVAS_DESKTOP_MULTI_INSTANCE=1` la salta: cada `cargo run` abre su
+    // propia ventana aunque haya otra instancia viva (útil para depurar sin
+    // que los lanzamientos se reenvíen a una app ya abierta).
+    let multi_instance = std::env::var("CANVAS_DESKTOP_MULTI_INSTANCE").is_ok_and(|v| v == "1");
+    let instance = if multi_instance {
+        tracing::info!("multi-instancia forzada: sin reenvío a otra app viva");
+        None
+    } else {
+        match canvas_shell::acquire_instance(&initial_paths) {
+            canvas_shell::InstanceRole::Secondary => {
+                tracing::info!("instancia ya abierta: rutas reenviadas, saliendo");
+                return Ok(());
+            }
+            canvas_shell::InstanceRole::Primary(listener) => Some(listener),
+            canvas_shell::InstanceRole::Standalone => None,
         }
-        canvas_shell::InstanceRole::Primary(listener) => Some(listener),
-        canvas_shell::InstanceRole::Standalone => None,
     };
     let initial_path = initial_paths.into_iter().next();
 

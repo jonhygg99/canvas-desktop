@@ -55,8 +55,7 @@ pub(super) fn row_ui(
         row_prefix_buttons(state, ui, row, visible, locked, is_background);
 
         let cursor_after = ui.cursor().min;
-        let prefix_rect =
-            egui::Rect::from_min_max(cursor_before, cursor_after);
+        let prefix_rect = egui::Rect::from_min_max(cursor_before, cursor_after);
 
         // ── Etiqueta (dentro del drag source, salvo fondo) ──
         let drag_resp = if is_background {
@@ -78,8 +77,8 @@ pub(super) fn row_ui(
         if let Some(payload) = drag_resp.dnd_hover_payload::<DragLayers>() {
             if !payload.0.contains(&row.id) {
                 if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                    let frac = ((pos.y - full_rect.top()) / full_rect.height().max(1.0))
-                        .clamp(0.0, 1.0);
+                    let frac =
+                        ((pos.y - full_rect.top()) / full_rect.height().max(1.0)).clamp(0.0, 1.0);
                     let drop = if is_background {
                         Drop::Above(row.id)
                     } else if frac < 0.25 {
@@ -104,8 +103,7 @@ pub(super) fn row_ui(
         // ── Clic / doble clic de selección (solo sobre la etiqueta;
         // los botones del prefijo gestionan sus propios clics).
         if !renaming {
-            let click =
-                ui.interact(drag_resp.rect, row_id.with("click"), egui::Sense::click());
+            let click = ui.interact(drag_resp.rect, row_id.with("click"), egui::Sense::click());
             if click.double_clicked() {
                 state.rename_edit = Some((row.id, name.clone(), name));
                 ui.memory_mut(|m| m.request_focus(row_id.with("rename")));
@@ -193,13 +191,7 @@ fn row_prefix_buttons(
 
 /// Etiqueta del nombre (o el `TextEdit` de renombrado). Renderizada dentro
 /// del `dnd_drag_source`, que solo cubre esta zona.
-fn row_label_ui(
-    state: &mut EditorState,
-    ui: &mut egui::Ui,
-    row: &Row,
-    name: &str,
-    renaming: bool,
-) {
+fn row_label_ui(state: &mut EditorState, ui: &mut egui::Ui, row: &Row, name: &str, renaming: bool) {
     if renaming {
         rename_edit_ui(state, ui, row.id);
     } else {
@@ -236,7 +228,11 @@ fn paint_drop_hint(ui: &egui::Ui, rect: egui::Rect, drop: Drop) {
 /// apuntando a la derecha cuando el grupo está plegado y hacia abajo
 /// cuando está desplegado.
 fn group_arrow_ui(ui: &mut egui::Ui, collapsed: bool) -> bool {
-    let dir = if collapsed { IconDir::Right } else { IconDir::Down };
+    let dir = if collapsed {
+        IconDir::Right
+    } else {
+        IconDir::Down
+    };
     icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
         draw_triangle_icon(p, r, dir, c)
     })

@@ -5,9 +5,7 @@
 
 use eframe::egui;
 
-use crate::app_icons::{
-    draw_doc_icon, draw_plus_icon, draw_spinner_icon, draw_warning_icon,
-};
+use crate::app_icons::{draw_doc_icon, draw_plus_icon, draw_spinner_icon, draw_warning_icon};
 use crate::deck::{Deck, SlotContent};
 use crate::gallery::ItemKind;
 

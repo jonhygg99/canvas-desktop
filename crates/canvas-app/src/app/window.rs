@@ -7,13 +7,13 @@ use std::path::PathBuf;
 use canvas_shell::ShellIntegration as _;
 use eframe::egui;
 
-use crate::{deck, loader};
+use crate::loader;
 
-use super::{App, View};
+use super::{AppInner, View, Workspace};
 
-impl App {
+impl AppInner {
     /// Apunta lo abierto en los recientes: ajustes, menú y Jump List del SO.
-    pub(super) fn push_recent(&mut self, path: &std::path::Path) {
+    pub(crate) fn push_recent(&mut self, path: &std::path::Path) {
         if !path.is_dir() {
             return;
         }
@@ -25,7 +25,6 @@ impl App {
         if let Some(m) = self.menus.as_mut() {
             m.set_recents(&self.settings.recent_files);
         }
-        // La Jump List usa COM: hilo aparte, mejor esfuerzo.
         let recents = self.settings.recent_files.clone();
         std::thread::spawn(move || {
             if let Err(e) = canvas_shell::platform().update_jump_list(&recents) {
@@ -33,38 +32,20 @@ impl App {
             }
         });
     }
-    /// Recuerda el tamaño de página para el próximo diseño nuevo, sin
-    /// escribir ajustes si no cambió (`save_in_background` lanza un hilo).
-    pub(super) fn remember_page_size(&mut self, doc: &canvas_core::Document) {
+
+    /// Recuerda el tamaño de página para el próximo diseño nuevo.
+    pub(crate) fn remember_page_size(&mut self, ws: &Workspace, doc: &canvas_core::Document) {
         let Ok(page) = doc.page() else { return };
         let size = (page.width, page.height);
         if self.settings.last_page_size != size {
             self.settings.last_page_size = size;
             self.settings.save_in_background();
         }
+        let _ = ws;
     }
-    /// Nombres de todos los lienzos con cambios sin guardar — la activa
-    /// primero, si lo está, luego el resto de la baraja — para los diálogos
-    /// de «cambios sin guardar». Desde que hay N lienzos cargados a la vez
-    /// (Fase 14c), un solo `state.is_dirty()` ya no cuenta la historia
-    /// entera: una ranura de fondo puede estar sucia sin que el documento
-    /// activo lo esté.
-    pub(super) fn dirty_canvas_names(&self) -> Vec<String> {
-        let View::Editor(state) = &self.view else {
-            return Vec::new();
-        };
-        let mut names = Vec::new();
-        if state.is_dirty() {
-            names.push(state.file_name());
-        }
-        for slot in &self.deck.slots {
-            if matches!(&slot.content, deck::SlotContent::Ready(d) if d.history.is_dirty()) {
-                names.push(slot.name.clone());
-            }
-        }
-        names
-    }
-    pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+
+    /// Archivos soltados sobre la ventana.
+    pub(crate) fn handle_dropped_files(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -73,35 +54,78 @@ impl App {
                 .collect()
         });
         if let Some(path) = dropped.into_iter().next() {
-            // Con un documento abierto, soltar una imagen la AÑADE como capa;
-            // en cualquier otra vista (o si es carpeta), abre como siempre.
-            if matches!(self.view, View::Editor(_))
+            if matches!(ws.view, View::Editor(_))
                 && path.is_file()
                 && canvas_io::is_image_file(&path)
             {
-                loader::spawn_load_image_as_layer(path, self.tx.clone(), ctx.clone());
+                loader::spawn_load_image_as_layer(path, ws.tx.clone(), ctx.clone());
             } else {
-                self.open_path(path, ctx);
+                self.open_path(ws, path, ctx);
             }
         }
     }
-    /// Si el usuario intenta cerrar con cambios sin guardar, cancela el
-    /// cierre y pregunta con un diálogo nativo Guardar / Descartar / Cancelar.
-    pub(super) fn confirm_close(&mut self, ctx: &egui::Context) {
-        if self.save.allow_close || !ctx.input(|i| i.viewport().close_requested()) {
+
+    /// Mantiene el título de la ventana (con asterisco de cambios sin
+    /// guardar) al día; solo envía el comando cuando cambia.
+    pub(crate) fn sync_title(&mut self, ctx: &egui::Context, ws: &mut Workspace) {
+        let title = match &ws.view {
+            View::Editor(state) => {
+                let dirty = if state.is_dirty() { "*" } else { "" };
+                let position = if ws.deck.slots.len() > 1 {
+                    format!(" ({}/{})", ws.deck.active + 1, ws.deck.slots.len())
+                } else {
+                    String::new()
+                };
+                format!("{dirty}{}{position} — Canvas Desktop", state.file_name())
+            }
+            View::Loading { path } => format!(
+                "Loading {}… — Canvas Desktop",
+                path.file_name()
+                    .map(|s| s.to_string_lossy())
+                    .unwrap_or_default()
+            ),
+            View::Gallery(g) => format!(
+                "{} — Canvas Desktop",
+                g.folder
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| g.folder.display().to_string())
+            ),
+            View::Welcome { .. } => "Canvas Desktop".to_owned(),
+        };
+        if title != ws.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            ws.last_title = title;
+        }
+    }
+
+    /// Cierre de una ventana (X de su barra de título o `Quit` de su menú):
+    /// pregunta por cambios sin guardar y, si procede (Save en curso o
+    /// Discard), deja que el cierre continúe. Para la raíz reenvía el
+    /// `Close` (el `CancelClose` lo canceló); para una hija marca
+    /// `close_requested` para que el frame raíz la retire.
+    pub(crate) fn confirm_window_close(
+        &mut self,
+        ws: &mut Workspace,
+        ctx: &egui::Context,
+        is_root: bool,
+    ) {
+        if ws.save.allow_close {
             return;
         }
-        if !matches!(self.view, View::Editor(_)) {
+        if !matches!(ws.view, View::Editor(_)) {
+            ws.save.allow_close = true;
+            if !is_root {
+                ws.close_requested = true;
+            }
             return;
         }
-        // Otras ranuras de la baraja pueden tener cambios sin guardar aunque
-        // la activa esté limpia: cerrar la app las perdería en silencio si
-        // no se avisa aquí también. «Save» aquí solo guarda la activa —
-        // «Save all» es una acción del editor (`Ctrl+Alt+S`), no de este
-        // diálogo — así que con más de un lienzo sucio el texto lo dice
-        // explícitamente en vez de fingir que un único «Save» los cubre.
-        let names = self.dirty_canvas_names();
+        let names = ws.dirty_canvas_names();
         if names.is_empty() {
+            ws.save.allow_close = true;
+            if !is_root {
+                ws.close_requested = true;
+            }
             return;
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -129,60 +153,26 @@ impl App {
                 "Cancel".to_owned(),
             ))
             .show();
-        // OJO: en Windows, sin la feature `common-controls-v6` de rfd los
-        // botones custom degradan a un MessageBox Sí/No/Cancelar que devuelve
-        // Yes/No/Cancel, nunca Custom. Hay que aceptar ambas familias.
+        let finish_close = |ws: &mut Workspace| {
+            ws.save.allow_close = true;
+            if is_root {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ws.close_requested = true;
+            }
+        };
         match choice {
             rfd::MessageDialogResult::Yes => {
-                self.save.save_requested = true;
-                self.save.close_after_save = true;
+                ws.save.save_requested = true;
+                ws.save.close_after_save = true;
             }
             rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                self.save.save_requested = true;
-                self.save.close_after_save = true;
+                ws.save.save_requested = true;
+                ws.save.close_after_save = true;
             }
-            rfd::MessageDialogResult::No => {
-                self.save.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            rfd::MessageDialogResult::Custom(c) if c == "Discard" => {
-                self.save.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            rfd::MessageDialogResult::No => finish_close(ws),
+            rfd::MessageDialogResult::Custom(c) if c == "Discard" => finish_close(ws),
             _ => {}
-        }
-    }
-    /// Mantiene el título de la ventana (con asterisco de cambios sin
-    /// guardar) al día; solo envía el comando cuando cambia.
-    pub(super) fn sync_title(&mut self, ctx: &egui::Context) {
-        let title = match &self.view {
-            View::Editor(state) => {
-                let dirty = if state.is_dirty() { "*" } else { "" };
-                let position = if self.deck.slots.len() > 1 {
-                    format!(" ({}/{})", self.deck.active + 1, self.deck.slots.len())
-                } else {
-                    String::new()
-                };
-                format!("{dirty}{}{position} — Canvas Desktop", state.file_name())
-            }
-            View::Loading { path } => format!(
-                "Loading {}… — Canvas Desktop",
-                path.file_name()
-                    .map(|s| s.to_string_lossy())
-                    .unwrap_or_default()
-            ),
-            View::Gallery(g) => format!(
-                "{} — Canvas Desktop",
-                g.folder
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| g.folder.display().to_string())
-            ),
-            View::Welcome { .. } => "Canvas Desktop".to_owned(),
-        };
-        if title != self.last_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.last_title = title;
         }
     }
 }

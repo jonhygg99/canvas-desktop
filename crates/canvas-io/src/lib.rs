@@ -5,6 +5,7 @@ mod clipboard;
 mod export;
 mod load;
 mod metadata;
+mod mounts;
 mod png_codec;
 mod probe;
 mod save;
@@ -25,6 +26,7 @@ pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
     ImageMetadata,
 };
+pub use mounts::{describe_read_dir_error, is_cloud_storage_path, read_dir_resilient};
 pub use probe::{probe_page_size, probe_page_size_with};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{

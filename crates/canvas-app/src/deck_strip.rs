@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_doc_icon, draw_double_arrow_icon, draw_plus_icon, draw_spinner_icon,
-    draw_triangle_icon, draw_warning_icon, icon_button_ui, IconDir,
+    draw_doc_icon, draw_double_arrow_icon, draw_plus_icon, draw_spinner_icon, draw_triangle_icon,
+    draw_warning_icon, icon_button_ui, IconDir,
 };
 use crate::deck::{Deck, DeckAxis, Slot, SlotContent, StripSide};
 use crate::gallery::ItemKind;
@@ -236,7 +236,8 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         egui::StrokeKind::Inside,
     );
     let plus_size = (m.thumb.y * 0.4).max(20.0);
-    let plus_rect = egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(plus_size, plus_size));
+    let plus_rect =
+        egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(plus_size, plus_size));
     draw_plus_icon(painter, plus_rect, ui.visuals().weak_text_color());
     response
         .on_hover_text("Add a blank canvas to this folder")

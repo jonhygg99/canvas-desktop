@@ -391,7 +391,9 @@ pub(super) fn layer_properties_ui(
                     )
                 };
                 if crop_resp
-                    .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
+                    .on_hover_text(
+                        "Drag the corner handles to trim the image; the pixels stay intact",
+                    )
                     .clicked()
                 {
                     state.crop_mode = !state.crop_mode;
