@@ -25,6 +25,7 @@ pub(super) fn opacity_control(state: &mut EditorState, ui: &mut egui::Ui, target
     let current = layer.opacity;
     let mut pct = current * 100.0;
 
+    ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
     ui.label("Opacity");
     let r = ui.add(
         egui::Slider::new(&mut pct, 0.0..=100.0)
@@ -89,46 +90,45 @@ pub(super) fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: L
         .map(|l| l.effects.blur_radius)
         .unwrap_or(0.0);
     let mut blur = current_blur;
-    ui.horizontal(|ui| {
-        let r = ui.add(
-            egui::Slider::new(&mut blur, 0.0..=100.0)
-                .suffix(" px")
-                .fixed_decimals(0),
-        );
-        if r.changed() && blur != current_blur {
-            if state.blur_edit.is_none() {
-                state.blur_edit = Some((target, current_blur));
-            }
-            if let Ok(l) = state.doc.layer_mut(target) {
-                l.effects.blur_radius = blur;
+    ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
+    let r = ui.add(
+        egui::Slider::new(&mut blur, 0.0..=100.0)
+            .suffix(" px")
+            .fixed_decimals(0),
+    );
+    if r.changed() && blur != current_blur {
+        if state.blur_edit.is_none() {
+            state.blur_edit = Some((target, current_blur));
+        }
+        if let Ok(l) = state.doc.layer_mut(target) {
+            l.effects.blur_radius = blur;
+        }
+    }
+    if r.drag_stopped() || r.lost_focus() {
+        if let Some((id, before)) = state.blur_edit.take() {
+            let after = state
+                .doc
+                .layer(id)
+                .map(|l| l.effects.blur_radius)
+                .unwrap_or(before);
+            if (after - before).abs() > f32::EPSILON {
+                state.push_undo_step(Box::new(canvas_core::SetBlur {
+                    layer: id,
+                    before,
+                    after,
+                }));
             }
         }
-        if r.drag_stopped() || r.lost_focus() {
-            if let Some((id, before)) = state.blur_edit.take() {
-                let after = state
-                    .doc
-                    .layer(id)
-                    .map(|l| l.effects.blur_radius)
-                    .unwrap_or(before);
-                if (after - before).abs() > f32::EPSILON {
-                    state.push_undo_step(Box::new(canvas_core::SetBlur {
-                        layer: id,
-                        before,
-                        after,
-                    }));
-                }
-            }
+    }
+    if current_blur > 0.0 && ui.button("Remove").clicked() {
+        if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetBlur {
+            layer: target,
+            before: current_blur,
+            after: 0.0,
+        })) {
+            tracing::error!("quitar desenfoque falló: {e}");
         }
-        if current_blur > 0.0 && ui.button("Remove").clicked() {
-            if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetBlur {
-                layer: target,
-                before: current_blur,
-                after: 0.0,
-            })) {
-                tracing::error!("quitar desenfoque falló: {e}");
-            }
-        }
-    });
+    }
 }
 
 /// Sliders de ajuste de color de una capa (brillo, contraste, saturación,
@@ -147,6 +147,7 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
     let mut slider =
         |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
             // Etiqueta encima y el slider a ancho completo debajo.
+            ui.spacing_mut().slider_width = (ui.max_rect().width() - 16.0).max(100.0);
             ui.label(label);
             let mut pct = *value * 100.0;
             let r = ui.add(
