@@ -313,3 +313,14 @@ canvas-app/src/
 - **Test count: 299** (`cargo test --workspace`, excluding 7 GPU-only
   `#[ignore]` tests in `crates/canvas-render/tests/gpu_bake.rs`). The count
   is a sanity checkpoint — a drop means a regression in test coverage.
+
+## Where the plan lives
+
+`REFACTOR.md` is the companion for the *structural* decisions: the phase log
+of the split into modules, why a few files are deliberately over the size
+target, the known-bug notes found along the way, and the post-refactor
+optimization log (parameter-grouping structs, hot-path render optimizations,
+shell implementations, test additions). Read it before undoing a module
+boundary or re-litigating an architectural choice (e.g. why groups use
+`parent_id` instead of nested layers, why crop is "trim at the edges" rather
+than destructive).
