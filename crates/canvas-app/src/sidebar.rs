@@ -31,7 +31,7 @@ pub fn section<R>(
 ) -> egui::containers::collapsing_header::CollapsingResponse<R> {
     egui::CollapsingHeader::new(text)
         .default_open(default_open)
-        .show(ui, add_contents)
+        .show_unindented(ui, add_contents)
 }
 
 #[cfg(test)]
