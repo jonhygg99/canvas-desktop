@@ -40,9 +40,6 @@ use layer_common::layer_properties_ui;
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     sidebar::compact(ui);
     sidebar::title(ui, "Properties");
-    // Los sliders de egui miden 100px por defecto; los estiramos al
-    // ancho real del panel (menos un pequeño margen).
-    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(100.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
