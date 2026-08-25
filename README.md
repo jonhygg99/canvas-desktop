@@ -148,6 +148,24 @@ Dos detalles a tener en cuenta:
   ya abierta: importan los permisos de quien lanzó ESA primera instancia.
   Si ves errores que no esperabas, ciérrala y relanza desde tu contexto.
 
+### Reportes de crash
+
+Si la app entra en pánico, escribe automáticamente un informe en disco y
+sigue mostrando el error por consola como siempre:
+
+- **macOS**: `~/Library/Application Support/com.canvas-desktop.Canvas-Desktop/crashes/`
+- **Windows**: `%APPDATA%\canvas-desktop\Canvas Desktop\data\crashes\`
+- **Linux**: `~/.local/share/canvas-desktop/Canvas Desktop/crashes/`
+
+Cada informe (`crash-<fecha>-<pid>.log`) incluye el mensaje del pánico, el
+hilo, la ubicación exacta (`archivo:línea:columna`), un backtrace, cuánto
+llevaba la app abierta y las últimas líneas de log previas, para saber qué
+estaba haciendo justo antes del fallo. Se conservan los 20 más recientes.
+
+Consejo para depurar: lanza con `RUST_LOG=debug cargo run` para que el
+contexto guardado en el informe sea más rico (y con build debug el
+backtrace sale simbolizado).
+
 ### Controles
 
 | Acción | Entrada |

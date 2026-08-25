@@ -14,6 +14,7 @@
 mod app;
 mod app_icons;
 mod clipboard;
+mod crash_log;
 mod deck;
 mod deck_strip;
 mod editor;
@@ -35,11 +36,17 @@ use canvas_shell::ShellIntegration as _;
 use eframe::egui;
 
 fn main() -> Result<()> {
+    // Los informes de crash se instalan antes que nada: cualquier pánico
+    // posterior (incluidos los de hilos worker) queda escrito en disco con
+    // backtrace y las últimas líneas de log.
+    crash_log::install();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,wgpu_core=warn,wgpu_hal=warn".into()),
         )
+        .with_writer(crash_log::tee_writer())
         .init();
 
     // Flags headless para el instalador: registran/quitan la integración con
