@@ -146,9 +146,11 @@ fn folder_display_name(path: &std::path::Path) -> String {
 /// Una fila clicable para una carpeta: icono de carpeta a la izquierda,
 /// nombre centrado, botón de chincheta a la derecha (solo visible al
 /// hover), fondo suave al hover, tooltip con la ruta completa.
-/// La chincheta de la derecha es un botón independiente (no incluido
-/// en el área del clic principal): así recibe sus propios clics y
-/// su propio fondo al hover. Mismo ancho que los botones principales.
+///
+/// Solo se asigna UN área (`Sense::hover()`): los clics se deciden
+/// por `press_origin` (cuerpo vs chincheta). Así `vertical_centered`
+/// centra la fila entera sin que los `ui.interact` internos
+/// descoloquen el layout.
 ///
 /// `is_pinned` controla si el icono de chincheta aparece lleno
 /// (anclada) o vacío (no anclada).
@@ -164,7 +166,7 @@ fn recent_folder_ui(
     let pin_sz = 12.0;
     let pad_y = 6.0;
     let gap = 8.0;
-    let pin_hit_area = 24.0; // área clicable generosa para la chincheta
+    let pin_hit_area = 24.0;
 
     let galley = ui
         .painter()
@@ -173,48 +175,32 @@ fn recent_folder_ui(
     let width = BUTTON_W;
     let body_w = width - pin_hit_area;
 
-    // ── Layout horizontal: cuerpo + pin ──
-    let row_rect = egui::Rect::from_min_size(
-        ui.cursor().min,
-        egui::vec2(width, height),
-    );
-    let (_row_rect, _row_resp) = ui.allocate_exact_size(row_rect.size(), egui::Sense::hover());
+    // Única asignación de espacio: `vertical_centered` la centra sola.
+    let (row_rect, row_resp) =
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let hovered = row_resp.hovered();
+    let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
-    // Fondo al hover de toda la fila
-    let hovered = _row_resp.hovered();
+    // Fondo al hover
     if hovered {
         ui.painter()
             .rect_filled(row_rect, 6.0, visuals.widgets.hovered.weak_bg_fill);
     }
 
-    // ── Cuerpo (icono + nombre, clicable para abrir) ──
-    let body_rect = egui::Rect::from_min_size(
-        row_rect.left_top(),
-        egui::vec2(body_w, height),
-    );
-    let body_resp = ui.interact(body_rect, ui.next_auto_id(), egui::Sense::click());
-    let body_hovered = body_resp.hovered();
-    let body_clicked = body_resp.clicked();
-
-    let color = if body_hovered {
+    let color = if hovered {
         visuals.widgets.active.text_color()
     } else {
         visuals.text_color()
     };
 
+    // Icono + texto centrados dentro del ancho completo
     let content_w = icon_sz + gap + galley.size().x;
-    // Centrar icono+texto dentro del ancho total de la fila (la
-    // chincheta va a la derecha del todo, no desplaza el centro).
     let content_start_x = row_rect.left() + (width - content_w) / 2.0;
-
-    // Icono de carpeta
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(content_start_x + icon_sz / 2.0, row_rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
     draw_folder_icon(ui.painter(), icon_rect, color);
-
-    // Nombre
     let text_origin = egui::pos2(icon_rect.right() + gap, row_rect.center().y);
     ui.painter().text(
         text_origin,
@@ -224,56 +210,70 @@ fn recent_folder_ui(
         color,
     );
 
-    // ── Chincheta (widget propio con fondo al hover) ──
+    // ── Chincheta ──
     let pin_area = egui::Rect::from_min_size(
         egui::pos2(row_rect.left() + body_w, row_rect.top()),
         egui::vec2(pin_hit_area, height),
     );
-    let pin_resp = ui.interact(pin_area, ui.next_auto_id(), egui::Sense::click());
-    let pin_hovered = pin_resp.hovered();
-    let pin_clicked = pin_resp.clicked();
+    let over_pin = hover_pos.map_or(false, |p| pin_area.contains(p));
 
-    let pin_center = egui::Rect::from_center_size(
-        pin_area.center(),
-        egui::vec2(pin_sz, pin_sz),
-    );
-
-    if pin_hovered {
-        // Fondo suave propio
+    if over_pin {
         ui.painter()
             .rect_filled(pin_area, 4.0, visuals.widgets.hovered.weak_bg_fill);
         draw_pin_icon(
             ui.painter(),
-            pin_center,
+            egui::Rect::from_center_size(pin_area.center(), egui::vec2(pin_sz, pin_sz)),
             visuals.widgets.active.text_color(),
             is_pinned,
         );
     } else if is_pinned {
-        // Siempre visible, apagado
         draw_pin_icon(
             ui.painter(),
-            pin_center,
+            egui::Rect::from_center_size(pin_area.center(), egui::vec2(pin_sz, pin_sz)),
             visuals.widgets.inactive.text_color(),
             true,
         );
     } else if hovered {
-        // Fila en hover pero no el pin: pin sutil
-        draw_pin_icon(ui.painter(), pin_center, color, false);
+        draw_pin_icon(
+            ui.painter(),
+            egui::Rect::from_center_size(pin_area.center(), egui::vec2(pin_sz, pin_sz)),
+            color,
+            false,
+        );
     }
 
-    if pin_hovered {
+    if over_pin {
         let tip = if is_pinned { "Unpin" } else { "Pin" };
-        pin_resp.on_hover_text(tip);
+        row_resp.clone().on_hover_text(tip);
+    } else {
+        row_resp.clone().on_hover_text(path.display().to_string());
     }
-    _row_resp.on_hover_text(path.display().to_string());
 
-    // ── Menú contextual sobre el cuerpo ──
+    // ── Clic: ¿cuerpo o pin? ──
+    let clicked = ui.input(|i| {
+        i.pointer.primary_clicked()
+            && i.pointer.press_origin().map_or(false, |o| row_rect.contains(o))
+    });
+    if clicked {
+        if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
+            if pin_area.contains(origin) {
+                return if is_pinned {
+                    Some(WelcomeAction::UnpinRecent(path.to_owned()))
+                } else {
+                    Some(WelcomeAction::PinRecent(path.to_owned()))
+                };
+            }
+        }
+        return Some(WelcomeAction::OpenRecent(path.to_owned()));
+    }
+
+    // ── Menú contextual ──
     let context_action = Rc::new(RefCell::new(None));
     let pin_label = if is_pinned { "Unpin" } else { "Pin" };
     let path_clone = path.to_owned();
     {
         let context_action = context_action.clone();
-        body_resp.context_menu(move |ui| {
+        row_resp.context_menu(move |ui| {
             if ui.button(pin_label).clicked() {
                 *context_action.borrow_mut() = if is_pinned {
                     Some(WelcomeAction::UnpinRecent(path_clone.clone()))
@@ -292,17 +292,6 @@ fn recent_folder_ui(
 
     if let Some(a) = context_action.take() {
         return Some(a);
-    }
-    // Clic en la chincheta → toggle
-    if pin_clicked {
-        if is_pinned {
-            return Some(WelcomeAction::UnpinRecent(path.to_owned()));
-        } else {
-            return Some(WelcomeAction::PinRecent(path.to_owned()));
-        }
-    }
-    if body_clicked {
-        return Some(WelcomeAction::OpenRecent(path.to_owned()));
     }
     None
 }
