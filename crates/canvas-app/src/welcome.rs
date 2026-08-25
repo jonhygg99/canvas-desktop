@@ -175,9 +175,9 @@ fn recent_folder_ui(
     let width = BUTTON_W;
     let body_w = width - pin_hit_area;
 
-    // Única asignación de espacio: `vertical_centered` la centra sola.
+    // Única asignación: `vertical_centered` la centra como un solo bloque.
     let (row_rect, row_resp) =
-        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let hovered = row_resp.hovered();
     let hover_pos = ui.input(|i| i.pointer.hover_pos());
 
@@ -249,20 +249,14 @@ fn recent_folder_ui(
         row_resp.clone().on_hover_text(path.display().to_string());
     }
 
-    // ── Clic: ¿cuerpo o pin? ──
-    let clicked = ui.input(|i| {
-        i.pointer.primary_clicked()
-            && i.pointer.press_origin().map_or(false, |o| row_rect.contains(o))
-    });
-    if clicked {
-        if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
-            if pin_area.contains(origin) {
-                return if is_pinned {
-                    Some(WelcomeAction::UnpinRecent(path.to_owned()))
-                } else {
-                    Some(WelcomeAction::PinRecent(path.to_owned()))
-                };
-            }
+    // ── Clic: decidir por la posición del puntero al clic ──
+    if row_resp.clicked() {
+        if hover_pos.map_or(false, |p| pin_area.contains(p)) {
+            return if is_pinned {
+                Some(WelcomeAction::UnpinRecent(path.to_owned()))
+            } else {
+                Some(WelcomeAction::PinRecent(path.to_owned()))
+            };
         }
         return Some(WelcomeAction::OpenRecent(path.to_owned()));
     }
