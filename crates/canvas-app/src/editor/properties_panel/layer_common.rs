@@ -164,7 +164,8 @@ pub(super) fn layer_properties_ui(
         }
     });
 
-    // --- Posición ---
+    // --- Posición: X/Y, rotación/volteo y alineación (todo sin
+    // desplegables propios, dentro de "Position") ---
     sidebar::section(ui, "Position", true, |ui| {
         ui.horizontal(|ui| {
             ui.label("X");
@@ -172,15 +173,6 @@ pub(super) fn layer_properties_ui(
             ui.label("Y");
             changed |= track(ui.add(egui::DragValue::new(&mut t.y).speed(1.0).max_decimals(1)));
         });
-    });
-
-    // --- Opacidad ---
-    sidebar::section(ui, "Opacity", true, |ui| {
-        opacity_control(state, ui, sel);
-    });
-
-    // --- Rotación y volteo ---
-    sidebar::section(ui, "Rotation", true, |ui| {
         let mut reset_rotation = false;
         let mut flip_h = false;
         let mut flip_v = false;
@@ -228,64 +220,8 @@ pub(super) fn layer_properties_ui(
             changed = true;
             force_commit = true;
         }
-    });
-
-    // --- Contenido (texto / forma) ---
-    content_properties_ui(state, ui, sel);
-
-    // --- Recorte no destructivo (solo capas de imagen) ---
-    if is_image {
-        sidebar::section(ui, "Crop", true, |ui| {
-            ui.horizontal(|ui| {
-                let crop_resp = if state.crop_mode {
-                    icon_text_button_ui(
-                        ui,
-                        true,
-                        |p, r, c| draw_check_icon(p, r, c),
-                        "Done",
-                        None,
-                        egui::Vec2::ZERO,
-                    )
-                } else {
-                    icon_text_button_ui(
-                        ui,
-                        true,
-                        |p, r, c| draw_crop_icon(p, r, c),
-                        "Crop",
-                        None,
-                        egui::Vec2::ZERO,
-                    )
-                };
-                if crop_resp
-                    .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
-                    .clicked()
-                {
-                    state.crop_mode = !state.crop_mode;
-                }
-                if current_crop.is_some() && ui.button("Reset").clicked() {
-                    reset_crop = true;
-                }
-            });
-        });
-    }
-
-    // --- Desenfoque (no destructivo, vista previa en vivo) ---
-    sidebar::section(ui, "Blur", true, |ui| {
-        blur_control(state, ui, sel);
-    });
-
-    // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
-    sidebar::section(ui, "Color", true, |ui| {
-        color_adjustments_ui(state, ui, sel);
-    });
-
-    // --- Sombra proyectada ---
-    sidebar::section(ui, "Shadow", true, |ui| {
-        shadow_ui(state, ui, sel);
-    });
-
-    // --- Alineación respecto a la página ---
-    sidebar::section(ui, "Align", true, |ui| {
+        ui.separator();
+        // Alineación respecto a la página (antes desplegable "Align" propio).
         ui.horizontal(|ui| {
             if icon_text_button_ui(
                 ui,
@@ -416,6 +352,65 @@ pub(super) fn layer_properties_ui(
         {
             aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));
         }
+    });
+
+    // --- Opacidad ---
+    sidebar::section(ui, "Opacity", true, |ui| {
+        opacity_control(state, ui, sel);
+    });
+
+    // --- Contenido (texto / forma) ---
+    content_properties_ui(state, ui, sel);
+
+    // --- Recorte no destructivo (solo capas de imagen) ---
+    if is_image {
+        sidebar::section(ui, "Crop", true, |ui| {
+            ui.horizontal(|ui| {
+                let crop_resp = if state.crop_mode {
+                    icon_text_button_ui(
+                        ui,
+                        true,
+                        |p, r, c| draw_check_icon(p, r, c),
+                        "Done",
+                        None,
+                        egui::Vec2::ZERO,
+                    )
+                } else {
+                    icon_text_button_ui(
+                        ui,
+                        true,
+                        |p, r, c| draw_crop_icon(p, r, c),
+                        "Crop",
+                        None,
+                        egui::Vec2::ZERO,
+                    )
+                };
+                if crop_resp
+                    .on_hover_text("Drag the corner handles to trim the image; the pixels stay intact")
+                    .clicked()
+                {
+                    state.crop_mode = !state.crop_mode;
+                }
+                if current_crop.is_some() && ui.button("Reset").clicked() {
+                    reset_crop = true;
+                }
+            });
+        });
+    }
+
+    // --- Desenfoque (no destructivo, vista previa en vivo) ---
+    sidebar::section(ui, "Blur", true, |ui| {
+        blur_control(state, ui, sel);
+    });
+
+    // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
+    sidebar::section(ui, "Color", true, |ui| {
+        color_adjustments_ui(state, ui, sel);
+    });
+
+    // --- Sombra proyectada ---
+    sidebar::section(ui, "Shadow", true, |ui| {
+        shadow_ui(state, ui, sel);
     });
 
     // --- Aplicar cambios ---
