@@ -190,6 +190,23 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
             ui.weak("No layer selected.");
             ui.weak("Click the image to select it.");
         }
+        ui.separator();
+        // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
+        let active = state.background_active();
+        let can_toggle = active || state.background_source().is_some();
+        let mut bg_on = active;
+        let response = ui.add_enabled(
+            can_toggle,
+            egui::Checkbox::new(&mut bg_on, "Blurred background"),
+        );
+        if response.changed() && bg_on != active {
+            state.set_blurred_background(bg_on);
+        }
+        if active {
+            if let Some(id) = state.background_layer {
+                effects::blur_control(state, ui, id);
+            }
+        }
     });
 
     sidebar::section(ui, "File actions", false, |ui| {

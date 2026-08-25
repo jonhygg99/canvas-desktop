@@ -12,6 +12,7 @@ use canvas_render::ImageMap;
 pub(crate) enum LeftTab {
     Page,
     Layers,
+    Insert,
 }
 
 use super::interaction::Gesture;

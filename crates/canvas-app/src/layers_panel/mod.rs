@@ -7,7 +7,7 @@
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
 
-use crate::app_icons::{draw_layers_icon, draw_page_icon};
+use crate::app_icons::{draw_layers_icon, draw_page_icon, draw_sparkle_icon};
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
 use crate::editor::EditorState;
@@ -87,53 +87,10 @@ pub fn left_panel_ui(
             let tab_name = match state.active_left_tab {
                 LeftTab::Page => "Page",
                 LeftTab::Layers => "Layers",
+                LeftTab::Insert => "Insert",
             };
             sidebar::title(ui, tab_name);
             ui.add_space(6.0);
-            sidebar::section(ui, "Insert", false, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("T Text").clicked() {
-                        state.insert_layer_centered(
-                            "Text",
-                            500.0,
-                            120.0,
-                            LayerContent::Text(canvas_core::TextContent::default()),
-                        );
-                    }
-                    if ui.small_button("R").on_hover_text("Rectangle").clicked() {
-                        state.insert_layer_centered(
-                            "Rectangle",
-                            320.0,
-                            220.0,
-                            LayerContent::Shape(canvas_core::ShapeContent::default()),
-                        );
-                    }
-                    if ui.small_button("O").on_hover_text("Ellipse").clicked() {
-                        state.insert_layer_centered(
-                            "Ellipse",
-                            280.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Ellipse,
-                                ..Default::default()
-                            }),
-                        );
-                    }
-                    if ui.small_button("L").on_hover_text("Line").clicked() {
-                        state.insert_layer_centered(
-                            "Line",
-                            400.0,
-                            24.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Line,
-                                stroke: [30, 30, 30, 255],
-                                stroke_width: 6.0,
-                                ..Default::default()
-                            }),
-                        );
-                    }
-                });
-            });
             match state.active_left_tab {
                 LeftTab::Page => {
                     page_ui(state, ui);
@@ -162,6 +119,50 @@ pub fn left_panel_ui(
                     if let Some((ids, drop)) = pending_drop {
                         apply_reorder(state, &ids, drop);
                     }
+                }
+                LeftTab::Insert => {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("T Text").clicked() {
+                            state.insert_layer_centered(
+                                "Text",
+                                500.0,
+                                120.0,
+                                LayerContent::Text(canvas_core::TextContent::default()),
+                            );
+                        }
+                        if ui.small_button("R").on_hover_text("Rectangle").clicked() {
+                            state.insert_layer_centered(
+                                "Rectangle",
+                                320.0,
+                                220.0,
+                                LayerContent::Shape(canvas_core::ShapeContent::default()),
+                            );
+                        }
+                        if ui.small_button("O").on_hover_text("Ellipse").clicked() {
+                            state.insert_layer_centered(
+                                "Ellipse",
+                                280.0,
+                                280.0,
+                                LayerContent::Shape(canvas_core::ShapeContent {
+                                    kind: canvas_core::ShapeKind::Ellipse,
+                                    ..Default::default()
+                                }),
+                            );
+                        }
+                        if ui.small_button("L").on_hover_text("Line").clicked() {
+                            state.insert_layer_centered(
+                                "Line",
+                                400.0,
+                                24.0,
+                                LayerContent::Shape(canvas_core::ShapeContent {
+                                    kind: canvas_core::ShapeKind::Line,
+                                    stroke: [30, 30, 30, 255],
+                                    stroke_width: 6.0,
+                                    ..Default::default()
+                                }),
+                            );
+                        }
+                    });
                 }
             }
         });
@@ -202,12 +203,14 @@ struct TabSwapAnim {
 /// Duración del deslizamiento del intercambio de pestañas.
 const SWAP_ANIM_SECS: f64 = 0.2;
 
-/// Las dos pestañas en el orden pedido por los ajustes.
-fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 2] {
-    match order {
-        LayersTabOrder::PageFirst => [LeftTab::Page, LeftTab::Layers],
-        LayersTabOrder::LayersFirst => [LeftTab::Layers, LeftTab::Page],
-    }
+/// Las tres pestañas: Page y Layers reordenables según los ajustes,
+/// Insert siempre al final con un separador.
+fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 3] {
+    let (first, second) = match order {
+        LayersTabOrder::PageFirst => (LeftTab::Page, LeftTab::Layers),
+        LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
+    };
+    [first, second, LeftTab::Insert]
 }
 
 /// Nombre de la pestaña (tooltip del icono).
@@ -215,6 +218,7 @@ fn tab_tip(tab: LeftTab) -> &'static str {
     match tab {
         LeftTab::Page => "Page settings",
         LeftTab::Layers => "Layers",
+        LeftTab::Insert => "Insert",
     }
 }
 
@@ -228,6 +232,7 @@ fn tab_icon(tab: LeftTab) -> fn(&egui::Painter, egui::Rect, egui::Color32) {
     match tab {
         LeftTab::Page => draw_page_icon,
         LeftTab::Layers => draw_layers_icon,
+        LeftTab::Insert => draw_sparkle_icon,
     }
 }
 
@@ -270,14 +275,18 @@ pub(crate) fn vertical_tab_strip_ui(
     }
 
     // Rectos de las pestañas, en el orden de los ajustes.
-    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(2);
+    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(3);
     let mut y = strip_rect.top() + top_margin;
-    for tab in ordered_tabs(order) {
+    for (i, tab) in ordered_tabs(order).iter().enumerate() {
+        // Separador antes de Insert
+        if *tab == LeftTab::Insert {
+            y += TAB_GAP;  // espacio extra como separador visual
+        }
         let rect = egui::Rect::from_min_size(
             egui::pos2(strip_rect.left(), y),
             egui::vec2(STRIP_WIDTH, tab_h),
         );
-        tab_rects.push((tab, rect));
+        tab_rects.push((*tab, rect));
         y += tab_h + TAB_GAP;
     }
 
@@ -548,11 +557,11 @@ mod tests {
     fn ordered_tabs_follows_the_setting() {
         assert_eq!(
             ordered_tabs(LayersTabOrder::PageFirst),
-            [LeftTab::Page, LeftTab::Layers]
+            [LeftTab::Page, LeftTab::Layers, LeftTab::Insert]
         );
         assert_eq!(
             ordered_tabs(LayersTabOrder::LayersFirst),
-            [LeftTab::Layers, LeftTab::Page]
+            [LeftTab::Layers, LeftTab::Page, LeftTab::Insert]
         );
     }
 
@@ -561,6 +570,7 @@ mod tests {
         let order = ordered_tabs(LayersTabOrder::LayersFirst);
         assert!(order.contains(&LeftTab::Page));
         assert!(order.contains(&LeftTab::Layers));
+        assert!(order.contains(&LeftTab::Insert));
     }
 }
 
