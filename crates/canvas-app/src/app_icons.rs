@@ -548,26 +548,6 @@ pub fn draw_minus_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::C
     );
 }
 
-/// Guardar (disquete).
-pub fn draw_floppy_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let c = rect.center();
-    let s = rect.width().min(rect.height());
-    let st = stroke(color);
-    let body = egui::Rect::from_center_size(c, egui::vec2(s * 0.72, s * 0.62));
-    painter.rect_stroke(body, 2.0, st, egui::StrokeKind::Outside);
-    // Muesca superior (la pestaña del disquete).
-    painter.line_segment(
-        [
-            egui::pos2(body.left() + s * 0.16, body.top()),
-            egui::pos2(body.left() + s * 0.42, body.top()),
-        ],
-        st,
-    );
-    // Etiqueta.
-    let label = egui::Rect::from_center_size(c + egui::vec2(0.0, s * 0.10), egui::vec2(s * 0.28, s * 0.16));
-    painter.rect_stroke(label, 1.0, st, egui::StrokeKind::Outside);
-}
-
 /// Documento (glifo de página de las miniaturas, el antiguo 🖹).
 pub fn draw_doc_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let c = rect.center();

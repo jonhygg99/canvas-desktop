@@ -25,8 +25,8 @@ mod tests;
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_close_icon, draw_delete_icon, draw_floppy_icon, draw_gear_icon, draw_pencil_icon,
-    draw_triangle_icon, icon_button_ui, icon_text_button_ui, IconDir,
+    draw_gear_icon, draw_pencil_icon, draw_triangle_icon, icon_button_ui, icon_text_button_ui,
+    IconDir,
 };
 
 use super::EditorState;
@@ -181,17 +181,21 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         page_dims.0 as i64, page_dims.1 as i64
     ));
 
-    sidebar::section(ui, "Layer", true, |ui| {
-        if let Some(sel) = state.selection.primary() {
-            if state.doc.layer(sel).is_ok() {
-                layer_properties_ui(state, ui, sel, page_dims);
-            }
+    // Capa seleccionada: cada propiedad en su propio desplegable.
+    if let Some(sel) = state.selection.primary() {
+        if state.doc.layer(sel).is_ok() {
+            layer_properties_ui(state, ui, sel, page_dims);
         } else {
             ui.weak("No layer selected.");
             ui.weak("Click the image to select it.");
         }
-        ui.separator();
-        // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
+    } else {
+        ui.weak("No layer selected.");
+        ui.weak("Click the image to select it.");
+    }
+
+    // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
+    sidebar::section(ui, "Blurred background", true, |ui| {
         let active = state.background_active();
         let can_toggle = active || state.background_source().is_some();
         let mut bg_on = active;
@@ -206,73 +210,6 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
             if let Some(id) = state.background_layer {
                 effects::blur_control(state, ui, id);
             }
-        }
-    });
-
-    sidebar::section(ui, "File actions", false, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            let dirty_mark = if state.is_dirty() { " •" } else { "" };
-            if icon_text_button_ui(
-                ui,
-                !state.saving,
-                |p, r, c| draw_floppy_icon(p, r, c),
-                &format!("Save{dirty_mark}"),
-                None,
-                egui::Vec2::ZERO,
-            )
-            .clicked()
-                && !state.saving
-            {
-                state.save_clicked = true;
-            }
-            if ui
-                .add_enabled(!state.saving, egui::Button::new("Save as…"))
-                .clicked()
-            {
-                state.save_as_clicked = true;
-            }
-            // Va a la Papelera de reciclaje (`trash::delete`), no borrado
-            // permanente: recuperable si el usuario se equivoca, así que no
-            // hace falta pedir confirmación aparte.
-            let del_c = egui::Color32::from_rgb(220, 70, 70);
-            if icon_text_button_ui(
-                ui,
-                !state.saving,
-                move |p, r, _| draw_delete_icon(p, r, del_c),
-                "Delete",
-                Some(del_c),
-                egui::Vec2::ZERO,
-            )
-            .clicked()
-                && !state.saving
-            {
-                state.delete_requested = true;
-            }
-        });
-        if state.is_design {
-            ui.weak("Design file (.canvas) — layers are always kept.");
-        } else {
-            ui.checkbox(&mut state.sidecar_enabled, "Editable sidecar (.canvas)")
-                .on_hover_text(
-                    "Writes a .canvas file next to the image so the layers stay \
-                     editable when you reopen it. Turn it off if you don't want \
-                     extra files in your folders.",
-                );
-        }
-        if state.saving {
-            ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new());
-                ui.label("Saving…");
-            });
-        }
-        if let Some(error) = state.save_error.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.colored_label(ui.visuals().error_fg_color, &error);
-                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked()
-                {
-                    state.save_error = None;
-                }
-            });
         }
     });
     ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
