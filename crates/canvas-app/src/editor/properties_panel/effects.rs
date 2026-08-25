@@ -146,22 +146,21 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
 
     let mut slider =
         |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                let mut pct = *value * 100.0;
-                let r = ui.add(
-                    egui::Slider::new(&mut pct, *range.start() * 100.0..=*range.end() * 100.0)
-                        .suffix(" %")
-                        .fixed_decimals(0),
-                );
-                *value = pct / 100.0;
-                if r.changed() {
-                    changed = true;
-                }
-                if r.drag_stopped() || r.lost_focus() {
-                    commit = true;
-                }
-            });
+            // Etiqueta encima y el slider a ancho completo debajo.
+            ui.label(label);
+            let mut pct = *value * 100.0;
+            let r = ui.add(
+                egui::Slider::new(&mut pct, *range.start() * 100.0..=*range.end() * 100.0)
+                    .suffix(" %")
+                    .fixed_decimals(0),
+            );
+            *value = pct / 100.0;
+            if r.changed() {
+                changed = true;
+            }
+            if r.drag_stopped() || r.lost_focus() {
+                commit = true;
+            }
         };
     slider(ui, "Brightness", &mut fx.brightness, -1.0..=1.0);
     slider(ui, "Contrast", &mut fx.contrast, -1.0..=1.0);
