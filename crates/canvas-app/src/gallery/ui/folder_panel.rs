@@ -235,7 +235,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
             .id_salt("gallery_folder_tree_vertical")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.strong(format!("Inside {current_name}"));
+                ui.strong(current_name);
                 new_folder_ui(
                     ui,
                     "inside",
@@ -257,7 +257,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                 }
             });
     } else {
-        ui.strong(format!("Inside {current_name}"));
+        ui.strong(current_name);
         new_folder_ui(
             ui,
             "inside",
