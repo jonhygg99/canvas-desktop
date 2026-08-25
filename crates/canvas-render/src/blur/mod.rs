@@ -26,9 +26,57 @@ pub use passes::SyncLayerRequest;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct FxScope(pub u64);
 
+/// Lado mayor máximo (en píxeles) con el que una imagen entra en la GPU.
+///
+/// El atlas de imágenes de vello es CUADRADO con tope duro de 8192 y, cuando
+/// una imagen no cabe, la descarta en silencio (`resolve_pending_images`
+/// pone su `xy` a `None`: "this image isn't rendered"). Con el tope de 8192,
+/// dos imágenes de 3072×4096 llenan el atlas y una tercera (o el horneado
+/// compartiendo el atlas con el preview en vivo) se descarta — el lienzo o
+/// el PNG guardado salen con la banda de blur plana o la capa ausente (fotos
+/// verticales de teléfono ≥ 4030 px de alto).
+///
+/// Reducir a este tope ANTES de procesar/registrar mantiene todo dentro del
+/// atlas y las texturas de efectos pequeñas (~12 MB por capa en vez de
+/// ~200 MB a 3072×4096). Es indistinguible en pantalla: esas imágenes se
+/// muestran a una fracción de su tamaño natural (el fondo desenfocado se
+/// pinta al 0.6× y la foto nítida al 0.26× de la página). Las fotos ≤ 2048
+/// no se tocan.
+pub(super) const MAX_FX_DIM: u32 = 2048;
+
+/// Copia reducida para la escena de una capa SIN efectos cuya imagen
+/// original supera `MAX_FX_DIM`: vello no podría alojarla en su atlas y la
+/// descartaría en silencio. Es un `ImageData` CPU normal (no una textura
+/// registrada), así que la escena la dibuja como cualquier imagen — solo
+/// cambia de qué píxeles se alimenta.
+struct DisplayEntry {
+    /// `Blob::id()` del ORIGINAL: si cambia (la imagen se editó o reemplazó),
+    /// hay que volver a reducir.
+    src_blob_id: u64,
+    image: ImageData,
+}
+
+/// Reduce `source` si su lado mayor supera `max_dim`; `None` si no hace
+/// falta. `thumbnail` (filtro de caja) conserva la proporción y la calidad.
+/// El resultado es lo que entra en la GPU (pasadas de efectos o atlas de
+/// vello), nunca los píxeles del documento.
+fn capped_image(source: &ImageData, max_dim: u32) -> Option<ImageData> {
+    let long = source.width.max(source.height);
+    if long <= max_dim {
+        return None;
+    }
+    let scale = f64::from(max_dim) / f64::from(long);
+    let w = ((f64::from(source.width) * scale).round() as u32).max(1);
+    let h = ((f64::from(source.height) * scale).round() as u32).max(1);
+    let img = image::RgbaImage::from_raw(source.width, source.height, source.data.data().to_vec())?;
+    let thumb = image::imageops::thumbnail(&img, w, h);
+    Some(crate::image_data_from_rgba(thumb.into_raw(), w, h))
+}
+
 /// Texturas de una capa con efectos activos.
 struct LayerFx {
-    /// Imagen original subida a GPU (una vez).
+    /// Imagen de trabajo subida a GPU (una vez): la original o su copia
+    /// reducida si supera `MAX_FX_DIM` (ver `capped_image`).
     src: wgpu::Texture,
     /// `Blob::id()` de los píxeles que se subieron a `src`. Si cambia,
     /// los píxeles de origen cambiaron (edición, pegado, reemplazo) y hay
@@ -53,6 +101,10 @@ pub struct BlurEngine {
     bind_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     cache: HashMap<(FxScope, LayerId), LayerFx>,
+    /// Copias reducidas para capas sin efectos demasiado grandes (ver
+    /// `DisplayEntry`). Fuera de `cache` a propósito: no son texturas de
+    /// efectos y no necesitan registro en vello.
+    display: HashMap<(FxScope, LayerId), DisplayEntry>,
 }
 
 /// Resultado de `BlurEngine::sync_layer`, para que el llamador sepa si tiene
@@ -68,4 +120,60 @@ pub enum FxSync {
     Rebaked(ImageData),
     /// Ya no queda ningún efecto activo: el llamador debe des-registrarla.
     Removed(ImageData),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capped_image_leaves_images_within_the_limit_alone() {
+        let small = crate::image_data_from_rgba(vec![0u8; 100 * 50 * 4], 100, 50);
+        assert!(capped_image(&small, MAX_FX_DIM).is_none());
+        // El tope exacto tampoco se toca.
+        let edge = crate::image_data_from_rgba(vec![0u8; 2048 * 1024 * 4], 2048, 1024);
+        assert!(capped_image(&edge, MAX_FX_DIM).is_none());
+    }
+
+    #[test]
+    fn capped_image_downscales_preserving_aspect() {
+        let mut rgba = Vec::with_capacity(3000 * 2000 * 4);
+        for y in 0..2000u32 {
+            for x in 0..3000u32 {
+                rgba.extend_from_slice(&[
+                    (x % 256) as u8,
+                    (y % 256) as u8,
+                    ((x + y) % 256) as u8,
+                    255,
+                ]);
+            }
+        }
+        let img = crate::image_data_from_rgba(rgba, 3000, 2000);
+        let capped = capped_image(&img, MAX_FX_DIM).expect("debe reducirse");
+        assert_eq!((capped.width, capped.height), (2048, 1365));
+
+        // El promedio se conserva aproximadamente (el filtro de caja promedia
+        // como la media global de los patrones modulares de arriba).
+        let avg = |d: &[u8]| -> [u32; 3] {
+            let mut acc = [0u32; 3];
+            let mut n = 0u32;
+            for px in d.chunks_exact(4) {
+                for i in 0..3 {
+                    acc[i] += u32::from(px[i]);
+                }
+                n += 1;
+            }
+            [acc[0] / n, acc[1] / n, acc[2] / n]
+        };
+        let src_avg = avg(img.data.data());
+        let cap_avg = avg(capped.data.data());
+        for i in 0..3 {
+            assert!(
+                (src_avg[i] as i64 - cap_avg[i] as i64).abs() < 16,
+                "promedio {i}: fuente {} vs reducida {}",
+                src_avg[i],
+                cap_avg[i]
+            );
+        }
+    }
 }

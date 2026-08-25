@@ -7,7 +7,7 @@ use vello::peniko::ImageData;
 use vello::wgpu;
 
 use super::params::{blur_params_bytes, BlurParams, ColorParams, MAX_RADIUS};
-use super::{BlurEngine, FxScope, FxSync, LayerFx};
+use super::{capped_image, BlurEngine, DisplayEntry, FxScope, FxSync, LayerFx, MAX_FX_DIM};
 
 /// Petición de sincronización de efectos GPU para una capa, agrupada para
 /// reducir la firma de `sync_layer` de 9 a 5 parámetros.
@@ -31,6 +31,34 @@ struct PassInput<'a> {
 }
 
 impl BlurEngine {
+    /// Mantiene la copia reducida de pantalla de una capa SIN efectos: se
+    /// crea solo si la imagen original supera `MAX_FX_DIM` y su `Blob::id()`
+    /// cambió (si no, la copia ya vale); se retira si no aplica (imagen
+    /// pequeña: la escena usa la original).
+    fn sync_display(&mut self, request: &SyncLayerRequest<'_>) {
+        let key = (request.scope, request.layer);
+        match capped_image(request.source, MAX_FX_DIM) {
+            Some(capped) => {
+                let stale = self
+                    .display
+                    .get(&key)
+                    .is_none_or(|e| e.src_blob_id != request.source.data.id());
+                if stale {
+                    self.display.insert(
+                        key,
+                        DisplayEntry {
+                            src_blob_id: request.source.data.id(),
+                            image: capped,
+                        },
+                    );
+                }
+            }
+            None => {
+                self.display.remove(&key);
+            }
+        }
+    }
+
     /// Sincroniza los efectos GPU de una capa de `scope`. Ver `FxSync` para
     /// qué debe hacer el llamador con el resultado.
     ///
@@ -44,16 +72,34 @@ impl BlurEngine {
         register: &mut dyn FnMut(wgpu::Texture) -> ImageData,
     ) -> FxSync {
         let blur_active = request.radius > 0.0;
+        let color_active = !request.color.is_identity();
         let key = (request.scope, request.layer);
-        if !blur_active && request.color.is_identity() {
+
+        // Sin efectos: la escena debe volver a la imagen original... salvo si
+        // es tan grande que vello no podría alojarla en su atlas (la
+        // descartaría en silencio y el lienzo o el guardado saldría plano o
+        // con la capa ausente): entonces se deja en `display` una copia
+        // reducida para la escena. Se retira la textura de efectos si la
+        // hubiera (el llamador la des-registra con `Removed`).
+        if !blur_active && !color_active {
+            self.sync_display(request);
             return match self.cache.remove(&key) {
                 Some(b) => FxSync::Removed(b.image),
                 None => FxSync::Unchanged,
             };
         }
 
+        // Con efectos, la escena usa la textura procesada: fuera la copia de
+        // pantalla (ambas comparten la clave de `LayerId` en el mapa de
+        // overrides y no pueden convivir).
+        self.display.remove(&key);
+
+        // Imagen de trabajo: la original o una reducida por debajo del tope
+        // del atlas (`MAX_FX_DIM`). Todo el pipeline de efectos trabaja sobre
+        // ella; la escena la dibuja estirada al rect de la capa.
         let entry = self.cache.entry(key).or_insert_with(|| {
-            let (w, h) = (request.source.width, request.source.height);
+            let working = capped_or_original(request.source);
+            let (w, h) = (working.width, working.height);
             let size = wgpu::Extent3d {
                 width: w,
                 height: h,
@@ -77,7 +123,7 @@ impl BlurEngine {
             );
             queue.write_texture(
                 src.as_image_copy(),
-                request.source.data.data(),
+                working.data.data(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * w),
@@ -114,7 +160,8 @@ impl BlurEngine {
         // cuando cambiaban los parámetros de efecto, no el contenido.
         let source_changed = entry.src_blob_id != request.source.data.id();
         if source_changed {
-            let (w, h) = (request.source.width, request.source.height);
+            let working = capped_or_original(request.source);
+            let (w, h) = (working.width, working.height);
             let size = wgpu::Extent3d {
                 width: w,
                 height: h,
@@ -122,7 +169,7 @@ impl BlurEngine {
             };
             queue.write_texture(
                 entry.src.as_image_copy(),
-                request.source.data.data(),
+                working.data.data(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * w),
@@ -134,7 +181,12 @@ impl BlurEngine {
         }
 
         if source_changed || entry.last != Some((request.color, request.radius)) {
-            let color_active = !request.color.is_identity();
+            // El radio del blur se escala a la resolución de trabajo real (la
+            // textura `src`): un radio de N píxeles de ORIGEN debe seguir
+            // siendo N píxeles de origen al desenfocar, aunque la pasada se
+            // haga sobre la imagen reducida.
+            let radius =
+                request.radius * entry.src.width() as f32 / request.source.width.max(1) as f32;
             // Cadena: color (src→mid_a) → blur H (x→mid_b) → blur V (mid_b→out);
             // sin blur, el color pinta directamente en out.
             if color_active {
@@ -157,8 +209,8 @@ impl BlurEngine {
                 );
             }
             if blur_active {
-                let sigma = (request.radius / 3.0).max(0.1);
-                let taps = (request.radius.ceil() as i32).clamp(1, MAX_RADIUS);
+                let sigma = (radius / 3.0).max(0.1);
+                let taps = (radius.ceil() as i32).clamp(1, MAX_RADIUS);
                 let blur_input = if color_active {
                     &entry.mid_a
                 } else {
@@ -201,6 +253,16 @@ impl BlurEngine {
             return FxSync::Rebaked(entry.image.clone());
         }
         FxSync::Unchanged
+    }
+}
+
+/// Imagen de trabajo de `sync_layer`: la original o su copia reducida al
+/// tope del atlas si supera `MAX_FX_DIM`. Clonar un `ImageData` es barato
+/// (el `Blob` va en un `Arc`).
+fn capped_or_original(source: &ImageData) -> ImageData {
+    match capped_image(source, MAX_FX_DIM) {
+        Some(capped) => capped,
+        None => source.clone(),
     }
 }
 

@@ -95,25 +95,39 @@ impl BlurEngine {
             bind_layout,
             sampler,
             cache: HashMap::new(),
+            display: HashMap::new(),
         }
     }
 
-    /// Imágenes sustitutas (procesadas) por capa de `scope`, para la escena.
-    /// La clave devuelta es el `LayerId` pelado (sin el scope): así
-    /// `append_document`/`ImageMap` no necesitan saber que la caché de
-    /// efectos distingue documentos.
+    /// Imágenes sustitutas por capa de `scope`, para la escena: las texturas
+    /// procesadas (efectos GPU) y las copias reducidas de las capas sin
+    /// efectos demasiado grandes (`display`). La clave devuelta es el
+    /// `LayerId` pelado (sin el scope): así `append_document`/`ImageMap` no
+    /// necesitan saber que la caché de efectos distingue documentos. Una capa
+    /// con efectos nunca tiene entrada en `display` (se retira al activar
+    /// efectos), así que no puede haber colisión; de todas formas `display`
+    /// gana si la hubiera.
     pub fn overrides(&self, scope: FxScope) -> HashMap<LayerId, ImageData> {
-        self.cache
+        let mut out: HashMap<LayerId, ImageData> = self
+            .cache
             .iter()
             .filter(|((s, _), _)| *s == scope)
             .map(|((_, id), b)| (*id, b.image.clone()))
-            .collect()
+            .collect();
+        for ((s, id), entry) in &self.display {
+            if *s == scope {
+                out.insert(*id, entry.image.clone());
+            }
+        }
+        out
     }
 
     /// Retira de la caché todas las capas de `scope` (un lienzo descargado
     /// de la baraja) y devuelve sus handles para des-registrarlos de vello:
     /// sin esto, sus texturas de efectos quedarían vivas en GPU
-    /// indefinidamente aunque el documento ya no esté cargado.
+    /// indefinidamente aunque el documento ya no esté cargado. Las copias
+    /// reducidas (`display`) son CPU puro y solo hay que soltarlas de la
+    /// caché; el atlas de vello las descarta solo al no verlas más.
     pub fn forget_scope(&mut self, scope: FxScope) -> Vec<ImageData> {
         let mut removed = Vec::new();
         self.cache.retain(|(s, _), entry| {
@@ -124,6 +138,7 @@ impl BlurEngine {
                 true
             }
         });
+        self.display.retain(|(s, _), _| *s != scope);
         removed
     }
 }

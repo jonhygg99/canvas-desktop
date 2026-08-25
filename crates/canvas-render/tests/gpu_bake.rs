@@ -50,6 +50,45 @@ fn solid_image(w: u32, h: u32, [r, g, b, a]: [u8; 4]) -> (Vec<u8>, u32, u32) {
     (rgba, w, h)
 }
 
+/// Imagen de `w×h` con un patrón determinista distinto por `kind` (canales
+/// rotados del degradado de `gradient_image`): permite detectar intercambios
+/// entre capas al inspeccionar los píxeles horneados.
+fn patterned_image(w: u32, h: u32, kind: u8) -> (Vec<u8>, u32, u32) {
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let t = if w > 1 {
+                x as f32 / (w - 1) as f32
+            } else {
+                0.0
+            };
+            let g = (y as f32 / h.max(1) as f32 * 255.0) as u8;
+            let (r, b) = ((t * 255.0) as u8, ((1.0 - t) * 255.0) as u8);
+            let [pr, pg, pb] = match kind {
+                0 => [r, g, b],
+                1 => [b, r, g],
+                _ => [g, b, r],
+            };
+            rgba.extend_from_slice(&[pr, pg, pb, 255]);
+        }
+    }
+    (rgba, w, h)
+}
+
+/// Colores únicos a lo largo de una fila horizontal (muestreo cada 8 px). Una
+/// región con la capa descartada del atlas de vello sale de un solo color
+/// (el fondo de página); una imagen o blur reales dan decenas de colores.
+fn row_unique_colors(rgba: &[u8], width: u32, y: u32, x0: u32, x1: u32) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    let mut x = x0;
+    while x < x1 {
+        let i = ((y * width + x) * 4) as usize;
+        seen.insert((rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]));
+        x += 8;
+    }
+    seen.len()
+}
+
 /// Obtiene un device/queue wgpu headless. Falla si no hay adaptador
 /// (CI sin GPU), lo que hace que los tests `--ignored` fallen ruidosamente
 /// en vez de pasar silenciosamente.
@@ -449,4 +488,157 @@ fn bake_at_2x_produces_double_resolution() {
     let c2 = &rgba2x[0..4];
     assert_eq!(c1, &[255, 255, 255, 255]);
     assert_eq!(c2, &[255, 255, 255, 255]);
+}
+
+// ─── Imágenes grandes: tope de resolución del atlas de vello ────────────
+
+/// Tres capas de imágenes de 3072×4096 (la central con blur) en un mismo
+/// documento. Sin el tope de resolución (`blur::MAX_FX_DIM` = 2048), el total
+/// 3×3072 > 8192 desborda el atlas CUADRADO de vello y la última capa se
+/// descarta en silencio (`resolve_pending_images` pone su `xy` a `None`) → su
+/// región sale con el fondo plano. Con el tope, las tres entran reducidas y
+/// se pintan. Es la regresión directa de las fotos verticales de teléfono
+/// (≥ 4030 px de alto) que guardaban el blur aplanado o perdían la capa.
+///
+/// Este test falla SIN el fix y pasa CON él, en cualquier GPU: la caída
+/// depende solo de tamaños y del resolutor, no del hardware.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_three_large_images_all_render() {
+    let (device, queue) = gpu_device();
+    let (w, h) = (1920u32, 1080u32);
+    let (iw, ih) = (3072u32, 4096u32);
+
+    let mut doc = Document::new(f64::from(w), f64::from(h));
+    doc.page_mut().unwrap().background = Some([255, 255, 255, 255]);
+
+    let mut images = ImageMap::new();
+    for (i, (x, blurred)) in [(0u32, false), (640, true), (1280, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = doc
+            .add_layer(
+                format!("img{i}"),
+                Transform::new(f64::from(x), 0.0, 640.0, f64::from(h)),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: iw,
+                    natural_height: ih,
+                    crop: None,
+                }),
+            )
+            .unwrap();
+        if blurred {
+            doc.layer_mut(id).unwrap().effects.blur_radius = 20.0;
+        }
+        let (rgba, _, _) = patterned_image(iw, ih, i as u8);
+        images.insert(id, image_data_from_rgba(rgba, iw, ih));
+    }
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (rgba, bw, bh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    assert_eq!((bw, bh), (w, h));
+
+    let mid = h / 2;
+    for (i, (x0, x1)) in [(0, 640), (640, 1280), (1280, 1920)]
+        .into_iter()
+        .enumerate()
+    {
+        let uniq = row_unique_colors(&rgba, w, mid, x0, x1);
+        assert!(
+            uniq > 20,
+            "la capa {i} salió plana/blanca ({uniq} colores) — imagen descartada del atlas de vello"
+        );
+    }
+}
+
+/// Réplica del documento real que fallaba (foto vertical de teléfono ≥ 4030
+/// px): fondo desenfocado a página completa (blur 50) + la MISMA foto nítida
+/// centrada, como en `24.png`. Verifica que ni el fondo ni la foto salen
+/// planos al hornear. A diferencia del test anterior, una sola foto entra en
+/// el atlas sin el fix (2×3072 ≤ 8192), así que este valida la fidelidad del
+/// resultado con el tope activo, no la caída en sí.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_tall_blur_background_and_sharp_layer_not_flat() {
+    let (device, queue) = gpu_device();
+    let (w, h) = (1920u32, 1080u32);
+    let (iw, ih) = (3072u32, 4096u32);
+
+    let mut doc = Document::new(f64::from(w), f64::from(h));
+    doc.page_mut().unwrap().background = Some([255, 255, 255, 255]);
+
+    // Fondo desenfocado: la foto estirada a cubrir la página (0, -740, 1920,
+    // 2560), como en el documento real.
+    let bg = doc
+        .add_layer(
+            "Blurred background",
+            Transform::new(0.0, -740.0, f64::from(w), 2560.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: iw,
+                natural_height: ih,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(bg).unwrap().effects.blur_radius = 50.0;
+
+    // Foto nítida centrada (810×1080 en el documento original).
+    let sharp = doc
+        .add_layer(
+            "Pasted Image",
+            Transform::new(555.0, 0.0, 810.0, f64::from(h)),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: iw,
+                natural_height: ih,
+                crop: None,
+            }),
+        )
+        .unwrap();
+
+    let (rgba_src, _, _) = gradient_image(iw, ih);
+    let mut images = ImageMap::new();
+    // Ambas capas embeben la MISMA foto (como el documento real), una por su
+    // `LayerId` propio.
+    let src = image_data_from_rgba(rgba_src, iw, ih);
+    images.insert(bg, src.clone());
+    images.insert(sharp, src);
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (rgba, bw, bh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    assert_eq!((bw, bh), (w, h));
+
+    // Banda superior del fondo (fuera de la foto nítida): un blur real de un
+    // degradado conserva decenas de colores; un fondo aplanado tiene 1.
+    let bg_uniq = row_unique_colors(&rgba, w, 50, 0, w);
+    assert!(
+        bg_uniq > 20,
+        "el fondo desenfocado salió plano ({bg_uniq} colores)"
+    );
+
+    // Centro (rect de la foto nítida): la foto visible, no blanca ni plana.
+    let sharp_uniq = row_unique_colors(&rgba, w, h / 2, 555, 1365);
+    assert!(
+        sharp_uniq > 20,
+        "la capa nítida salió plana ({sharp_uniq} colores)"
+    );
 }

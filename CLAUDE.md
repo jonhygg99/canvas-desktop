@@ -154,6 +154,17 @@ canvas-render/src/
 - GPU effects (blur, color filters) are non-destructive and chained: applied
   live for preview, only baked into pixels on save (`bake_*` examples
   exercise this path headlessly).
+- **Resolution cap for GPU work.** Any image whose long side exceeds
+  `blur::MAX_FX_DIM` (2048) is downscaled (CPU, `image::thumbnail`) before it
+  enters the effect pipeline or vello's image atlas. Reason: vello's atlas is
+  SQUARE with a hard 8192 cap and silently drops images that don't fit
+  (`xy = None` in `resolve_pending_images`) — two 3072×4096 photos fill it and
+  a third (or a bake sharing the atlas with the live deck) got dropped,
+  flattening blurred backgrounds and losing the sharp layer on tall phone
+  photos. The document keeps full-res pixels; only what the GPU
+  processes/registers is capped, blur radii are scaled to the working
+  resolution so N source pixels stay N source pixels, and effect-less big
+  layers get a reduced display copy via the `display` cache in `BlurEngine`.
 - Layer shadows use vello's `Scene::draw_blurred_rounded_rect` directly — no
   custom GPU shader for that one.
 - Layers are clipped to the page rect both when rendering and when baking.

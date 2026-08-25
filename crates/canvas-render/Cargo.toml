@@ -10,12 +10,14 @@ canvas-core = { workspace = true }
 vello = { workspace = true }
 parley = { workspace = true }
 thiserror = { workspace = true }
+# Reducción de imágenes grandes por debajo del tope del atlas de vello antes
+# de subirlas a GPU (ver `blur::MAX_FX_DIM`). Misma versión que usa canvas-io.
+image = { workspace = true }
 
 [dev-dependencies]
 # Solo para los ejemplos headless de verificación sin ventana.
 canvas-io = { workspace = true }
 pollster = "0.4"
-image = { workspace = true }
 anyhow = { workspace = true }
 # Reparsear el SVG generado por canvas-io::document_to_svg en export_probe:
 # la misma versión que ya usa canvas-io, así que no duplica el árbol.

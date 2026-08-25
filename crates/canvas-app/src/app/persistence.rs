@@ -278,10 +278,20 @@ pub(super) fn start_export(
     let mut images: Vec<canvas_io::LayerPixels> = Vec::new();
     if let Ok(page) = state.doc.page() {
         for layer in &page.layers {
-            let Some(data) = blurred
-                .get(&layer.id)
-                .or_else(|| state.images.get(&layer.id))
-            else {
+            // Las capas SIN efectos deben embeber sus píxeles ORIGINALES:
+            // `blurred` también contiene la copia reducida de pantalla de las
+            // imágenes que superan el tope del atlas (ver `MAX_FX_DIM`), y
+            // aplanarla en el SVG degradaría la resolución del vector.
+            let has_effects =
+                layer.effects.blur_radius > 0.0 || layer.effects.has_color_adjustments();
+            let data = if has_effects {
+                blurred
+                    .get(&layer.id)
+                    .or_else(|| state.images.get(&layer.id))
+            } else {
+                state.images.get(&layer.id)
+            };
+            let Some(data) = data else {
                 continue;
             };
             images.push((

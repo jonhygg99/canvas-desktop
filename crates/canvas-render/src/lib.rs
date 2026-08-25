@@ -51,9 +51,11 @@ impl CanvasRenderer {
 
     /// Sincroniza los efectos GPU (no destructivos) de una capa de imagen:
     /// filtro de color + desenfoque, encadenados. Sin efectos activos retira
-    /// la textura procesada y vuelve a la original. `scope` distingue a qué
-    /// documento pertenece la capa (ver `FxScope`); un solo documento cargado
-    /// puede usar `FxScope::default()`.
+    /// la textura procesada; una imagen de origen que supere el tope del
+    /// atlas de vello deja en su lugar una copia reducida para la escena (ver
+    /// `blur::MAX_FX_DIM`), el resto vuelve a la original. `scope` distingue
+    /// a qué documento pertenece la capa (ver `FxScope`); un solo documento
+    /// cargado puede usar `FxScope::default()`.
     pub fn sync_layer_effects(
         &mut self,
         device: &wgpu::Device,
