@@ -31,12 +31,20 @@ pub fn section<R>(
 ) -> egui::containers::collapsing_header::CollapsingResponse<R> {
     egui::CollapsingHeader::new(text)
         .default_open(default_open)
-        .show_unindented(ui, |ui| {
-            // El clip_rect sí está acotado al área visible del panel.
-            let w = (ui.clip_rect().width() - 16.0).max(100.0);
-            ui.spacing_mut().slider_width = w;
-            add_contents(ui)
-        })
+        .show_unindented(ui, add_contents)
+}
+
+/// Estira un slider hasta casi el borde del panel dejando hueco para el
+/// display del valor (el `DragValue` que egui pinta a su derecha, ~56px).
+///
+/// NO se puede poner en `section`: el ancho correcto depende de cuánto
+/// queda libre en la fila actual (aquí el `Slider` pinta pista + valor
+/// SEGUIDOS, así que si la pista ocupa todo el ancho, el total desborda el
+/// panel y egui agranda el `max_rect` del padre — lo que a su vez hace que
+/// el siguiente slider sea aún más ancho, y así hasta ocupar toda la
+/// pantalla). Se llama justo antes de `ui.add(egui::Slider...)`.
+pub fn stretch_slider(ui: &mut egui::Ui) {
+    ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(60.0);
 }
 
 #[cfg(test)]
