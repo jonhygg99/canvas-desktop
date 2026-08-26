@@ -13,6 +13,7 @@ use crate::gallery::ItemKind;
 use crate::settings::GallerySort;
 
 use super::geometry::MoveDir;
+use super::loading::next_scope;
 use super::model::{file_name, idle_slot, Slot, SlotContent};
 use super::Deck;
 
@@ -49,6 +50,7 @@ impl Deck {
         self.next_order += 1;
         self.slots.push(Slot {
             id,
+            scope: next_scope(),
             name: file_name(&path),
             path,
             kind: if is_design {

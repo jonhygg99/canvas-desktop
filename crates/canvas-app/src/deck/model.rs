@@ -13,6 +13,7 @@ use crate::gallery::{GalleryState, ItemKind};
 use crate::settings::GallerySort;
 
 use super::geometry::DeckRect;
+use super::loading::next_scope;
 
 /// Estado de carga de una ranura.
 pub enum SlotContent {
@@ -65,9 +66,14 @@ pub struct SlotDoc {
 /// Una ranura = un archivo de la carpeta = un lienzo.
 pub struct Slot {
     /// Identidad estable durante toda la sesión, aunque la lista se reordene
-    /// o el archivo se renombre. También el `FxScope` con el que se habla
-    /// con `CanvasRenderer`.
+    /// o el archivo se renombre.
     pub id: u64,
+    /// `FxScope` con el que esta ranura habla con `CanvasRenderer`: único a
+    /// nivel de PROCESO (ver `loading::next_scope`), porque el renderer y su
+    /// caché de efectos son compartidos entre ventanas — dos ventanas con el
+    /// mismo `Slot::id` (cada `Deck` empieza en 1) se pisarían las texturas
+    /// procesadas si el scope derivara del id.
+    pub scope: u64,
     pub path: PathBuf,
     pub name: String,
     pub kind: ItemKind,
@@ -201,6 +207,7 @@ pub(super) fn idle_slot(
     let name = file_name(&path);
     Slot {
         id,
+        scope: next_scope(),
         path,
         name,
         kind,

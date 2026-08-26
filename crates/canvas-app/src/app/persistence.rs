@@ -24,6 +24,13 @@ pub(in crate::app) struct SaveContext<'a> {
     pub tx: &'a Sender<AppMsg>,
     pub ctx: &'a egui::Context,
     pub ignore_fs_events_until: &'a mut Option<Instant>,
+    /// `FxScope` de la ranura activa de esta ventana (único por ranura a
+    /// nivel de proceso). El guardado lo usa en vez del scope por defecto:
+    /// antes, TODOS los guardados de TODAS las ventanas compartían el
+    /// scope 0 y dos guardados a la vez se pisaban la caché de efectos.
+    /// Además, al coincidir con el scope con el que la ranura se renderiza,
+    /// el horneado reutiliza las texturas de efectos ya calculadas.
+    pub scope: u64,
 }
 
 impl AppInner {
@@ -135,12 +142,12 @@ pub(super) fn start_save(
         return;
     }
     tracing::info!("guardando en {}", path.display());
-    sctx.renderer
-        .forget_scope(canvas_render::FxScope::default());
+    let scope = canvas_render::FxScope(sctx.scope);
+    sctx.renderer.forget_scope(scope);
     match sctx.renderer.bake_page(
         &sctx.rs.device,
         &sctx.rs.queue,
-        canvas_render::FxScope::default(),
+        scope,
         &state.doc,
         &state.images,
         1.0,
@@ -192,12 +199,12 @@ pub(super) fn start_save_design(
         .map(|p| (p.width, p.height))
         .unwrap_or((0.0, 0.0));
     let scale = canvas_io::preview_scale(pw, ph);
-    sctx.renderer
-        .forget_scope(canvas_render::FxScope::default());
+    let scope = canvas_render::FxScope(sctx.scope);
+    sctx.renderer.forget_scope(scope);
     match sctx.renderer.bake_page(
         &sctx.rs.device,
         &sctx.rs.queue,
-        canvas_render::FxScope::default(),
+        scope,
         &state.doc,
         &state.images,
         scale,
@@ -222,19 +229,23 @@ pub(super) fn start_export(
     ctx: &egui::Context,
     path: PathBuf,
     settings: export::ExportSettings,
+    // `FxScope` de la ranura activa (único por ranura a nivel de proceso):
+    // el export no debe compartir el scope 0 con otras ventanas.
+    scope: u64,
 ) {
     if state.exporting {
         return;
     }
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
-    renderer.forget_scope(canvas_render::FxScope::default());
+    let scope = canvas_render::FxScope(scope);
+    renderer.forget_scope(scope);
 
     if settings.format.needs_bake() {
         match renderer.bake_page(
             &rs.device,
             &rs.queue,
-            canvas_render::FxScope::default(),
+            scope,
             &state.doc,
             &state.images,
             scale,
@@ -266,7 +277,7 @@ pub(super) fn start_export(
                 renderer.sync_layer_effects(
                     &rs.device,
                     &rs.queue,
-                    canvas_render::FxScope::default(),
+                    scope,
                     layer.id,
                     source,
                     &layer.effects,
@@ -274,7 +285,7 @@ pub(super) fn start_export(
             }
         }
     }
-    let blurred = renderer.blur_overrides(canvas_render::FxScope::default());
+    let blurred = renderer.blur_overrides(scope);
     let mut images: Vec<canvas_io::LayerPixels> = Vec::new();
     if let Ok(page) = state.doc.page() {
         for layer in &page.layers {

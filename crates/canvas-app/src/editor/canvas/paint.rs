@@ -59,7 +59,11 @@ pub(super) fn paint(
             let Some(slot) = deck.slots.get(idx) else {
                 continue;
             };
-            let scope = FxScope(slot.id);
+            // El scope es único a nivel de proceso (no el `slot.id`, que
+            // cada ventana reinicia en 1): el `CanvasRenderer` es compartido
+            // y dos ventanas con los mismos scopes se pisarían la caché de
+            // efectos cada frame.
+            let scope = FxScope(slot.scope);
             let view = geo.base_view * Affine::translate(slot.rect.origin());
             let mut rref = RenderRefs { renderer, rs };
             if idx == deck.active {

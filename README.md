@@ -107,6 +107,23 @@ filtran y solo se aceptan rutas que existan en disco.
 Para lanzar varias ventanas en paralelo mientras depuras (saltando el
 reenvío de instancia única): `CANVAS_DESKTOP_MULTI_INSTANCE=1 cargo run`.
 
+Diagnóstico del atlas de vello (scopes entre ventanas):
+
+- `CANVAS_DEBUG_WINDOWS=2` abre la misma ruta inicial en N ventanas del
+  MISMO proceso (un solo renderer compartido), el escenario real de dos
+  ventanas sobre la misma carpeta sin necesidad de clics.
+- `CANVAS_DEBUG_ATLAS=1` imprime por frame cuántas texturas nuevas se
+  registraron y cuántas se re-subieron al atlas en el renderer compartido
+  (y fuerza repintado continuo para poder observarlo en reposo). Con dos
+  ventanas de editor, el estado estacionario debe ser `0`/`0`; cualquier
+  re-subida por frame sin editar es un `FxScope` colisionando.
+
+Reproducción de la verificación: `cargo run -p canvas-io --example
+make_blur_design -- /tmp/Prueba.canvas` genera un diseño con capa de fondo
+desenfocado, y `cargo run -p canvas-render --example
+verify_two_windows_atlas` reproduce el escenario de dos ventanas con
+ediciones a nivel de renderer, imprimiendo las subidas al atlas por frame.
+
 ### macOS: carpetas en la nube requieren Full Disk Access
 
 Las carpetas de Google Drive, iCloud Drive, Dropbox o OneDrive viven en

@@ -642,3 +642,113 @@ fn bake_tall_blur_background_and_sharp_layer_not_flat() {
         "la capa nítida salió plana ({sharp_uniq} colores)"
     );
 }
+
+// ─── Aislamiento de scopes entre ventanas ───────────────────────────────
+
+/// Documento a página completa con una capa de imagen de un color sólido y
+/// blur. El desenfoque de una imagen uniforme es la misma imagen, así que
+/// el color del primer píxel identifica inequívocamente al documento —
+/// imprescindible para detectar interferencias entre scopes.
+fn doc_with_solid_blur(w: u32, h: u32, rgb: [u8; 3]) -> (Document, ImageMap) {
+    let mut doc = Document::new(f64::from(w), f64::from(h));
+    let id = doc
+        .add_layer(
+            "img",
+            Transform::new(0.0, 0.0, f64::from(w), f64::from(h)),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: w,
+                natural_height: h,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(id).unwrap().effects = Effects {
+        blur_radius: 50.0,
+        ..Default::default()
+    };
+    let pixels: Vec<u8> = (0..w * h)
+        .flat_map(|_| [rgb[0], rgb[1], rgb[2], 255])
+        .collect();
+    let mut images = ImageMap::new();
+    images.insert(id, image_data_from_rgba(pixels, w, h));
+    (doc, images)
+}
+
+/// Dos scopes DISTINTOS con el MISMO `LayerId` no interfieren — el caso
+/// real de dos ventanas abiertas sobre la misma carpeta (cada `Deck`
+/// empieza sus ids de ranura en 1, y el `CanvasRenderer` es compartido).
+/// Cada scope debe conservar su propia textura de efectos: hornear A,
+/// hornear B, volver a hornear A → A debe seguir siendo la de A (rojo) y
+/// B la de B (azul). Si la caché mezclara scopes, el segundo horneado de
+/// cada documento dibujaría la textura procesada del otro.
+#[test]
+#[ignore = "requiere GPU"]
+fn distinct_scopes_with_same_layer_id_do_not_interfere() {
+    let (device, queue) = gpu_device();
+    let (doc_a, images_a) = doc_with_solid_blur(64, 64, [255, 0, 0]); // ventana A: rojo
+    let (doc_b, images_b) = doc_with_solid_blur(64, 64, [0, 0, 255]); // ventana B: azul
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let scope_a = FxScope(1001);
+    let scope_b = FxScope(2002);
+
+    let (a1, _, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    let (b1, _, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_b,
+        &doc_b,
+        &images_b,
+        1.0,
+    );
+    // Interleave: cada documento vuelve a hornearse DESPUÉS del otro.
+    let (a2, _, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    let (b2, _, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_b,
+        &doc_b,
+        &images_b,
+        1.0,
+    );
+
+    assert!(
+        a1[0] > 200 && a1[2] < 60,
+        "A debería ser rojo (primer horneado): {:?}",
+        &a1[..4]
+    );
+    assert!(
+        b1[2] > 200 && b1[0] < 60,
+        "B debería ser azul (primer horneado): {:?}",
+        &b1[..4]
+    );
+    assert!(
+        a2[0] > 200 && a2[2] < 60,
+        "A cambió tras hornear B: {:?}",
+        &a2[..4]
+    );
+    assert!(
+        b2[2] > 200 && b2[0] < 60,
+        "B cambió tras volver a hornear A: {:?}",
+        &b2[..4]
+    );
+}

@@ -123,6 +123,11 @@ pub(crate) struct AppInner {
     /// que `focus_workspace` inmediato perdería el comando. Se consume en
     /// `root_frame` justo después de crear las hijas.
     pub(crate) pending_focus: Option<usize>,
+    /// Diagnóstico del atlas de vello (solo con `CANVAS_DEBUG_ATLAS=1`):
+    /// últimos totales vistos y contador de frames para el log periódico.
+    pub(crate) atlas_regs: u64,
+    pub(crate) atlas_reups: u64,
+    pub(crate) atlas_log_frames: u64,
 }
 
 /// Todo lo que hace falta para llevar un guardado a término: lo pedido, lo
@@ -249,7 +254,7 @@ impl App {
         // Menú nativo (Windows): necesita el HWND de la ventana recién creada.
         // Vive en `App` (fuera del `Arc` compartido), no en `AppInner`.
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut native_menus = None;
+        let mut native_menus: Option<menus::AppMenus> = None;
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -285,6 +290,9 @@ impl App {
             workspaces_dirty: false,
             paste_this_frame: false,
             pending_focus: None,
+            atlas_regs: 0,
+            atlas_reups: 0,
+            atlas_log_frames: 0,
         };
 
         // La app arranca SIEMPRE en la home (bienvenida) de la única ventana
@@ -295,7 +303,7 @@ impl App {
         let _ = std::mem::take(&mut inner.settings.workspaces);
 
         let path_to_open = initial_path;
-        if let Some(path) = path_to_open {
+        if let Some(path) = path_to_open.clone() {
             if path.exists() {
                 let ws0 = Arc::clone(&inner.workspaces[0]);
                 let mut ws0 = ws0.lock().unwrap();
@@ -303,6 +311,27 @@ impl App {
             } else {
                 tracing::info!("ruta inicial inexistente, se ignora: {}", path.display());
             }
+        }
+        // Gancho de desarrollo: `CANVAS_DEBUG_WINDOWS=2` (o más) abre la misma
+        // ruta inicial en N ventanas del MISMO proceso — un único renderer
+        // compartido, el escenario real de varias ventanas sobre la misma
+        // carpeta, sin clics. La app empaquetada nunca lo lleva activo; sirve
+        // para reproducir y verificar bugs de scopes/atlas en vivo.
+        if let Some(n) = std::env::var("CANVAS_DEBUG_WINDOWS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n >= 2)
+        {
+            for _ in 1..n.min(8) {
+                let ws = inner.new_workspace();
+                if let Some(path) = path_to_open.as_ref() {
+                    if path.exists() {
+                        let mut ws = ws.lock().unwrap();
+                        inner.open_path(&mut ws, path.clone(), &cc.egui_ctx);
+                    }
+                }
+            }
+            inner.pending_focus = Some(inner.workspaces.len() - 1);
         }
         inner.persist_workspaces_now();
 
@@ -517,6 +546,38 @@ impl AppInner {
             self.focus_workspace(idx, ctx);
         }
         self.finish_root_frame(ctx);
+        self.maybe_log_atlas(ctx);
+    }
+
+    /// Log de diagnóstico del atlas de vello, activado con
+    /// `CANVAS_DEBUG_ATLAS=1`. Cada frame imprime cuántas texturas NUEVAS se
+    /// registraron y cuántas se re-subieron (re-horneados) en el renderer
+    /// compartido. El estado estacionario de dos ventanas de editor debe ser
+    /// 0/0: cualquier re-subida por frame sin que nadie edite es un scope
+    /// colisionando entre ventanas. Además fuerza un repintado por frame
+    /// mientras está activo, para poder observar los contadores en vivo
+    /// aunque la UI esté en reposo (egui se detiene si nada cambia).
+    fn maybe_log_atlas(&mut self, ctx: &egui::Context) {
+        if std::env::var_os("CANVAS_DEBUG_ATLAS").is_none() {
+            return;
+        }
+        let stats = self.renderer.atlas_stats();
+        let reg = stats.registrations.saturating_sub(self.atlas_regs);
+        let reup = stats.reuploads.saturating_sub(self.atlas_reups);
+        self.atlas_regs = stats.registrations;
+        self.atlas_reups = stats.reuploads;
+        self.atlas_log_frames += 1;
+        if reg > 0 || reup > 0 || self.atlas_log_frames % 60 == 0 {
+            tracing::info!(
+                "atlas de vello: frame={} registros_nuevos={} re_subidas={} | acumulado: {} registros, {} re-subidas",
+                self.atlas_log_frames,
+                reg,
+                reup,
+                stats.registrations,
+                stats.reuploads,
+            );
+        }
+        ctx.request_repaint();
     }
 
     /// Tras los frames: retira las ventanas que pidieron cerrarse y

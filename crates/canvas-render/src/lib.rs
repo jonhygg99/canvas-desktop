@@ -33,10 +33,25 @@ pub enum RenderError {
     Bake(String),
 }
 
+/// Contadores acumulados de actividad del atlas de vello (diagnóstico).
+/// `registrations` = texturas nuevas registradas (entradas nuevas en el
+/// atlas); `reuploads` = texturas ya registradas marcadas como sucias para
+/// re-copiarse al atlas (re-horneados); `removals` = texturas des-registradas
+/// (entradas liberadas). El spam de subidas de dos ventanas de editor con
+/// scopes colisionando se ve aquí: `reuploads` subiendo CADA frame aunque
+/// nadie esté editando.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AtlasStats {
+    pub registrations: u64,
+    pub reuploads: u64,
+    pub removals: u64,
+}
+
 /// Renderizador del lienzo sobre un device wgpu ajeno (el de la ventana).
 pub struct CanvasRenderer {
     renderer: Renderer,
     blur: BlurEngine,
+    atlas: AtlasStats,
 }
 
 impl CanvasRenderer {
@@ -46,6 +61,7 @@ impl CanvasRenderer {
         Ok(Self {
             renderer,
             blur: BlurEngine::new(device),
+            atlas: AtlasStats::default(),
         })
     }
 
@@ -66,6 +82,9 @@ impl CanvasRenderer {
         effects: &canvas_core::Effects,
     ) {
         let renderer = &mut self.renderer;
+        // Se cuenta en un local y se suma tras `sync_layer`: el cierre solo
+        // puede prestar `self.renderer`, no `self.atlas` a la vez.
+        let mut new_registrations = 0u64;
         let outcome = self.blur.sync_layer(
             device,
             queue,
@@ -76,15 +95,23 @@ impl CanvasRenderer {
                 color: ColorParams::from(effects),
                 radius: effects.blur_radius,
             },
-            &mut |texture| renderer.register_texture(texture),
+            &mut |texture| {
+                new_registrations += 1;
+                renderer.register_texture(texture)
+            },
         );
+        self.atlas.registrations += new_registrations;
         match outcome {
             blur::FxSync::Unchanged => {}
             // Re-horneado: la textura registrada cambió de contenido sin
             // volver a registrarse — sin esto vello sigue usando la copia
             // que hizo en su atlas de imágenes la primera vez.
-            blur::FxSync::Rebaked(image) => renderer.mark_override_image_dirty(&image),
+            blur::FxSync::Rebaked(image) => {
+                self.atlas.reuploads += 1;
+                renderer.mark_override_image_dirty(&image);
+            }
             blur::FxSync::Removed(image) => {
+                self.atlas.removals += 1;
                 renderer.override_image(&image, None);
             }
         }
@@ -101,8 +128,20 @@ impl CanvasRenderer {
     /// indefinidamente aunque el documento ya no esté cargado.
     pub fn forget_scope(&mut self, scope: FxScope) {
         for image in self.blur.forget_scope(scope) {
+            self.atlas.removals += 1;
             self.renderer.override_image(&image, None);
         }
+    }
+
+    /// Contadores acumulados de actividad del atlas desde la creación o el
+    /// último `reset_atlas_stats`.
+    pub fn atlas_stats(&self) -> AtlasStats {
+        self.atlas
+    }
+
+    /// Pone los contadores del atlas a cero (para medir deltas por frame).
+    pub fn reset_atlas_stats(&mut self) {
+        self.atlas = AtlasStats::default();
     }
 
     /// Crea una textura destino compatible con vello (`Rgba8Unorm` +

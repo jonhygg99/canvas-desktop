@@ -24,6 +24,7 @@ pub(super) fn show_modals(
         tx: f.tx,
         ctx,
         ignore_fs_events_until: f.ignore_fs_events_until,
+        scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
     };
     overwrite_modal_ui(state, &mut sctx, f.save, f.settings);
 

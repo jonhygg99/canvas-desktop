@@ -1,6 +1,8 @@
 //! Tests de la baraja. Juntos a proposito: casi todos montan una baraja con
 //! `from_seed` y luego cruzan escaneo, layout, cache y navegacion a la vez.
 
+use std::collections::HashSet;
+
 use canvas_core::{Document, History, LayerId, Selection};
 use canvas_render::ImageMap;
 
@@ -727,4 +729,82 @@ fn evict_protects_the_jump_target() {
     );
     let _ = freed;
     let _ = (EVICT_BUDGET_BYTES, MAX_LOADED_SLOTS);
+}
+
+/// Los `Slot::scope` (los `FxScope` de efectos GPU) son únicos a nivel de
+/// PROCESO, no por baraja. El `CanvasRenderer` y su caché de efectos son
+/// compartidos entre ventanas, y cada `Deck` empieza sus `Slot::id` en 1:
+/// si el scope derivara del id, dos ventanas abiertas sobre la misma
+/// carpeta usarían los mismos scopes y se pisarían las texturas procesadas
+/// cada frame (crash/lienzo negro al editar en dos ventanas).
+#[test]
+fn scopes_are_globally_disjoint_across_decks() {
+    let deck_a = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    let deck_b = Deck::from_seed(seed(&["c.png", "d.png"]), Path::new("c.png"));
+    let deck_c = Deck::single(PathBuf::from("e.png"));
+
+    let scopes_a: HashSet<u64> = deck_a.slots.iter().map(|s| s.scope).collect();
+    let scopes_b: HashSet<u64> = deck_b.slots.iter().map(|s| s.scope).collect();
+    let scopes_c: HashSet<u64> = deck_c.slots.iter().map(|s| s.scope).collect();
+
+    // Ningún scope compartido entre barajas distintas.
+    assert!(
+        scopes_a.is_disjoint(&scopes_b),
+        "scopes de A y B se solapan"
+    );
+    assert!(
+        scopes_a.is_disjoint(&scopes_c),
+        "scopes de A y single se solapan"
+    );
+    assert!(
+        scopes_b.is_disjoint(&scopes_c),
+        "scopes de B y single se solapan"
+    );
+    // Y en particular, la primera ranura de cada baraja (mismo `id`, el 1)
+    // NO puede compartir scope.
+    assert_eq!(
+        deck_a.slots[0].id, deck_b.slots[0].id,
+        "ids coinciden por diseño"
+    );
+    assert_ne!(
+        deck_a.slots[0].scope, deck_b.slots[0].scope,
+        "el primer slot de A y B comparten scope: colisionarían en la caché de efectos"
+    );
+}
+
+/// `evict` devuelve los `FxScope` de las ranuras descartadas (los que el
+/// llamador debe liberar en el `CanvasRenderer`), no los `Slot::id` — con
+/// scopes únicos por proceso, liberar el scope de otra ranura/ventana
+/// colisionante dejaría de ser posible.
+#[test]
+fn evict_frees_scopes_not_ids() {
+    let mut deck = Deck::from_seed(
+        seed(&["a.png", "b.png", "c.png", "d.png", "e.png"]),
+        Path::new("a.png"),
+    );
+    for i in 0..deck.slots.len() {
+        if i != deck.active {
+            let mut doc = blank_slot_doc(10.0, 10.0);
+            // Limpia y sin historial de deshacer: expulsable por presupuesto.
+            doc.history.mark_saved();
+            // Que pese en el presupuesto de bytes (si no, `loaded_bytes` ya
+            // está bajo presupuesto y nada se descarta).
+            doc.bytes = 1;
+            deck.slots[i].content = SlotContent::Ready(Box::new(doc));
+        }
+    }
+    let freed = deck.evict_with_budget(0);
+    assert!(!freed.is_empty(), "con presupuesto 0 algo debe descartarse");
+    let freed_scopes: HashSet<u64> = freed.into_iter().map(|s| s.0).collect();
+    // Los scopes liberados son los de las ranuras que quedaron Idle.
+    let idle_scopes: HashSet<u64> = deck
+        .slots
+        .iter()
+        .filter(|s| matches!(s.content, SlotContent::Idle))
+        .map(|s| s.scope)
+        .collect();
+    assert_eq!(
+        freed_scopes, idle_scopes,
+        "evict debe liberar el scope de cada ranura descartada"
+    );
 }

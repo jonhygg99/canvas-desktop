@@ -279,6 +279,7 @@ pub(super) fn export_flow_ui(
             sctx.ctx,
             path,
             settings,
+            sctx.scope,
         );
     }
 }

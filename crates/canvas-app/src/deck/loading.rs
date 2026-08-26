@@ -129,6 +129,21 @@ pub(super) fn next_generation() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Identificador de `FxScope` de efectos GPU, único a nivel de PROCESO.
+/// El `CanvasRenderer` (y su caché de efectos, keyed por scope) es único y
+/// compartido por todas las ventanas, así que un contador por-baraja
+/// (como `Slot::id`, que cada ventana empieza en 1) haría que dos ventanas
+/// usaran los mismos scopes y se pisaran las texturas procesadas cada
+/// frame — re-horneados infinitos, crecimiento de registros GPU y, al
+/// llenarse el atlas de vello, lienzo negro o el crash al editar en dos
+/// ventanas. Los decks de `Deck::default()` se construyen bajo el lock del
+/// workspace del frame (un solo hilo de UI), así que el `fetch_add` sin
+/// sincronización fuerte es suficiente.
+pub(super) fn next_scope() -> u64 {
+    static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
+    NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)
+}
+
 pub(super) fn configured_inflight_limit() -> Option<usize> {
     std::env::var("CANVAS_PRELOAD_CONCURRENCY")
         .ok()

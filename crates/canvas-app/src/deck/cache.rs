@@ -78,7 +78,7 @@ impl Deck {
                 break;
             };
             self.slots[idx].content = SlotContent::Idle;
-            freed.push(FxScope(self.slots[idx].id));
+            freed.push(FxScope(self.slots[idx].scope));
         }
         freed
     }

@@ -72,6 +72,7 @@ pub(super) fn handle_save(
                         tx: f.tx,
                         ctx,
                         ignore_fs_events_until: f.ignore_fs_events_until,
+                        scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
                     };
                     start_save_design(state, &mut sctx, path, false);
                 }
@@ -107,6 +108,7 @@ pub(super) fn handle_save(
                             tx: f.tx,
                             ctx,
                             ignore_fs_events_until: f.ignore_fs_events_until,
+                            scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
                         };
                         start_save(state, &mut sctx, path, false, f.settings.jpeg_quality);
                     }
@@ -129,6 +131,7 @@ pub(super) fn handle_save(
                 tx: f.tx,
                 ctx,
                 ignore_fs_events_until: f.ignore_fs_events_until,
+                scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
             };
             start_save_design(state, &mut sctx, path, true);
         } else {
@@ -138,6 +141,7 @@ pub(super) fn handle_save(
                 tx: f.tx,
                 ctx,
                 ignore_fs_events_until: f.ignore_fs_events_until,
+                scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
             };
             start_save(state, &mut sctx, path, true, f.settings.jpeg_quality);
         }

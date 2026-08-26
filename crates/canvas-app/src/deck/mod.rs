@@ -28,7 +28,7 @@ pub use model::{DeckSeed, Slot, SlotContent, SlotDoc};
 pub use model::SeedItem;
 pub use nav::apply_jump;
 
-use loading::next_generation;
+use loading::{next_generation, next_scope};
 use model::idle_slot;
 
 /// La baraja del editor: todos los archivos de `folder`, con el activo
@@ -155,6 +155,7 @@ impl Deck {
             deck.next_order += 1;
             deck.slots.push(Slot {
                 id,
+                scope: next_scope(),
                 path: item.path,
                 name: item.name,
                 kind: item.kind,
