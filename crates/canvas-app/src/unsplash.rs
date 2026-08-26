@@ -26,6 +26,9 @@ pub const ACCESS_KEY_ENV: &str = "UNSPLASH_ACCESS_KEY";
 
 const SEARCH_URL: &str = "https://api.unsplash.com/search/photos";
 const PER_PAGE: u32 = 30;
+/// Margen lateral (en puntos) a cada lado de las tarjetas de foto en la
+/// lista: las imágenes quedan un poco más estrechas que el panel.
+const CARD_INSET: f32 = 12.0;
 
 /// Orientación de las fotos del resultado (parámetro `orientation` de la
 /// API). `Any` no envía el parámetro.
@@ -474,25 +477,27 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
         return;
     }
 
-    // Lista vertical: una tarjeta por foto, imagen grande a todo lo ancho.
-    let row_w = ui.available_width();
+    // Lista vertical: una tarjeta por foto, imagen grande y centrada, un
+    // poco más estrecha que el panel para que no ocupe todo el ancho
+    // (margen lateral de `CARD_INSET` a cada lado).
+    let row_w = (ui.available_width() - CARD_INSET * 2.0).max(120.0);
     let img_h = (row_w * 0.66).clamp(150.0, 320.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let inserting = &mut panel.inserting;
-            for item in panel.photos.iter_mut() {
-                photo_card_ui(item, inserting, row_w, img_h, ui, tx);
-                ui.add_space(12.0);
-            }
-            if !panel.photos.is_empty() {
-                ui.add_space(4.0);
-                ui.vertical_centered(|ui| {
+            ui.vertical_centered(|ui| {
+                let inserting = &mut panel.inserting;
+                for item in panel.photos.iter_mut() {
+                    photo_card_ui(item, inserting, row_w, img_h, ui, tx);
+                    ui.add_space(12.0);
+                }
+                if !panel.photos.is_empty() {
+                    ui.add_space(4.0);
                     if ui.button("Load more").clicked() {
                         load_more(panel, tx, ui.ctx());
                     }
-                });
-            }
+                }
+            });
         });
     ui.add_space(4.0);
     ui.weak("Photos from Unsplash — unsplash.com/license");
