@@ -123,9 +123,10 @@ impl AppInner {
             } => self.on_image_loaded_for_replace(ws, layer, label, source_path, result),
             AppMsg::UnsplashSearch {
                 query,
+                seq,
                 page,
                 result,
-            } => self.on_unsplash_search(ws, query, page, result, ctx),
+            } => self.on_unsplash_search(ws, query, seq, page, result, ctx),
             AppMsg::UnsplashThumb { id, result } => self.on_unsplash_thumb(ws, id, result, ctx),
             AppMsg::UnsplashImageReady { id, label, result } => {
                 self.on_unsplash_image_ready(ws, id, label, result)

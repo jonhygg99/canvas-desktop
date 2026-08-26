@@ -64,6 +64,7 @@ pub(super) fn show_panels(
         }
     }
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
+    tracing::info!("panels DBG: locked={locked} active_tab={:?}", state.active_left_tab);
     let layers_collapsed_before = f.settings.layers_collapsed;
     const COLLAPSED_WIDTH: f32 = 36.0;
     // Con la pestaña Images activa el panel se ensancha para que las fotos

@@ -16,6 +16,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         _query: String,
+        seq: u64,
         page: u32,
         result: Result<Vec<crate::unsplash::Photo>, String>,
         ctx: &egui::Context,
@@ -24,6 +25,12 @@ impl AppInner {
             return;
         };
         let panel = &mut state.unsplash;
+        // Respuesta caduca: entre medias se lanzó otra búsqueda (nuevo
+        // filtro/consulta), así que se ignora; el `searching` lo gestiona la
+        // búsqueda nueva.
+        if seq != panel.search_seq {
+            return;
+        }
         panel.searching = false;
         panel.page = page;
         match result {

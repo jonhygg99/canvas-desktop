@@ -69,8 +69,10 @@ pub enum AppMsg {
         result: Result<LoadedImage, String>,
     },
     /// Resultado de una búsqueda en Unsplash (fotos, sin miniaturas aún).
+    /// `seq` descarta respuestas caducas cuando se relanza con otros filtros.
     UnsplashSearch {
         query: String,
+        seq: u64,
         page: u32,
         result: Result<Vec<crate::unsplash::Photo>, String>,
     },

@@ -27,6 +27,164 @@ pub const ACCESS_KEY_ENV: &str = "UNSPLASH_ACCESS_KEY";
 const SEARCH_URL: &str = "https://api.unsplash.com/search/photos";
 const PER_PAGE: u32 = 30;
 
+/// Orientación de las fotos del resultado (parámetro `orientation` de la
+/// API). `Any` no envía el parámetro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Orientation {
+    #[default]
+    Any,
+    Landscape,
+    Portrait,
+    Squarish,
+}
+
+impl Orientation {
+    pub const ALL: [Self; 4] = [Self::Any, Self::Landscape, Self::Portrait, Self::Squarish];
+
+    /// Valor para la API; `None` = sin filtro.
+    pub fn as_str(self) -> Option<&'static str> {
+        match self {
+            Self::Any => None,
+            Self::Landscape => Some("landscape"),
+            Self::Portrait => Some("portrait"),
+            Self::Squarish => Some("squarish"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any",
+            Self::Landscape => "Landscape",
+            Self::Portrait => "Portrait",
+            Self::Squarish => "Square",
+        }
+    }
+}
+
+/// Color dominante de la foto (parámetro `color` de la API). `Any` no envía
+/// el parámetro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorFilter {
+    #[default]
+    Any,
+    BlackAndWhite,
+    Black,
+    White,
+    Yellow,
+    Orange,
+    Red,
+    Purple,
+    Magenta,
+    Green,
+    Teal,
+    Blue,
+}
+
+impl ColorFilter {
+    pub const ALL: [Self; 12] = [
+        Self::Any,
+        Self::BlackAndWhite,
+        Self::Black,
+        Self::White,
+        Self::Yellow,
+        Self::Orange,
+        Self::Red,
+        Self::Purple,
+        Self::Magenta,
+        Self::Green,
+        Self::Teal,
+        Self::Blue,
+    ];
+
+    /// Valor para la API; `None` = sin filtro.
+    pub fn as_str(self) -> Option<&'static str> {
+        match self {
+            Self::Any => None,
+            Self::BlackAndWhite => Some("black_and_white"),
+            Self::Black => Some("black"),
+            Self::White => Some("white"),
+            Self::Yellow => Some("yellow"),
+            Self::Orange => Some("orange"),
+            Self::Red => Some("red"),
+            Self::Purple => Some("purple"),
+            Self::Magenta => Some("magenta"),
+            Self::Green => Some("green"),
+            Self::Teal => Some("teal"),
+            Self::Blue => Some("blue"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any color",
+            Self::BlackAndWhite => "B&W",
+            Self::Black => "Black",
+            Self::White => "White",
+            Self::Yellow => "Yellow",
+            Self::Orange => "Orange",
+            Self::Red => "Red",
+            Self::Purple => "Purple",
+            Self::Magenta => "Magenta",
+            Self::Green => "Green",
+            Self::Teal => "Teal",
+            Self::Blue => "Blue",
+        }
+    }
+
+    /// Color aproximado para el punto de la UI; `None` para «sin filtro».
+    pub fn swatch(self) -> Option<egui::Color32> {
+        match self {
+            Self::Any => None,
+            Self::BlackAndWhite => Some(egui::Color32::from_gray(160)),
+            Self::Black => Some(egui::Color32::from_gray(20)),
+            Self::White => Some(egui::Color32::from_gray(235)),
+            Self::Yellow => Some(egui::Color32::from_rgb(245, 194, 17)),
+            Self::Orange => Some(egui::Color32::from_rgb(245, 137, 15)),
+            Self::Red => Some(egui::Color32::from_rgb(217, 30, 24)),
+            Self::Purple => Some(egui::Color32::from_rgb(142, 68, 173)),
+            Self::Magenta => Some(egui::Color32::from_rgb(214, 25, 99)),
+            Self::Green => Some(egui::Color32::from_rgb(0, 150, 64)),
+            Self::Teal => Some(egui::Color32::from_rgb(0, 121, 107)),
+            Self::Blue => Some(egui::Color32::from_rgb(0, 81, 186)),
+        }
+    }
+}
+
+/// Orden de los resultados (parámetro `order_by` de la API).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OrderBy {
+    #[default]
+    Relevant,
+    Latest,
+}
+
+impl OrderBy {
+    pub const ALL: [Self; 2] = [Self::Relevant, Self::Latest];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Relevant => "relevant",
+            Self::Latest => "latest",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Relevant => "Relevant",
+            Self::Latest => "Latest",
+        }
+    }
+}
+
+/// Filtros activos de la búsqueda. Se copian al worker para que la petición
+/// use los valores del momento en que se lanzó.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SearchFilters {
+    pub orientation: Orientation,
+    pub color: ColorFilter,
+    pub order_by: OrderBy,
+}
+
 /// Lee la Access Key del entorno; `None` si no está definida (o está vacía).
 pub fn access_key() -> Option<String> {
     std::env::var(ACCESS_KEY_ENV)
@@ -77,9 +235,9 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-/// Busca fotos en Unsplash. `page` es 1-based; devuelve hasta `PER_PAGE`
-/// resultados. Solo se llama desde hilos worker.
-pub fn search(query: &str, page: u32) -> Result<Vec<Photo>, String> {
+/// Busca fotos en Unsplash con los filtros dados. `page` es 1-based;
+/// devuelve hasta `PER_PAGE` resultados. Solo se llama desde hilos worker.
+pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<Vec<Photo>, String> {
     let Some(key) = access_key() else {
         return Err(format!("{ACCESS_KEY_ENV} is not set"));
     };
@@ -87,14 +245,22 @@ pub fn search(query: &str, page: u32) -> Result<Vec<Photo>, String> {
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let resp = agent()
+    let mut req = agent()
         .get(SEARCH_URL)
         .query("query", query)
         .query("page", &page.to_string())
         .query("per_page", &PER_PAGE.to_string())
-        .query("client_id", &key)
-        .call()
-        .map_err(|e| format!("Unsplash search failed: {e}"))?;
+        .query("client_id", &key);
+    // Solo se mandan los filtros activos: la API ignora (o falla) valores
+    // vacíos, así que un filtro «Any» simplemente no se envía.
+    if let Some(o) = filters.orientation.as_str() {
+        req = req.query("orientation", o);
+    }
+    if let Some(c) = filters.color.as_str() {
+        req = req.query("color", c);
+    }
+    req = req.query("order_by", filters.order_by.as_str());
+    let resp = req.call().map_err(|e| format!("Unsplash search failed: {e}"))?;
     let body = resp
         .into_string()
         .map_err(|e| format!("Unsplash search failed: {e}"))?;
@@ -136,11 +302,14 @@ pub fn decode(bytes: &[u8]) -> Result<canvas_io::LoadedImage, String> {
     })
 }
 
-/// Estado del panel «Images» del sidebar del editor: consulta, resultados
-/// (con sus miniaturas ya subidas a GPU) y errores. Vive en `EditorState`.
+/// Estado del panel «Images» del sidebar del editor: consulta, filtros,
+/// resultados (con sus miniaturas ya subidas a GPU) y errores. Vive en
+/// `EditorState`.
 #[derive(Default)]
 pub struct Panel {
     pub query: String,
+    /// Filtros activos de la búsqueda (orientación, color, orden).
+    pub filters: SearchFilters,
     /// Última página cargada (1-based).
     pub page: u32,
     /// Hay una búsqueda o descarga de lote en vuelo (desactiva la UI).
@@ -149,6 +318,102 @@ pub struct Panel {
     pub error: Option<String>,
     /// Id de la foto cuya imagen completa se está descargando para insertar.
     pub inserting: Option<String>,
+    /// Contador de búsquedas lanzadas: descarta respuestas caducas (llegarían
+    /// con los filtros/consulta anteriores).
+    pub search_seq: u64,
+}
+
+/// Lanza una búsqueda nueva (página 1) con la consulta y filtros actuales.
+/// No hace nada si ya hay una en vuelo o la consulta está vacía.
+fn start_search(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &egui::Context) {
+    if panel.searching || panel.query.trim().is_empty() {
+        return;
+    }
+    panel.search_seq += 1;
+    panel.searching = true;
+    panel.page = 1;
+    panel.photos.clear();
+    panel.error = None;
+    loader::spawn_unsplash_search(
+        panel.query.trim().to_owned(),
+        panel.filters,
+        panel.search_seq,
+        1,
+        tx.clone(),
+        ctx.clone(),
+    );
+}
+
+/// Pide la siguiente página de la búsqueda actual («Load more»).
+fn load_more(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &egui::Context) {
+    if panel.searching || panel.query.trim().is_empty() {
+        return;
+    }
+    panel.search_seq += 1;
+    panel.searching = true;
+    panel.page += 1;
+    loader::spawn_unsplash_search(
+        panel.query.trim().to_owned(),
+        panel.filters,
+        panel.search_seq,
+        panel.page,
+        tx.clone(),
+        ctx.clone(),
+    );
+}
+
+/// Fila de filtros (orientación, orden y color). Devuelve `true` si algún
+/// filtro cambió para relanzar la búsqueda.
+fn filters_ui(panel: &mut Panel, ui: &mut egui::Ui) -> bool {
+    let mut changed = false;
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        for o in Orientation::ALL {
+            if ui
+                .selectable_label(panel.filters.orientation == o, o.label())
+                .clicked()
+            {
+                panel.filters.orientation = o;
+                changed = true;
+            }
+        }
+    });
+
+    ui.add_space(2.0);
+    // Orden y color en la misma fila (envuelve si no caben).
+    ui.horizontal_wrapped(|ui| {
+        for ob in OrderBy::ALL {
+            if ui
+                .selectable_label(panel.filters.order_by == ob, ob.label())
+                .clicked()
+            {
+                panel.filters.order_by = ob;
+                changed = true;
+            }
+        }
+        ui.separator();
+        for c in ColorFilter::ALL {
+            let is_sel = panel.filters.color == c;
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+            let fill = c.swatch().unwrap_or(ui.visuals().faint_bg_color);
+            ui.painter().circle_filled(rect.center(), 6.5, fill);
+            if is_sel {
+                ui.painter().circle_stroke(
+                    rect.center(),
+                    8.5,
+                    egui::Stroke::new(2.0, ui.visuals().strong_text_color()),
+                );
+            }
+            if resp.clicked() {
+                panel.filters.color = c;
+                changed = true;
+            }
+            let _ = resp.on_hover_text(c.label());
+        }
+    });
+
+    changed
 }
 
 /// Un resultado con su miniatura (si ya llegó del worker).
@@ -170,6 +435,7 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
     let panel = &mut state.unsplash;
 
     ui.add_space(6.0);
+    let mut do_search = false;
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 58.0).max(110.0);
         let resp = ui.add(
@@ -179,19 +445,15 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
         );
         let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let clicked = ui.button("Search").clicked();
-        if (submit || clicked) && !panel.searching && !panel.query.trim().is_empty() {
-            panel.searching = true;
-            panel.page = 1;
-            panel.photos.clear();
-            panel.error = None;
-            loader::spawn_unsplash_search(
-                panel.query.trim().to_owned(),
-                1,
-                tx.clone(),
-                ui.ctx().clone(),
-            );
-        }
+        do_search = (submit || clicked) && !panel.query.trim().is_empty();
     });
+    // Cambiar un filtro relanza la búsqueda (si ya hay una consulta).
+    if filters_ui(panel, ui) && !panel.query.trim().is_empty() {
+        do_search = true;
+    }
+    if do_search {
+        start_search(panel, tx, ui.ctx());
+    }
 
     if panel.searching {
         ui.add_space(10.0);
@@ -227,14 +489,7 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
                 ui.add_space(4.0);
                 ui.vertical_centered(|ui| {
                     if ui.button("Load more").clicked() {
-                        panel.searching = true;
-                        panel.page += 1;
-                        loader::spawn_unsplash_search(
-                            panel.query.trim().to_owned(),
-                            panel.page,
-                            tx.clone(),
-                            ui.ctx().clone(),
-                        );
+                        load_more(panel, tx, ui.ctx());
                     }
                 });
             }
@@ -382,7 +637,7 @@ mod tests {
     fn search_without_key_is_an_error() {
         let had = std::env::var(ACCESS_KEY_ENV).ok();
         std::env::remove_var(ACCESS_KEY_ENV);
-        let err = search("mountain", 1).unwrap_err();
+        let err = search("mountain", 1, SearchFilters::default()).unwrap_err();
         assert!(err.contains(ACCESS_KEY_ENV), "{err}");
         match had {
             Some(key) => std::env::set_var(ACCESS_KEY_ENV, key),
@@ -397,5 +652,47 @@ mod tests {
         assert!(p.photos.is_empty());
         assert!(p.error.is_none());
         assert!(!p.searching);
+        assert_eq!(p.filters, SearchFilters::default());
+        assert_eq!(p.search_seq, 0);
+    }
+
+    #[test]
+    fn orientation_maps_to_api_values() {
+        assert_eq!(Orientation::Any.as_str(), None);
+        assert_eq!(Orientation::Landscape.as_str(), Some("landscape"));
+        assert_eq!(Orientation::Portrait.as_str(), Some("portrait"));
+        assert_eq!(Orientation::Squarish.as_str(), Some("squarish"));
+    }
+
+    #[test]
+    fn color_maps_to_api_values() {
+        assert_eq!(ColorFilter::Any.as_str(), None);
+        assert_eq!(ColorFilter::BlackAndWhite.as_str(), Some("black_and_white"));
+        assert_eq!(ColorFilter::Red.as_str(), Some("red"));
+        assert_eq!(ColorFilter::Teal.as_str(), Some("teal"));
+        // Todos los colores tienen etiqueta y punto de UI (excepto «Any»).
+        for c in ColorFilter::ALL {
+            assert!(!c.label().is_empty());
+            if c == ColorFilter::Any {
+                assert!(c.swatch().is_none());
+            } else {
+                assert!(c.swatch().is_some(), "{} sin swatch", c.label());
+            }
+        }
+    }
+
+    #[test]
+    fn order_by_maps_to_api_values() {
+        assert_eq!(OrderBy::Relevant.as_str(), "relevant");
+        assert_eq!(OrderBy::Latest.as_str(), "latest");
+        assert_eq!(OrderBy::default(), OrderBy::Relevant);
+    }
+
+    #[test]
+    fn filters_default_to_no_restrictions() {
+        let f = SearchFilters::default();
+        assert_eq!(f.orientation, Orientation::Any);
+        assert_eq!(f.color, ColorFilter::Any);
+        assert_eq!(f.order_by, OrderBy::Relevant);
     }
 }

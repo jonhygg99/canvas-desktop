@@ -9,13 +9,26 @@ use eframe::egui;
 
 use super::AppMsg;
 
-/// Lanza la búsqueda de `query` (página `page`, 1-based). La respuesta trae
-/// las fotos SIN miniaturas: el handler las pide una a una con
-/// `spawn_unsplash_thumb`.
-pub fn spawn_unsplash_search(query: String, page: u32, tx: Sender<AppMsg>, ctx: egui::Context) {
+/// Lanza la búsqueda de `query` (página `page`, 1-based) con los filtros
+/// `filters`. `seq` identifica la búsqueda para descartar respuestas
+/// caducas. La respuesta trae las fotos SIN miniaturas: el handler las pide
+/// una a una con `spawn_unsplash_thumb`.
+pub fn spawn_unsplash_search(
+    query: String,
+    filters: crate::unsplash::SearchFilters,
+    seq: u64,
+    page: u32,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
-        let result = crate::unsplash::search(&query, page);
-        let _ = tx.send(AppMsg::UnsplashSearch { query, page, result });
+        let result = crate::unsplash::search(&query, page, filters);
+        let _ = tx.send(AppMsg::UnsplashSearch {
+            query,
+            seq,
+            page,
+            result,
+        });
         ctx.request_repaint();
     });
 }
