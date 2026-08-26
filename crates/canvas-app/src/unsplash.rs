@@ -219,13 +219,26 @@ pub struct User {
     pub name: String,
 }
 
-/// Envuelve el JSON de `/search/photos`: resultados o lista de errores.
+/// Envuelve el JSON de `/search/photos`: resultados, errores y el total de
+/// páginas (para saber cuándo «Load more» ya no tiene más resultados).
 #[derive(Debug, serde::Deserialize)]
 struct SearchResponse {
     #[serde(default)]
     results: Vec<Photo>,
     #[serde(default)]
     errors: Vec<String>,
+    /// Páginas disponibles en total; `None` si la respuesta no lo trae.
+    #[serde(default)]
+    total_pages: Option<u32>,
+}
+
+/// Una página de resultados ya resuelta: las fotos y si esta era la última
+/// página (para ocultar «Load more» y avisar del final).
+#[derive(Debug, Clone)]
+pub struct SearchPage {
+    pub photos: Vec<Photo>,
+    /// `true` si no hay más páginas tras esta (fin de los resultados).
+    pub reached_end: bool,
 }
 
 /// Agente HTTP con tiempos de espera acotados: una red colgada no puede
@@ -239,14 +252,18 @@ fn agent() -> ureq::Agent {
 }
 
 /// Busca fotos en Unsplash con los filtros dados. `page` es 1-based;
-/// devuelve hasta `PER_PAGE` resultados. Solo se llama desde hilos worker.
-pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<Vec<Photo>, String> {
+/// devuelve hasta `PER_PAGE` resultados y si esta era la última página.
+/// Solo se llama desde hilos worker.
+pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<SearchPage, String> {
     let Some(key) = access_key() else {
         return Err(format!("{ACCESS_KEY_ENV} is not set"));
     };
     let query = query.trim();
     if query.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SearchPage {
+            photos: Vec::new(),
+            reached_end: true,
+        });
     }
     let mut req = agent()
         .get(SEARCH_URL)
@@ -272,7 +289,17 @@ pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<Vec<Phot
     if let Some(err) = parsed.errors.first() {
         return Err(err.clone());
     }
-    Ok(parsed.results)
+    Ok(SearchPage {
+        reached_end: reached_end(parsed.total_pages, page, parsed.results.len()),
+        photos: parsed.results,
+    })
+}
+
+/// ¿Esta página era la última? O la API dice que `page` alcanzó
+/// `total_pages`, o devolvió menos fotos de las que caben en una página
+/// (defensa si el campo `total_pages` falta en la respuesta).
+fn reached_end(total_pages: Option<u32>, page: u32, returned: usize) -> bool {
+    total_pages.is_some_and(|t| page >= t) || returned < PER_PAGE as usize
 }
 
 /// Descarga el contenido de una URL (miniatura o imagen completa). Solo se
@@ -319,6 +346,9 @@ pub struct Panel {
     pub searching: bool,
     pub photos: Vec<PhotoItem>,
     pub error: Option<String>,
+    /// Se llegó a la última página: «Load more» desaparece y se muestra un
+    /// aviso de fin de resultados.
+    pub reached_end: bool,
     /// Id de la foto cuya imagen completa se está descargando para insertar.
     pub inserting: Option<String>,
     /// Contador de búsquedas lanzadas: descarta respuestas caducas (llegarían
@@ -337,6 +367,7 @@ fn start_search(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &egui::Cont
     panel.page = 1;
     panel.photos.clear();
     panel.error = None;
+    panel.reached_end = false;
     loader::spawn_unsplash_search(
         panel.query.trim().to_owned(),
         panel.filters,
@@ -426,6 +457,61 @@ pub struct PhotoItem {
     pub thumb_failed: bool,
 }
 
+/// Botón «Load more» a todo lo ancho de la lista: píldora con borde sutil,
+/// un chevron simple hacia abajo + texto centrados como una unidad (ambos
+/// centrados verticalmente), y hover con fondo más claro — el mismo
+/// lenguaje visual que el resto de botones de la app.
+fn load_more_button_ui(ui: &mut egui::Ui, w: f32) -> egui::Response {
+    let visuals = ui.visuals().clone();
+    let font = egui::FontId::proportional(13.0);
+    let text = "Load more";
+    let icon_sz = 10.0;
+    let gap = 7.0;
+    let h = 30.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
+    let hovered = resp.hovered();
+    let bg = if hovered {
+        visuals.widgets.hovered.bg_fill
+    } else {
+        visuals.widgets.inactive.bg_fill
+    };
+    ui.painter().rect(
+        rect,
+        h * 0.5,
+        bg,
+        visuals.widgets.inactive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    let color = if hovered {
+        visuals.widgets.active.text_color()
+    } else {
+        visuals.strong_text_color()
+    };
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color);
+    // Icono + texto como una unidad centrada en la píldora; el texto se
+    // centra también en vertical (su esquina NO va al centro del botón).
+    let total = icon_sz + gap + galley.size().x;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x - total * 0.5 + icon_sz * 0.5, rect.center().y),
+        egui::vec2(icon_sz, icon_sz),
+    );
+    crate::app_icons::draw_triangle_icon(
+        ui.painter(),
+        icon_rect,
+        crate::app_icons::IconDir::Down,
+        color,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            icon_rect.right() + gap,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        color,
+    );
+    resp.on_hover_text("Load the next page of photos")
+}
+
 /// Contenido de la pestaña «Images» del panel lateral izquierdo.
 pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
     if access_key().is_none() {
@@ -458,7 +544,10 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
         start_search(panel, tx, ui.ctx());
     }
 
-    if panel.searching {
+    // Solo la PRIMERA búsqueda (sin resultados aún) muestra el spinner a
+    // pantalla completa; «Load more» mantiene la lista visible y avisa en la
+    // parte baja — nada de flashes al cargar la página siguiente.
+    if panel.searching && panel.photos.is_empty() {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.spinner();
@@ -466,14 +555,14 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
         });
         return;
     }
-    if let Some(err) = &panel.error {
-        ui.add_space(8.0);
-        ui.colored_label(ui.visuals().error_fg_color, err);
-        return;
-    }
     if panel.photos.is_empty() {
-        ui.add_space(8.0);
-        ui.weak("Search for photos and click one\nto add it to the canvas.");
+        if let Some(err) = &panel.error {
+            ui.add_space(8.0);
+            ui.colored_label(ui.visuals().error_fg_color, err);
+        } else {
+            ui.add_space(8.0);
+            ui.weak("Search for photos and click one\nto add it to the canvas.");
+        }
         return;
     }
 
@@ -491,12 +580,26 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
                     photo_card_ui(item, inserting, row_w, img_h, ui, tx);
                     ui.add_space(12.0);
                 }
-                if !panel.photos.is_empty() {
-                    ui.add_space(4.0);
-                    if ui.button("Load more").clicked() {
+                ui.add_space(4.0);
+                // Pie de la lista: mientras «Load more» está en vuelo solo
+                // se muestra la animación centrada bajo la última tarjeta
+                // (el botón desaparece); luego aviso de fin de resultados,
+                // error con reintento, o el botón de más resultados.
+                if panel.searching {
+                    ui.add(egui::Spinner::new().size(26.0));
+                } else if let Some(err) = &panel.error {
+                    ui.colored_label(ui.visuals().error_fg_color, err);
+                    if ui.button("Try again").clicked() {
                         load_more(panel, tx, ui.ctx());
                     }
+                } else if panel.reached_end {
+                    ui.weak("No more results for this search.");
+                } else if load_more_button_ui(ui, row_w).clicked() {
+                    load_more(panel, tx, ui.ctx());
                 }
+                // Aire bajo el pie de la lista: el botón/spinner/mensaje no
+                // queda pegado al borde inferior del panel al hacer scroll.
+                ui.add_space(12.0);
             });
         });
     ui.add_space(4.0);
@@ -657,6 +760,7 @@ mod tests {
         assert!(p.photos.is_empty());
         assert!(p.error.is_none());
         assert!(!p.searching);
+        assert!(!p.reached_end);
         assert_eq!(p.filters, SearchFilters::default());
         assert_eq!(p.search_seq, 0);
     }
@@ -699,5 +803,30 @@ mod tests {
         assert_eq!(f.orientation, Orientation::Any);
         assert_eq!(f.color, ColorFilter::Any);
         assert_eq!(f.order_by, OrderBy::Relevant);
+    }
+
+    #[test]
+    fn reached_end_is_true_when_total_pages_says_so() {
+        assert!(reached_end(Some(1), 1, PER_PAGE as usize));
+        assert!(reached_end(Some(3), 3, PER_PAGE as usize));
+        assert!(!reached_end(Some(3), 2, PER_PAGE as usize));
+    }
+
+    #[test]
+    fn reached_end_falls_back_to_short_page() {
+        // Sin `total_pages` en la respuesta, una página incompleta es el fin.
+        assert!(reached_end(None, 1, 7));
+        // Una página completa sin `total_pages` no es necesariamente el fin.
+        assert!(!reached_end(None, 1, PER_PAGE as usize));
+    }
+
+    #[test]
+    fn search_response_parses_total_pages() {
+        let json = r#"{"total_pages": 4, "results": []}"#;
+        let parsed: SearchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.total_pages, Some(4));
+        // El campo puede faltar (respuestas antiguas): se ignora.
+        let parsed: SearchResponse = serde_json::from_str(r#"{"results": []}"#).unwrap();
+        assert_eq!(parsed.total_pages, None);
     }
 }

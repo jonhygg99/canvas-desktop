@@ -18,7 +18,7 @@ impl AppInner {
         _query: String,
         seq: u64,
         page: u32,
-        result: Result<Vec<crate::unsplash::Photo>, String>,
+        result: Result<crate::unsplash::SearchPage, String>,
         ctx: &egui::Context,
     ) {
         let View::Editor(state) = &mut ws.view else {
@@ -34,14 +34,14 @@ impl AppInner {
         panel.searching = false;
         panel.page = page;
         match result {
-            Ok(photos) => {
+            Ok(page_result) => {
                 // Solo la primera página reinicia; «Load more» añade.
                 if page == 1 {
                     panel.photos.clear();
                 }
                 let existing: HashSet<String> =
                     panel.photos.iter().map(|p| p.photo.id.clone()).collect();
-                for photo in photos {
+                for photo in page_result.photos {
                     if existing.contains(&photo.id) {
                         continue;
                     }
@@ -55,6 +55,7 @@ impl AppInner {
                     });
                 }
                 panel.error = None;
+                panel.reached_end = page_result.reached_end;
                 if panel.photos.is_empty() {
                     panel.error = Some("No results for that query".to_owned());
                 }

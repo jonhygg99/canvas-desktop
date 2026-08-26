@@ -68,13 +68,14 @@ pub enum AppMsg {
         source_path: Option<PathBuf>,
         result: Result<LoadedImage, String>,
     },
-    /// Resultado de una búsqueda en Unsplash (fotos, sin miniaturas aún).
-    /// `seq` descarta respuestas caducas cuando se relanza con otros filtros.
+    /// Resultado de una búsqueda en Unsplash (fotos, sin miniaturas aún,
+    /// y si era la última página). `seq` descarta respuestas caducas cuando
+    /// se relanza con otros filtros.
     UnsplashSearch {
         query: String,
         seq: u64,
         page: u32,
-        result: Result<Vec<crate::unsplash::Photo>, String>,
+        result: Result<crate::unsplash::SearchPage, String>,
     },
     /// Miniatura de un resultado de Unsplash ya descargada y decodificada.
     UnsplashThumb {
