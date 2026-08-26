@@ -21,11 +21,7 @@ mod scan;
 mod tests;
 
 pub use geometry::{DeckAxis, DeckRect, MoveDir, StripSide};
-pub use model::{DeckSeed, Slot, SlotContent, SlotDoc};
-
-/// Solo lo necesitan los tests de otros módulos, para sembrar una baraja.
-#[cfg(test)]
-pub use model::SeedItem;
+pub use model::{DeckSeed, SeedItem, Slot, SlotContent, SlotDoc};
 pub use nav::apply_jump;
 
 use loading::{next_generation, next_scope};

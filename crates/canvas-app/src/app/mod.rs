@@ -669,5 +669,12 @@ impl AppInner {
         }
         let paste = paste_hook::take_request();
         self.ws_frame(ui, ctx, ws, idx, false, paste);
+        // Con el diagnóstico del atlas activo (`CANVAS_DEBUG_ATLAS=1`), la
+        // ventana hija también repinta cada frame: solo la raíz forzaba el
+        // repintado continuo, así que el modo estrés de dos ventanas era
+        // asimétrico (la hija apenas editaba).
+        if std::env::var_os("CANVAS_DEBUG_ATLAS").is_some() {
+            ctx.request_repaint_of(ws.viewport);
+        }
     }
 }
