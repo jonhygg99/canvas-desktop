@@ -136,6 +136,29 @@ impl Deck {
         true
     }
 
+    /// Convierte una provisional en la ranura real cuyo nombre acaba de
+    /// reservarse en disco (`canvas_io::reserve_numbered_path`): nombre
+    /// visible, ruta y `is_placeholder = false`, SIN tocar la lista — la
+    /// ranura ocupa exactamente el sitio que ocupaba la provisional. Devuelve
+    /// su índice para que el llamador actualice el documento (activo →
+    /// `EditorState`, de fondo → `SlotDoc`); `None` si la ranura ya no existe
+    /// o no era provisional — en ese caso el archivo reservado se queda sin
+    /// dueño y el llamador debe retirarlo.
+    pub fn materialize_placeholder(&mut self, id: u64, path: PathBuf) -> Option<usize> {
+        let idx = self.find_by_id(id)?;
+        let slot = self.slots.get_mut(idx)?;
+        if !slot.is_placeholder {
+            return None;
+        }
+        slot.name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        slot.path = path;
+        slot.is_placeholder = false;
+        Some(idx)
+    }
+
     /// Intercambia la posición VISUAL de la ranura `id` con su vecina
     /// adyacente (en el orden actual, sea cual sea). Un uso de las flechas
     /// ◀/▶ es una declaración explícita de "quiero ESTE orden": cambia
@@ -225,9 +248,11 @@ impl Deck {
         // reordenado la desplazase.
         let (placeholders, rest): (Vec<Slot>, Vec<Slot>) =
             self.slots.drain(..).partition(|s| s.is_placeholder);
+        let old_next_id = self.next_id;
         let mut old: HashMap<PathBuf, Slot> =
             rest.into_iter().map(|s| (s.path.clone(), s)).collect();
         let mut next_id = self.next_id;
+        let n_files = files.len();
         let mut slots = Vec::with_capacity(files.len());
         for (path, mtime) in files {
             match old.remove(&path) {
@@ -244,6 +269,7 @@ impl Deck {
                 }
             }
         }
+        let n_dropped = old.len();
         for (_, slot) in old {
             let keep = matches!(&slot.content, SlotContent::Active)
                 || matches!(&slot.content, SlotContent::Ready(doc) if doc.history.is_dirty());
@@ -251,6 +277,7 @@ impl Deck {
                 slots.push(slot);
             }
         }
+        let (n_new, n_ph) = (next_id - old_next_id, placeholders.len());
         self.slots = slots;
         self.next_id = next_id;
         self.apply_sort();
@@ -260,6 +287,10 @@ impl Deck {
                 self.active = idx;
             }
         }
+        tracing::info!(
+            "merge_scan: files={n_files}, nuevas={n_new}, descartadas={n_dropped}, provisionales={n_ph}, activa_restaurada={}",
+            self.active
+        );
     }
 
     /// Entrega una miniatura llegada de un hilo de trabajo (por ruta: el

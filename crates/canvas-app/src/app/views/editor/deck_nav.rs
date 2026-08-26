@@ -135,37 +135,47 @@ pub(super) fn resolve(
         }
         None => {}
     }
-    if let Some(target) = deck_target {
-        if let Some(idx) = f.deck.find_by_path(&target) {
-            f.deck.jump_to = Some(idx);
-            f.deck.jump_reframe = true;
-        }
-    } else if let Some(&next_id) = f.save.save_all_queue.first() {
-        if f.deck.slots.get(f.deck.active).map(|s| s.id) != Some(next_id) {
-            match f.deck.find_by_id(next_id) {
+    // Si ya hay un salto pendiente (`jump_to` — zona «+» de la baraja,
+    // botón «+» de la tira, o uno anterior esperando a que el editor se
+    // quedara ocioso), NINGUNA petición del resto del frame puede pisarlo:
+    // el «+» es la interacción más reciente y el trazo que el usuario dibuje
+    // a continuación debe caer en el lienzo recién creado. Antes este bloque
+    // podía sobreescribir `jump_to` (Save all, PageUp/PageDown, deshacer
+    // global) y el lienzo nuevo quedaba sin activar — el dibujo se iba al
+    // lienzo equivocado y el nuevo se quedaba en blanco.
+    if f.deck.jump_to.is_none() {
+        if let Some(target) = deck_target {
+            if let Some(idx) = f.deck.find_by_path(&target) {
+                f.deck.jump_to = Some(idx);
+                f.deck.jump_reframe = true;
+            }
+        } else if let Some(&next_id) = f.save.save_all_queue.first() {
+            if f.deck.slots.get(f.deck.active).map(|s| s.id) != Some(next_id) {
+                match f.deck.find_by_id(next_id) {
+                    Some(idx) => {
+                        f.deck.jump_to = Some(idx);
+                        f.deck.jump_reframe = true;
+                    }
+                    None => {
+                        f.save.save_all_queue.remove(0);
+                    }
+                }
+            }
+        } else if let Some(id) = state
+            .pending_global_undo
+            .as_ref()
+            .or(state.pending_global_redo.as_ref())
+            .map(editor::GlobalStep::slot_id)
+        {
+            match f.deck.find_by_id(id) {
                 Some(idx) => {
                     f.deck.jump_to = Some(idx);
                     f.deck.jump_reframe = true;
                 }
                 None => {
-                    f.save.save_all_queue.remove(0);
+                    state.discard_pending_global_undo();
+                    state.discard_pending_global_redo();
                 }
-            }
-        }
-    } else if let Some(id) = state
-        .pending_global_undo
-        .as_ref()
-        .or(state.pending_global_redo.as_ref())
-        .map(editor::GlobalStep::slot_id)
-    {
-        match f.deck.find_by_id(id) {
-            Some(idx) => {
-                f.deck.jump_to = Some(idx);
-                f.deck.jump_reframe = true;
-            }
-            None => {
-                state.discard_pending_global_undo();
-                state.discard_pending_global_redo();
             }
         }
     }

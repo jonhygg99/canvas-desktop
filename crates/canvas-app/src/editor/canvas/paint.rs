@@ -55,6 +55,13 @@ pub(super) fn paint(
     let surface = &mut *geo.surface;
     {
         let scene = surface.scene_mut();
+        // Ancla de atlas (ver `canvas_render::draw_atlas_anchor`): sin esto,
+        // un frame donde NINGUNA ranura visible tenga imágenes (cámara entre
+        // páginas, solo lienzos vectoriales a la vista) deja la escena sin
+        // patches y vello recrea el atlas GPU vacío, blanqueando todas las
+        // fotos. El `append_document` de cada ranura también la dibuja; aquí
+        // se cubre además el caso de cero ranuras visibles.
+        canvas_render::draw_atlas_anchor(scene);
         for &idx in geo.visible {
             let Some(slot) = deck.slots.get(idx) else {
                 continue;

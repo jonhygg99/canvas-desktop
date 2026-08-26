@@ -1,9 +1,11 @@
 //! Construccion de la escena vello a partir del documento.
 
+use std::sync::{Arc, OnceLock};
+
 use canvas_core::{Document, LayerContent};
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::color::palette;
-use vello::peniko::Fill;
+use vello::peniko::{Blob, Fill, ImageAlphaType, ImageData, ImageFormat};
 use vello::Scene;
 
 mod raster;
@@ -19,6 +21,38 @@ pub use text::text_lines;
 use raster::{checker_image, place_transform};
 use shape::draw_shape;
 use text::draw_text;
+
+/// Píxel de 1x1 transparente que se dibuja (fuera de página) en TODA escena
+/// que se mande al renderizador compartido. Ver `draw_atlas_anchor`.
+pub fn atlas_anchor() -> &'static ImageData {
+    static ANCHOR: OnceLock<ImageData> = OnceLock::new();
+    ANCHOR.get_or_init(|| ImageData {
+        data: Blob::new(Arc::new([0u8; 4])),
+        format: ImageFormat::Rgba8,
+        width: 1,
+        height: 1,
+        alpha_type: ImageAlphaType::Alpha,
+    })
+}
+
+/// Garantiza que `scene` tenga al menos UN patch de imagen. Vello 0.9, ante
+/// una escena sin patches (`Resolver::resolve` vuelve pronto con
+/// `Images::default()`, de ancho 0), redimensiona el proxy GPU del atlas de
+/// imágenes a 1x1: LIBERA la textura grande y crea una vacía. La caché CPU
+/// del atlas no se entera — las imágenes ya residentes conservan sus
+/// coordenadas con `dirty=false`, nunca se re-suben, y todos los lienzos con
+/// fotos quedan en blanco hasta que algo fuerce una re-subida (volver a la
+/// galería recrea el renderer; un efecto que cambie marca la suya).
+///
+/// El disparador real del bug reportado: guardar un lienzo SOLO vectorial
+/// (p. ej. un canvas nuevo con un triángulo) hornea una escena sin ninguna
+/// imagen y, al compartir renderer con la baraja viva, borra el atlas de
+/// TODAS las fotos. También bastaba con que la cámara quedara un frame entre
+/// páginas sin ninguna imagen a la vista. Dibujar este píxel invisible en
+/// cada escena hace que nunca sea patchless: el atlas GPU se conserva.
+pub fn draw_atlas_anchor(scene: &mut Scene) {
+    scene.draw_image(atlas_anchor(), Affine::translate((-1.0e9, -1.0e9)));
+}
 
 /// Construye la escena de UN documento con la transformación de vista dada
 /// (página → píxeles físicos del lienzo). Envoltorio de una sola llamada a
@@ -68,6 +102,9 @@ pub fn append_document(
     view: Affine,
     decorated: bool,
 ) {
+    // Antes del retorno temprano: el ancla tiene que estar aunque la página
+    // no exista (ver `draw_atlas_anchor`).
+    draw_atlas_anchor(scene);
     let Ok(page) = doc.page() else {
         return;
     };

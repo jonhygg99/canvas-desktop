@@ -498,6 +498,58 @@ fn push_placeholder_needs_a_folder() {
     assert_eq!(deck.slots.len(), 1);
 }
 
+/// Regresión del bug «los lienzos se quedan en blanco tras añadir uno»: al
+/// materializar una provisional (la respuesta de `reserve_numbered_path`
+/// llegando a `on_canvas_path_reserved`), la ranura se convierte en real
+/// EN EL MISMO SITIO — la lista no crece. Antes se encadenaba un
+/// `push_placeholder` automático por cada materialización, y cada lienzo
+/// nuevo terminado dejaba una provisional fantasma en blanco al final de la
+/// baraja (y, al tocarla, un archivo vacío de verdad en la carpeta).
+#[test]
+fn materialize_placeholder_converts_in_place_without_adding_slots() {
+    let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+    let idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
+    deck.active = idx;
+    let id = deck.slots[idx].id;
+
+    // `join` (no barras pegadas a mano): el separador real de la plataforma
+    // — `file_name()` sobre una ruta con barras ajenas devolvería la ruta
+    // entera en el otro sistema.
+    let real = seed(&[]).folder.join("1.canvas");
+    assert_eq!(deck.materialize_placeholder(id, real.clone()), Some(idx));
+    assert_eq!(
+        deck.slots.len(),
+        2,
+        "materializar no debe añadir ni quitar ranuras"
+    );
+    let slot = &deck.slots[idx];
+    assert!(!slot.is_placeholder, "la provisional debe pasar a real");
+    assert_eq!(slot.path, real);
+    assert_eq!(slot.name, "1.canvas");
+}
+
+#[test]
+fn materialize_placeholder_rejects_unknown_or_already_real_slots() {
+    let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+    let idx = deck.push_placeholder((800.0, 600.0), "png").unwrap();
+    let id = deck.slots[idx].id;
+
+    assert_eq!(
+        deck.materialize_placeholder(id, PathBuf::from(r"C:\folder\1.png")),
+        Some(idx)
+    );
+    // La misma ranura, ya real: no es provisional.
+    assert_eq!(
+        deck.materialize_placeholder(id, PathBuf::from(r"C:\folder\2.png")),
+        None
+    );
+    // Una ranura que no existe.
+    assert_eq!(
+        deck.materialize_placeholder(9999, PathBuf::from(r"C:\folder\3.png")),
+        None
+    );
+}
+
 #[test]
 fn merge_scan_keeps_the_placeholder_and_leaves_it_last() {
     let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));

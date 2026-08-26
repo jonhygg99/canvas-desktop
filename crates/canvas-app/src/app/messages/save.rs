@@ -145,6 +145,12 @@ impl AppInner {
             ws.deck_ops.materializing = None;
         }
         if ws.deck.folder.as_deref() != Some(folder.as_path()) {
+            // El archivo reservado ya no tiene dueño: se retira el hueco de
+            // 0 bytes que deja (la galería lo listaría como lienzo en
+            // blanco) — la baraja no volverá a esta carpeta.
+            if let Ok(path) = &result {
+                let _ = std::fs::remove_file(path);
+            }
             tracing::warn!(
                 "baraja: reserva de nombre para «{}» llegó tras cambiar de carpeta; \
              el archivo reservado queda huérfano",
@@ -154,33 +160,34 @@ impl AppInner {
         }
         match result {
             Ok(path) => {
-                let Some(idx) = ws.deck.find_by_id(slot) else {
-                    tracing::warn!(
-                        "baraja: la ranura provisional ya no existe al reservar su nombre"
-                    );
-                    return;
-                };
-                if let Some(s) = ws.deck.slots.get_mut(idx) {
-                    s.name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    s.path = path.clone();
-                    s.is_placeholder = false;
-                }
-                if idx == ws.deck.active {
-                    if let View::Editor(state) = &mut ws.view {
-                        state.is_design = canvas_io::is_canvas_file(&path);
-                        state.doc.source_path = Some(path);
-                        state.save_clicked = true;
+                // Materializa la provisional SIN crear ninguna ranura nueva:
+                // la provisional ya ocupa su sitio en la baraja y su
+                // documento ya está en memoria (activo o en su `SlotDoc`).
+                match ws.deck.materialize_placeholder(slot, path.clone()) {
+                    Some(idx) if idx == ws.deck.active => {
+                        if let View::Editor(state) = &mut ws.view {
+                            state.is_design = canvas_io::is_canvas_file(&path);
+                            state.doc.source_path = Some(path);
+                            state.save_clicked = true;
+                        }
                     }
-                } else if let deck::SlotContent::Ready(d) = &mut ws.deck.slots[idx].content {
-                    d.doc.source_path = Some(path);
+                    Some(idx) => {
+                        if let deck::SlotContent::Ready(d) = &mut ws.deck.slots[idx].content {
+                            d.doc.source_path = Some(path);
+                        }
+                    }
+                    // La provisional ya no existe (el usuario la descartó
+                    // entre la petición y la respuesta): el archivo reservado
+                    // es un hueco de 0 bytes sin dueño que la galería listaría
+                    // como lienzo en blanco — se retira.
+                    None => {
+                        let _ = std::fs::remove_file(&path);
+                        tracing::warn!(
+                            "baraja: la ranura provisional ya no existe al reservar su nombre; \
+                         se retira el archivo vacío"
+                        );
+                    }
                 }
-                ws.deck.push_placeholder(
-                    self.settings.last_page_size,
-                    self.settings.new_canvas_format.extension(),
-                );
             }
             Err(e) => {
                 ws.deck_ops.materialize_blocked = Some(slot);

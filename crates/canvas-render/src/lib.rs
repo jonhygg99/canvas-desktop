@@ -5,7 +5,7 @@ mod blur;
 mod scene;
 
 pub use blur::{ColorParams, FxScope, SyncLayerRequest};
-pub use scene::{append_document, build_scene, image_data_from_rgba, text_lines, ImageMap};
+pub use scene::{append_document, build_scene, draw_atlas_anchor, image_data_from_rgba, text_lines, ImageMap};
 
 /// Dimensiones y color base para `render_with_base`, agrupadas para reducir
 /// la firma de 8 a 6 parámetros.
