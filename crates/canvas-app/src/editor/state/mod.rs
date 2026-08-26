@@ -13,6 +13,7 @@ pub(crate) enum LeftTab {
     Page,
     Layers,
     Insert,
+    Images,
 }
 
 use super::interaction::Gesture;
@@ -84,6 +85,8 @@ pub struct EditorState {
     pub layers_panel_toggle: bool,
     /// Pestaña activa en el panel izquierdo.
     pub active_left_tab: LeftTab,
+    /// Estado del buscador de imágenes de Unsplash (pestaña «Images»).
+    pub unsplash: crate::unsplash::Panel,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,

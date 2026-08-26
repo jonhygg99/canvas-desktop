@@ -616,6 +616,32 @@ pub fn draw_folder_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     painter.add(egui::Shape::line(pts, stroke(color)));
 }
 
+/// Imágenes (pestaña «Images» del editor, búsqueda de Unsplash): marco de
+/// foto con un sol y una montaña — el icono clásico de imagen.
+pub fn draw_images_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height());
+    let frame = egui::Rect::from_center_size(rect.center(), egui::vec2(s * 0.84, s * 0.70));
+    painter.rect_stroke(frame, 2.0, egui::Stroke::new(1.4, color), egui::StrokeKind::Inside);
+    let sun = egui::pos2(frame.left() + s * 0.22, frame.top() + s * 0.24);
+    painter.circle_stroke(sun, s * 0.085, egui::Stroke::new(1.3, color));
+    let base_y = frame.bottom() - s * 0.06;
+    let peak = egui::pos2(frame.center().x, frame.top() + s * 0.28);
+    painter.line_segment(
+        [
+            egui::pos2(frame.left() + s * 0.10, base_y),
+            peak,
+        ],
+        egui::Stroke::new(1.3, color),
+    );
+    painter.line_segment(
+        [
+            peak,
+            egui::pos2(frame.right() - s * 0.12, base_y),
+        ],
+        egui::Stroke::new(1.3, color),
+    );
+}
+
 /// Destello (✨ de la bienvenida): cuatro rayos concéntricos de longitud
 /// alternada.
 pub fn draw_sparkle_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {

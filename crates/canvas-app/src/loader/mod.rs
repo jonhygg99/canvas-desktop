@@ -4,14 +4,16 @@
 //! Dividido en submódulos por dominio: `load_ops` (abrir imágenes/diseños/
 //! ranuras de la baraja, y los diálogos de abrir archivo/carpeta),
 //! `save_ops` (guardar), `export_ops` (exportar), `gallery_ops`
-//! (operaciones de archivos de la galería) e `image_import` (añadir/
-//! reemplazar una capa de imagen, incluida la descarga por URL).
+//! (operaciones de archivos de la galería), `image_import` (añadir/
+//! reemplazar una capa de imagen, incluida la descarga por URL) y
+//! `unsplash_ops` (búsqueda de imágenes de Unsplash).
 
 mod export_ops;
 mod gallery_ops;
 mod image_import;
 mod load_ops;
 mod save_ops;
+mod unsplash_ops;
 
 use std::path::PathBuf;
 
@@ -34,6 +36,7 @@ pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_reserve_canvas_path, spawn_save,
     spawn_save_design, SaveInput,
 };
+pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -63,6 +66,24 @@ pub enum AppMsg {
         layer: LayerId,
         label: String,
         source_path: Option<PathBuf>,
+        result: Result<LoadedImage, String>,
+    },
+    /// Resultado de una búsqueda en Unsplash (fotos, sin miniaturas aún).
+    UnsplashSearch {
+        query: String,
+        page: u32,
+        result: Result<Vec<crate::unsplash::Photo>, String>,
+    },
+    /// Miniatura de un resultado de Unsplash ya descargada y decodificada.
+    UnsplashThumb {
+        id: String,
+        result: Result<LoadedImage, String>,
+    },
+    /// Imagen completa de Unsplash descargada y decodificada, lista para
+    /// insertarse como capa nueva del documento abierto.
+    UnsplashImageReady {
+        id: String,
+        label: String,
         result: Result<LoadedImage, String>,
     },
     SaveAsPicked(Option<PathBuf>),

@@ -3,6 +3,9 @@
 /Canvas Desktop.app
 .freebuff/
 
+# Configuración local con secretos (clave de Unsplash). Copia .env.example a .env.
+.env
+
 # scaffolding del refactor
 .refactor-tools/__pycache__/
 /dist

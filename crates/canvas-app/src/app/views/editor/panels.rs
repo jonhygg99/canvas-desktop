@@ -6,6 +6,7 @@
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 
+use crate::editor::state::LeftTab;
 use crate::{deck, deck_strip, editor, layers_panel};
 
 use super::super::super::frame::EditorFrame;
@@ -65,7 +66,13 @@ pub(super) fn show_panels(
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
     let layers_collapsed_before = f.settings.layers_collapsed;
     const COLLAPSED_WIDTH: f32 = 36.0;
-    const EXPANDED_WIDTH: f32 = 220.0;
+    // Con la pestaña Images activa el panel se ensancha para que las fotos
+    // de Unsplash se vean grandes; el resto de pestañas usan el ancho normal.
+    let expanded_width = if state.active_left_tab == LeftTab::Images {
+        320.0
+    } else {
+        220.0
+    };
     const PANEL_ANIM_SECS: f64 = 0.2;
 
     let anim_salt = egui::Id::new("layers_panel_anim");
@@ -81,7 +88,7 @@ pub(super) fn show_panels(
     let mut width = if target_collapsed {
         COLLAPSED_WIDTH
     } else {
-        EXPANDED_WIDTH
+        expanded_width
     };
     if let Some((target, start, started)) = &mut anim {
         if !*started {
@@ -97,16 +104,16 @@ pub(super) fn show_panels(
             let t = (elapsed / PANEL_ANIM_SECS) as f32;
             let ease = 1.0 - (1.0 - t).powi(3);
             if *target {
-                width = EXPANDED_WIDTH + (COLLAPSED_WIDTH - EXPANDED_WIDTH) * ease;
+                width = expanded_width + (COLLAPSED_WIDTH - expanded_width) * ease;
             } else {
-                width = COLLAPSED_WIDTH + (EXPANDED_WIDTH - COLLAPSED_WIDTH) * ease;
+                width = COLLAPSED_WIDTH + (expanded_width - COLLAPSED_WIDTH) * ease;
             }
             ui.ctx().request_repaint();
         }
     }
     ui.data_mut(|d| d.insert_temp(anim_salt, anim));
 
-    let midpoint = (COLLAPSED_WIDTH + EXPANDED_WIDTH) * 0.5;
+    let midpoint = (COLLAPSED_WIDTH + expanded_width) * 0.5;
     egui::Panel::left("layers")
         .frame(egui::Frame::NONE)
         .exact_size(width)
@@ -135,6 +142,7 @@ pub(super) fn show_panels(
                         ui,
                         &mut f.settings.layers_collapsed,
                         f.settings.layers_tab_order,
+                        f.tx,
                     );
                     if let Some(new_order) = new_order {
                         if f.settings.layers_tab_order != new_order {

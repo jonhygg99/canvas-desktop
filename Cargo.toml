@@ -64,6 +64,13 @@ arboard = { version = "3", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Cliente HTTP bloqueante para la búsqueda de imágenes de Unsplash (API +
+# descarga). TLS vía rustls: sin dependencias de C, funciona en macOS,
+# Windows y Linux. Se usa solo en hilos worker del loader, nunca en la UI.
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+# Carga de `.env` del directorio de trabajo (o sus padres) al arrancar: la
+# clave de Unsplash vive en el `.env` del proyecto, sin tocar el shell.
+dotenvy = "0.15"
 base64 = "0.22"
 thiserror = "2"
 anyhow = "1"

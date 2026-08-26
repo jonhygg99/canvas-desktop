@@ -8,9 +8,9 @@ use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_arrow_preview, draw_ellipse_preview, draw_layers_icon, draw_line_preview, draw_page_icon,
-    draw_rect_preview, draw_sparkle_icon, draw_star_preview, draw_text_preview,
-    draw_triangle_preview,
+    draw_arrow_preview, draw_ellipse_preview, draw_images_icon, draw_layers_icon,
+    draw_line_preview, draw_page_icon, draw_rect_preview, draw_sparkle_icon, draw_star_preview,
+    draw_text_preview, draw_triangle_preview,
 };
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
@@ -77,10 +77,20 @@ pub fn left_panel_ui(
     ui: &mut egui::Ui,
     layers_collapsed: &mut bool,
     order: LayersTabOrder,
+    tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
 ) -> Option<LayersTabOrder> {
     sidebar::compact(ui);
     let mut new_order = None;
-    ui.horizontal(|ui| {
+    // `ui.horizontal` arranca con altura = `interact_size.y` (22pt) y limita
+    // a sus hijos a esa altura inicial: la tira de pestañas se dibuja
+    // desbordando (el clic es geométrico, no de layout) pero el contenido
+    // del panel —listas y scroll— quedaba aplastado a ~0pt. Con
+    // `allocate_ui_with_layout` el layout horizontal recibe TODA la altura
+    // disponible del panel y el contenido ocupa el vertical completo.
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.available_height()),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
         new_order = vertical_tab_strip_ui(
             ui,
             &mut state.active_left_tab,
@@ -98,6 +108,7 @@ pub fn left_panel_ui(
                 LeftTab::Page => "Page",
                 LeftTab::Layers => "Layers",
                 LeftTab::Insert => "Insert",
+                LeftTab::Images => "Images",
             };
             sidebar::title(ui, tab_name);
             ui.add_space(6.0);
@@ -105,6 +116,7 @@ pub fn left_panel_ui(
                 LeftTab::Page => {
                     page_ui(state, ui);
                 }
+                LeftTab::Images => crate::unsplash::panel_ui(state, ui, tx),
                 LeftTab::Layers => {
                     toolbar_ui(state, ui);
                     ui.separator();
@@ -170,14 +182,14 @@ struct TabSwapAnim {
 /// Duración del deslizamiento del intercambio de pestañas.
 const SWAP_ANIM_SECS: f64 = 0.2;
 
-/// Las tres pestañas: Page y Layers reordenables según los ajustes,
-/// Insert siempre al final con un separador.
-fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 3] {
+/// Las cuatro pestañas: Page y Layers reordenables según los ajustes, e
+/// Insert e Images fijas detrás con un separador delante de Insert.
+fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 4] {
     let (first, second) = match order {
         LayersTabOrder::PageFirst => (LeftTab::Page, LeftTab::Layers),
         LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
     };
-    [first, second, LeftTab::Insert]
+    [first, second, LeftTab::Insert, LeftTab::Images]
 }
 
 /// Tamaño de las cajas de la cuadrícula Insert.
@@ -338,6 +350,7 @@ fn tab_tip(tab: LeftTab) -> &'static str {
         LeftTab::Page => "Page settings",
         LeftTab::Layers => "Layers",
         LeftTab::Insert => "Insert",
+        LeftTab::Images => "Images (Unsplash)",
     }
 }
 
@@ -352,6 +365,7 @@ fn tab_icon(tab: LeftTab) -> fn(&egui::Painter, egui::Rect, egui::Color32) {
         LeftTab::Page => draw_page_icon,
         LeftTab::Layers => draw_layers_icon,
         LeftTab::Insert => draw_sparkle_icon,
+        LeftTab::Images => draw_images_icon,
     }
 }
 
@@ -403,7 +417,7 @@ pub(crate) fn vertical_tab_strip_ui(
     }
 
     // Rectos de las pestañas, en el orden de los ajustes.
-    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(3);
+    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(4);
     let mut y = strip_rect.top() + top_margin;
     for tab in ordered_tabs(order).iter() {
         // Separador antes de Insert
@@ -698,11 +712,11 @@ mod tests {
     fn ordered_tabs_follows_the_setting() {
         assert_eq!(
             ordered_tabs(LayersTabOrder::PageFirst),
-            [LeftTab::Page, LeftTab::Layers, LeftTab::Insert]
+            [LeftTab::Page, LeftTab::Layers, LeftTab::Insert, LeftTab::Images]
         );
         assert_eq!(
             ordered_tabs(LayersTabOrder::LayersFirst),
-            [LeftTab::Layers, LeftTab::Page, LeftTab::Insert]
+            [LeftTab::Layers, LeftTab::Page, LeftTab::Insert, LeftTab::Images]
         );
     }
 
@@ -712,5 +726,6 @@ mod tests {
         assert!(order.contains(&LeftTab::Page));
         assert!(order.contains(&LeftTab::Layers));
         assert!(order.contains(&LeftTab::Insert));
+        assert!(order.contains(&LeftTab::Images));
     }
 }

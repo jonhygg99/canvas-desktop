@@ -23,6 +23,7 @@ mod gallery;
 mod load;
 mod save;
 mod shell;
+mod unsplash;
 
 impl AppInner {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería de
@@ -120,6 +121,15 @@ impl AppInner {
                 source_path,
                 result,
             } => self.on_image_loaded_for_replace(ws, layer, label, source_path, result),
+            AppMsg::UnsplashSearch {
+                query,
+                page,
+                result,
+            } => self.on_unsplash_search(ws, query, page, result, ctx),
+            AppMsg::UnsplashThumb { id, result } => self.on_unsplash_thumb(ws, id, result, ctx),
+            AppMsg::UnsplashImageReady { id, label, result } => {
+                self.on_unsplash_image_ready(ws, id, label, result)
+            }
             AppMsg::GalleryScanned { folder, files } => {
                 self.on_gallery_scanned(ws, folder, files, ctx)
             }

@@ -27,6 +27,7 @@ mod paste_hook;
 mod settings;
 mod sidebar;
 mod surface;
+mod unsplash;
 mod watcher;
 mod welcome;
 
@@ -36,6 +37,12 @@ use canvas_shell::ShellIntegration as _;
 use eframe::egui;
 
 fn main() -> Result<()> {
+    // `.env` del directorio de trabajo (o sus padres): la clave de Unsplash
+    // y otras variables de configuración viven en el proyecto, sin tocar el
+    // shell. No pisa variables ya definidas en el entorno (comportamiento
+    // por defecto de dotenvy); sin `.env` no pasa nada.
+    let _ = dotenvy::dotenv();
+
     // Los informes de crash se instalan antes que nada: cualquier pánico
     // posterior (incluidos los de hilos worker) queda escrito en disco con
     // backtrace y las últimas líneas de log.

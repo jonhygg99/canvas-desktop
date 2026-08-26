@@ -1,0 +1,112 @@
+//! Respuestas de la búsqueda de Unsplash: los resultados de la API, cada
+//! miniatura (se sube a GPU en el hilo de UI, como las de la galería) y la
+//! imagen completa lista para insertarse como capa nueva.
+
+use std::collections::HashSet;
+
+use eframe::egui;
+
+use crate::loader;
+use crate::unsplash::PhotoItem;
+
+use super::super::{AppInner, View, Workspace};
+
+impl AppInner {
+    pub(super) fn on_unsplash_search(
+        &mut self,
+        ws: &mut Workspace,
+        _query: String,
+        page: u32,
+        result: Result<Vec<crate::unsplash::Photo>, String>,
+        ctx: &egui::Context,
+    ) {
+        let View::Editor(state) = &mut ws.view else {
+            return;
+        };
+        let panel = &mut state.unsplash;
+        panel.searching = false;
+        panel.page = page;
+        match result {
+            Ok(photos) => {
+                // Solo la primera página reinicia; «Load more» añade.
+                if page == 1 {
+                    panel.photos.clear();
+                }
+                let existing: HashSet<String> =
+                    panel.photos.iter().map(|p| p.photo.id.clone()).collect();
+                for photo in photos {
+                    if existing.contains(&photo.id) {
+                        continue;
+                    }
+                    let id = photo.id.clone();
+                    let thumb_url = photo.urls.small.clone();
+                    loader::spawn_unsplash_thumb(id, thumb_url, ws.tx.clone(), ctx.clone());
+                    panel.photos.push(PhotoItem {
+                        photo,
+                        thumb: None,
+                        thumb_failed: false,
+                    });
+                }
+                panel.error = None;
+                if panel.photos.is_empty() {
+                    panel.error = Some("No results for that query".to_owned());
+                }
+            }
+            Err(e) => panel.error = Some(e),
+        }
+    }
+
+    pub(super) fn on_unsplash_thumb(
+        &mut self,
+        ws: &mut Workspace,
+        id: String,
+        result: Result<canvas_io::LoadedImage, String>,
+        ctx: &egui::Context,
+    ) {
+        let View::Editor(state) = &mut ws.view else {
+            return;
+        };
+        let Some(item) = state
+            .unsplash
+            .photos
+            .iter_mut()
+            .find(|p| p.photo.id == id)
+        else {
+            return;
+        };
+        match result {
+            Ok(img) => {
+                let color = egui::ColorImage::from_rgba_unmultiplied(
+                    [img.width as usize, img.height as usize],
+                    &img.rgba,
+                );
+                item.thumb = Some(ctx.load_texture(
+                    format!("unsplash-thumb-{id}"),
+                    color,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
+            Err(e) => {
+                tracing::warn!("miniatura de Unsplash {id} falló: {e}");
+                item.thumb_failed = true;
+            }
+        }
+    }
+
+    pub(super) fn on_unsplash_image_ready(
+        &mut self,
+        ws: &mut Workspace,
+        _id: String,
+        label: String,
+        result: Result<canvas_io::LoadedImage, String>,
+    ) {
+        let View::Editor(state) = &mut ws.view else {
+            return;
+        };
+        state.unsplash.inserting = None;
+        match result {
+            Ok(img) => state.add_image_layer(label, None, img),
+            Err(e) => state.save_error = Some(format!("Unsplash: {e}")),
+        }
+    }
+}
