@@ -330,7 +330,7 @@ pub(super) fn layer_properties_ui(
         if icon_text_button_ui(
             ui,
             true,
-            |p, r, c| draw_target_icon(p, r, c),
+            draw_target_icon,
             "Center on page",
             None,
             egui::Vec2::ZERO,
@@ -347,7 +347,7 @@ pub(super) fn layer_properties_ui(
         if icon_text_button_ui(
             ui,
             true,
-            |p, r, c| draw_fill_icon(p, r, c),
+            draw_fill_icon,
             "Cover the page",
             None,
             egui::Vec2::ZERO,
@@ -372,23 +372,9 @@ pub(super) fn layer_properties_ui(
         sidebar::section(ui, "Crop", true, |ui| {
             ui.horizontal(|ui| {
                 let crop_resp = if state.crop_mode {
-                    icon_text_button_ui(
-                        ui,
-                        true,
-                        |p, r, c| draw_check_icon(p, r, c),
-                        "Done",
-                        None,
-                        egui::Vec2::ZERO,
-                    )
+                    icon_text_button_ui(ui, true, draw_check_icon, "Done", None, egui::Vec2::ZERO)
                 } else {
-                    icon_text_button_ui(
-                        ui,
-                        true,
-                        |p, r, c| draw_crop_icon(p, r, c),
-                        "Crop",
-                        None,
-                        egui::Vec2::ZERO,
-                    )
+                    icon_text_button_ui(ui, true, draw_crop_icon, "Crop", None, egui::Vec2::ZERO)
                 };
                 if crop_resp
                     .on_hover_text(

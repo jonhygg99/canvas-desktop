@@ -219,6 +219,17 @@ pub(super) fn start_save_design(
     loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());
 }
 
+/// Lo pedido en el diálogo de exportación ya resuelto: destino, ajustes y
+/// scope de la ranura activa. Agrupado para reducir la firma de
+/// `start_export` de 8 a 6 parámetros.
+pub(super) struct ExportRequest {
+    pub(super) path: PathBuf,
+    pub(super) settings: export::ExportSettings,
+    /// `FxScope` de la ranura activa (único por ranura a nivel de proceso):
+    /// el export no debe compartir el scope 0 con otras ventanas.
+    pub(super) scope: u64,
+}
+
 /// PNG/JPEG hornean en la GPU igual que al guardar; SVG/PDF se generan a
 /// mano a partir del documento.
 pub(super) fn start_export(
@@ -227,15 +238,16 @@ pub(super) fn start_export(
     rs: &RenderState,
     tx: &Sender<AppMsg>,
     ctx: &egui::Context,
-    path: PathBuf,
-    settings: export::ExportSettings,
-    // `FxScope` de la ranura activa (único por ranura a nivel de proceso):
-    // el export no debe compartir el scope 0 con otras ventanas.
-    scope: u64,
+    request: ExportRequest,
 ) {
     if state.exporting {
         return;
     }
+    let ExportRequest {
+        path,
+        settings,
+        scope,
+    } = request;
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
     let scope = canvas_render::FxScope(scope);

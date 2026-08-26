@@ -43,7 +43,7 @@ pub fn show(
             if icon_text_button_ui(
                 ui,
                 true,
-                |p, r, c| draw_sparkle_icon(p, r, c),
+                draw_sparkle_icon,
                 "New design",
                 None,
                 egui::vec2(BUTTON_W, BUTTON_H),
@@ -56,7 +56,7 @@ pub fn show(
             if icon_text_button_ui(
                 ui,
                 true,
-                |p, r, c| draw_doc_icon(p, r, c),
+                draw_doc_icon,
                 "Open file…",
                 None,
                 egui::vec2(BUTTON_W, BUTTON_H),
@@ -69,7 +69,7 @@ pub fn show(
             if icon_text_button_ui(
                 ui,
                 true,
-                |p, r, c| draw_folder_icon(p, r, c),
+                draw_folder_icon,
                 "Open folder…",
                 None,
                 egui::vec2(BUTTON_W, BUTTON_H),
@@ -142,15 +142,8 @@ pub fn show(
             ui.add_space(18.0);
             ui.weak("You can also drag an image or a folder onto this window.");
             ui.add_space(8.0);
-            if icon_text_button_ui(
-                ui,
-                true,
-                |p, r, c| draw_gear_icon(p, r, c),
-                "Settings",
-                None,
-                egui::Vec2::ZERO,
-            )
-            .clicked()
+            if icon_text_button_ui(ui, true, draw_gear_icon, "Settings", None, egui::Vec2::ZERO)
+                .clicked()
             {
                 action = Some(WelcomeAction::OpenSettings);
             }
@@ -216,7 +209,7 @@ fn recent_folder_ui(
 
     // ── Zona borrar (izquierda) ──
     let trash_area = egui::Rect::from_min_size(row_rect.left_top(), egui::vec2(side_area, height));
-    let over_trash = hovered && hover_pos.map_or(false, |p| trash_area.contains(p));
+    let over_trash = hovered && hover_pos.is_some_and(|p| trash_area.contains(p));
     if over_trash {
         ui.painter()
             .rect_filled(trash_area, 4.0, visuals.widgets.hovered.weak_bg_fill);
@@ -251,7 +244,7 @@ fn recent_folder_ui(
         egui::pos2(row_rect.right() - side_area, row_rect.top()),
         egui::vec2(side_area, height),
     );
-    let over_pin = hover_pos.map_or(false, |p| pin_area.contains(p));
+    let over_pin = hover_pos.is_some_and(|p| pin_area.contains(p));
 
     if over_pin {
         ui.painter()
@@ -290,10 +283,10 @@ fn recent_folder_ui(
 
     // ── Clic ──
     if row_resp.clicked() {
-        if hover_pos.map_or(false, |p| trash_area.contains(p)) {
+        if hover_pos.is_some_and(|p| trash_area.contains(p)) {
             return Some(WelcomeAction::RemoveRecent(path.to_owned()));
         }
-        if hover_pos.map_or(false, |p| pin_area.contains(p)) {
+        if hover_pos.is_some_and(|p| pin_area.contains(p)) {
             return if is_pinned {
                 Some(WelcomeAction::UnpinRecent(path.to_owned()))
             } else {

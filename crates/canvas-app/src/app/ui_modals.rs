@@ -277,9 +277,11 @@ pub(super) fn export_flow_ui(
             sctx.rs,
             sctx.tx,
             sctx.ctx,
-            path,
-            settings,
-            sctx.scope,
+            super::persistence::ExportRequest {
+                path,
+                settings,
+                scope: sctx.scope,
+            },
         );
     }
 }

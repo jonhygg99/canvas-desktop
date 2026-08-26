@@ -218,16 +218,7 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
     ui.weak("Ctrl+C / Ctrl+V: copy layers, even between designs");
     ui.add_space(4.0);
-    if icon_text_button_ui(
-        ui,
-        true,
-        |p, r, c| draw_gear_icon(p, r, c),
-        "Settings",
-        None,
-        egui::Vec2::ZERO,
-    )
-    .clicked()
-    {
+    if icon_text_button_ui(ui, true, draw_gear_icon, "Settings", None, egui::Vec2::ZERO).clicked() {
         state.settings_clicked = true;
     }
 }
@@ -275,7 +266,7 @@ fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading(state.file_name());
             if state.doc.source_path.is_some()
-                && icon_button_ui(ui, 16.0, true, |p, r, c| draw_pencil_icon(p, r, c)).clicked()
+                && icon_button_ui(ui, 16.0, true, draw_pencil_icon).clicked()
             {
                 let stem = state
                     .doc

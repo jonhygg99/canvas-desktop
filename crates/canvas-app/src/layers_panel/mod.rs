@@ -255,8 +255,17 @@ pub(crate) fn vertical_tab_strip_ui(
     let active_c = ui.visuals().widgets.active.text_color();
     let inactive_c = ui.visuals().widgets.inactive.text_color();
     let hover_fill = ui.visuals().widgets.hovered.weak_bg_fill;
+    // El estilo es común a todas las pestañas del pase (y al fantasma del
+    // drag): se arma una vez y se presta a cada `draw_vertical_tab`.
     let tab_h = 64.0;
     let icon_size = 20.0;
+    let style = TabStyle {
+        strong,
+        active_c,
+        inactive_c,
+        hover_fill,
+        icon_size,
+    };
 
     let available_h = ui.available_height();
     // Margen superior fijo, no centrado: así las pestañas no saltan de
@@ -283,7 +292,7 @@ pub(crate) fn vertical_tab_strip_ui(
     // Rectos de las pestañas, en el orden de los ajustes.
     let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(3);
     let mut y = strip_rect.top() + top_margin;
-    for (_i, tab) in ordered_tabs(order).iter().enumerate() {
+    for tab in ordered_tabs(order).iter() {
         // Separador antes de Insert
         if *tab == LeftTab::Insert {
             y += TAB_GAP; // espacio extra como separador visual
@@ -405,12 +414,8 @@ pub(crate) fn vertical_tab_strip_ui(
             visual_rect,
             is_active,
             false,
-            strong,
-            active_c,
-            inactive_c,
-            hover_fill,
+            &style,
             tab_icon(*tab),
-            icon_size,
             icon_fade,
         );
         if is_drop_target {
@@ -441,17 +446,21 @@ pub(crate) fn vertical_tab_strip_ui(
                     6.0,
                     egui::Color32::from_rgba_unmultiplied(0, 122, 255, 40),
                 );
+                // Fantasma: siempre inactivo y sin desvanecer, pero usa el
+                // color ACTIVO como tinta del icono (así era antes del
+                // agrupado: se pasa `active_c` también en la ranura de
+                // `inactive_c`).
+                let ghost_style = TabStyle {
+                    inactive_c: style.active_c,
+                    ..style
+                };
                 draw_vertical_tab(
                     ui.painter(),
                     ghost,
                     false,
                     false,
-                    strong,
-                    active_c,
-                    active_c,
-                    hover_fill,
+                    &ghost_style,
                     tab_icon(d.tab),
-                    icon_size,
                     1.0,
                 );
             }
@@ -512,6 +521,19 @@ pub(crate) fn vertical_tab_strip_ui(
     new_order
 }
 
+/// Estilo fijo de las pestañas verticales de la tira del panel: idéntico
+/// para todas las llamadas de un mismo pase. Lo que varía por llamada
+/// (rect, estado, icono, fundido) queda fuera. Agrupado para reducir la
+/// firma de `draw_vertical_tab` de 11 a 7 parámetros.
+#[derive(Clone, Copy)]
+struct TabStyle {
+    strong: egui::Color32,
+    active_c: egui::Color32,
+    inactive_c: egui::Color32,
+    hover_fill: egui::Color32,
+    icon_size: f32,
+}
+
 /// `icon_fade` (1.0 = opaco) atenúa solo el color del icono, no el fondo:
 /// durante el cruce del intercambio, cuanto más cerca están las dos
 /// pestañas de solaparse, más transparente se vuelve su icono.
@@ -520,15 +542,11 @@ fn draw_vertical_tab(
     rect: egui::Rect,
     is_active: bool,
     hovered: bool,
-    strong: egui::Color32,
-    active_c: egui::Color32,
-    inactive_c: egui::Color32,
-    hover_fill: egui::Color32,
+    style: &TabStyle,
     draw_icon: fn(&egui::Painter, egui::Rect, egui::Color32),
-    icon_size: f32,
     icon_fade: f32,
 ) {
-    let is_dark = strong.r() > 128;
+    let is_dark = style.strong.r() > 128;
     if is_active {
         painter.rect_filled(
             rect,
@@ -537,23 +555,24 @@ fn draw_vertical_tab(
         );
         // Left edge accent
         let indicator = egui::Rect::from_min_size(rect.left_top(), egui::vec2(2.5, rect.height()));
-        painter.rect_filled(indicator, 2.5, strong);
+        painter.rect_filled(indicator, 2.5, style.strong);
     } else if hovered {
         // Fondo sutil al hover: solo-icono, el área debe leerse clicable.
-        painter.rect_filled(rect, 4.0, hover_fill);
+        painter.rect_filled(rect, 4.0, style.hover_fill);
     }
 
     let color = if is_active {
-        strong
+        style.strong
     } else if hovered {
-        active_c
+        style.active_c
     } else {
-        inactive_c
+        style.inactive_c
     };
     let color = color.gamma_multiply(icon_fade);
 
     // Icono centrado en la pestaña
-    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size));
+    let icon_rect =
+        egui::Rect::from_center_size(rect.center(), egui::vec2(style.icon_size, style.icon_size));
     draw_icon(painter, icon_rect, color);
 }
 

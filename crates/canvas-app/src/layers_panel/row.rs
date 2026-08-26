@@ -79,9 +79,9 @@ pub(super) fn row_ui(
                 if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
                     let frac =
                         ((pos.y - full_rect.top()) / full_rect.height().max(1.0)).clamp(0.0, 1.0);
-                    let drop = if is_background {
-                        Drop::Above(row.id)
-                    } else if frac < 0.25 {
+                    // El fondo solo recibe «encima de» y el cuarto superior
+                    // del rect cuenta como «encima de» también.
+                    let drop = if is_background || frac < 0.25 {
                         Drop::Above(row.id)
                     } else if frac > 0.75 {
                         Drop::Below(row.id)
@@ -184,8 +184,7 @@ fn row_prefix_buttons(
     }
 
     if is_background {
-        icon_label_ui(ui, GROUP_ARROW_W, |p, r, c| draw_blur_icon(p, r, c))
-            .on_hover_text("Blurred background");
+        icon_label_ui(ui, GROUP_ARROW_W, draw_blur_icon).on_hover_text("Blurred background");
     }
 }
 

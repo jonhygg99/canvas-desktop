@@ -48,7 +48,7 @@ pub fn icon_button_ui(
     } else {
         visuals.widgets.inactive.text_color()
     };
-    draw(&ui.painter(), rect, color);
+    draw(ui.painter(), rect, color);
     resp
 }
 
@@ -103,7 +103,7 @@ pub fn icon_text_button_ui(
         egui::pos2(rect.left() + pad_x + icon_sz / 2.0, rect.center().y),
         egui::vec2(icon_sz, icon_sz),
     );
-    draw(&ui.painter(), icon_rect, color);
+    draw(ui.painter(), icon_rect, color);
     ui.painter().text(
         egui::pos2(icon_rect.right() + gap, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -127,7 +127,7 @@ pub fn icon_label_ui(
     } else {
         ui.visuals().widgets.inactive.text_color()
     };
-    draw(&ui.painter(), rect, color);
+    draw(ui.painter(), rect, color);
     resp
 }
 

@@ -288,7 +288,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m as u32, d)
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// Deja solo los `keep` informes más nuevos (los nombres llevan la marca
@@ -300,7 +300,7 @@ fn prune_reports(dir: &Path, keep: usize) {
     let mut files: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |e| e == "log"))
+        .filter(|p| p.extension().is_some_and(|e| e == "log"))
         .collect();
     files.sort();
     if files.len() > keep {

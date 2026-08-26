@@ -448,7 +448,9 @@ mod tests {
         assert_eq!(super::folder_refresh_delay(1), Duration::from_secs(2));
         assert_eq!(super::folder_refresh_delay(2), Duration::from_secs(4));
         assert_eq!(super::folder_refresh_delay(9), Duration::from_secs(4));
-        assert!(super::FOLDER_REFRESH_ATTEMPTS >= 2);
+        // Guarda en tiempo de compilación: la tabla de backoff de arriba
+        // asume al menos estos intentos de refresco automático.
+        const _: () = assert!(super::FOLDER_REFRESH_ATTEMPTS >= 2);
     }
 
     #[test]
