@@ -240,11 +240,14 @@ fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                         "Line" => state.insert_layer_centered(
                             "Line",
                             400.0,
-                            24.0,
+                            48.0,
                             LayerContent::Shape(canvas_core::ShapeContent {
                                 kind: canvas_core::ShapeKind::Line,
                                 stroke: [30, 30, 30, 255],
-                                stroke_width: 6.0,
+                                stroke_width: 16.0,
+                                // Extremos redondeados (mitad del trazo);
+                                // ajustable con «Corner radius».
+                                corner_radius: 8.0,
                                 ..Default::default()
                             }),
                         ),
@@ -272,6 +275,14 @@ fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                             200.0,
                             LayerContent::Shape(canvas_core::ShapeContent {
                                 kind: canvas_core::ShapeKind::Arrow,
+                                // El astil grueso iguala a la línea: con el
+                                // grosor por defecto (2 px) la flecha era un
+                                // palo fino + triángulo gigante.
+                                stroke_width: 16.0,
+                                // Punta y base redondeadas (≈18 % del largo
+                                // de la cabeza); ajustable con «Corner
+                                // radius» en el panel de propiedades.
+                                corner_radius: 28.0,
                                 ..Default::default()
                             }),
                         ),

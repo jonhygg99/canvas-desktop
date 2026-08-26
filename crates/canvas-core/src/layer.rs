@@ -266,7 +266,9 @@ pub struct ShapeContent {
     /// Borde RGBA; alfa 0 = sin borde.
     pub stroke: [u8; 4],
     pub stroke_width: f32,
-    /// Radio de esquina (solo Rect).
+    /// Radio de esquina, en píxeles. Rect: esquinas del rect. Line: extremos
+    /// de la línea (0 = a tajo, > 0 = redondeados). Arrow: punta y base de la
+    /// cabeza y extremos del astil (0 = todo a tajo).
     pub corner_radius: f32,
 }
 

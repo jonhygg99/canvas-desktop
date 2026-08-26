@@ -30,6 +30,7 @@ pub use layer::{
 };
 pub use selection::Selection;
 pub use shape_geom::{
-    arrow_head_points, arrow_shaft_end_x, star_points, triangle_points,
+    arrow_head_points, arrow_head_rounded, arrow_shaft_end_x, rounded_polygon_path, star_points,
+    triangle_points, RoundedPath,
 };
 pub use snap::{snap_translation, SnapResult};

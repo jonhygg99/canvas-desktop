@@ -48,7 +48,14 @@ pub(super) fn shape_content_ui(
         changed |= r.changed();
         commit |= r.drag_stopped() || r.lost_focus();
     });
-    if shape.kind == canvas_core::ShapeKind::Rect {
+    // El radio de esquina aplica al rectángulo, a la línea/astil (0 =
+    // extremos a tajo, > 0 = redondeados) y a la cabeza de la flecha.
+    if matches!(
+        shape.kind,
+        canvas_core::ShapeKind::Rect
+            | canvas_core::ShapeKind::Line
+            | canvas_core::ShapeKind::Arrow
+    ) {
         ui.horizontal(|ui| {
             ui.label("Corner radius");
             let r = ui.add(

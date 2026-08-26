@@ -1,6 +1,8 @@
 //! Emision de una capa de forma (rectangulo, elipse, linea, poligono...).
 
-use canvas_core::{arrow_head_points, arrow_shaft_end_x, star_points, triangle_points, ShapeKind};
+use canvas_core::{
+    arrow_head_rounded, arrow_shaft_end_x, star_points, triangle_points, ShapeKind,
+};
 
 use super::util::{alpha, hex, n};
 
@@ -69,12 +71,15 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
                     n(alpha(shape.fill))
                 )
             };
+            // Extremos redondeados si hay corner_radius, a tajo si no.
+            let cap = if shape.corner_radius > 0.0 { "round" } else { "butt" };
             svg.push_str(&format!(
-                "<line x1=\"0\" y1=\"{y}\" x2=\"{w}\" y2=\"{y}\" {color} stroke-width=\"{sw}\"/>\n",
+                "<line x1=\"0\" y1=\"{y}\" x2=\"{w}\" y2=\"{y}\" {color} stroke-width=\"{sw}\" stroke-linecap=\"{cap}\"/>\n",
                 y = n(h / 2.0),
                 w = n(w),
                 color = color,
                 sw = n(f64::from(shape.stroke_width.max(0.0))),
+                cap = cap,
             ));
         }
         ShapeKind::Triangle => {
@@ -111,23 +116,38 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
             } else {
                 (shape.fill, alpha(shape.fill))
             };
-            let head_pts = arrow_head_points(w, h)
-                .iter()
-                .map(|(x, y)| format!("{},{}", n(*x), n(*y)))
-                .collect::<Vec<_>>()
-                .join(" ");
+            // Extremos del astil redondeados si hay corner_radius, a tajo
+            // si no (coherente con la cabeza).
+            let cap = if shape.corner_radius > 0.0 { "round" } else { "butt" };
             svg.push_str(&format!(
-                "<line x1=\"0\" y1=\"{y}\" x2=\"{x2}\" y2=\"{y}\" stroke=\"{c}\" stroke-opacity=\"{a}\" stroke-width=\"{sw}\"/>\n",
+                "<line x1=\"0\" y1=\"{y}\" x2=\"{x2}\" y2=\"{y}\" stroke=\"{c}\" stroke-opacity=\"{a}\" stroke-width=\"{sw}\" stroke-linecap=\"{cap}\"/>\n",
                 y = n(h / 2.0),
                 x2 = n(arrow_shaft_end_x(w)),
                 c = hex(chosen),
                 a = n(chosen_alpha),
                 sw = n(f64::from(shape.stroke_width.max(0.0))),
+                cap = cap,
             ));
-            // La cabeza va rellena del MISMO color.
+            // Cabeza redondeada (punta y base), con las mismas curvas que el
+            // render y el radio de `corner_radius` (0 = a tajo): ver
+            // `arrow_head_rounded` en canvas-core.
+            let rp = arrow_head_rounded(w, h, f64::from(shape.corner_radius.max(0.0)));
+            let mut d = format!("M {} {}", n(rp.start.0), n(rp.start.1));
+            for (a, c, b) in &rp.segments {
+                d.push_str(&format!(
+                    " L {} {} Q {} {} {} {}",
+                    n(a.0),
+                    n(a.1),
+                    n(c.0),
+                    n(c.1),
+                    n(b.0),
+                    n(b.1)
+                ));
+            }
+            d.push('Z');
             svg.push_str(&format!(
-                "<polygon points=\"{pts}\" fill=\"{c}\" fill-opacity=\"{a}\"/>\n",
-                pts = head_pts,
+                "<path d=\"{d}\" fill=\"{c}\" fill-opacity=\"{a}\"/>\n",
+                d = d,
                 c = hex(chosen),
                 a = n(chosen_alpha),
             ));

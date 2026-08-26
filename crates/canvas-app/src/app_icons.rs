@@ -675,12 +675,21 @@ pub fn draw_ellipse_preview(painter: &egui::Painter, rect: egui::Rect, color: eg
     painter.circle_stroke(rect.center(), s, egui::Stroke::new(1.4, color));
 }
 
-/// Línea diagonal gruesa (como la capa Line del lienzo).
+/// Línea gruesa con tapas redondas, como la capa Line del lienzo (el
+/// trazo grueso es lo que la distingue de un palo fino: la mitad del
+/// alto de la cabeza de la flecha, para que ambas concuerden).
 pub fn draw_line_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let s = rect.width().min(rect.height());
     let c = rect.center();
-    let d = egui::vec2(s * 0.34, -s * 0.22);
-    painter.line_segment([c - d, c + d], egui::Stroke::new(2.6, color));
+    let d = egui::vec2(s * 0.34, -s * 0.20);
+    let (a, b) = (c - d, c + d);
+    let w = (s * 0.20).max(3.0);
+    painter.line_segment([a, b], egui::Stroke::new(w, color));
+    // egui no tiene tapas redondas en `Stroke`: se simulan con un círculo
+    // en cada extremo.
+    let r = w / 2.0;
+    painter.circle_filled(a, r, color);
+    painter.circle_filled(b, r, color);
 }
 
 /// Triángulo regular apuntando hacia arriba (silueta real de la capa).
@@ -727,23 +736,37 @@ pub fn draw_star_preview(painter: &egui::Painter, rect: egui::Rect, color: egui:
 }
 
 /// Flecha apuntando a la derecha (astil + cabeza, como la capa Arrow).
+/// Dibuja la MISMA geometría relativa que la capa (fracciones idénticas
+/// sobre la caja), con la cabeza redondeada: astil y triángulo comparten
+/// el estilo redondeado.
 pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let c = rect.center();
-    let s = rect.width().min(rect.height());
-    let y = c.y;
-    let x_end = c.x + s * 0.26;
-    painter.line_segment(
-        [egui::pos2(c.x - s * 0.34, y), egui::pos2(x_end, y)],
-        egui::Stroke::new(2.6, color),
-    );
+    let (w, h) = (rect.width(), rect.height());
+    let y = rect.center().y;
+    let shaft_end = rect.left() + w * 0.60;
+    let start = egui::pos2(rect.left(), y);
+    // Grosor del astil proporcional al de la capa (≈8 % de la altura).
+    let shaft_w = (h * 0.08).max(2.5);
+    painter.line_segment([start, egui::pos2(shaft_end, y)], egui::Stroke::new(shaft_w, color));
+    painter.circle_filled(start, shaft_w / 2.0, color);
+    // Cabeza redondeada: canvas-core devuelve la ruta en la caja local
+    // (0,0)..(w,h) y aquí se traduce al rect del tile. egui no tiene
+    // curvas, así que se aplana la ruta a segmentos rectos. El radio usa
+    // el mismo ratio (~18 % del largo de la cabeza) que el default de
+    // inserción, para que el preview muestre lo que se va a crear.
+    let head = canvas_core::arrow_head_rounded(f64::from(w), f64::from(h), f64::from(w) * 0.38 * 0.18);
+    let pts: Vec<egui::Pos2> = head
+        .to_polyline(6)
+        .iter()
+        .map(|(x, y)| egui::pos2(rect.left() + *x as f32, rect.top() + *y as f32))
+        .collect();
     painter.add(egui::Shape::convex_polygon(
-        vec![
-            egui::pos2(x_end - s * 0.02, y - s * 0.22),
-            egui::pos2(x_end - s * 0.02, y + s * 0.22),
-            egui::pos2(c.x + s * 0.38, y),
-        ],
-        color,
+        pts.clone(),
+        color.gamma_multiply(0.35),
         egui::Stroke::NONE,
+    ));
+    painter.add(egui::Shape::closed_line(
+        pts,
+        egui::Stroke::new(1.4, color),
     ));
 }
 
