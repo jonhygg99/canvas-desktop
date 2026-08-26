@@ -129,10 +129,8 @@ fn gallery_folder_row_ui(
     row_resp.clone().on_hover_text(path.display().to_string());
 
     // ── Clic ──
-    if row_resp.clicked() {
-        if !is_current {
-            return Some(GalleryAction::OpenFolder(path.to_owned()));
-        }
+    if row_resp.clicked() && !is_current {
+        return Some(GalleryAction::OpenFolder(path.to_owned()));
     }
 
     // ── Doble clic → renombrar ──
@@ -225,6 +223,10 @@ fn folder_button_list(
 
 fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
+    // Solo macOS consume este valor hoy (botón «Grant access…» del pane
+    // de Full Disk Access): en las demás plataformas el flujo de permisos
+    // de almacenamiento en la nube todavía no existe.
+    #[allow(unused_variables)]
     let cloud_folder = canvas_io::is_cloud_storage_path(&state.folder);
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
@@ -404,7 +406,7 @@ fn new_folder_ui(
             if icon_text_button_ui(
                 ui,
                 true,
-                |p, r, c| draw_plus_icon(p, r, c),
+                draw_plus_icon,
                 "New folder",
                 None,
                 egui::Vec2::ZERO,

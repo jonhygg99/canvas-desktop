@@ -172,6 +172,22 @@ pub enum AppMsg {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// Respuesta del diálogo «¿guardar los cambios?» de una ventana o de
+    /// una navegación. El modal corre en un hilo aparte a propósito:
+    /// bloquear el pase de un viewport diferido con `rfd::…::show()`
+    /// congela todo el event loop multi-ventana.
+    UnsavedDialogAnswer(DialogDecision),
+}
+
+/// Qué decidió el usuario en un diálogo «¿guardar los cambios?».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogDecision {
+    /// Guardar y continuar (cerrar la ventana / abrir lo pedido).
+    Save,
+    /// Descartar los cambios y continuar.
+    Discard,
+    /// No hacer nada.
+    Cancel,
 }
 
 /// Operación de archivos pedida desde la galería. Siempre en un hilo aparte:

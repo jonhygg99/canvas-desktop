@@ -161,14 +161,14 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                     action = Some(GalleryAction::SortChanged(sort));
                 }
                 ui.add_space(12.0);
-                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_plus_icon(p, r, c))
+                if icon_button_ui(ui, 16.0, true, draw_plus_icon)
                     .on_hover_text("Show more designs per line")
                     .clicked()
                 {
                     state.gallery_columns = (state.gallery_columns + 1).min(12);
                 }
                 ui.label(format!("{} por línea", state.gallery_columns));
-                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_minus_icon(p, r, c))
+                if icon_button_ui(ui, 16.0, true, draw_minus_icon)
                     .on_hover_text("Show fewer designs per line")
                     .clicked()
                 {
@@ -177,7 +177,7 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
                 if icon_text_button_ui(
                     ui,
                     true,
-                    |p, r, c| draw_plus_icon(p, r, c),
+                    draw_plus_icon,
                     "New design",
                     None,
                     egui::Vec2::ZERO,
@@ -191,7 +191,7 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         if let Some(error) = state.op_error.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(ui.visuals().error_fg_color, &error);
-                if icon_button_ui(ui, 16.0, true, |p, r, c| draw_close_icon(p, r, c)).clicked() {
+                if icon_button_ui(ui, 16.0, true, draw_close_icon).clicked() {
                     state.op_error = None;
                 }
             });
@@ -208,6 +208,10 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
             return;
         }
         if let Some(error) = &state.scan_error {
+            // Solo macOS consume este valor hoy (botón de paneles de disco
+            // del error de escaneo): en las demás plataformas el flujo de
+            // permisos de almacenamiento en la nube todavía no existe.
+            #[allow(unused_variables)]
             let cloud_folder = canvas_io::is_cloud_storage_path(&state.folder);
             // Propio del closure: asi pedir &mut state dentro (marcar el
             // reintento al abrir Ajustes) no pelea con el borrow del error.

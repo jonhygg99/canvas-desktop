@@ -10,6 +10,54 @@ use crate::{deck, loader};
 use super::super::{AppInner, Nav, View, Workspace};
 
 impl AppInner {
+    /// Respuesta del diálogo «¿guardar los cambios?» lanzado en un hilo
+    /// (ver `confirm_window_close` y `request_nav`). Aplica la decisión
+    /// sobre lo que había pendiente detrás del diálogo.
+    pub(super) fn on_unsaved_dialog_answer(
+        &mut self,
+        ws: &mut Workspace,
+        decision: loader::DialogDecision,
+        open_after: &mut Option<Nav>,
+        ctx: &egui::Context,
+    ) {
+        use crate::app::UnsavedDialog;
+        use loader::DialogDecision;
+
+        let Some(dialog) = ws.unsaved_dialog.take() else {
+            return;
+        };
+        match decision {
+            DialogDecision::Cancel => {}
+            DialogDecision::Save => match dialog {
+                UnsavedDialog::WindowClose => {
+                    ws.save.save_requested = true;
+                    ws.save.close_after_save = true;
+                }
+                UnsavedDialog::Navigate(nav) => {
+                    ws.save.save_requested = true;
+                    ws.save.after_save = Some(nav);
+                }
+            },
+            DialogDecision::Discard => match dialog {
+                UnsavedDialog::WindowClose => {
+                    ws.save.allow_close = true;
+                    if ws.viewport == egui::ViewportId::ROOT {
+                        // La raíz se cierra con la app entera.
+                        ctx.send_viewport_cmd_to(
+                            egui::ViewportId::ROOT,
+                            egui::ViewportCommand::Close,
+                        );
+                    } else {
+                        ws.close_requested = true;
+                    }
+                }
+                UnsavedDialog::Navigate(nav) => {
+                    *open_after = Some(nav);
+                }
+            },
+        }
+    }
+
     pub(super) fn on_saved(
         &mut self,
         ws: &mut Workspace,
@@ -62,7 +110,10 @@ impl AppInner {
                     if ws.save.close_after_save {
                         ws.save.allow_close = true;
                         // Cierra LA VENTANA de este workspace, no la app.
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        // Al viewport propio (no al del pase actual): este
+                        // mensaje puede drenarse desde el pase de la raíz y
+                        // un Close pelado cerraría la app entera.
+                        ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::Close);
                     } else if let Some(nav) = ws.save.after_save.take() {
                         *open_after = Some(nav);
                     }

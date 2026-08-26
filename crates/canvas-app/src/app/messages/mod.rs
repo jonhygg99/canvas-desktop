@@ -106,6 +106,9 @@ impl AppInner {
                 result,
                 new_source,
             } => self.on_saved(ws, path, result, new_source, ctx, open_after),
+            AppMsg::UnsavedDialogAnswer(decision) => {
+                self.on_unsaved_dialog_answer(ws, decision, open_after, ctx)
+            }
             AppMsg::ExportPathPicked(path) => self.on_export_path_picked(ws, path),
             AppMsg::Exported { path, result } => self.on_exported(ws, path, result),
             AppMsg::ImageLoadedForLayer { path, result } => {

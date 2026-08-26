@@ -58,6 +58,12 @@ pub(crate) struct Workspace {
     /// frame raíz la retira (deja de mostrarla) en cuanto este flag termina
     /// de aplicarse. La ventana 0 nunca se retira: cerrarla cierra la app.
     pub(crate) close_requested: bool,
+    /// Diálogo «¿guardar los cambios?» EN VUELO: el modal corre en un hilo
+    /// aparte y responde por `AppMsg::UnsavedDialogAnswer`. Guarda qué hay
+    /// que decidir (cerrar la ventana o navegar); `None` si no hay ninguno.
+    /// Un modal SINCRÓNICO dentro del pase de un viewport diferido congela
+    /// todo el event loop multi-ventana — de ahí el hilo + canal.
+    pub(crate) unsaved_dialog: Option<super::UnsavedDialog>,
     /// Identidad de la VENTANA NATIVA de este workspace. La raíz es
     /// `ViewportId::ROOT`; las hijas, un id derivado estable del id de
     /// workspace — `show_viewport_deferred` exige el MISO id cada frame.
@@ -88,6 +94,7 @@ impl Workspace {
             tx,
             rx,
             close_requested: false,
+            unsaved_dialog: None,
             viewport,
             geometry: None,
         }

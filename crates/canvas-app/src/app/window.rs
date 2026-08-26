@@ -93,7 +93,11 @@ impl AppInner {
             View::Welcome { .. } => "Canvas Desktop".to_owned(),
         };
         if title != ws.last_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            // Al viewport PROPIO del workspace, no al del pase actual:
+            // sync_title también corre desde el pase de la raíz (cuando
+            // drain_all resuelve una navegación de otra ventana) y un
+            // send_viewport_cmd pelado aterrizaría en la ventana equivocada.
+            ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::Title(title.clone()));
             ws.last_title = title;
         }
     }
@@ -127,7 +131,16 @@ impl AppInner {
             }
             return;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        // Cancela el cierre YA (en el viewport propio) y lanza el modal en
+        // un hilo: un `rfd::…::show()` sincrónico dentro del pase de un
+        // viewport diferido congela todo el event loop multi-ventana. La
+        // respuesta vuelve por el canal del workspace
+        // (`AppMsg::UnsavedDialogAnswer`) y se aplica en `messages/save.rs`.
+        ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::CancelClose);
+        if ws.unsaved_dialog.is_some() {
+            return; // ya hay uno en vuelo para esta ventana
+        }
+        ws.unsaved_dialog = Some(super::UnsavedDialog::WindowClose);
         let description = if names.len() == 1 {
             format!(
                 "\"{}\" has unsaved changes.\nSave them before closing? (\"No\" discards them.)",
@@ -142,37 +155,32 @@ impl AppInner {
                 names.join("\n\u{2022} ")
             )
         };
-        let choice = rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("Unsaved changes")
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                "Save".to_owned(),
-                "Discard".to_owned(),
-                "Cancel".to_owned(),
-            ))
-            .show();
-        let finish_close = |ws: &mut Workspace| {
-            ws.save.allow_close = true;
-            if is_root {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else {
-                ws.close_requested = true;
-            }
-        };
-        match choice {
-            rfd::MessageDialogResult::Yes => {
-                ws.save.save_requested = true;
-                ws.save.close_after_save = true;
-            }
-            rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                ws.save.save_requested = true;
-                ws.save.close_after_save = true;
-            }
-            rfd::MessageDialogResult::No => finish_close(ws),
-            rfd::MessageDialogResult::Custom(c) if c == "Discard" => finish_close(ws),
-            _ => {}
-        }
+        let tx = ws.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let choice = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Unsaved changes")
+                .set_description(description)
+                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                    "Save".to_owned(),
+                    "Discard".to_owned(),
+                    "Cancel".to_owned(),
+                ))
+                .show();
+            use crate::loader::{AppMsg, DialogDecision};
+            let decision = match choice {
+                rfd::MessageDialogResult::Yes => DialogDecision::Save,
+                rfd::MessageDialogResult::Custom(ref c) if c == "Save" => DialogDecision::Save,
+                rfd::MessageDialogResult::No => DialogDecision::Discard,
+                rfd::MessageDialogResult::Custom(ref c) if c == "Discard" => {
+                    DialogDecision::Discard
+                }
+                _ => DialogDecision::Cancel,
+            };
+            let _ = tx.send(AppMsg::UnsavedDialogAnswer(decision));
+            ctx.request_repaint();
+        });
     }
 }
 

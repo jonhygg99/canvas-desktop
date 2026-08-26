@@ -60,6 +60,14 @@ pub(crate) enum Nav {
     },
 }
 
+/// Qué hay pendiente de decidir detrás de un diálogo «¿guardar los
+/// cambios?» que corre en un hilo aparte (ver `AppMsg::UnsavedDialogAnswer`):
+/// cerrar LA VENTANA, o aplicar una navegación.
+pub(crate) enum UnsavedDialog {
+    WindowClose,
+    Navigate(Nav),
+}
+
 /// La shell eframe; `inner` se comparte con los callbacks de las ventanas
 /// hijas. Los menús nativos (muda, Windows) viven AQUÍ, fuera del `Arc`:
 /// sus `Rc` internos romperían `Send`/`Sync` en el closure de
@@ -115,9 +123,6 @@ pub(crate) struct AppInner {
     /// bloquea TODOS los workspaces (`std::sync::Mutex` no reentrante →
     /// deadlock, el «File ▸ New Window se congela»).
     pub(crate) workspaces_dirty: bool,
-    /// Ctrl+V con bitmap (hook de mensajes del SO): se consume en la ventana
-    /// enfocada.
-    pub(crate) paste_this_frame: bool,
     /// Foco pendiente para una ventana recién CREADA: el viewport de la
     /// ventana no existe hasta `spawn_child_viewports` del mismo frame, así
     /// que `focus_workspace` inmediato perdería el comando. Se consume en
@@ -288,7 +293,6 @@ impl App {
             next_ws_id: 1,
             last_workspaces_save: None,
             workspaces_dirty: false,
-            paste_this_frame: false,
             pending_focus: None,
             atlas_regs: 0,
             atlas_reups: 0,
@@ -508,20 +512,25 @@ impl AppInner {
     /// Refresca `self.focused` contra el estado real de las ventanas (el SO
     /// manda: Alt+Tab etc. no pasan por aquí).
     fn update_focused(&mut self, ctx: &egui::Context) {
-        self.focused = ctx
-            .input(|i| {
-                i.raw
-                    .viewports
-                    .iter()
-                    .find(|(_, info)| info.focused == Some(true))
-                    .and_then(|(id, _)| {
-                        self.workspaces
-                            .iter()
-                            .position(|ws| ws.lock().unwrap().viewport == *id)
-                    })
-                    .unwrap_or(0)
-            })
-            .min(self.workspaces.len().saturating_sub(1));
+        // Solo se actualiza cuando ALGUNA ventana tiene el foco del SO: si
+        // ninguna lo tiene (p. ej. el arranque de una segunda instancia roba
+        // el foco un instante antes de reenviar su ruta por el socket), se
+        // CONSERVA la última enfocada — así una apertura externa aterriza en
+        // la ventana que el usuario estaba usando, no siempre en la raíz.
+        let focused_now = ctx.input(|i| {
+            i.raw
+                .viewports
+                .iter()
+                .find(|(_, info)| info.focused == Some(true))
+                .and_then(|(id, _)| {
+                    self.workspaces
+                        .iter()
+                        .position(|ws| ws.lock().unwrap().viewport == *id)
+                })
+        });
+        if let Some(idx) = focused_now {
+            self.focused = idx.min(self.workspaces.len().saturating_sub(1));
+        }
     }
 
     /// El frame de cada arranque: tema, foco, mensajes, la ventana raíz y
@@ -532,12 +541,17 @@ impl AppInner {
             self.applied_theme = Some(self.settings.theme);
         }
         self.update_focused(ctx);
-        self.paste_this_frame = paste_hook::take_request();
+        // El flag global de pegado (paste_hook) NO lo roba la raíz: lo
+        // consume la ventana ENFOCADA en su PROPIO pase. La raíz no sabe en
+        // qué orden correrá respecto del pase de la hija dentro de la misma
+        // pasada del event loop, así que cualquier reparto con estado entre
+        // frames tiene una carrera; «solo la enfocada toma el flag» no la
+        // tiene — el resto de ventanas ni lo mira.
         self.drain_all(ctx);
 
         let ws0_arc = Arc::clone(&self.workspaces[0]);
         let mut ws0 = ws0_arc.lock().unwrap();
-        let paste = self.paste_this_frame;
+        let paste = self.focused == 0 && paste_hook::take_request();
         self.ws_frame(ui, ctx, &mut ws0, 0, true, paste);
         drop(ws0);
 
@@ -667,7 +681,8 @@ impl AppInner {
         if let Some(nav) = open_after {
             self.navigate(ws, nav, ctx);
         }
-        let paste = paste_hook::take_request();
+        // El pegado lo consume SOLO la ventana enfocada (ver `root_frame`).
+        let paste = self.focused == idx && paste_hook::take_request();
         self.ws_frame(ui, ctx, ws, idx, false, paste);
         // Con el diagnóstico del atlas activo (`CANVAS_DEBUG_ATLAS=1`), la
         // ventana hija también repinta cada frame: solo la raíz forzaba el

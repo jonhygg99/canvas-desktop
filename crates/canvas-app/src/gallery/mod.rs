@@ -329,6 +329,10 @@ impl GalleryState {
     }
 
     /// El usuario abrio Ajustes desde esta galeria para dar permiso.
+    /// Hoy solo lo llaman los flujos de Full Disk Access de macOS
+    /// (`folder_panel` y `ui::gallery_ui`); en las demás plataformas queda
+    /// preparado para su equivalente.
+    #[allow(dead_code)]
     pub(crate) fn note_settings_opened(&mut self) {
         self.settings_opened_at = Some(std::time::Instant::now());
     }

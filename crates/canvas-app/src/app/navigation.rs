@@ -253,13 +253,20 @@ impl AppInner {
     }
 
     /// Navega un workspace, pero si hay algún lienzo con cambios sin guardar
-    /// delante pregunta primero (Save / Discard / Cancel).
+    /// delante pregunta primero (Save / Discard / Cancel). El modal corre en
+    /// un hilo aparte y responde por `AppMsg::UnsavedDialogAnswer`: un
+    /// `rfd::…::show()` sincrónico dentro del pase de un viewport diferido
+    /// congela todo el event loop multi-ventana.
     pub(crate) fn request_nav(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
         let names = ws.dirty_canvas_names();
         if names.is_empty() {
             self.navigate(ws, nav, ctx);
             return;
         }
+        if ws.unsaved_dialog.is_some() {
+            return; // ya hay un diálogo en vuelo para esta ventana
+        }
+        ws.unsaved_dialog = Some(super::UnsavedDialog::Navigate(nav.clone()));
         let target = match &nav {
             Nav::Open(p) | Nav::OpenGallery { path: p, .. } => format!(
                 "\"{}\"",
@@ -285,28 +292,31 @@ impl AppInner {
                 names.join("\n\u{2022} ")
             )
         };
-        let choice = rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Warning)
-            .set_title("Unsaved changes")
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                "Save".to_owned(),
-                "Discard".to_owned(),
-                "Cancel".to_owned(),
-            ))
-            .show();
-        match choice {
-            rfd::MessageDialogResult::Yes => {
-                ws.save.save_requested = true;
-                ws.save.after_save = Some(nav);
-            }
-            rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                ws.save.save_requested = true;
-                ws.save.after_save = Some(nav);
-            }
-            rfd::MessageDialogResult::No => self.navigate(ws, nav, ctx),
-            rfd::MessageDialogResult::Custom(c) if c == "Discard" => self.navigate(ws, nav, ctx),
-            _ => {}
-        }
+        let tx = ws.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let choice = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Unsaved changes")
+                .set_description(description)
+                .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                    "Save".to_owned(),
+                    "Discard".to_owned(),
+                    "Cancel".to_owned(),
+                ))
+                .show();
+            use crate::loader::{AppMsg, DialogDecision};
+            let decision = match choice {
+                rfd::MessageDialogResult::Yes => DialogDecision::Save,
+                rfd::MessageDialogResult::Custom(ref c) if c == "Save" => DialogDecision::Save,
+                rfd::MessageDialogResult::No => DialogDecision::Discard,
+                rfd::MessageDialogResult::Custom(ref c) if c == "Discard" => {
+                    DialogDecision::Discard
+                }
+                _ => DialogDecision::Cancel,
+            };
+            let _ = tx.send(AppMsg::UnsavedDialogAnswer(decision));
+            ctx.request_repaint();
+        });
     }
 }
