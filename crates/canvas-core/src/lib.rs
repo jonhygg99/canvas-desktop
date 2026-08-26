@@ -9,6 +9,7 @@ mod error;
 mod geometry;
 mod layer;
 mod selection;
+mod shape_geom;
 mod snap;
 
 pub use command::{
@@ -28,4 +29,7 @@ pub use layer::{
     ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform,
 };
 pub use selection::Selection;
+pub use shape_geom::{
+    arrow_head_points, arrow_shaft_end_x, star_points, triangle_points,
+};
 pub use snap::{snap_translation, SnapResult};

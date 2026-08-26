@@ -250,6 +250,12 @@ pub enum ShapeKind {
     Rect,
     Ellipse,
     Line,
+    /// Triángulo regular apuntando hacia arriba.
+    Triangle,
+    /// Estrella de cinco puntas.
+    Star,
+    /// Flecha apuntando a la derecha (astil + cabeza).
+    Arrow,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -7,7 +7,11 @@
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
 
-use crate::app_icons::{draw_layers_icon, draw_page_icon, draw_sparkle_icon};
+use crate::app_icons::{
+    draw_arrow_preview, draw_ellipse_preview, draw_layers_icon, draw_line_preview, draw_page_icon,
+    draw_rect_preview, draw_sparkle_icon, draw_star_preview, draw_text_preview,
+    draw_triangle_preview,
+};
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
 use crate::editor::EditorState;
@@ -126,50 +130,7 @@ pub fn left_panel_ui(
                         apply_reorder(state, &ids, drop);
                     }
                 }
-                LeftTab::Insert => {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.button("T Text").clicked() {
-                            state.insert_layer_centered(
-                                "Text",
-                                500.0,
-                                120.0,
-                                LayerContent::Text(canvas_core::TextContent::default()),
-                            );
-                        }
-                        if ui.small_button("R").on_hover_text("Rectangle").clicked() {
-                            state.insert_layer_centered(
-                                "Rectangle",
-                                320.0,
-                                220.0,
-                                LayerContent::Shape(canvas_core::ShapeContent::default()),
-                            );
-                        }
-                        if ui.small_button("O").on_hover_text("Ellipse").clicked() {
-                            state.insert_layer_centered(
-                                "Ellipse",
-                                280.0,
-                                280.0,
-                                LayerContent::Shape(canvas_core::ShapeContent {
-                                    kind: canvas_core::ShapeKind::Ellipse,
-                                    ..Default::default()
-                                }),
-                            );
-                        }
-                        if ui.small_button("L").on_hover_text("Line").clicked() {
-                            state.insert_layer_centered(
-                                "Line",
-                                400.0,
-                                24.0,
-                                LayerContent::Shape(canvas_core::ShapeContent {
-                                    kind: canvas_core::ShapeKind::Line,
-                                    stroke: [30, 30, 30, 255],
-                                    stroke_width: 6.0,
-                                    ..Default::default()
-                                }),
-                            );
-                        }
-                    });
-                }
+                LeftTab::Insert => insert_tab_ui(state, ui),
             }
         });
     });
@@ -217,6 +178,147 @@ fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 3] {
         LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
     };
     [first, second, LeftTab::Insert]
+}
+
+/// Tamaño de las cajas de la cuadrícula Insert.
+const INSERT_TILE: f32 = 56.0;
+
+/// Una entrada de la cuadrícula Insert: qué se inserta y cómo se pinta.
+struct InsertItem {
+    label: &'static str,
+    tip: &'static str,
+    draw: fn(&egui::Painter, egui::Rect, egui::Color32),
+}
+
+const INSERT_ITEMS: [InsertItem; 7] = [
+    InsertItem { label: "Text", tip: "Text", draw: draw_text_preview },
+    InsertItem { label: "Rect", tip: "Rectangle", draw: draw_rect_preview },
+    InsertItem { label: "Ellipse", tip: "Ellipse", draw: draw_ellipse_preview },
+    InsertItem { label: "Line", tip: "Line", draw: draw_line_preview },
+    InsertItem { label: "Triangle", tip: "Triangle", draw: draw_triangle_preview },
+    InsertItem { label: "Star", tip: "Star", draw: draw_star_preview },
+    InsertItem { label: "Arrow", tip: "Arrow", draw: draw_arrow_preview },
+];
+
+/// Pestaña Insert: cuadrícula de cajas visuales con la silueta de cada
+/// elemento a insertar (texto y formas). Los clics llaman a las mismas
+/// `insert_layer_centered` que los antiguos botones de texto.
+fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    let visuals = ui.visuals().clone();
+    let cols = ((ui.available_width() / (INSERT_TILE + 8.0)).floor() as usize).max(1);
+    egui::Grid::new("insert_grid")
+        .num_columns(cols)
+        .spacing([8.0, 10.0])
+        .show(ui, |ui| {
+            for (i, item) in INSERT_ITEMS.iter().enumerate() {
+                if i > 0 && i % cols == 0 {
+                    ui.end_row();
+                }
+                if insert_tile_ui(ui, item, &visuals).clicked() {
+                    match item.label {
+                        "Text" => state.insert_layer_centered(
+                            "Text",
+                            500.0,
+                            120.0,
+                            LayerContent::Text(canvas_core::TextContent::default()),
+                        ),
+                        "Rect" => state.insert_layer_centered(
+                            "Rectangle",
+                            320.0,
+                            220.0,
+                            LayerContent::Shape(canvas_core::ShapeContent::default()),
+                        ),
+                        "Ellipse" => state.insert_layer_centered(
+                            "Ellipse",
+                            280.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Ellipse,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Line" => state.insert_layer_centered(
+                            "Line",
+                            400.0,
+                            24.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Line,
+                                stroke: [30, 30, 30, 255],
+                                stroke_width: 6.0,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Triangle" => state.insert_layer_centered(
+                            "Triangle",
+                            320.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Triangle,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Star" => state.insert_layer_centered(
+                            "Star",
+                            320.0,
+                            300.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Star,
+                                ..Default::default()
+                            }),
+                        ),
+                        _ => state.insert_layer_centered(
+                            "Arrow",
+                            400.0,
+                            200.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Arrow,
+                                ..Default::default()
+                            }),
+                        ),
+                    }
+                }
+            }
+        });
+}
+
+/// Caja individual de la cuadrícula: fondo de widget, preview centrado y
+/// etiqueta pequeña debajo.
+fn insert_tile_ui(ui: &mut egui::Ui, item: &InsertItem, visuals: &egui::Visuals) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(INSERT_TILE, INSERT_TILE),
+        egui::Sense::click(),
+    );
+    let bg = if resp.hovered() {
+        visuals.widgets.hovered.bg_fill
+    } else {
+        visuals.widgets.inactive.bg_fill
+    };
+    ui.painter().rect(
+        rect,
+        5.0,
+        bg,
+        visuals.widgets.inactive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    // Preview arriba (deja sitio a la etiqueta).
+    let icon_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(4.0, 2.0),
+        egui::vec2(INSERT_TILE - 8.0, INSERT_TILE - 18.0),
+    );
+    let color = if resp.hovered() {
+        visuals.widgets.active.text_color()
+    } else {
+        visuals.widgets.inactive.text_color()
+    };
+    (item.draw)(ui.painter(), icon_rect, color);
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.bottom() - 7.5),
+        egui::Align2::CENTER_CENTER,
+        item.label,
+        egui::FontId::proportional(9.5),
+        color,
+    );
+    resp.on_hover_text(item.tip)
 }
 
 /// Nombre de la pestaña (tooltip del icono).

@@ -1,6 +1,6 @@
 //! Emision de una capa de forma (rectangulo, elipse, linea, poligono...).
 
-use canvas_core::ShapeKind;
+use canvas_core::{arrow_head_points, arrow_shaft_end_x, star_points, triangle_points, ShapeKind};
 
 use super::util::{alpha, hex, n};
 
@@ -75,6 +75,61 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
                 w = n(w),
                 color = color,
                 sw = n(f64::from(shape.stroke_width.max(0.0))),
+            ));
+        }
+        ShapeKind::Triangle => {
+            let pts = triangle_points(w, h)
+                .iter()
+                .map(|(x, y)| format!("{},{}", n(*x), n(*y)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            svg.push_str(&format!(
+                "<polygon points=\"{pts}\" {fill} {stroke}/>\n",
+                pts = pts,
+                fill = fill_attr,
+                stroke = stroke_attr,
+            ));
+        }
+        ShapeKind::Star => {
+            let pts = star_points(w, h, 5, 0.45)
+                .iter()
+                .map(|(x, y)| format!("{},{}", n(*x), n(*y)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            svg.push_str(&format!(
+                "<polygon points=\"{pts}\" {fill} {stroke}/>\n",
+                pts = pts,
+                fill = fill_attr,
+                stroke = stroke_attr,
+            ));
+        }
+        ShapeKind::Arrow => {
+            // Mismo criterio de color que la línea: borde si lo hay, si no
+            // relleno, y astil y cabeza lo comparten (escena shape.rs).
+            let (chosen, chosen_alpha) = if has_stroke {
+                (shape.stroke, alpha(shape.stroke))
+            } else {
+                (shape.fill, alpha(shape.fill))
+            };
+            let head_pts = arrow_head_points(w, h)
+                .iter()
+                .map(|(x, y)| format!("{},{}", n(*x), n(*y)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            svg.push_str(&format!(
+                "<line x1=\"0\" y1=\"{y}\" x2=\"{x2}\" y2=\"{y}\" stroke=\"{c}\" stroke-opacity=\"{a}\" stroke-width=\"{sw}\"/>\n",
+                y = n(h / 2.0),
+                x2 = n(arrow_shaft_end_x(w)),
+                c = hex(chosen),
+                a = n(chosen_alpha),
+                sw = n(f64::from(shape.stroke_width.max(0.0))),
+            ));
+            // La cabeza va rellena del MISMO color.
+            svg.push_str(&format!(
+                "<polygon points=\"{pts}\" fill=\"{c}\" fill-opacity=\"{a}\"/>\n",
+                pts = head_pts,
+                c = hex(chosen),
+                a = n(chosen_alpha),
             ));
         }
     }

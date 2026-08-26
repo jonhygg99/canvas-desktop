@@ -639,6 +639,114 @@ pub fn draw_sparkle_icon(painter: &egui::Painter, rect: egui::Rect, color: egui:
     }
 }
 
+// ---------------------------------------------------------------------------
+// Previews de la pestaña Insert: la silueta REAL de lo que se va a insertar
+// (no un icono abstracto), dibujada con el mismo trazo que el resto.
+// ---------------------------------------------------------------------------
+
+/// Texto: glifo «Aa» pintado con la fuente de la app (el antiguo botón
+/// «T Text»). Sin Unicode raro: son dos letras ASCII.
+pub fn draw_text_preview(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    color: egui::Color32,
+) {
+    let font = egui::FontId::proportional(rect.height() * 0.62);
+    painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Aa", font, color);
+}
+
+/// Rectángulo relleno suave con borde, como se verá en el lienzo.
+pub fn draw_rect_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height()) * 0.58;
+    let body = egui::Rect::from_center_size(rect.center(), egui::vec2(s * 1.15, s * 0.85));
+    painter.rect_filled(body, 2.5, color.gamma_multiply(0.35));
+    painter.rect_stroke(
+        body,
+        2.5,
+        egui::Stroke::new(1.4, color),
+        egui::StrokeKind::Outside,
+    );
+}
+
+/// Elipse/círculo relleno suave con borde.
+pub fn draw_ellipse_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height()) * 0.30;
+    painter.circle_filled(rect.center(), s, color.gamma_multiply(0.35));
+    painter.circle_stroke(rect.center(), s, egui::Stroke::new(1.4, color));
+}
+
+/// Línea diagonal gruesa (como la capa Line del lienzo).
+pub fn draw_line_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height());
+    let c = rect.center();
+    let d = egui::vec2(s * 0.34, -s * 0.22);
+    painter.line_segment([c - d, c + d], egui::Stroke::new(2.6, color));
+}
+
+/// Triángulo regular apuntando hacia arriba (silueta real de la capa).
+pub fn draw_triangle_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height());
+    let pts = vec![
+        c + egui::vec2(0.0, -s * 0.30),
+        c + egui::vec2(-s * 0.30, s * 0.26),
+        c + egui::vec2(s * 0.30, s * 0.26),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        pts.clone(),
+        color.gamma_multiply(0.35),
+        egui::Stroke::NONE,
+    ));
+    painter.add(egui::Shape::closed_line(
+        pts,
+        egui::Stroke::new(1.4, color),
+    ));
+}
+
+/// Estrella de cinco puntas (silueta real de la capa).
+pub fn draw_star_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height());
+    let r_out = s * 0.42;
+    let r_in = r_out * 0.45;
+    let mut pts = Vec::with_capacity(10);
+    for i in 0..10 {
+        let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 5.0;
+        let r = if i % 2 == 0 { r_out } else { r_in };
+        pts.push(c + egui::vec2(a.cos() * r, a.sin() * r));
+    }
+    painter.add(egui::Shape::convex_polygon(
+        pts.clone(),
+        color.gamma_multiply(0.35),
+        egui::Stroke::NONE,
+    ));
+    painter.add(egui::Shape::closed_line(
+        pts,
+        egui::Stroke::new(1.4, color),
+    ));
+}
+
+/// Flecha apuntando a la derecha (astil + cabeza, como la capa Arrow).
+pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let c = rect.center();
+    let s = rect.width().min(rect.height());
+    let y = c.y;
+    let x_end = c.x + s * 0.26;
+    painter.line_segment(
+        [egui::pos2(c.x - s * 0.34, y), egui::pos2(x_end, y)],
+        egui::Stroke::new(2.6, color),
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(x_end - s * 0.02, y - s * 0.22),
+            egui::pos2(x_end - s * 0.02, y + s * 0.22),
+            egui::pos2(c.x + s * 0.38, y),
+        ],
+        color,
+        egui::Stroke::NONE,
+    ));
+}
+
 /// Centro en página (círculo + punto).
 pub fn draw_target_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let c = rect.center();
