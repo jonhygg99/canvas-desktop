@@ -44,11 +44,13 @@ There is no single-test shorthand beyond normal cargo filtering, e.g.
 `cargo test -p canvas-core snap`. `crates/canvas-io/tests/kill_during_save.rs`
 spawns a real child process and kills it mid-write to verify atomic save
 survives a crash — don't "fix" it by mocking the filesystem.
-`crates/canvas-render/tests/gpu_bake.rs` has 7 GPU integration tests
+`crates/canvas-render/tests/gpu_bake.rs` has 11 GPU integration tests
 (marked `#[ignore]` — run with `cargo test -p canvas-render --test gpu_bake
 -- --ignored`); they replicate `bake_blur` and `save_roundtrip` with synthetic
 images and assertions on the baked pixels, catching GPU shader regressions
-that CPU tests can't.
+that CPU tests can't — including the texture-swap crash (a layer whose source
+image changes size between bakes, e.g. pasting a photo over a blurred layer:
+the whole fx texture set must be recreated, never re-uploaded in place).
 `crates/canvas-shell/tests/integration.rs` tests cross-platform path
 normalization (argv parsing, hidden-file detection, `ShellEvent`).
 `crates/canvas-shell/src/single_instance.rs` has unit tests that use a
@@ -322,7 +324,7 @@ canvas-app/src/
   with `cargo tree -i usvg` after touching either.
 - `arboard`'s `image-data` feature is pinned to match what `egui-winit`
   already pulls in transitively, to avoid duplicating the crate.
-- **Test count: 299** (`cargo test --workspace`, excluding 7 GPU-only
+- **Test count: 327** (`cargo test --workspace`, excluding 11 GPU-only
   `#[ignore]` tests in `crates/canvas-render/tests/gpu_bake.rs`). The count
   is a sanity checkpoint — a drop means a regression in test coverage.
 

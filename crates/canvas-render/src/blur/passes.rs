@@ -7,7 +7,9 @@ use vello::peniko::ImageData;
 use vello::wgpu;
 
 use super::params::{blur_params_bytes, BlurParams, ColorParams, MAX_RADIUS};
-use super::{capped_image, BlurEngine, DisplayEntry, FxScope, FxSync, LayerFx, MAX_FX_DIM};
+use super::{
+    capped_dims, capped_image, BlurEngine, DisplayEntry, FxScope, FxSync, LayerFx, MAX_FX_DIM,
+};
 
 /// Petición de sincronización de efectos GPU para una capa, agrupada para
 /// reducir la firma de `sync_layer` de 9 a 5 parámetros.
@@ -94,70 +96,51 @@ impl BlurEngine {
         // overrides y no pueden convivir).
         self.display.remove(&key);
 
+        // Relevo de dimensiones: si los píxeles de origen cambiaron Y la
+        // imagen de trabajo vigente tiene otro tamaño que el del juego de
+        // texturas cacheado (dimensionado con la PRIMERA imagen de la
+        // entrada), hay que recrear el juego completo: reescribir en las
+        // texturas viejas desbordaría su tamaño y wgpu lo rechaza con un
+        // error de validación que tumba la app (pegar una foto de otra
+        // resolución sobre una capa con efectos, informe crash-1787704986:
+        // «Copy of X 0..2033 … overrunning … size 2000»). La textura
+        // sustituida sale en `retired` para que el llamador la des-registre
+        // de vello.
+        //
+        // `capped_dims` no materializa el thumbnail, así que mirarlo cada
+        // frame es gratis.
+        let mut retired: Option<ImageData> = None;
+        let stale_size = match self.cache.get(&key) {
+            Some(entry) => {
+                entry.src_blob_id != request.source.data.id()
+                    && capped_dims(request.source) != (entry.src.width(), entry.src.height())
+            }
+            None => false,
+        };
+        if stale_size {
+            if let Some(old) = self.cache.remove(&key) {
+                retired = Some(old.image);
+            }
+            self.cache
+                .insert(key, create_fx_entry(device, queue, request, register));
+        }
+
         // Imagen de trabajo: la original o una reducida por debajo del tope
         // del atlas (`MAX_FX_DIM`). Todo el pipeline de efectos trabaja sobre
         // ella; la escena la dibuja estirada al rect de la capa.
-        let entry = self.cache.entry(key).or_insert_with(|| {
-            let working = capped_or_original(request.source);
-            let (w, h) = (working.width, working.height);
-            let size = wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            };
-            let tex = |label: &str, usage: wgpu::TextureUsages| {
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage,
-                    view_formats: &[],
-                })
-            };
-            let src = tex(
-                "fx src",
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            );
-            queue.write_texture(
-                src.as_image_copy(),
-                working.data.data(),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * w),
-                    rows_per_image: None,
-                },
-                size,
-            );
-            let inter =
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT;
-            let mid_a = tex("fx mid a", inter);
-            let mid_b = tex("fx mid b", inter);
-            // La salida además debe poder copiarse al atlas de vello (COPY_SRC)
-            // y volver a muestrearse (pasada de color sin blur).
-            let out = tex(
-                "fx out",
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            );
-            let image = register(out.clone());
-            LayerFx {
-                src,
-                src_blob_id: request.source.data.id(),
-                mid_a,
-                mid_b,
-                out,
-                image,
-                last: None,
-            }
-        });
+        let entry = self
+            .cache
+            .entry(key)
+            .or_insert_with(|| create_fx_entry(device, queue, request, register));
 
         // Si los píxeles de origen cambiaron (el `Blob::id()` es distinto),
         // re-subir `src` y forzar un re-horneado. Sin esto, editar una imagen
         // (pegado, reemplazo) sin tocar el slider de blur dejaba la textura
         // procesada mostrando los píxeles antiguos — la caché solo invalidaba
         // cuando cambiaban los parámetros de efecto, no el contenido.
+        // Si el TAMAÑO de trabajo también cambió, el relevo de arriba ya
+        // recreó las texturas y subió los píxeles: aquí las dimensiones de
+        // la nueva fuente SIEMPRE coinciden con las de `src`.
         let source_changed = entry.src_blob_id != request.source.data.id();
         if source_changed {
             let working = capped_or_original(request.source);
@@ -250,7 +233,13 @@ impl BlurEngine {
                 );
             }
             entry.last = Some((request.color, request.radius));
-            return FxSync::Rebaked(entry.image.clone());
+            return match retired {
+                Some(retired) => FxSync::Replaced {
+                    retired,
+                    image: entry.image.clone(),
+                },
+                None => FxSync::Rebaked(entry.image.clone()),
+            };
         }
         FxSync::Unchanged
     }
@@ -263,6 +252,73 @@ fn capped_or_original(source: &ImageData) -> ImageData {
     match capped_image(source, MAX_FX_DIM) {
         Some(capped) => capped,
         None => source.clone(),
+    }
+}
+
+/// Crea el juego COMPLETO de texturas de una capa con efectos (fuente,
+/// intermedias y salida), SIEMPRE dimensionado a la imagen de trabajo
+/// vigente, sube los píxeles a `src` y registra la salida en vello. Único
+/// sitio donde se dimensionan texturas de efectos: así el tamaño del juego
+/// coincide por construcción con la fuente que llega (ver «relevo de
+/// dimensiones» en `sync_layer`). La entrada nace con `last` vacío para que
+/// el horneado repase la cadena entera.
+fn create_fx_entry(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    request: &SyncLayerRequest<'_>,
+    register: &mut dyn FnMut(wgpu::Texture) -> ImageData,
+) -> LayerFx {
+    let working = capped_or_original(request.source);
+    let (w, h) = (working.width, working.height);
+    let size = wgpu::Extent3d {
+        width: w,
+        height: h,
+        depth_or_array_layers: 1,
+    };
+    let tex = |label: &str, usage: wgpu::TextureUsages| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let src = tex(
+        "fx src",
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
+    queue.write_texture(
+        src.as_image_copy(),
+        working.data.data(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4 * w),
+            rows_per_image: None,
+        },
+        size,
+    );
+    let inter = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT;
+    let mid_a = tex("fx mid a", inter);
+    let mid_b = tex("fx mid b", inter);
+    // La salida además debe poder copiarse al atlas de vello (COPY_SRC)
+    // y volver a muestrearse (pasada de color sin blur).
+    let out = tex(
+        "fx out",
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let image = register(out.clone());
+    LayerFx {
+        src,
+        src_blob_id: request.source.data.id(),
+        mid_a,
+        mid_b,
+        out,
+        image,
+        last: None,
     }
 }
 

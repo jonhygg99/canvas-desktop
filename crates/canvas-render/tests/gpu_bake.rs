@@ -752,3 +752,90 @@ fn distinct_scopes_with_same_layer_id_do_not_interfere() {
         &b2[..4]
     );
 }
+
+// ─── relevo de texturas al cambiar el tamaño de la fuente ────────────────
+
+/// Réplica del crash real (informe crash-1787704986, foto de 2154×2170): una
+/// capa con efectos activos recibe píxeles nuevos de OTRAS dimensiones bajo
+/// la MISMA clave `(scope, LayerId)` — p. ej. pegar una foto de otra
+/// resolución sobre una capa que ya tenía blur. Antes del relevo,
+/// `sync_layer` reescribía los píxeles nuevos EN LAS TEXTURAS VIEJAS y wgpu
+/// mataba la app con un error de validación («Copy of X 0..2033 would end up
+/// overrunning the bounds of the Destination texture of X size 2000»). Ahora
+/// el juego completo se recrea y el horneado refleja la imagen nueva.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_survives_source_resize_under_same_layer_id() {
+    let (device, queue) = gpu_device();
+    const PW: u32 = 400;
+    const PH: u32 = 300;
+
+    let mut doc = Document::new(f64::from(PW), f64::from(PH));
+    let id = doc
+        .add_layer(
+            "img",
+            Transform::new(0.0, 0.0, f64::from(PW), f64::from(PH)),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 2000,
+                natural_height: 1500,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(id).unwrap().effects.blur_radius = 20.0;
+
+    let mut images = ImageMap::new();
+    // Imagen A: 2000×1500 (≤2048: entra sin capar). Las texturas de efectos
+    // nacen con ESTE tamaño.
+    let (rgba_a, wa, ha) = solid_image(2000, 1500, [200, 30, 30, 255]);
+    images.insert(id, image_data_from_rgba(rgba_a, wa, ha));
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (first, fw, fh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    assert_eq!((fw, fh), (PW, PH));
+
+    // Imagen B: 2154×2170 (>2048: se reduce a 2033×2048), azul sólida, bajo
+    // LA MISMA clave de caché. Dimensiones distintas de las texturas vivas:
+    // aquí estaba el pánico.
+    let (rgba_b, wb, hb) = solid_image(2154, 2170, [30, 60, 220, 255]);
+    images.insert(id, image_data_from_rgba(rgba_b, wb, hb));
+
+    let (second, sw, sh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    assert_eq!((sw, sh), (PW, PH));
+
+    // El blur de un color sólido es ese mismo color en todo el rect: centro
+    // y esquina deben salir AZULES (imagen B), con alpha opaco.
+    let px = |buf: &[u8], x: u32, y: u32| {
+        let i = ((y * PW + x) * 4) as usize;
+        (buf[i], buf[i + 1], buf[i + 2], buf[i + 3])
+    };
+    for (x, y) in [(PW / 2, PH / 2), (2, 2)] {
+        let (r, g, b, a) = px(&second, x, y);
+        assert!(
+            r < 80 && g < 110 && b > 160 && a == 255,
+            "el horneado tras el relevo no refleja la imagen nueva en ({x},{y}): ({r},{g},{b},{a})"
+        );
+    }
+    assert_ne!(
+        px(&first, PW / 2, PH / 2),
+        px(&second, PW / 2, PH / 2),
+        "el segundo horneado es idéntico al primero: los píxeles nuevos no llegaron a la GPU"
+    );
+}

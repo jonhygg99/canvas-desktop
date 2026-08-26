@@ -73,6 +73,23 @@ fn capped_image(source: &ImageData, max_dim: u32) -> Option<ImageData> {
     Some(crate::image_data_from_rgba(thumb.into_raw(), w, h))
 }
 
+/// Dimensiones que tendrá la imagen de trabajo (`capped_image` o la
+/// original) SIN materializar la reducción: decidir en cada frame si el
+/// juego de texturas cacheado sigue siendo del tamaño correcto debe ser
+/// barato, y recalcular el thumbnail no lo es. DEBE coincidir con el
+/// cálculo de `capped_image`.
+fn capped_dims(source: &ImageData) -> (u32, u32) {
+    let long = source.width.max(source.height);
+    if long <= MAX_FX_DIM {
+        return (source.width, source.height);
+    }
+    let scale = f64::from(MAX_FX_DIM) / f64::from(long);
+    (
+        ((f64::from(source.width) * scale).round() as u32).max(1),
+        ((f64::from(source.height) * scale).round() as u32).max(1),
+    )
+}
+
 /// Texturas de una capa con efectos activos.
 struct LayerFx {
     /// Imagen de trabajo subida a GPU (una vez): la original o su copia
@@ -118,6 +135,19 @@ pub enum FxSync {
     Unchanged,
     /// Se (re)horneó: el llamador debe marcar esta imagen "dirty" en vello.
     Rebaked(ImageData),
+    /// La capa conserva sus efectos pero su imagen de trabajo cambió de
+    /// TAMAÑO y el juego completo de texturas se recreó: hay que des-registrar
+    /// la textura anterior (`retired`) del renderer compartido además de
+    /// marcar sucia la nueva. Sin este relevo, reescribir píxeles de otra
+    /// resolución en las texturas viejas desborda su tamaño y wgpu mata la
+    /// app con un error de validación (crash real 2026-08-26, pegar una foto
+    /// de 2154×2170 sobre una capa que ya tenía efectos).
+    Replaced {
+        /// Handle de vello de la textura sustituida, a des-registrar.
+        retired: ImageData,
+        /// Handle de vello de la textura nueva, ya registrada.
+        image: ImageData,
+    },
     /// Ya no queda ningún efecto activo: el llamador debe des-registrarla.
     Removed(ImageData),
 }
@@ -175,5 +205,34 @@ mod tests {
                 cap_avg[i]
             );
         }
+    }
+
+    #[test]
+    fn capped_dims_matches_capped_image_for_various_sizes() {
+        // El criterio barato que decide el relevo de texturas debe dar
+        // SIEMPRE las mismas dimensiones que la reducción real.
+        for (w, h) in [
+            (100u32, 50u32), // pequeña: sin tocar
+            (2048, 1024),    // justo en el tope: sin tocar
+            (3000, 2000),    // ancho > alto
+            (2154, 2170),    // la foto del crash real → 2033×2048
+            (2170, 2154),    // la misma girada
+            (5000, 100),     // panorama extremo
+        ] {
+            let img = crate::image_data_from_rgba(vec![0u8; (w * h * 4) as usize], w, h);
+            let expected = match capped_image(&img, MAX_FX_DIM) {
+                Some(capped) => (capped.width, capped.height),
+                None => (w, h),
+            };
+            assert_eq!(capped_dims(&img), expected, "discrepancia con {w}×{h}");
+        }
+    }
+
+    #[test]
+    fn capped_dims_reports_the_crash_photo_working_size() {
+        // 2154×2170 reducida al tope da 2033×2048: exactamente el par que
+        // chocaba con la textura de 2000 px del informe de crash.
+        let img = crate::image_data_from_rgba(vec![0u8; 2154 * 2170 * 4], 2154, 2170);
+        assert_eq!(capped_dims(&img), (2033, 2048));
     }
 }

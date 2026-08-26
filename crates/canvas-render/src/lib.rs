@@ -110,6 +110,18 @@ impl CanvasRenderer {
                 self.atlas.reuploads += 1;
                 renderer.mark_override_image_dirty(&image);
             }
+            // Relevo de dimensiones: la textura nueva ya está registrada
+            // (registro fresco = copia al atlas), pero el horneado llega
+            // DESPUÉS del registro, así que también hay que marcarla dirty;
+            // y la sustituida hay que soltarla del registry, o perdería un
+            // slot de GPU con cada relevo. En el contador del atlas es a la
+            // vez una baja (textura sustituida) y una re-subida (dirty).
+            blur::FxSync::Replaced { retired, image } => {
+                self.atlas.removals += 1;
+                renderer.override_image(&retired, None);
+                self.atlas.reuploads += 1;
+                renderer.mark_override_image_dirty(&image);
+            }
             blur::FxSync::Removed(image) => {
                 self.atlas.removals += 1;
                 renderer.override_image(&image, None);
