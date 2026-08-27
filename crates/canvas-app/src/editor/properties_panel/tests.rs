@@ -743,3 +743,264 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
         "un único undo debe devolver el transform original completo"
     );
 }
+
+#[test]
+fn probe_lock_toggle() {
+    for y in (30u32..=240).step_by(3) {
+        let y = y as f32;
+        let ctx = egui::Context::default(); // real fonts
+        let mut state = EditorState::new_blank(400.0, 1200.0);
+        let _id = selected_rect(&mut state);
+        assert!(state.aspect_lock, "el default debe ser true");
+        let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
+            let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                properties_ui(state, ui);
+            });
+        };
+        wrap(&mut state, vec![]);
+        wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(12.0, y))]);
+        wrap(&mut state, vec![egui::Event::PointerButton { pos: egui::pos2(12.0, y), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }]);
+        wrap(&mut state, vec![egui::Event::PointerButton { pos: egui::pos2(12.0, y), button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }]);
+        if !state.aspect_lock {
+            eprintln!("PROBE_LOCK_HIT toggled true->false at y={y}");
+        }
+    }
+}
+
+/// Una capa de imagen 400×200 a la que se le ha recortado la esquina inferior
+/// derecha; devuelve su `LayerId` con la selección apuntando a ella.
+fn cropped_image(state: &mut EditorState) -> canvas_core::LayerId {
+    let (cropped_t, crop) = canvas_core::trim_crop_from_corner(
+        &canvas_core::Transform::new(100.0, 100.0, 400.0, 200.0),
+        canvas_core::CropRect::full(),
+        canvas_core::Corner::BottomRight,
+        -40.0,
+        -30.0,
+    );
+    let id = state
+        .doc
+        .add_layer(
+            "foto",
+            cropped_t,
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 400,
+                natural_height: 200,
+                crop: Some(crop),
+            }),
+        )
+        .unwrap();
+    state.selection = canvas_core::Selection::single(id);
+    id
+}
+
+/// Un clic en un punto concreto dentro del panel, usando fuentes reales
+/// (los botones de texto necesitan anchos de glifo reales para pegarles).
+fn panel_click(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    pos: egui::Pos2,
+) {
+    let r = |st: &mut EditorState, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            properties_ui(st, ui);
+        });
+    };
+    r(state, vec![]);
+    r(state, vec![egui::Event::PointerMoved(pos)]);
+    r(
+        state,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    r(
+        state,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+}
+
+/// Posiciones (con fuentes reales) de la fila «Crop»: el botón Crop/Done a la
+/// izquierda y Reset junto a él.
+const CROP_TOGGLE_POS: egui::Pos2 = egui::Pos2::new(40.0, 516.0);
+const CROP_RESET_POS: egui::Pos2 = egui::Pos2::new(100.0, 515.0);
+
+/// El botón «Crop» de una capa de imagen entra en modo recorte, y al pulsarlo
+/// de nuevo («Done») lo deja.
+#[test]
+fn clicking_the_crop_button_enters_and_exits_crop_mode() {
+    let ctx = egui::Context::default();
+    let mut state = EditorState::new_blank(400.0, 1200.0);
+    let _id = cropped_image(&mut state);
+    assert!(!state.crop_mode);
+
+    panel_click(&ctx, &mut state, CROP_TOGGLE_POS);
+    assert!(
+        state.crop_mode,
+        "pulsar «Crop» debe activar el modo recorte"
+    );
+
+    panel_click(&ctx, &mut state, CROP_TOGGLE_POS);
+    assert!(
+        !state.crop_mode,
+        "pulsar «Done» debe salir del modo recorte"
+    );
+}
+
+/// Pulsar «Reset» en una capa con recorte limpia el crop, ensancha el
+/// transform hasta el contenido completo (`uncrop_transform`) y lo consolida
+/// en UN `Composite` deshacible que un solo Ctrl+Z revierte por completo.
+#[test]
+fn resetting_a_crop_commits_an_undoable_composite() {
+    let ctx = egui::Context::default();
+    let mut state = EditorState::new_blank(400.0, 1200.0);
+    let id = cropped_image(&mut state);
+    let before = match &state.doc.layer(id).unwrap().content {
+        LayerContent::Image(c) => (c.crop.unwrap(), state.doc.layer(id).unwrap().transform),
+        _ => unreachable!(),
+    };
+    let restored_expected =
+        canvas_core::uncrop_transform(&before.1, before.0);
+    let (orig_crop, orig_transform) = before;
+
+    panel_click(&ctx, &mut state, CROP_RESET_POS);
+
+    let after = state.doc.layer(id).unwrap();
+    assert!(
+        matches!(&after.content, LayerContent::Image(c) if c.crop.is_none()),
+        "Reset debe quitar el recorte no destructivo"
+    );
+    // El transform se expande hasta mostrar la imagen completa, centrada.
+    assert!(
+        (after.transform.width - restored_expected.width).abs() < 1e-6
+            && (after.transform.height - restored_expected.height).abs() < 1e-6,
+        "Reset debe expandir el transform al contenido completo, no solo borrar el crop"
+    );
+    assert!(
+        state.can_undo(),
+        "el Reset debe registrar un paso deshacible"
+    );
+
+    state.undo();
+    let undone = state.doc.layer(id).unwrap();
+    assert_eq!(
+        undone.transform, orig_transform,
+        "el undo debe devolver el transform recortado original"
+    );
+    assert_eq!(
+        match &undone.content {
+            LayerContent::Image(c) => c.crop,
+            _ => None,
+        },
+        Some(orig_crop),
+        "el undo debe restaurar el crop original en un solo paso"
+    );
+}
+
+/// Arrastrar una esquina en modo recorte (gesto sobre el lienzo) muta el
+/// crop/transform en vivo y, al soltar, lo consolida en UN `Composite`
+/// deshacible que un solo Ctrl+Z revierte.
+#[test]
+fn dragging_a_crop_corner_commits_an_undoable_composite() {
+    use super::super::interaction::layer_interaction;
+    use super::super::viewport::layer_corners_screen;
+
+    let ctx = egui::Context::default();
+    let mut state = EditorState::new_blank(400.0, 1200.0);
+    let id = cropped_image(&mut state);
+    state.crop_mode = true;
+    state.viewport.zoom = 1.0;
+    state.viewport.pan = egui::Vec2::ZERO;
+
+    // Área de lienzo con origen en (0,0); con zoom 1 y pan 0, coordenadas de
+    // pantalla == coordenadas de página.
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let t0 = state.doc.layer(id).unwrap().transform;
+    let crop0 = match &state.doc.layer(id).unwrap().content {
+        LayerContent::Image(c) => c.crop,
+        _ => None,
+    };
+
+    // La esquina inferior derecha de la capa, en coordenadas de pantalla.
+    let br = layer_corners_screen(&state.viewport, rect, &t0)[3];
+
+    let run = |state: &mut EditorState, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.allocate_response(rect.size(), egui::Sense::drag());
+                layer_interaction(state, ui, &response, response.rect);
+            },
+        );
+    };
+
+    // 1) Hover, 2) pulsar sobre la esquina → inicia `Gesture::Crop`, 3)
+    // arrastrar hacia dentro (encoger), 4) soltar → consolida el comanddo.
+    run(&mut state, vec![egui::Event::PointerMoved(br)]);
+    run(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: br,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    let target = br + egui::vec2(-30.0, -20.0);
+    run(&mut state, vec![egui::Event::PointerMoved(target)]);
+    run(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    let edited = state.doc.layer(id).unwrap();
+    let edited_crop = match &edited.content {
+        LayerContent::Image(c) => c.crop,
+        _ => None,
+    };
+    assert!(
+        edited_crop != crop0 || edited.transform != t0,
+        "arrastrar la esquina debe cambiar el crop/transform"
+    );
+    assert!(
+        edited_crop.is_some() && edited.transform.width < t0.width,
+        "encoger la esquina inferior derecha debe reducir la ventana visible"
+    );
+    assert!(
+        state.can_undo(),
+        "el gesto de recorte debe ser un paso deshacible"
+    );
+
+    state.undo();
+    let undone = state.doc.layer(id).unwrap();
+    assert_eq!(
+        undone.transform, t0,
+        "el undo debe devolver el transform original"
+    );
+    assert_eq!(
+        match &undone.content {
+            LayerContent::Image(c) => c.crop,
+            _ => None,
+        },
+        crop0,
+        "el undo debe restaurar el crop original en un solo paso"
+    );
+}
+
