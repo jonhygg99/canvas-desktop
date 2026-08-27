@@ -740,25 +740,23 @@ pub fn draw_triangle_preview(painter: &egui::Painter, rect: egui::Rect, color: e
 
 /// Estrella de cinco puntas (silueta real de la capa).
 pub fn draw_star_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    let c = rect.center();
-    let s = rect.width().min(rect.height());
-    let r_out = s * 0.42;
-    let r_in = r_out * 0.45;
-    let mut pts = Vec::with_capacity(10);
-    for i in 0..10 {
-        let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 5.0;
-        let r = if i % 2 == 0 { r_out } else { r_in };
-        pts.push(c + egui::vec2(a.cos() * r, a.sin() * r));
-    }
-    painter.add(egui::Shape::convex_polygon(
-        pts.clone(),
-        color.gamma_multiply(0.35),
-        egui::Stroke::NONE,
-    ));
-    painter.add(egui::Shape::closed_line(
-        pts,
-        egui::Stroke::new(1.4, color),
-    ));
+    // Scale the shape to 65% of the icon rect and center it, so the
+    // fill never bleeds to the tile edges.
+    let scale = 0.65_f32;
+    let iw = rect.width() * scale;
+    let ih = rect.height() * scale;
+    let ox = (rect.width() - iw) / 2.0;
+    let oy = (rect.height() - ih) / 2.0;
+    let pts: Vec<(f64, f64)> = canvas_core::star_points(
+        f64::from(iw),
+        f64::from(ih),
+        5,
+        0.45,
+    )
+    .into_iter()
+    .map(|(x, y)| (x + f64::from(ox), y + f64::from(oy)))
+    .collect();
+    polygon_preview(painter, rect, &pts, color, false);
 }
 
 /// Flecha apuntando a la derecha (astil + cabeza, como la capa Arrow).
@@ -791,6 +789,80 @@ pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui
         egui::Stroke::NONE,
     ));
     painter.add(egui::Shape::closed_line(
+        pts,
+        egui::Stroke::new(1.4, color),
+    ));
+}
+
+/// Pentágono regular: la MISMA geometría relativa que la capa (puntos de
+/// canvas-core sobre la caja), relleno suave + borde.
+pub fn draw_pentagon_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    polygon_preview(painter, rect, &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 5), color, true);
+}
+
+/// Hexágono regular (misma geometría que la capa).
+pub fn draw_hexagon_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    polygon_preview(painter, rect, &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 6), color, true);
+}
+
+/// Rombo (misma geometría que la capa).
+pub fn draw_diamond_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    polygon_preview(painter, rect, &canvas_core::diamond_points(f64::from(rect.width()), f64::from(rect.height())), color, true);
+}
+
+/// Cruz (misma geometría que la capa).
+pub fn draw_cross_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let scale = 0.65_f32;
+    let iw = rect.width() * scale;
+    let ih = rect.height() * scale;
+    let ox = (rect.width() - iw) / 2.0;
+    let oy = (rect.height() - ih) / 2.0;
+    let pts: Vec<(f64, f64)> = canvas_core::cross_points(f64::from(iw), f64::from(ih))
+        .into_iter()
+        .map(|(x, y)| (x + f64::from(ox), y + f64::from(oy)))
+        .collect();
+    polygon_preview(painter, rect, &pts, color, false);
+}
+
+/// Corazón (misma geometría que la capa).
+pub fn draw_heart_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let scale = 0.65_f32;
+    let iw = rect.width() * scale;
+    let ih = rect.height() * scale;
+    let ox = (rect.width() - iw) / 2.0;
+    let oy = (rect.height() - ih) / 2.0;
+    let pts: Vec<(f64, f64)> = canvas_core::heart_points(f64::from(iw), f64::from(ih), 32)
+        .into_iter()
+        .map(|(x, y)| (x + f64::from(ox), y + f64::from(oy)))
+        .collect();
+    polygon_preview(painter, rect, &pts, color, false);
+}
+
+/// Pinta una forma poligonal como preview de Insert: relleno suave (sólo
+/// para polígonos convexos) + borde de 1.4 px, traduciendo los puntos de
+/// la caja local al rect del tile.
+///
+/// `fill`: si `true` dibuja relleno semitransparente (sólo convexe).
+fn polygon_preview(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    points: &[(f64, f64)],
+    color: egui::Color32,
+    fill: bool,
+) {
+    let pts: Vec<egui::Pos2> = points
+        .iter()
+        .map(|(x, y)| egui::pos2(rect.left() + *x as f32, rect.top() + *y as f32))
+        .collect();
+    let cp = painter.with_clip_rect(rect);
+    if fill {
+        cp.add(egui::Shape::convex_polygon(
+            pts.clone(),
+            color.gamma_multiply(0.35),
+            egui::Stroke::NONE,
+        ));
+    }
+    cp.add(egui::Shape::closed_line(
         pts,
         egui::Stroke::new(1.4, color),
     ));

@@ -1,7 +1,8 @@
 //! Emision de una capa de forma (rectangulo, elipse, linea, poligono...).
 
 use canvas_core::{
-    arrow_head_rounded, arrow_shaft_end_x, star_points, triangle_points, ShapeKind,
+    arrow_head_rounded, arrow_shaft_end_x, cross_points, diamond_points, heart_points,
+    regular_polygon_points, star_points, triangle_points, ShapeKind,
 };
 
 use super::util::{alpha, hex, n};
@@ -152,5 +153,36 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
                 a = n(chosen_alpha),
             ));
         }
+        ShapeKind::Pentagon => {
+            polygon_element(svg, &regular_polygon_points(w, h, 5), &fill_attr, &stroke_attr);
+        }
+        ShapeKind::Hexagon => {
+            polygon_element(svg, &regular_polygon_points(w, h, 6), &fill_attr, &stroke_attr);
+        }
+        ShapeKind::Diamond => {
+            polygon_element(svg, &diamond_points(w, h), &fill_attr, &stroke_attr);
+        }
+        ShapeKind::Cross => {
+            polygon_element(svg, &cross_points(w, h), &fill_attr, &stroke_attr);
+        }
+        ShapeKind::Heart => {
+            polygon_element(svg, &heart_points(w, h, 32), &fill_attr, &stroke_attr);
+        }
     }
+}
+
+/// Emite un `<polygon>` con los puntos dados y los atributos de relleno y
+/// borde ya formateados (formas poligonales nuevas).
+fn polygon_element(svg: &mut String, pts: &[(f64, f64)], fill: &str, stroke: &str) {
+    let pts = pts
+        .iter()
+        .map(|(x, y)| format!("{},{}", n(*x), n(*y)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    svg.push_str(&format!(
+        "<polygon points=\"{pts}\" {fill} {stroke}/>\n",
+        pts = pts,
+        fill = fill,
+        stroke = stroke,
+    ));
 }

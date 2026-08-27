@@ -35,6 +35,85 @@ pub fn arrow_shaft_end_x(w: f64) -> f64 {
     w * 0.60
 }
 
+/// Puntos de un polígono regular de `sides` lados centrado en la caja, con
+/// un vértice arriba (alineado con el centro vertical), como el triángulo
+/// y la estrella.
+pub fn regular_polygon_points(w: f64, h: f64, sides: u32) -> Vec<(f64, f64)> {
+    let sides = sides.max(3);
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let r = w.min(h) * 0.48;
+    let mut pts = Vec::with_capacity(sides as usize);
+    for i in 0..sides {
+        let a = -std::f64::consts::FRAC_PI_2 + std::f64::consts::TAU * i as f64 / sides as f64;
+        pts.push((cx + a.cos() * r, cy + a.sin() * r));
+    }
+    pts
+}
+
+/// Rombo (cuadrado girado 45°) centrado en la caja.
+pub fn diamond_points(w: f64, h: f64) -> [(f64, f64); 4] {
+    [
+        (w * 0.5, h * 0.10),
+        (w * 0.90, h * 0.50),
+        (w * 0.5, h * 0.90),
+        (w * 0.10, h * 0.50),
+    ]
+}
+
+/// Cruz (signo de suma) centrada en la caja: cuatro brazos del mismo grosor.
+pub fn cross_points(w: f64, h: f64) -> [(f64, f64); 12] {
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let t = w.min(h) * 0.26; // grosor de los brazos
+    let r = w.min(h) * 0.42; // alcance de los brazos
+    let (hx, hy) = (t / 2.0, t / 2.0);
+    [
+        (cx - hx, cy - r),
+        (cx + hx, cy - r),
+        (cx + hx, cy - hy),
+        (cx + r, cy - hy),
+        (cx + r, cy + hy),
+        (cx + hx, cy + hy),
+        (cx + hx, cy + r),
+        (cx - hx, cy + r),
+        (cx - hx, cy + hy),
+        (cx - r, cy + hy),
+        (cx - r, cy - hy),
+        (cx - hx, cy - hy),
+    ]
+}
+
+/// Puntos del contorno de un corazón (curva paramétrica clásica), centrado
+/// en la caja, con la punta hacia abajo. `samples` controla la suavidad
+/// (32 dan un contorno redondeado sin necesidad de curvas). Los límites se
+/// miden sobre los propios puntos, así la forma queda siempre contenida y
+/// centrada aunque la curva cambie.
+pub fn heart_points(w: f64, h: f64, samples: usize) -> Vec<(f64, f64)> {
+    let n = samples.max(16);
+    let mut raw = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = std::f64::consts::TAU * i as f64 / n as f64;
+        let x = 16.0 * t.sin().powi(3) / 17.0;
+        let y =
+            (13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos())
+                / 17.0;
+        raw.push((x, y));
+    }
+    let min_x = raw.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let max_x = raw.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    let min_y = raw.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let max_y = raw.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    let (x_span, y_span) = (max_x - min_x, max_y - min_y);
+    // Margen del 8 % como el triángulo y la estrella, para que la forma
+    // no toque los bordes de la caja de la capa.
+    let s = (w / x_span).min(h / y_span) * 0.88;
+    let ox = w / 2.0;
+    // Y de pantalla invertida (la punta −1 abajo), centrada en la caja.
+    let oy = h / 2.0 + (max_y + min_y) / 2.0 * s;
+    raw.into_iter()
+        .map(|(x, y)| (ox + x * s, oy - y * s))
+        .collect()
+}
+
 /// Cabeza de la flecha: triángulo apuntando a la derecha, enganchado al
 /// extremo del astil.
 pub fn arrow_head_points(w: f64, h: f64) -> [(f64, f64); 3] {
@@ -203,6 +282,85 @@ mod tests {
         assert!(max_x <= sharp[2].0);
         // start + 3 esquinas × 6 muestras.
         assert_eq!(flat.len(), 1 + 3 * 6);
+    }
+
+    #[test]
+    fn regular_polygon_has_sides_points_centered_and_first_on_top() {
+        for (sides, label) in [(5, "pentagon"), (6, "hexagon")] {
+            let pts = regular_polygon_points(300.0, 200.0, sides);
+            assert_eq!(pts.len(), sides as usize, "{label}");
+            let (cx, cy) = (150.0, 100.0);
+            // Primer vértice arriba, centrado horizontalmente.
+            assert!((pts[0].0 - cx).abs() < 1e-6, "{label}");
+            assert!(pts[0].1 < cy, "{label}");
+            // Todos a la misma distancia del centro (polígono regular).
+            let r0 = (pts[0].0 - cx).hypot(pts[0].1 - cy);
+            for p in &pts {
+                let r = (p.0 - cx).hypot(p.1 - cy);
+                assert!((r - r0).abs() < 1e-6, "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn diamond_is_symmetric_and_inside_the_box() {
+        let pts = diamond_points(200.0, 100.0);
+        assert_eq!(pts.len(), 4);
+        // Vértice superior centrado, izquierdo/derecho a mitad de altura.
+        assert!((pts[0].0 - 100.0).abs() < 1e-6);
+        assert!((pts[1].1 - 50.0).abs() < 1e-6);
+        assert!((pts[2].0 - 100.0).abs() < 1e-6);
+        assert!((pts[3].1 - 50.0).abs() < 1e-6);
+        for (x, y) in pts {
+            assert!(x >= 0.0 && x <= 200.0 && y >= 0.0 && y <= 100.0);
+        }
+    }
+
+    #[test]
+    fn cross_is_symmetric_with_four_equal_arms() {
+        let pts = cross_points(200.0, 200.0);
+        assert_eq!(pts.len(), 12);
+        let (cx, cy) = (100.0, 100.0);
+        let reach = |p: (f64, f64)| (p.0 - cx).abs().max((p.1 - cy).abs());
+        // Los cuatro brazos (arriba, derecha, abajo, izquierda) llegan
+        // igual de lejos del centro.
+        assert_eq!(reach(pts[0]), reach(pts[3]));
+        assert_eq!(reach(pts[3]), reach(pts[6]));
+        assert_eq!(reach(pts[6]), reach(pts[9]));
+        // Los dos vértices de cada brazo comparten la coordenada fija
+        // (brazo superior: mismo y; brazo derecho: mismo x).
+        assert!((pts[0].1 - pts[1].1).abs() < 1e-6);
+        assert!((pts[3].0 - pts[4].0).abs() < 1e-6);
+        assert!((pts[6].1 - pts[7].1).abs() < 1e-6);
+        assert!((pts[9].0 - pts[10].0).abs() < 1e-6);
+        // Todo dentro de la caja.
+        for (x, y) in pts {
+            assert!(x >= 0.0 && x <= 200.0 && y >= 0.0 && y <= 200.0);
+        }
+    }
+
+    #[test]
+    fn heart_fits_the_box_with_tip_below_center() {
+        let pts = heart_points(280.0, 280.0, 32);
+        assert_eq!(pts.len(), 32);
+        let min_x = pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        let max_x = pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+        let max_y = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+        // Dentro de la caja, con margen (~6 % por lado tras el 0.88).
+        assert!(min_x >= 0.0 && max_x <= 280.0);
+        assert!(min_y >= 0.0 && max_y <= 280.0);
+        assert!(min_x > 5.0 && max_x < 275.0);
+        // La punta (y máxima, abajo en pantalla) queda por debajo del centro.
+        assert!(max_y > 140.0);
+        assert!(min_y < 140.0);
+        // El corazón es simétrico en x.
+        for p in &pts {
+            assert!((p.0 - 140.0).abs() <= 140.0);
+        }
+        let left = pts.iter().map(|p| 140.0 - p.0).fold(f64::NEG_INFINITY, f64::max);
+        let right = pts.iter().map(|p| p.0 - 140.0).fold(f64::NEG_INFINITY, f64::max);
+        assert!((left - right).abs() < 1e-6);
     }
 
     #[test]

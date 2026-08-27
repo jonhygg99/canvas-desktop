@@ -256,6 +256,16 @@ pub enum ShapeKind {
     Star,
     /// Flecha apuntando a la derecha (astil + cabeza).
     Arrow,
+    /// Pentágono regular.
+    Pentagon,
+    /// Hexágono regular.
+    Hexagon,
+    /// Rombo (cuadrado girado 45°).
+    Diamond,
+    /// Cruz (signo de suma).
+    Cross,
+    /// Corazón con la punta hacia abajo.
+    Heart,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

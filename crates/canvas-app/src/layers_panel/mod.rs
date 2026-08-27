@@ -8,9 +8,10 @@ use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_arrow_preview, draw_ellipse_preview, draw_images_icon, draw_layers_icon,
-    draw_line_preview, draw_page_icon, draw_rect_preview, draw_sparkle_icon, draw_star_preview,
-    draw_text_preview, draw_triangle_preview,
+    draw_arrow_preview, draw_cross_preview, draw_diamond_preview, draw_ellipse_preview,
+    draw_heart_preview, draw_hexagon_preview, draw_images_icon, draw_layers_icon,
+    draw_line_preview, draw_page_icon, draw_pentagon_preview, draw_rect_preview,
+    draw_sparkle_icon, draw_star_preview, draw_text_preview, draw_triangle_preview,
 };
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
@@ -192,8 +193,9 @@ fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 4] {
     [first, second, LeftTab::Insert, LeftTab::Images]
 }
 
-/// Tamaño de las cajas de la cuadrícula Insert.
-const INSERT_TILE: f32 = 56.0;
+/// Altura de las cajas de la cuadrícula Insert (el ancho es la mitad del
+/// panel: dos columnas, cada elemento ocupa el 50 % del ancho).
+const INSERT_TILE_H: f32 = 64.0;
 
 /// Una entrada de la cuadrícula Insert: qué se inserta y cómo se pinta.
 struct InsertItem {
@@ -202,7 +204,7 @@ struct InsertItem {
     draw: fn(&egui::Painter, egui::Rect, egui::Color32),
 }
 
-const INSERT_ITEMS: [InsertItem; 7] = [
+const INSERT_ITEMS: [InsertItem; 12] = [
     InsertItem { label: "Text", tip: "Text", draw: draw_text_preview },
     InsertItem { label: "Rect", tip: "Rectangle", draw: draw_rect_preview },
     InsertItem { label: "Ellipse", tip: "Ellipse", draw: draw_ellipse_preview },
@@ -210,6 +212,11 @@ const INSERT_ITEMS: [InsertItem; 7] = [
     InsertItem { label: "Triangle", tip: "Triangle", draw: draw_triangle_preview },
     InsertItem { label: "Star", tip: "Star", draw: draw_star_preview },
     InsertItem { label: "Arrow", tip: "Arrow", draw: draw_arrow_preview },
+    InsertItem { label: "Pentagon", tip: "Pentagon", draw: draw_pentagon_preview },
+    InsertItem { label: "Hexagon", tip: "Hexagon", draw: draw_hexagon_preview },
+    InsertItem { label: "Diamond", tip: "Diamond", draw: draw_diamond_preview },
+    InsertItem { label: "Cross", tip: "Cross", draw: draw_cross_preview },
+    InsertItem { label: "Heart", tip: "Heart", draw: draw_heart_preview },
 ];
 
 /// Pestaña Insert: cuadrícula de cajas visuales con la silueta de cada
@@ -217,16 +224,18 @@ const INSERT_ITEMS: [InsertItem; 7] = [
 /// `insert_layer_centered` que los antiguos botones de texto.
 fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let visuals = ui.visuals().clone();
-    let cols = ((ui.available_width() / (INSERT_TILE + 8.0)).floor() as usize).max(1);
+    // Dos columnas: cada elemento ocupa el 50 % del ancho del panel.
+    let spacing = 8.0;
+    let tile_w = ((ui.available_width() - spacing) * 0.5).max(1.0);
     egui::Grid::new("insert_grid")
-        .num_columns(cols)
-        .spacing([8.0, 10.0])
+        .num_columns(2)
+        .spacing([spacing, 10.0])
         .show(ui, |ui| {
             for (i, item) in INSERT_ITEMS.iter().enumerate() {
-                if i > 0 && i % cols == 0 {
+                if i > 0 && i % 2 == 0 {
                     ui.end_row();
                 }
-                if insert_tile_ui(ui, item, &visuals).clicked() {
+                if insert_tile_ui(ui, item, &visuals, tile_w, INSERT_TILE_H).clicked() {
                     match item.label {
                         "Text" => state.insert_layer_centered(
                             "Text",
@@ -281,6 +290,51 @@ fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                                 ..Default::default()
                             }),
                         ),
+                        "Pentagon" => state.insert_layer_centered(
+                            "Pentagon",
+                            320.0,
+                            300.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Pentagon,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Hexagon" => state.insert_layer_centered(
+                            "Hexagon",
+                            320.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Hexagon,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Diamond" => state.insert_layer_centered(
+                            "Diamond",
+                            280.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Diamond,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Cross" => state.insert_layer_centered(
+                            "Cross",
+                            300.0,
+                            300.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Cross,
+                                ..Default::default()
+                            }),
+                        ),
+                        "Heart" => state.insert_layer_centered(
+                            "Heart",
+                            300.0,
+                            280.0,
+                            LayerContent::Shape(canvas_core::ShapeContent {
+                                kind: canvas_core::ShapeKind::Heart,
+                                ..Default::default()
+                            }),
+                        ),
                         _ => state.insert_layer_centered(
                             "Arrow",
                             400.0,
@@ -305,12 +359,16 @@ fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
 }
 
 /// Caja individual de la cuadrícula: fondo de widget, preview centrado y
-/// etiqueta pequeña debajo.
-fn insert_tile_ui(ui: &mut egui::Ui, item: &InsertItem, visuals: &egui::Visuals) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(INSERT_TILE, INSERT_TILE),
-        egui::Sense::click(),
-    );
+/// etiqueta pequeña debajo. Ocupa todo el ancho que se le pase (la mitad
+/// del panel).
+fn insert_tile_ui(
+    ui: &mut egui::Ui,
+    item: &InsertItem,
+    visuals: &egui::Visuals,
+    w: f32,
+    h: f32,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
     let bg = if resp.hovered() {
         visuals.widgets.hovered.bg_fill
     } else {
@@ -318,15 +376,15 @@ fn insert_tile_ui(ui: &mut egui::Ui, item: &InsertItem, visuals: &egui::Visuals)
     };
     ui.painter().rect(
         rect,
-        5.0,
+        8.0,
         bg,
         visuals.widgets.inactive.bg_stroke,
         egui::StrokeKind::Inside,
     );
-    // Preview arriba (deja sitio a la etiqueta).
-    let icon_rect = egui::Rect::from_min_size(
-        rect.left_top() + egui::vec2(4.0, 2.0),
-        egui::vec2(INSERT_TILE - 8.0, INSERT_TILE - 18.0),
+    // Preview centrado (deja sitio a la etiqueta).
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.center().y - 6.0),
+        egui::vec2(w - 20.0, h - 26.0),
     );
     let color = if resp.hovered() {
         visuals.widgets.active.text_color()
@@ -335,10 +393,10 @@ fn insert_tile_ui(ui: &mut egui::Ui, item: &InsertItem, visuals: &egui::Visuals)
     };
     (item.draw)(ui.painter(), icon_rect, color);
     ui.painter().text(
-        egui::pos2(rect.center().x, rect.bottom() - 7.5),
+        egui::pos2(rect.center().x, rect.bottom() - 8.0),
         egui::Align2::CENTER_CENTER,
         item.label,
-        egui::FontId::proportional(9.5),
+        egui::FontId::proportional(11.0),
         color,
     );
     resp.on_hover_text(item.tip)

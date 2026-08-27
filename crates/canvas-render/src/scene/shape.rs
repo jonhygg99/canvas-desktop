@@ -5,8 +5,9 @@
 //! parametros.
 
 use canvas_core::{
-    arrow_head_rounded, arrow_shaft_end_x, star_points, triangle_points, Layer, RoundedPath,
-    ShapeContent, ShapeKind,
+    arrow_head_rounded, arrow_shaft_end_x, cross_points, diamond_points, heart_points,
+    regular_polygon_points, star_points, triangle_points, Layer, RoundedPath, ShapeContent,
+    ShapeKind,
 };
 use vello::kurbo::{Affine, Rect};
 use vello::peniko::{Color, Fill};
@@ -101,6 +102,41 @@ pub(super) fn draw_shape(scene: &mut Scene, layer: &Layer, shape: &ShapeContent,
             ));
             scene.fill(Fill::NonZero, place, color, None, &head);
         }
+        ShapeKind::Pentagon => {
+            draw_polygon(scene, &regular_polygon_points(t.width, t.height, 5), fa, sa, place, &stroke, fill_color, stroke_color);
+        }
+        ShapeKind::Hexagon => {
+            draw_polygon(scene, &regular_polygon_points(t.width, t.height, 6), fa, sa, place, &stroke, fill_color, stroke_color);
+        }
+        ShapeKind::Diamond => {
+            draw_polygon(scene, &diamond_points(t.width, t.height), fa, sa, place, &stroke, fill_color, stroke_color);
+        }
+        ShapeKind::Cross => {
+            draw_polygon(scene, &cross_points(t.width, t.height), fa, sa, place, &stroke, fill_color, stroke_color);
+        }
+        ShapeKind::Heart => {
+            draw_polygon(scene, &heart_points(t.width, t.height, 32), fa, sa, place, &stroke, fill_color, stroke_color);
+        }
+    }
+}
+
+/// Rellena y contornea un polígono cerrado (formas poligonales nuevas).
+fn draw_polygon(
+    scene: &mut Scene,
+    points: &[(f64, f64)],
+    fa: u8,
+    sa: u8,
+    place: Affine,
+    stroke: &vello::kurbo::Stroke,
+    fill_color: Color,
+    stroke_color: Color,
+) {
+    let path = polygon_path(points);
+    if fa > 0 {
+        scene.fill(Fill::NonZero, place, fill_color, None, &path);
+    }
+    if sa > 0 && stroke.width > 0.0 {
+        scene.stroke(stroke, place, stroke_color, None, &path);
     }
 }
 
