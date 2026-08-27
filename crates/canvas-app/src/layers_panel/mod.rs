@@ -376,50 +376,6 @@ fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     }
 }
 
-/// Caja individual de la cuadrícula: fondo de widget, preview centrado y
-/// etiqueta pequeña debajo. Ocupa todo el ancho que se le pase (la mitad
-/// del panel).
-fn insert_tile_ui(
-    ui: &mut egui::Ui,
-    item: &InsertItem,
-    visuals: &egui::Visuals,
-    w: f32,
-    h: f32,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
-    let bg = if resp.hovered() {
-        visuals.widgets.hovered.bg_fill
-    } else {
-        visuals.widgets.inactive.bg_fill
-    };
-    ui.painter().rect(
-        rect,
-        8.0,
-        bg,
-        visuals.widgets.inactive.bg_stroke,
-        egui::StrokeKind::Inside,
-    );
-    // Preview centrado (deja sitio a la etiqueta).
-    let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.center().y - 6.0),
-        egui::vec2(w - 20.0, h - 26.0),
-    );
-    let color = if resp.hovered() {
-        visuals.widgets.active.text_color()
-    } else {
-        visuals.widgets.inactive.text_color()
-    };
-    (item.draw)(ui.painter(), icon_rect, color);
-    ui.painter().text(
-        egui::pos2(rect.center().x, rect.bottom() - 8.0),
-        egui::Align2::CENTER_CENTER,
-        item.label,
-        egui::FontId::proportional(11.0),
-        color,
-    );
-    resp.on_hover_text(item.tip)
-}
-
 /// Pinta un tile de Insert en un rect pre-calculado y gestiona el clic.
 /// Usa `ui.interact` sobre el rect para detectar hover/click sin que
 /// el layout de egui modifique el ancho.
