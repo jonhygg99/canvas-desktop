@@ -337,31 +337,17 @@ fn insert_item(state: &mut EditorState, label: &str) {
 /// `insert_layer_centered` que los antiguos botones de texto.
 fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let visuals = ui.visuals().clone();
-    // Dos columnas de ancho fijo e idéntico (evita que el Grid auto-
-    // dimensione la segunda columna más ancha por etiquetas largas).
-    let spacing = 8.0;
-    let tile_w = ((ui.available_width() - spacing) * 0.5).max(1.0);
-    let mut i = 0;
-    while i < INSERT_ITEMS.len() {
-        let left = &INSERT_ITEMS[i];
-        let right = if i + 1 < INSERT_ITEMS.len() { Some(&INSERT_ITEMS[i + 1]) } else { None };
-
-        ui.horizontal(|ui| {
-            if insert_tile_ui(ui, left, &visuals, tile_w, INSERT_TILE_H).clicked() {
-                insert_item(state, left.label);
+    // Dos columnas de ancho idéntico: `ui.columns` divide el espacio
+    // disponible en 2 partes iguales, así ningún tile se corta.
+    ui.columns(2, |cols| {
+        for (i, item) in INSERT_ITEMS.iter().enumerate() {
+            let col = &mut cols[i % 2];
+            if insert_tile_ui(col, item, &visuals, col.available_width(), INSERT_TILE_H).clicked() {
+                insert_item(state, item.label);
             }
-            ui.add_space(spacing);
-            if let Some(item) = right {
-                if insert_tile_ui(ui, item, &visuals, tile_w, INSERT_TILE_H).clicked() {
-                    insert_item(state, item.label);
-                }
-            } else {
-                ui.add_space(tile_w);
-            }
-        });
-        ui.add_space(10.0);
-        i += 2;
-    }
+            col.add_space(10.0);
+        }
+    });
 }
 
 /// Caja individual de la cuadrícula: fondo de widget, preview centrado y
