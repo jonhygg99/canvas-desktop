@@ -860,3 +860,56 @@ fn evict_frees_scopes_not_ids() {
         "evict debe liberar el scope de cada ranura descartada"
     );
 }
+
+#[test]
+fn deck_axis_toggles_between_vertical_and_horizontal() {
+    assert_eq!(DeckAxis::Vertical.toggled(), DeckAxis::Horizontal);
+    assert_eq!(DeckAxis::Horizontal.toggled(), DeckAxis::Vertical);
+}
+
+#[test]
+fn strip_side_cycles_counterclockwise_and_reports_its_flow() {
+    assert_eq!(StripSide::Left.cycled(), StripSide::Bottom);
+    assert_eq!(StripSide::Bottom.cycled(), StripSide::Right);
+    assert_eq!(StripSide::Right.cycled(), StripSide::Top);
+    assert_eq!(StripSide::Top.cycled(), StripSide::Left);
+    assert!(StripSide::Left.is_vertical_flow());
+    assert!(StripSide::Right.is_vertical_flow());
+    assert!(!StripSide::Top.is_vertical_flow());
+    assert!(!StripSide::Bottom.is_vertical_flow());
+    assert_eq!(StripSide::Bottom.label(), "Bottom");
+}
+
+#[test]
+fn deck_rect_intersects_only_overlapping_rects() {
+    let a = DeckRect {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 100.0,
+    };
+    let overlapping = DeckRect {
+        x: 50.0,
+        y: 50.0,
+        w: 100.0,
+        h: 100.0,
+    };
+    let edge_touching = DeckRect {
+        x: 100.0,
+        y: 0.0,
+        w: 100.0,
+        h: 100.0,
+    };
+    let disjoint = DeckRect {
+        x: 200.0,
+        y: 200.0,
+        w: 10.0,
+        h: 10.0,
+    };
+    assert!(a.intersects(overlapping));
+    assert!(
+        !a.intersects(edge_touching),
+        "solo tocar el borde no es intersectar"
+    );
+    assert!(!a.intersects(disjoint));
+}

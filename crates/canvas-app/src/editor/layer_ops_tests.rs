@@ -3,7 +3,10 @@
 
 use canvas_core::{LayerContent, LayerId, ShapeContent, ShapeKind, Transform};
 
-use super::layer_ops::{delete_selected, has_deletable_selection};
+use super::layer_ops::{
+    apply_alignment, delete_selected, has_deletable_selection, reorder_layer, sibling_position,
+    ZOrder,
+};
 use super::EditorState;
 
 fn shape(state: &mut EditorState, name: &str) -> LayerId {
@@ -173,4 +176,127 @@ fn the_delete_button_is_enabled_when_something_can_go() {
 fn an_empty_selection_has_nothing_to_delete() {
     let state = EditorState::new_blank(800.0, 600.0);
     assert!(!has_deletable_selection(&state));
+}
+
+fn ids(state: &EditorState) -> Vec<LayerId> {
+    state
+        .doc
+        .page()
+        .expect("hay página")
+        .layers
+        .iter()
+        .map(|l| l.id)
+        .collect()
+}
+
+#[test]
+fn sibling_position_reports_parent_and_bounds() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a");
+    let b = shape(&mut state, "b");
+    let c = shape(&mut state, "c");
+    assert_eq!(sibling_position(&state, a), Some((None, 0, 2)));
+    assert_eq!(sibling_position(&state, b), Some((None, 1, 2)));
+    assert_eq!(sibling_position(&state, c), Some((None, 2, 2)));
+    assert_eq!(sibling_position(&state, LayerId::from_raw(9999)), None);
+}
+
+#[test]
+fn reorder_layer_forward_and_backward_step_once() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a");
+    let b = shape(&mut state, "b");
+    let c = shape(&mut state, "c");
+
+    reorder_layer(&mut state, a, ZOrder::Forward);
+    assert_eq!(ids(&state), [b, a, c], "Forward sube un paso");
+
+    reorder_layer(&mut state, c, ZOrder::Backward);
+    assert_eq!(ids(&state), [b, c, a], "Backward baja un paso");
+}
+
+#[test]
+fn reorder_layer_front_and_back_jump_to_the_ends() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a");
+    let b = shape(&mut state, "b");
+    let c = shape(&mut state, "c");
+
+    reorder_layer(&mut state, a, ZOrder::Front);
+    assert_eq!(ids(&state), [b, c, a], "Front lleva la capa al frente");
+
+    reorder_layer(&mut state, a, ZOrder::Back);
+    assert_eq!(ids(&state), [a, b, c], "Back la devuelve al fondo");
+}
+
+#[test]
+fn reorder_layer_at_the_end_is_a_noop_without_an_undo_step() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a");
+    let b = shape(&mut state, "b");
+    let c = shape(&mut state, "c");
+
+    reorder_layer(&mut state, c, ZOrder::Front); // ya está al frente
+    assert_eq!(ids(&state), [a, b, c]);
+    reorder_layer(&mut state, a, ZOrder::Back); // ya está al fondo
+    assert_eq!(ids(&state), [a, b, c]);
+    assert!(
+        !state.history.can_undo(),
+        "un reorden sin efecto no debe dejar un paso de deshacer"
+    );
+}
+
+#[test]
+fn reorder_layer_works_inside_a_group_and_is_undoable() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let g = group(&mut state, "g");
+    let a = shape(&mut state, "a");
+    let b = shape(&mut state, "b");
+    let c = shape(&mut state, "c");
+    let page = state.doc.page_mut().expect("hay página");
+    page.move_subtree(a, Some(g), 0).expect("a dentro del grupo");
+    page.move_subtree(b, Some(g), 1).expect("b dentro del grupo");
+    page.move_subtree(c, Some(g), 2).expect("c dentro del grupo");
+    assert_eq!(state.doc.page().unwrap().children_of(Some(g)), [a, b, c]);
+    assert_eq!(sibling_position(&state, a), Some((Some(g), 0, 2)));
+
+    reorder_layer(&mut state, a, ZOrder::Forward);
+    assert_eq!(state.doc.page().unwrap().children_of(Some(g)), [b, a, c]);
+
+    state.undo();
+    assert_eq!(
+        state.doc.page().unwrap().children_of(Some(g)),
+        [a, b, c],
+        "un undo restaura el orden dentro del grupo"
+    );
+}
+
+#[test]
+fn apply_alignment_sets_the_transform_as_one_undo_step() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a"); // 10x10 en (0,0)
+    let after = Transform::new(0.0, 0.0, 100.0, 100.0);
+
+    apply_alignment(&mut state, a, after);
+    assert_eq!(state.doc.layer(a).unwrap().transform, after);
+
+    state.undo();
+    assert_eq!(
+        state.doc.layer(a).unwrap().transform,
+        Transform::new(0.0, 0.0, 10.0, 10.0),
+        "un undo restaura el transform original"
+    );
+}
+
+#[test]
+fn apply_alignment_with_the_same_transform_is_a_noop() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = shape(&mut state, "a");
+
+    apply_alignment(&mut state, a, Transform::new(0.0, 0.0, 10.0, 10.0));
+
+    assert!(
+        !state.history.can_undo(),
+        "alinear con el mismo transform no debe dejar paso de deshacer"
+    );
 }

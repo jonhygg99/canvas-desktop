@@ -26,6 +26,10 @@ mod layer_factory;
 mod shortcuts;
 mod sidecar;
 
+#[cfg(test)]
+#[path = "shortcuts_tests.rs"]
+mod shortcuts_tests;
+
 pub(crate) use history::{DeleteRecord, GlobalStep};
 
 pub struct EditorState {
