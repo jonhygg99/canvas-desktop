@@ -785,7 +785,200 @@ fn draw_vertical_tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use canvas_core::{Selection, ShapeKind};
     use crate::settings::LayersTabOrder;
+
+    /// Lo que debe crear `insert_item` para cada etiqueta del panel Insert:
+    /// nombre de la capa, tamaño y tipo de contenido. Espejo de `insert_item`
+    /// para detectar cualquier desvío entre lo que ofrece la cuadrícula y lo
+    /// que realmente se inserta.
+    struct InsertCase {
+        label: &'static str,
+        name: &'static str,
+        w: f64,
+        h: f64,
+        kind: LayerKind,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum LayerKind {
+        Text,
+        Shape(ShapeKind),
+    }
+
+    const INSERT_CASES: [InsertCase; 12] = [
+        InsertCase { label: "Text", name: "Text", w: 500.0, h: 120.0, kind: LayerKind::Text },
+        InsertCase { label: "Rect", name: "Rectangle", w: 320.0, h: 220.0, kind: LayerKind::Shape(ShapeKind::Rect) },
+        InsertCase { label: "Ellipse", name: "Ellipse", w: 280.0, h: 280.0, kind: LayerKind::Shape(ShapeKind::Ellipse) },
+        InsertCase { label: "Line", name: "Line", w: 400.0, h: 48.0, kind: LayerKind::Shape(ShapeKind::Line) },
+        InsertCase { label: "Triangle", name: "Triangle", w: 320.0, h: 280.0, kind: LayerKind::Shape(ShapeKind::Triangle) },
+        InsertCase { label: "Star", name: "Star", w: 320.0, h: 300.0, kind: LayerKind::Shape(ShapeKind::Star) },
+        InsertCase { label: "Arrow", name: "Arrow", w: 400.0, h: 200.0, kind: LayerKind::Shape(ShapeKind::Arrow) },
+        InsertCase { label: "Pentagon", name: "Pentagon", w: 320.0, h: 300.0, kind: LayerKind::Shape(ShapeKind::Pentagon) },
+        InsertCase { label: "Hexagon", name: "Hexagon", w: 320.0, h: 280.0, kind: LayerKind::Shape(ShapeKind::Hexagon) },
+        InsertCase { label: "Diamond", name: "Diamond", w: 280.0, h: 280.0, kind: LayerKind::Shape(ShapeKind::Diamond) },
+        InsertCase { label: "Cross", name: "Cross", w: 300.0, h: 300.0, kind: LayerKind::Shape(ShapeKind::Cross) },
+        InsertCase { label: "Heart", name: "Heart", w: 300.0, h: 280.0, kind: LayerKind::Shape(ShapeKind::Heart) },
+    ];
+
+    /// La tabla de casos es un espejo exacto de la cuadrícula: ni etiquetas
+    /// del panel sin caso, ni casos huérfanos.
+    #[test]
+    fn insert_cases_match_the_panel_tiles() {
+        assert_eq!(INSERT_CASES.len(), INSERT_ITEMS.len());
+        for item in &INSERT_ITEMS {
+            assert!(
+                INSERT_CASES.iter().any(|c| c.label == item.label),
+                "la etiqueta '{}' del panel no tiene caso esperado",
+                item.label
+            );
+        }
+        for case in &INSERT_CASES {
+            assert!(
+                INSERT_ITEMS.iter().any(|i| i.label == case.label),
+                "el caso '{}' no corresponde a ninguna etiqueta del panel",
+                case.label
+            );
+        }
+    }
+
+    #[test]
+    fn insert_item_creates_each_tile_centered_with_expected_content() {
+        for case in &INSERT_CASES {
+            let mut state = EditorState::new_blank(800.0, 600.0);
+            insert_item(&mut state, case.label);
+            let page = state.doc.page().expect("un documento en blanco tiene página");
+            assert_eq!(page.layers.len(), 1, "{}", case.label);
+            let layer = &page.layers[0];
+            assert_eq!(layer.name, case.name, "{}", case.label);
+            assert_eq!(layer.transform.width, case.w, "{}", case.label);
+            assert_eq!(layer.transform.height, case.h, "{}", case.label);
+            // Centrada en la página (origen + mitad del tamaño = centro).
+            let (cx, cy) = layer.transform.center();
+            assert!(
+                (cx - page.width / 2.0).abs() < 1e-9,
+                "{}: centrado en x",
+                case.label
+            );
+            assert!(
+                (cy - page.height / 2.0).abs() < 1e-9,
+                "{}: centrado en y",
+                case.label
+            );
+            match (case.kind, &layer.content) {
+                (LayerKind::Text, LayerContent::Text(_)) => {}
+                (LayerKind::Shape(k), LayerContent::Shape(s)) => {
+                    assert_eq!(s.kind, k, "{}", case.label)
+                }
+                (expected, got) => panic!(
+                    "{}: esperaba {:?}, la capa tiene {:?}",
+                    case.label, expected, got
+                ),
+            }
+            // La capa nueva queda seleccionada (la inserta y selecciona).
+            assert_eq!(
+                state.selection,
+                Selection::single(layer.id),
+                "{}",
+                case.label
+            );
+        }
+    }
+
+    /// Cualquier etiqueta desconocida cae al caso por defecto: una flecha.
+    #[test]
+    fn insert_item_unknown_label_falls_back_to_an_arrow() {
+        let mut state = EditorState::new_blank(800.0, 600.0);
+        insert_item(&mut state, "NoSuchItem");
+        let page = state.doc.page().expect("un documento en blanco tiene página");
+        assert_eq!(page.layers.len(), 1);
+        let layer = &page.layers[0];
+        assert_eq!(layer.name, "Arrow");
+        assert_eq!(layer.transform.width, 400.0);
+        assert_eq!(layer.transform.height, 200.0);
+        let LayerContent::Shape(s) = &layer.content else {
+            panic!("el caso por defecto debe crear una forma, no {:?}", layer.content);
+        };
+        assert_eq!(s.kind, ShapeKind::Arrow);
+        let (cx, cy) = layer.transform.center();
+        assert!((cx - page.width / 2.0).abs() < 1e-9);
+        assert!((cy - page.height / 2.0).abs() < 1e-9);
+        assert_eq!(state.selection, Selection::single(layer.id));
+    }
+
+    /// `insert_item` es deshacible: cada inserción apila un paso en el
+    /// historial, un `undo()` devuelve la página a su estado anterior (sin
+    /// capas) y el `redo()` restaura la capa. Se comprueba para cada etiqueta
+    /// del panel y para el caso por defecto (etiqueta desconocida).
+    #[test]
+    fn insert_item_is_undoable_and_redoable_for_every_tile() {
+        for label in INSERT_ITEMS.iter().map(|i| i.label).chain(["NoSuchItem"]) {
+            let mut state = EditorState::new_blank(800.0, 600.0);
+            insert_item(&mut state, label);
+            let page = state.doc.page().expect("un documento en blanco tiene página");
+            assert_eq!(page.layers.len(), 1, "{label}: debe insertar una capa");
+            let inserted = page.layers[0].id;
+
+            state.undo();
+            let page = state.doc.page().expect("un documento en blanco tiene página");
+            assert!(
+                page.layers.is_empty(),
+                "{label}: deshacer debe dejar la página sin capas"
+            );
+            assert!(
+                !state.selection.contains(inserted),
+                "{label}: la selección debe olvidar la capa deshecha"
+            );
+
+            state.redo();
+            let page = state.doc.page().expect("un documento en blanco tiene página");
+            assert_eq!(
+                page.layers.len(),
+                1,
+                "{label}: rehacer debe restaurar la capa insertada"
+            );
+        }
+    }
+
+    /// Dos inserciones del panel se apilan en el orden de inserción (índice
+    /// 0 = abajo, arriba del todo = última) y el deshacer las quita en orden
+    /// inverso, restaurando el rehacer el apilado original.
+    #[test]
+    fn insert_item_stacks_layers_in_order_and_undo_removes_them_in_reverse() {
+        let mut state = EditorState::new_blank(800.0, 600.0);
+        insert_item(&mut state, "Rect"); // primera, abajo del todo
+        insert_item(&mut state, "Heart"); // segunda, encima
+
+        let page = state.doc.page().expect("un documento en blanco tiene página");
+        assert_eq!(page.layers.len(), 2);
+        assert_eq!(page.layers[0].name, "Rectangle", "la primera inserción queda abajo");
+        assert_eq!(page.layers[1].name, "Heart", "la segunda inserción queda encima");
+        // La última insertada es la que manda: seleccionada y en el tope.
+        assert_eq!(state.selection, Selection::single(page.layers[1].id));
+
+        state.undo();
+        let page = state.doc.page().expect("un documento en blanco tiene página");
+        assert_eq!(page.layers.len(), 1);
+        assert_eq!(
+            page.layers[0].name, "Rectangle",
+            "el primer deshacer quita la de arriba (Heart), no la de abajo"
+        );
+
+        state.undo();
+        let page = state.doc.page().expect("un documento en blanco tiene página");
+        assert!(
+            page.layers.is_empty(),
+            "el segundo deshacer deja la página sin capas"
+        );
+
+        // El rehacer las restaura en el mismo orden de apilado original.
+        state.redo();
+        state.redo();
+        let page = state.doc.page().expect("un documento en blanco tiene página");
+        assert_eq!(page.layers.len(), 2);
+        assert_eq!(page.layers[0].name, "Rectangle");
+        assert_eq!(page.layers[1].name, "Heart");
+    }
 
     #[test]
     fn ordered_tabs_follows_the_setting() {
