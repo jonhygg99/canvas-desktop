@@ -407,3 +407,270 @@ fn dropping_an_image_larger_than_the_page_scales_it_down_but_keeps_the_center() 
     assert_eq!(fg.transform.x, 0.0);
     assert_eq!(fg.transform.y, 250.0);
 }
+
+// ---------------------------------------------------------------------------
+// Edición de propiedades → comandos deshacibles. Conducen los MISMOS widgets
+// que la app (DragValue/Slider/checkbox) a través de frames de egui reales
+// (CPU, sin backend), como hace `opacity_tests`, así que prueban que la
+// edición de tamaño/opacidad/efectos acaba en un paso de deshacer y que un
+// solo Ctrl+Z devuelve el valor original.
+// ---------------------------------------------------------------------------
+
+use super::effects::{blur_control, color_adjustments_ui, shadow_ui};
+
+/// Un rectángulo de 200×100 en (50, 50) como capa seleccionada.
+fn selected_rect(state: &mut EditorState) -> canvas_core::LayerId {
+    let id = state
+        .doc
+        .add_layer(
+            "capa",
+            Transform::new(50.0, 50.0, 200.0, 100.0),
+            LayerContent::Shape(ShapeContent {
+                kind: canvas_core::ShapeKind::Rect,
+                fill: [255, 0, 0, 255],
+                stroke: [0, 0, 0, 0],
+                stroke_width: 0.0,
+                corner_radius: 0.0,
+            }),
+        )
+        .unwrap();
+    state.selection = canvas_core::Selection::single(id);
+    id
+}
+
+/// Un frame headless de egui que corre `fx(state, ui, id)` a la vez.
+fn run_one(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    id: canvas_core::LayerId,
+    fx: fn(&mut EditorState, &mut egui::Ui, canvas_core::LayerId),
+    events: Vec<egui::Event>,
+) {
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 400.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| fx(state, ui, id),
+    );
+}
+
+/// Un clic de egui real (mover el puntero, pulsar y soltar), como en la app.
+fn click_one(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    id: canvas_core::LayerId,
+    fx: fn(&mut EditorState, &mut egui::Ui, canvas_core::LayerId),
+    pos: egui::Pos2,
+) {
+    run_one(ctx, state, id, fx, vec![egui::Event::PointerMoved(pos)]);
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+}
+
+/// Un arrastre de egui real sobre el widget en `(x0, y)` hacia `(x1, y)`.
+fn drag_one(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    id: canvas_core::LayerId,
+    fx: fn(&mut EditorState, &mut egui::Ui, canvas_core::LayerId),
+    y: f32,
+    x0: f32,
+    x1: f32,
+) {
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerMoved(egui::pos2(x0, y))],
+    );
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(x0, y),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerMoved(egui::pos2(x1, y))],
+    );
+    run_one(
+        ctx,
+        state,
+        id,
+        fx,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(x1, y),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+}
+
+/// Editar el ancho (campo W de la sección «Size») en un frame headless
+/// termina en un `SetTransform` deshacible: un Ctrl+Z restaura el transform
+/// original, tamaño y posición incluidos (escalado alrededor del centro).
+#[test]
+fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut state = EditorState::new_blank(400.0, 1200.0);
+    let id = selected_rect(&mut state);
+    let original = state.doc.layer(id).unwrap().transform;
+
+    // Renderiza el panel y arrastra el campo W (fila superior de «Size»).
+    let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            properties_ui(state, ui);
+        });
+    };
+    wrap(&mut state, vec![]);
+    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(40.0, 110.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(40.0, 110.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(110.0, 110.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(110.0, 110.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    let edited = state.doc.layer(id).unwrap().transform;
+    assert!(
+        edited.width > original.width,
+        "el arrastre debe agrandar la capa en vivo"
+    );
+    assert!(state.history.can_undo(), "la edición debe ser un paso de deshacer");
+
+    state.undo();
+    let restored = state.doc.layer(id).unwrap().transform;
+    assert_eq!(
+        restored, original,
+        "un undo debe devolver el transform original completo"
+    );
+}
+
+/// Arrastrar el slider de desenfoque termina en un `SetBlur` deshacible.
+#[test]
+fn editing_blur_commits_an_undoable_set_blur() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut state = EditorState::new_blank(400.0, 400.0);
+    let id = selected_rect(&mut state);
+    let before = state.doc.layer(id).unwrap().effects.blur_radius;
+
+    drag_one(&ctx, &mut state, id, blur_control, 0.0, 200.0, 320.0);
+
+    let edited = state.doc.layer(id).unwrap().effects.blur_radius;
+    assert!(edited > before, "el arrastre debe añadir desenfoque");
+    assert!(state.history.can_undo());
+
+    state.undo();
+    assert_eq!(state.doc.layer(id).unwrap().effects.blur_radius, before);
+}
+
+/// Ajustar la saturación/brillo (cualquier slider de color) termina en un
+/// `SetEffects` deshacible que restaura el ajuste neutro original.
+#[test]
+fn editing_color_commits_an_undoable_set_effects() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut state = EditorState::new_blank(400.0, 400.0);
+    let id = selected_rect(&mut state);
+    let original = state.doc.layer(id).unwrap().effects;
+
+    // El primer slider de color es «Brightness»: arrastrarlo lo desvía.
+    drag_one(
+        &ctx,
+        &mut state,
+        id,
+        color_adjustments_ui,
+        0.0,
+        200.0,
+        320.0,
+    );
+
+    let edited = state.doc.layer(id).unwrap().effects;
+    assert!(
+        (edited.brightness - original.brightness).abs() > f32::EPSILON,
+        "el arrastre debe desviar el brillo (efectos de color)"
+    );
+    assert!(state.history.can_undo());
+
+    state.undo();
+    assert_eq!(state.doc.layer(id).unwrap().effects, original);
+}
+
+/// Marcar la casilla de sombra termina en un `SetShadow` deshacible (on), y
+/// un segundo Ctrl+Z la restablecería; aquí verificamos el primer paso.
+#[test]
+fn enabling_the_shadow_commits_an_undoable_set_shadow() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut state = EditorState::new_blank(400.0, 400.0);
+    let id = selected_rect(&mut state);
+    assert!(state.doc.layer(id).unwrap().effects.shadow.is_none());
+
+    click_one(&ctx, &mut state, id, shadow_ui, egui::pos2(12.0, 0.0));
+
+    let shadow = state.doc.layer(id).unwrap().effects.shadow;
+    assert!(
+        shadow.is_some(),
+        "marcar la casilla debe añadir una sombra por defecto"
+    );
+    assert!(state.history.can_undo());
+
+    state.undo();
+    assert!(
+        state.doc.layer(id).unwrap().effects.shadow.is_none(),
+        "un undo debe quitar la sombra recién añadida"
+    );
+}
