@@ -312,7 +312,7 @@ mod tests {
         assert!((pts[2].0 - 100.0).abs() < 1e-6);
         assert!((pts[3].1 - 50.0).abs() < 1e-6);
         for (x, y) in pts {
-            assert!(x >= 0.0 && x <= 200.0 && y >= 0.0 && y <= 100.0);
+            assert!((0.0..=200.0).contains(&x) && (0.0..=100.0).contains(&y));
         }
     }
 
@@ -335,7 +335,7 @@ mod tests {
         assert!((pts[9].0 - pts[10].0).abs() < 1e-6);
         // Todo dentro de la caja.
         for (x, y) in pts {
-            assert!(x >= 0.0 && x <= 200.0 && y >= 0.0 && y <= 200.0);
+            assert!((0.0..=200.0).contains(&x) && (0.0..=200.0).contains(&y));
         }
     }
 

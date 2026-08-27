@@ -103,40 +103,63 @@ pub(super) fn draw_shape(scene: &mut Scene, layer: &Layer, shape: &ShapeContent,
             scene.fill(Fill::NonZero, place, color, None, &head);
         }
         ShapeKind::Pentagon => {
-            draw_polygon(scene, &regular_polygon_points(t.width, t.height, 5), fa, sa, place, &stroke, fill_color, stroke_color);
+            draw_polygon(
+                scene,
+                &regular_polygon_points(t.width, t.height, 5),
+                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+            );
         }
         ShapeKind::Hexagon => {
-            draw_polygon(scene, &regular_polygon_points(t.width, t.height, 6), fa, sa, place, &stroke, fill_color, stroke_color);
+            draw_polygon(
+                scene,
+                &regular_polygon_points(t.width, t.height, 6),
+                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+            );
         }
         ShapeKind::Diamond => {
-            draw_polygon(scene, &diamond_points(t.width, t.height), fa, sa, place, &stroke, fill_color, stroke_color);
+            draw_polygon(
+                scene,
+                &diamond_points(t.width, t.height),
+                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+            );
         }
         ShapeKind::Cross => {
-            draw_polygon(scene, &cross_points(t.width, t.height), fa, sa, place, &stroke, fill_color, stroke_color);
+            draw_polygon(
+                scene,
+                &cross_points(t.width, t.height),
+                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+            );
         }
         ShapeKind::Heart => {
-            draw_polygon(scene, &heart_points(t.width, t.height, 32), fa, sa, place, &stroke, fill_color, stroke_color);
+            draw_polygon(
+                scene,
+                &heart_points(t.width, t.height, 32),
+                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+            );
         }
     }
 }
 
-/// Rellena y contornea un polígono cerrado (formas poligonales nuevas).
-fn draw_polygon(
-    scene: &mut Scene,
-    points: &[(f64, f64)],
+/// Estilo de relleno y contorno de un polígono cerrado (formas poligonales
+/// nuevas): alphas, transformación, trazo y colores. Agrupado para mantener
+/// corta la firma de `draw_polygon`.
+struct PolyStyle<'a> {
     fa: u8,
     sa: u8,
     place: Affine,
-    stroke: &vello::kurbo::Stroke,
+    stroke: &'a vello::kurbo::Stroke,
     fill_color: Color,
     stroke_color: Color,
-) {
+}
+
+/// Rellena y contornea un polígono cerrado (formas poligonales nuevas).
+fn draw_polygon(scene: &mut Scene, points: &[(f64, f64)], style: &PolyStyle) {
     let path = polygon_path(points);
-    if fa > 0 {
-        scene.fill(Fill::NonZero, place, fill_color, None, &path);
+    if style.fa > 0 {
+        scene.fill(Fill::NonZero, style.place, style.fill_color, None, &path);
     }
-    if sa > 0 && stroke.width > 0.0 {
-        scene.stroke(stroke, place, stroke_color, None, &path);
+    if style.sa > 0 && style.stroke.width > 0.0 {
+        scene.stroke(style.stroke, style.place, style.stroke_color, None, &path);
     }
 }
 
