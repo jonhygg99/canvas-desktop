@@ -377,3 +377,33 @@ fn pasting_into_a_non_empty_canvas_keeps_the_old_contain_behavior() {
     let fg = &page.layers[1];
     assert_eq!((fg.transform.width, fg.transform.height), (540.0, 960.0));
 }
+
+#[test]
+fn dropping_an_image_places_it_centered_at_the_drop_point() {
+    let mut state = EditorState::new_blank(1000.0, 1000.0);
+    // Arrastre desde Unsplash: sin fondo automático, centrada en el punto.
+    state.add_image_layer_at("Unsplash · foto", (700.0, 300.0), loaded_image(500, 500));
+
+    let page = state.doc.page().unwrap();
+    assert_eq!(page.layers.len(), 1, "el arrastre nunca añade fondo");
+    assert_eq!(state.background_layer, None);
+
+    let fg = &page.layers[0];
+    assert_eq!((fg.transform.width, fg.transform.height), (500.0, 500.0));
+    // Centrada en (700, 300): la esquina queda a media imagen de distancia.
+    assert_eq!(fg.transform.x, 700.0 - 250.0);
+    assert_eq!(fg.transform.y, 300.0 - 250.0);
+    assert_eq!(state.selection.primary(), Some(fg.id));
+}
+
+#[test]
+fn dropping_an_image_larger_than_the_page_scales_it_down_but_keeps_the_center() {
+    let mut state = EditorState::new_blank(1000.0, 1000.0);
+    // 2:1 sobre página 1:1 → escala 0.5 (1000x500), centrada en (500, 500).
+    state.add_image_layer_at("Unsplash · ancha", (500.0, 500.0), loaded_image(2000, 1000));
+
+    let fg = &state.doc.page().unwrap().layers[0];
+    assert_eq!((fg.transform.width, fg.transform.height), (1000.0, 500.0));
+    assert_eq!(fg.transform.x, 0.0);
+    assert_eq!(fg.transform.y, 250.0);
+}

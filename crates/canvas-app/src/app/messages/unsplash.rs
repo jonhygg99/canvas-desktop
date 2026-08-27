@@ -104,7 +104,7 @@ impl AppInner {
     pub(super) fn on_unsplash_image_ready(
         &mut self,
         ws: &mut Workspace,
-        _id: String,
+        id: String,
         label: String,
         result: Result<canvas_io::LoadedImage, String>,
     ) {
@@ -113,7 +113,19 @@ impl AppInner {
         };
         state.unsplash.inserting = None;
         match result {
-            Ok(img) => state.add_image_layer(label, None, img),
+            Ok(img) => {
+                // Si la foto llegó tras un ARRASTRE soltado sobre el lienzo,
+                // cae en la posición de la soltada; si no, centrada (clic).
+                if let Some((drop_id, pos)) = state.unsplash.pending_drop.take() {
+                    if drop_id == id {
+                        state.add_image_layer_at(label, pos, img);
+                    } else {
+                        state.add_image_layer(label, None, img);
+                    }
+                } else {
+                    state.add_image_layer(label, None, img);
+                }
+            }
             Err(e) => state.save_error = Some(format!("Unsplash: {e}")),
         }
     }

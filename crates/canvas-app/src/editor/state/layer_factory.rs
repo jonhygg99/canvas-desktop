@@ -13,6 +13,14 @@ use canvas_render::image_data_from_rgba;
 
 use super::EditorState;
 
+/// Dónde debe quedar la imagen al insertarla.
+enum ImagePlacement {
+    /// Centrada en la página; sobre lienzo vacío, «contain» + fondo.
+    Centered,
+    /// Centrada en un punto concreto (arrastre); sin fondo automático.
+    At((f64, f64)),
+}
+
 impl EditorState {
     /// Añade una imagen como capa nueva (deshacible) y la selecciona.
     /// `source` es `None` cuando la imagen viene del portapapeles del
@@ -32,23 +40,51 @@ impl EditorState {
         source: Option<PathBuf>,
         img: LoadedImage,
     ) {
+        self.insert_image_layer(name.into(), source, img, ImagePlacement::Centered);
+    }
+
+    /// Añade una imagen como capa nueva en un punto concreto de la página
+    /// (arrastre desde el panel de Unsplash), centrada en `pos`, con el
+    /// mismo ajuste de escala que el clic (encoger si supera la página).
+    /// Sin fondo automático: el usuario eligió dónde va.
+    pub fn add_image_layer_at(&mut self, name: impl Into<String>, pos: (f64, f64), img: LoadedImage) {
+        self.insert_image_layer(name.into(), None, img, ImagePlacement::At(pos));
+    }
+
+    fn insert_image_layer(
+        &mut self,
+        name: String,
+        source: Option<PathBuf>,
+        img: LoadedImage,
+        placement: ImagePlacement,
+    ) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
         let empty = page.layers.is_empty();
         let index = page.layers.len();
 
         let (nw, nh) = (f64::from(img.width), f64::from(img.height));
-        let transform = if empty {
-            contain_transform(nw, nh, pw, ph)
-        } else {
-            let scale = (pw / nw).min(ph / nh).min(1.0);
-            let (w, h) = (nw * scale, nh * scale);
-            Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h)
+        let transform = match placement {
+            ImagePlacement::Centered => {
+                if empty {
+                    contain_transform(nw, nh, pw, ph)
+                } else {
+                    let scale = (pw / nw).min(ph / nh).min(1.0);
+                    let (w, h) = (nw * scale, nh * scale);
+                    Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h)
+                }
+            }
+            ImagePlacement::At((x, y)) => {
+                let scale = (pw / nw).min(ph / nh).min(1.0);
+                let (w, h) = (nw * scale, nh * scale);
+                Transform::new(x - w / 2.0, y - h / 2.0, w, h)
+            }
         };
         // Con el mismo aspecto que la página, "contain" ya la cubre entera:
         // ese margen es solo tolerancia de redondeo, no hueco real.
-        let needs_background =
-            empty && !(transform.width >= pw * 0.999 && transform.height >= ph * 0.999);
+        let needs_background = matches!(placement, ImagePlacement::Centered)
+            && empty
+            && !(transform.width >= pw * 0.999 && transform.height >= ph * 0.999);
 
         let content = ImageContent {
             source_path: source,

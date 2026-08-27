@@ -283,6 +283,35 @@ pub fn canvas_ui(
     };
     paint(state, deck, ui, &mut geo, ctx.rs, ctx.renderer, &mut action);
 
+    // ── Soltar una foto de Unsplash sobre el lienzo ──
+    // El payload del arrastre solo se entrega AQUÍ (release sobre el área
+    // de edición), nunca en el sidebar: así el clic normal sigue insertando
+    // centrada y el arrastre coloca la imagen en el punto exacto de la
+    // soltada. La posición se pasa a coordenadas de página y se recorta a
+    // los límites de la página (una imagen no puede caer fuera).
+    if let Some(payload) = response.dnd_release_payload::<crate::unsplash::DragUnsplash>() {
+        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            // `slot_rect`, no `rect`: es el rect del área de dibujo desplazado
+            // por el origen de la ranura ACTIVA en la baraja — `screen_to_page`
+            // devuelve coordenadas de BARAJA, y sin ese desplazamiento la
+            // posición caería en el espacio equivocado (cada lienzo de la
+            // baraja vive desplazado de la página 0,0). Mismo patrón que
+            // `layer_interaction` y los helpers de coordenadas.
+            let (px, py) = screen_to_page(&state.viewport, slot_rect, pos);
+            let page_pos = (px.clamp(0.0, page_dims.0), py.clamp(0.0, page_dims.1));
+            state.unsplash.drop_on_canvas((*payload).clone(), page_pos, ctx.tx, ui.ctx());
+        }
+    } else if response.dnd_hover_payload::<crate::unsplash::DragUnsplash>().is_some() {
+        // Pista visual mientras se arrastra: borde azul sobre la página
+        // activa, para que se vea dónde caerá la foto.
+        ui.painter().rect_stroke(
+            slot_rect,
+            4.0,
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 122, 255)),
+            egui::StrokeKind::Inside,
+        );
+    }
+
     size_popup_ui(state, ui.ctx());
     action
 }
