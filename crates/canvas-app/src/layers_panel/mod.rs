@@ -219,143 +219,149 @@ const INSERT_ITEMS: [InsertItem; 12] = [
     InsertItem { label: "Heart", tip: "Heart", draw: draw_heart_preview },
 ];
 
+/// Inserta una capa centrada según la etiqueta del ítem del panel Insert.
+fn insert_item(state: &mut EditorState, label: &str) {
+    match label {
+        "Text" => state.insert_layer_centered(
+            "Text",
+            500.0,
+            120.0,
+            LayerContent::Text(canvas_core::TextContent::default()),
+        ),
+        "Rect" => state.insert_layer_centered(
+            "Rectangle",
+            320.0,
+            220.0,
+            LayerContent::Shape(canvas_core::ShapeContent::default()),
+        ),
+        "Ellipse" => state.insert_layer_centered(
+            "Ellipse",
+            280.0,
+            280.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Ellipse,
+                ..Default::default()
+            }),
+        ),
+        "Line" => state.insert_layer_centered(
+            "Line",
+            400.0,
+            48.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Line,
+                stroke: [30, 30, 30, 255],
+                stroke_width: 16.0,
+                corner_radius: 8.0,
+                ..Default::default()
+            }),
+        ),
+        "Triangle" => state.insert_layer_centered(
+            "Triangle",
+            320.0,
+            280.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Triangle,
+                ..Default::default()
+            }),
+        ),
+        "Star" => state.insert_layer_centered(
+            "Star",
+            320.0,
+            300.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Star,
+                ..Default::default()
+            }),
+        ),
+        "Pentagon" => state.insert_layer_centered(
+            "Pentagon",
+            320.0,
+            300.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Pentagon,
+                ..Default::default()
+            }),
+        ),
+        "Hexagon" => state.insert_layer_centered(
+            "Hexagon",
+            320.0,
+            280.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Hexagon,
+                ..Default::default()
+            }),
+        ),
+        "Diamond" => state.insert_layer_centered(
+            "Diamond",
+            280.0,
+            280.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Diamond,
+                ..Default::default()
+            }),
+        ),
+        "Cross" => state.insert_layer_centered(
+            "Cross",
+            300.0,
+            300.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Cross,
+                ..Default::default()
+            }),
+        ),
+        "Heart" => state.insert_layer_centered(
+            "Heart",
+            300.0,
+            280.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Heart,
+                ..Default::default()
+            }),
+        ),
+        _ => state.insert_layer_centered(
+            "Arrow",
+            400.0,
+            200.0,
+            LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Arrow,
+                stroke_width: 16.0,
+                corner_radius: 28.0,
+                ..Default::default()
+            }),
+        ),
+    }
+}
+
 /// Pestaña Insert: cuadrícula de cajas visuales con la silueta de cada
 /// elemento a insertar (texto y formas). Los clics llaman a las mismas
 /// `insert_layer_centered` que los antiguos botones de texto.
 fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let visuals = ui.visuals().clone();
-    // Dos columnas: cada elemento ocupa el 50 % del ancho del panel.
+    // Dos columnas de ancho fijo e idéntico (evita que el Grid auto-
+    // dimensione la segunda columna más ancha por etiquetas largas).
     let spacing = 8.0;
     let tile_w = ((ui.available_width() - spacing) * 0.5).max(1.0);
-    egui::Grid::new("insert_grid")
-        .num_columns(2)
-        .spacing([spacing, 10.0])
-        .show(ui, |ui| {
-            for (i, item) in INSERT_ITEMS.iter().enumerate() {
-                if i > 0 && i % 2 == 0 {
-                    ui.end_row();
-                }
+    let mut i = 0;
+    while i < INSERT_ITEMS.len() {
+        let left = &INSERT_ITEMS[i];
+        let right = if i + 1 < INSERT_ITEMS.len() { Some(&INSERT_ITEMS[i + 1]) } else { None };
+
+        ui.horizontal(|ui| {
+            if insert_tile_ui(ui, left, &visuals, tile_w, INSERT_TILE_H).clicked() {
+                insert_item(state, left.label);
+            }
+            ui.add_space(spacing);
+            if let Some(item) = right {
                 if insert_tile_ui(ui, item, &visuals, tile_w, INSERT_TILE_H).clicked() {
-                    match item.label {
-                        "Text" => state.insert_layer_centered(
-                            "Text",
-                            500.0,
-                            120.0,
-                            LayerContent::Text(canvas_core::TextContent::default()),
-                        ),
-                        "Rect" => state.insert_layer_centered(
-                            "Rectangle",
-                            320.0,
-                            220.0,
-                            LayerContent::Shape(canvas_core::ShapeContent::default()),
-                        ),
-                        "Ellipse" => state.insert_layer_centered(
-                            "Ellipse",
-                            280.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Ellipse,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Line" => state.insert_layer_centered(
-                            "Line",
-                            400.0,
-                            48.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Line,
-                                stroke: [30, 30, 30, 255],
-                                stroke_width: 16.0,
-                                // Extremos redondeados (mitad del trazo);
-                                // ajustable con «Corner radius».
-                                corner_radius: 8.0,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Triangle" => state.insert_layer_centered(
-                            "Triangle",
-                            320.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Triangle,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Star" => state.insert_layer_centered(
-                            "Star",
-                            320.0,
-                            300.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Star,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Pentagon" => state.insert_layer_centered(
-                            "Pentagon",
-                            320.0,
-                            300.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Pentagon,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Hexagon" => state.insert_layer_centered(
-                            "Hexagon",
-                            320.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Hexagon,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Diamond" => state.insert_layer_centered(
-                            "Diamond",
-                            280.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Diamond,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Cross" => state.insert_layer_centered(
-                            "Cross",
-                            300.0,
-                            300.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Cross,
-                                ..Default::default()
-                            }),
-                        ),
-                        "Heart" => state.insert_layer_centered(
-                            "Heart",
-                            300.0,
-                            280.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Heart,
-                                ..Default::default()
-                            }),
-                        ),
-                        _ => state.insert_layer_centered(
-                            "Arrow",
-                            400.0,
-                            200.0,
-                            LayerContent::Shape(canvas_core::ShapeContent {
-                                kind: canvas_core::ShapeKind::Arrow,
-                                // El astil grueso iguala a la línea: con el
-                                // grosor por defecto (2 px) la flecha era un
-                                // palo fino + triángulo gigante.
-                                stroke_width: 16.0,
-                                // Punta y base redondeadas (≈18 % del largo
-                                // de la cabeza); ajustable con «Corner
-                                // radius» en el panel de propiedades.
-                                corner_radius: 28.0,
-                                ..Default::default()
-                            }),
-                        ),
-                    }
+                    insert_item(state, item.label);
                 }
+            } else {
+                ui.add_space(tile_w);
             }
         });
+        ui.add_space(10.0);
+        i += 2;
+    }
 }
 
 /// Caja individual de la cuadrícula: fondo de widget, preview centrado y
