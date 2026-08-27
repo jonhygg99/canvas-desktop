@@ -674,3 +674,72 @@ fn enabling_the_shadow_commits_an_undoable_set_shadow() {
         "un undo debe quitar la sombra recién añadida"
     );
 }
+
+/// Con el candado de proporción (`aspect_lock`) activado, arrastrar el campo
+/// W ajusta también el alto para conservar la relación de la capa, y todo el
+/// arrastre acaba en un único `SetTransform` deshacible.
+#[test]
+fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let mut state = EditorState::new_blank(400.0, 1200.0);
+    let id = selected_rect(&mut state);
+    state.aspect_lock = true;
+
+    let original = state.doc.layer(id).unwrap().transform;
+    let ratio = original.aspect_ratio();
+
+    // Renderiza el panel y arrastra el campo W (fila «W/H» de la sección
+    // «Size») con el candado ya activado.
+    let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            properties_ui(state, ui);
+        });
+    };
+    wrap(&mut state, vec![]);
+    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(40.0, 112.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(40.0, 112.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(340.0, 112.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos: egui::pos2(340.0, 112.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+
+    let edited = state.doc.layer(id).unwrap().transform;
+    assert!(
+        edited.width > original.width,
+        "el arrastre debe agrandar el ancho en vivo"
+    );
+    assert_eq!(
+        edited.height,
+        (edited.width / ratio).max(1.0),
+        "con aspect_lock el alto sigue a la proporción original (ratio {ratio})"
+    );
+    assert!(
+        (edited.aspect_ratio() - ratio).abs() < 1e-3,
+        "la relación anchura/altura debe conservarse al escalar"
+    );
+
+    // Todo el arrastre es UN solo paso de deshacer: un único undo deja el
+    // panel sin cambios pendientes y restaura el transform original.
+    assert!(state.history.can_undo());
+    state.undo();
+    let restored = state.doc.layer(id).unwrap().transform;
+    assert_eq!(
+        restored, original,
+        "un único undo debe devolver el transform original completo"
+    );
+}
