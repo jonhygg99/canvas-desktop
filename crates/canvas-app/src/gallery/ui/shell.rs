@@ -40,3 +40,15 @@ pub(super) fn reveal_in_explorer(path: &Path) {
         );
     }
 }
+
+/// Abre el panel «Full Disk Access» de Ajustes del Sistema (macOS). Solo
+/// tiene sentido ahí: el fallo típico con carpetas de nube es que el
+/// proceso que lanzó la app no tiene permiso de disco, y los binarios
+/// sueltos nunca reciben el diálogo de consentimiento — así que llevamos
+/// al usuario directo al panel.
+#[cfg(target_os = "macos")]
+pub(super) fn open_full_disk_access_pane() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.settings.privacy.security.FullDiskAccess")
+        .spawn();
+}

@@ -1,7 +1,7 @@
 //! Bucle de mensajes: reacciona a todo lo que vuelve de los hilos de fondo
 //! (`AppMsg` - cargas, guardados, exportaciones, miniaturas, sondeos de la
-//! baraja, escaneos de la galeria...). Este archivo es solo el bucle y el
-//! despacho: el cuerpo de cada respuesta vive en el submodulo de su dominio.
+//! baraja, escaneos de la galería...). Este archivo es solo el bucle y el
+//! despacho: el cuerpo de cada respuesta vive en el submódulo de su dominio.
 //!
 //! Cada workspace tiene su propio canal (`Workspace::tx`/`rx`): los hilos a
 //! los que pide trabajo responden por ESE canal, así que el mensaje llega ya

@@ -241,24 +241,31 @@ pub fn settings_window(
                 settings.skip_overwrite_warning = !ask;
             }
 
-            ui.add_space(12.0);
-            ui.separator();
-            ui.label("File Explorer integration");
-            ui.weak(
-                "Adds Canvas Desktop to \"Open with\" for images and to the \
-                 right-click menu of folders.",
-            );
-            ui.horizontal(|ui| {
-                if ui.button("Register").clicked() {
-                    action = Some(SettingsAction::RegisterShell);
-                }
-                if ui.button("Unregister").clicked() {
-                    action = Some(SettingsAction::UnregisterShell);
-                }
-            });
-            if !shell_status.is_empty() {
-                ui.weak(shell_status);
-            }
+            explorer_section(ui, shell_status, &mut action);
         });
     action
+}
+
+/// Sección «File Explorer integration» de la ventana de ajustes: registro y
+/// limpieza de las asociaciones «Open with» (en plataformas sin shell
+/// integration el botón reporta el error por `shell_status`).
+fn explorer_section(ui: &mut egui::Ui, shell_status: &str, action: &mut Option<SettingsAction>) {
+    ui.add_space(12.0);
+    ui.separator();
+    ui.label("File Explorer integration");
+    ui.weak(
+        "Adds Canvas Desktop to \"Open with\" for images and to the \
+         right-click menu of folders.",
+    );
+    ui.horizontal(|ui| {
+        if ui.button("Register").clicked() {
+            *action = Some(SettingsAction::RegisterShell);
+        }
+        if ui.button("Unregister").clicked() {
+            *action = Some(SettingsAction::UnregisterShell);
+        }
+    });
+    if !shell_status.is_empty() {
+        ui.weak(shell_status);
+    }
 }

@@ -12,20 +12,11 @@ use crate::app::persistence::build_slot_doc;
 
 /// Carga una imagen. Con `use_sidecar`, intenta primero restaurar las capas
 /// editables desde su `.canvas`; un sidecar ilegible degrada a carga plana.
+/// La política (design vs. sidecar vs. plano, y el fallback con warning) es
+/// UNA: `canvas_io::open_document`.
 pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = (|| {
-            if use_sidecar {
-                match canvas_io::read_sidecar(&path) {
-                    Ok(Some(restored)) => return Ok(LoadOutcome::Restored(restored)),
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada")
-                    }
-                }
-            }
-            canvas_io::load_image(&path).map(LoadOutcome::Flat)
-        })();
+        let result = canvas_io::open_document(&path, use_sidecar).map(LoadOutcome::from);
         // ICC/EXIF del archivo en disco (mejor esfuerzo), venga el documento
         // aplanado o restaurado del sidecar: el original es el mismo.
         let metadata = canvas_io::extract_metadata_from_file(&path);
@@ -55,8 +46,8 @@ pub fn spawn_load_design(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) 
 
 /// Carga un lienzo de la baraja del editor en segundo plano (no la primera
 /// apertura: eso sigue siendo `spawn_load_image`/`spawn_load_design` vía
-/// `ImageLoaded`). Misma bifurcación que `App::open_path`: un `.canvas` ES
-/// el documento; una imagen restaura su sidecar si lo tiene.
+/// `ImageLoaded`). La bifurcación design/sidecar/plano es la MISMA que
+/// `spawn_load_image` usa: `canvas_io::open_document`.
 pub fn spawn_load_slot(
     folder: PathBuf,
     path: PathBuf,
@@ -67,28 +58,17 @@ pub fn spawn_load_slot(
 ) {
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
-        let is_canvas = canvas_io::is_canvas_file(&path);
-        let result = if is_canvas {
-            canvas_io::read_design(&path).map(LoadOutcome::Design)
-        } else {
-            match canvas_io::read_sidecar(&path) {
-                Ok(Some(restored)) => Ok(LoadOutcome::Restored(restored)),
-                Ok(None) => canvas_io::load_image(&path).map(LoadOutcome::Flat),
-                Err(e) => {
-                    tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada");
-                    canvas_io::load_image(&path).map(LoadOutcome::Flat)
-                }
-            }
-        };
-        let metadata = if is_canvas {
-            ImageMetadata::default()
-        } else {
-            canvas_io::extract_metadata_from_file(&path)
-        };
-        let prepared = result.and_then(|outcome| {
+        let prepared = canvas_io::open_document(&path, sidecar_default).and_then(|outcome| {
+            // Un diseño autónomo no tiene ICC/EXIF que preservar; una imagen
+            // (plana o con capas restauradas) sí: se leen del archivo en
+            // disco, mejor esfuerzo.
+            let metadata = match outcome {
+                canvas_io::OpenOutcome::Design(_) => ImageMetadata::default(),
+                _ => canvas_io::extract_metadata_from_file(&path),
+            };
             build_slot_doc(
                 path.clone(),
-                outcome,
+                outcome.into(),
                 (!metadata.is_empty()).then_some(metadata),
                 sidecar_default,
             )

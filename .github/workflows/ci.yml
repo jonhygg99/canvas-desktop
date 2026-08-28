@@ -45,9 +45,9 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev
 
-      # `--all-targets` compila tambien los examples GPU de canvas-render
+      # `--all-targets` compila también los examples GPU de canvas-render
       # (bake_blur, bake_filters, save_roundtrip, export_probe, text_probe):
-      # deben compilar en los tres sistemas aunque no se ejecuten aqui (los
+      # deben compilar en los tres sistemas aunque no se ejecuten aquí (los
       # runners no tienen adaptador GPU real).
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -69,7 +69,7 @@ jobs:
           fi
 
   # La shell integration se compila para los tres SO pero solo puede
-  # enlazarse en el suyo: los checks cruzados (sin linker) son la unica
+  # enlazarse en el suyo: los checks cruzados (sin linker) son la única
   # forma de validar linux.rs y macos.rs desde el CI.
   shell-cross:
     name: shell cross-check
@@ -82,3 +82,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p canvas-shell --target x86_64-unknown-linux-gnu --locked
       - run: cargo check -p canvas-shell --target x86_64-apple-darwin --locked
+
+  # Los 11 tests GPU de canvas-render (tests/gpu_bake.rs) van #[ignore] en
+  # el job `test`: los runners hospedados no tienen adaptador GPU real y los
+  # shaders solo se pueden verificar con uno. Este job los ejecuta a demanda
+  # (Actions › Run workflow) en un runner propio con GPU etiquetado
+  # [self-hosted, gpu]; como nunca se dispara en push/PR, sin ese runner
+  # conectado simplemente no llega a existir. Es la pieza que el job `test`
+  # no puede cubrir y que hoy solo se verifica localmente.
+  gpu-bake:
+    name: gpu bake (runner con GPU, a demanda)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p canvas-render --test gpu_bake -- --ignored

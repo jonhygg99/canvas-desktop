@@ -1,5 +1,5 @@
-//! Planificador de cargas: que ranuras pedir al hilo de disco, en que orden y
-//! cuantas a la vez. La generacion sirve para descartar respuestas de una
+//! Planificador de cargas: qué ranuras pedir al hilo de disco, en qué orden y
+//! cuántas a la vez. La generación sirve para descartar respuestas de una
 //! baraja anterior.
 
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ impl Deck {
         let hi = (active + PRELOAD_RADIUS).min(self.slots.len() - 1);
         let mut candidates: Vec<usize> = visible.iter().copied().chain(lo..=hi).collect();
         if self.preload_all {
-            // Radio de precarga simetrico a ambos lados de la activa,
+            // Radio de precarga simétrico a ambos lados de la activa,
             // hasta el mismo techo que `evict` permite (MAX_LOADED_SLOTS).
             // Antes usaba `budget / 2` (5 a cada lado), lo que dejaba slots
             // a 6+ posiciones sin cargar; un salto ahi se colgaba
@@ -53,10 +53,14 @@ impl Deck {
         candidates.retain(|&i| {
             matches!(self.slots.get(i), Some(s) if matches!(s.content, SlotContent::Idle) && !s.is_placeholder)
         });
+        // Rango de visibilidad precalculado: `visible` es una lista pequeña,
+        // pero el comparador corre O(n·log n) veces y un `contains` lineal
+        // dentro de ella escala cuadrático con carpetas grandes.
+        let visible_set: std::collections::HashSet<usize> = visible.iter().copied().collect();
         candidates.sort_by_key(|&i| {
             let jump_rank = usize::from(Some(i) != jump);
             let distance = i.abs_diff(active);
-            let visibility_rank = usize::from(!visible.contains(&i));
+            let visibility_rank = usize::from(!visible_set.contains(&i));
             (jump_rank, distance, visibility_rank, i)
         });
 
