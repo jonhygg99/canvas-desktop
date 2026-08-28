@@ -64,4 +64,15 @@ pub enum IoError {
     Encode { path: PathBuf, message: String },
     #[error("Could not save \"{path}\": {message}. The document is still intact in memory; try \"Save as…\"")]
     Write { path: PathBuf, message: String },
+    /// Error de E/S genérico con ruta (copiar, renombrar, crear directorio…):
+    /// todo lo que no es abrir/decodificar/guardar en sí.
+    #[error("\"{path}\": {source}")]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// Mensaje ya redactado para la UI, de un origen sin `io::Error` debajo
+    /// (papelera del sistema, validaciones de dominio, descargador externo).
+    #[error("{message}")]
+    Message { message: String },
 }

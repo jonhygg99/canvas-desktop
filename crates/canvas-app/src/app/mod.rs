@@ -12,16 +12,17 @@
 //!   al arrancar y lo usan también las ventanas hijas.
 
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context as _, Result};
 use canvas_render::CanvasRenderer;
 use eframe::egui;
 
 use crate::loader::AppMsg;
+use crate::lock::LockExt;
 use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
+mod bootstrap;
 mod frame;
 mod menu_actions;
 mod messages;
@@ -33,6 +34,7 @@ mod ui_modals;
 mod views;
 mod window;
 mod workspace;
+mod workspace_lifecycle;
 mod ws_frame;
 
 pub(crate) use workspace::Workspace;
@@ -208,150 +210,6 @@ pub(crate) struct MenuMirror {
 }
 
 impl App {
-    pub(crate) fn new(
-        cc: &eframe::CreationContext<'_>,
-        initial_path: Option<PathBuf>,
-        instance: Option<canvas_shell::InstanceListener>,
-    ) -> Result<Self> {
-        // egui 0.35 solo trae Ubuntu-Light: `RichText::strong()` solo cambia
-        // el COLOR, no el grosor. Para títulos de verdad en negrita (secciones
-        // del panel de propiedades) registramos la variante Bold de la misma
-        // familia Ubuntu y la usamos vía `FontFamily::Name("Ubuntu-Bold")`.
-        {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "Ubuntu-Bold".to_owned(),
-                egui::FontData::from_static(include_bytes!("../../assets/fonts/Ubuntu-Bold.ttf"))
-                    .into(),
-            );
-            fonts.families.insert(
-                egui::FontFamily::Name("Ubuntu-Bold".into()),
-                vec!["Ubuntu-Bold".to_owned()],
-            );
-            cc.egui_ctx.set_fonts(fonts);
-        }
-
-        let rs = cc
-            .wgpu_render_state
-            .as_ref()
-            .context("eframe no ha inicializado wgpu (¿backend glow activo?)?")?
-            .clone();
-        let renderer = CanvasRenderer::new(&rs.device)?;
-        let (shell_tx, shell_rx) = channel();
-
-        // Rutas de segundas instancias: un hilo acepta conexiones del socket
-        // local y las convierte en mensajes para la UI (canal global, no de
-        // ningún workspace: se resuelven contra la ventana ENFOCADA).
-        if let Some(listener) = instance {
-            let tx = shell_tx.clone();
-            let ctx = cc.egui_ctx.clone();
-            listener.spawn_accept_loop(move |line| {
-                let line = line.trim().to_owned();
-                if line.is_empty() {
-                    let _ = tx.send(AppMsg::FocusWindow);
-                } else {
-                    let _ = tx.send(AppMsg::OpenPathExternal(PathBuf::from(line)));
-                }
-                ctx.request_repaint();
-            });
-        }
-
-        // Menú nativo (Windows): necesita el HWND de la ventana recién creada.
-        // Vive en `App` (fuera del `Arc` compartido), no en `AppInner`.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut native_menus: Option<menus::AppMenus> = None;
-        #[cfg(windows)]
-        {
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            if let Ok(handle) = cc.window_handle() {
-                if let RawWindowHandle::Win32(h) = handle.as_raw() {
-                    native_menus = menus::AppMenus::install(h.hwnd.get());
-                }
-            }
-        }
-
-        let settings = settings::AppSettings::load();
-        if let Some(m) = native_menus.as_mut() {
-            m.set_recents(&settings.recent_files);
-        }
-
-        let ws0 = Arc::new(Mutex::new(Workspace::new(egui::ViewportId::ROOT)));
-        let mut inner = AppInner {
-            workspaces: vec![Arc::clone(&ws0)],
-            me: None,
-            renderer,
-            rs,
-            settings,
-            thumb_cache: window::thumbnail_cache_dir(),
-            shell_status: String::new(),
-            menu_mirror: MenuMirror::default(),
-            applied_theme: None,
-            switcher: switcher::SwitcherState::default(),
-            focused: 0,
-            shell_rx,
-            shell_tx,
-            next_ws_id: 1,
-            last_workspaces_save: None,
-            workspaces_dirty: false,
-            pending_focus: None,
-            atlas_regs: 0,
-            atlas_reups: 0,
-            atlas_log_frames: 0,
-        };
-
-        // La app arranca SIEMPRE en la home (bienvenida) de la única ventana
-        // raíz, con su tamaño por defecto: ni las ventanas hijas ni las
-        // carpetas/documentos de la sesión anterior se restauran. La lista
-        // sigue persistiéndose en `settings.json` como historial, pero aquí
-        // se descarta. Una ruta explícita (argv o «Abrir con» del SO) sí abre.
-        let _ = std::mem::take(&mut inner.settings.workspaces);
-
-        let path_to_open = initial_path;
-        if let Some(path) = path_to_open.clone() {
-            if path.exists() {
-                let ws0 = Arc::clone(&inner.workspaces[0]);
-                let mut ws0 = ws0.lock().unwrap();
-                inner.open_path(&mut ws0, path, &cc.egui_ctx);
-            } else {
-                tracing::info!("ruta inicial inexistente, se ignora: {}", path.display());
-            }
-        }
-        // Gancho de desarrollo: `CANVAS_DEBUG_WINDOWS=2` (o más) abre la misma
-        // ruta inicial en N ventanas del MISMO proceso — un único renderer
-        // compartido, el escenario real de varias ventanas sobre la misma
-        // carpeta, sin clics. La app empaquetada nunca lo lleva activo; sirve
-        // para reproducir y verificar bugs de scopes/atlas en vivo.
-        if let Some(n) = std::env::var("CANVAS_DEBUG_WINDOWS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&n| n >= 2)
-        {
-            for _ in 1..n.min(8) {
-                let ws = inner.new_workspace();
-                if let Some(path) = path_to_open.as_ref() {
-                    if path.exists() {
-                        let mut ws = ws.lock().unwrap();
-                        inner.open_path(&mut ws, path.clone(), &cc.egui_ctx);
-                    }
-                }
-            }
-            inner.pending_focus = Some(inner.workspaces.len() - 1);
-        }
-        inner.persist_workspaces_now();
-
-        // El Arc que comparten las ventanas; se patcha `me` con el Arc
-        // definitivo una vez creado (`None` mientras se construye; nadie lo
-        // lee hasta el primer frame, y las ventanas hijas nacen en él).
-        let inner_arc = Arc::new(Mutex::new(inner));
-        inner_arc.lock().unwrap().me = Some(Arc::clone(&inner_arc));
-        Ok(Self {
-            inner: inner_arc,
-            menus: native_menus,
-        })
-    }
-}
-
-impl App {
     /// Sondear clics del menú nativo (solo existe en la raíz de Windows) y
     /// aplicarlos sobre el workspace raíz. Se ejecuta antes del frame raíz;
     /// el resto de ventanas no tiene menú nativo. `menus` se pasa aparte (no
@@ -366,7 +224,7 @@ impl App {
             let Some(ws0) = inner.workspaces.first().cloned() else {
                 continue;
             };
-            let mut ws0 = ws0.lock().unwrap();
+            let mut ws0 = ws0.lock_ok();
             inner.handle_menu_action(&mut ws0, action, ctx);
         }
     }
@@ -382,7 +240,7 @@ impl App {
             return;
         };
         let (editor_open, can_undo, can_redo) = {
-            let ws0 = ws0.lock().unwrap();
+            let ws0 = ws0.lock_ok();
             match &ws0.view {
                 View::Editor(state) => (true, state.can_undo(), state.can_redo()),
                 _ => (false, false, false),
@@ -412,7 +270,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock_ok();
         App::poll_native_menu(&self.menus, &mut inner, &ctx);
         inner.root_frame(ui, &ctx);
         App::sync_native_menu(&mut self.menus, &mut inner);
@@ -422,117 +280,14 @@ impl eframe::App for App {
     /// las ventanas como historial en `settings.json`; ya no se restaura al
     /// arrancar: la app siempre abre en la home.
     fn on_exit(&mut self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.persist_workspaces_now();
-        }
+        // lock_ok y no `if let Ok`: aunque un workspace haya envenenado su
+        // lock con un pánico, la persistencia de geometría sigue siendo
+        // segura (y sí se quiere al salir).
+        self.inner.lock_ok().persist_workspaces_now();
     }
 }
 
 impl AppInner {
-    /// Crea un workspace nuevo (ventana) con la bienvenida y lo añade a la
-    /// lista. `from_root` indica si el usuario lo pidió desde el menú de una
-    /// ventana (se persiste ya) o es uno restaurado del arranque.
-    pub(crate) fn new_workspace(&mut self) -> Arc<Mutex<Workspace>> {
-        let id = self.next_ws_id;
-        self.next_ws_id += 1;
-        let viewport = egui::ViewportId::from_hash_of(("canvas-ws", id));
-        let ws = Arc::new(Mutex::new(Workspace::new(viewport)));
-        self.workspaces.push(Arc::clone(&ws));
-        // La persistencia se difiere al final del frame raíz: llamar aquí
-        // `persist_workspaces_now` bloquearía TODOS los workspaces, y si
-        // este método se invoca con el del frame actual ya lockeado (menú
-        // «New Window», Ctrl+N/Ctrl+T) el hilo se bloquearía a sí mismo.
-        self.workspaces_dirty = true;
-        ws
-    }
-
-    /// Persiste la lista de workspaces (documento activo + geometría) en los
-    /// ajustes. Se llama al crear/cerrar una ventana, con throttle para la
-    /// geometría en vivo, y en `on_exit`.
-    pub(crate) fn persist_workspaces_now(&mut self) {
-        self.settings.workspaces = self
-            .workspaces
-            .iter()
-            .map(|ws| {
-                let ws = ws.lock().unwrap();
-                settings::StoredWorkspace {
-                    path: ws.persisted_path(),
-                    pos: ws.geometry.map(|(p, _)| [p.x, p.y]),
-                    size: ws.geometry.map(|(_, s)| [s.x, s.y]),
-                }
-            })
-            .collect();
-        self.settings.save_in_background();
-        self.last_workspaces_save = Some(std::time::Instant::now());
-    }
-
-    /// Persiste la geometría con un throttle corto (no spam de hilos de
-    /// escritura por cada píxel de un arrastre de ventana).
-    pub(crate) fn maybe_persist_workspaces(&mut self) {
-        let due = self
-            .last_workspaces_save
-            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(2));
-        if due {
-            self.persist_workspaces_now();
-        }
-    }
-
-    /// Libera los recursos GPU del workspace que se cierra y lo retira de la
-    /// lista. Solo para ventanas hijas (la raíz no se retira nunca).
-    pub(crate) fn close_workspace(&mut self, index: usize) {
-        debug_assert!(index > 0, "la raíz no se cierra por esta vía");
-        // La textura nativa (register_native_texture) vive en el registry del
-        // renderer COMPARTIDO: hay que liberarla a mano o la GPU perdería
-        // slots con cada ventana cerrada.
-        let ws = self.workspaces.remove(index);
-        if let Ok(ws) = ws.lock() {
-            if let Some(surface) = &ws.surface {
-                self.rs.renderer.write().free_texture(&surface.egui_id());
-            }
-        }
-        if self.focused >= self.workspaces.len() {
-            self.focused = 0;
-        }
-        self.persist_workspaces_now();
-    }
-
-    /// Enfoca (trae al frente) la ventana de un workspace.
-    pub(crate) fn focus_workspace(&mut self, idx: usize, ctx: &egui::Context) {
-        let Some(ws_arc) = self.workspaces.get(idx) else {
-            return;
-        };
-        self.focused = idx;
-        let viewport = ws_arc.lock().unwrap().viewport;
-        ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
-        // La ventana objetivo se repinta sola al recibir el foco; la paleta
-        // se cierra en el frame siguiente.
-        ctx.request_repaint_of(viewport);
-    }
-
-    /// Refresca `self.focused` contra el estado real de las ventanas (el SO
-    /// manda: Alt+Tab etc. no pasan por aquí).
-    fn update_focused(&mut self, ctx: &egui::Context) {
-        // Solo se actualiza cuando ALGUNA ventana tiene el foco del SO: si
-        // ninguna lo tiene (p. ej. el arranque de una segunda instancia roba
-        // el foco un instante antes de reenviar su ruta por el socket), se
-        // CONSERVA la última enfocada — así una apertura externa aterriza en
-        // la ventana que el usuario estaba usando, no siempre en la raíz.
-        let focused_now = ctx.input(|i| {
-            i.raw
-                .viewports
-                .iter()
-                .find(|(_, info)| info.focused == Some(true))
-                .and_then(|(id, _)| {
-                    self.workspaces
-                        .iter()
-                        .position(|ws| ws.lock().unwrap().viewport == *id)
-                })
-        });
-        if let Some(idx) = focused_now {
-            self.focused = idx.min(self.workspaces.len().saturating_sub(1));
-        }
-    }
-
     /// El frame de cada arranque: tema, foco, mensajes, la ventana raíz y
     /// la creación de las hijas.
     fn root_frame(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -550,7 +305,7 @@ impl AppInner {
         self.drain_all(ctx);
 
         let ws0_arc = Arc::clone(&self.workspaces[0]);
-        let mut ws0 = ws0_arc.lock().unwrap();
+        let mut ws0 = ws0_arc.lock_ok();
         let paste = self.focused == 0 && paste_hook::take_request();
         self.ws_frame(ui, ctx, &mut ws0, 0, true, paste);
         drop(ws0);
@@ -592,79 +347,6 @@ impl AppInner {
             );
         }
         ctx.request_repaint();
-    }
-
-    /// Tras los frames: retira las ventanas que pidieron cerrarse y
-    /// persiste (throttleado) la geometría.
-    fn finish_root_frame(&mut self, ctx: &egui::Context) {
-        let mut changed = false;
-        let mut i = 1;
-        while i < self.workspaces.len() {
-            if self.workspaces[i].lock().unwrap().close_requested {
-                self.close_workspace(i);
-                changed = true;
-            } else {
-                i += 1;
-            }
-        }
-        if changed {
-            // El conmutador pudo quedar apuntando a una ventana retirada.
-            if self.focused >= self.workspaces.len() {
-                self.focused = 0;
-            }
-            self.switcher.selected = self
-                .switcher
-                .selected
-                .min(self.workspaces.len().saturating_sub(1));
-            let _ = ctx;
-        }
-        if self.workspaces_dirty {
-            self.workspaces_dirty = false;
-            self.persist_workspaces_now();
-        }
-        self.maybe_persist_workspaces();
-    }
-
-    /// Crea (o mantiene) las ventanas hijas con `show_viewport_deferred`.
-    /// Hay que llamarla cada frame con los MISMOS `ViewportId`, o la ventana
-    /// se cierra.
-    fn spawn_child_viewports(&self, ctx: &egui::Context) {
-        if self.workspaces.len() <= 1 {
-            return;
-        }
-        let me = Arc::clone(
-            self.me
-                .as_ref()
-                .expect("me se parchea en App::new antes del primer frame"),
-        );
-        for (i, ws_arc) in self.workspaces.iter().enumerate().skip(1) {
-            let ws = ws_arc.lock().unwrap();
-            if ws.close_requested {
-                continue;
-            }
-            let viewport = ws.viewport;
-            let mut builder = egui::ViewportBuilder::default().with_title(ws.label());
-            if let Some((pos, size)) = ws.geometry {
-                builder = builder
-                    .with_position([pos.x, pos.y])
-                    .with_inner_size([size.x, size.y]);
-            }
-            let ws_arc = Arc::clone(ws_arc);
-            let child_ctx = ctx.clone();
-            let me = Arc::clone(&me);
-            let idx = i;
-            ctx.show_viewport_deferred(viewport, builder, move |ui, class| {
-                if class == egui::ViewportClass::Deferred {
-                    let mut inner = me.lock().unwrap();
-                    if let Some(ws_cur) = inner.workspaces.get(idx) {
-                        if Arc::ptr_eq(ws_cur, &ws_arc) {
-                            let mut ws = ws_arc.lock().unwrap();
-                            inner.child_frame(ui, &child_ctx, &mut ws, idx);
-                        }
-                    }
-                }
-            });
-        }
     }
 
     /// El frame de una ventana hija: drena su propio canal (#por si se repintó

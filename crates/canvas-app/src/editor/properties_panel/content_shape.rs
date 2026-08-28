@@ -52,9 +52,7 @@ pub(super) fn shape_content_ui(
     // extremos a tajo, > 0 = redondeados) y a la cabeza de la flecha.
     if matches!(
         shape.kind,
-        canvas_core::ShapeKind::Rect
-            | canvas_core::ShapeKind::Line
-            | canvas_core::ShapeKind::Arrow
+        canvas_core::ShapeKind::Rect | canvas_core::ShapeKind::Line | canvas_core::ShapeKind::Arrow
     ) {
         ui.horizontal(|ui| {
             ui.label("Corner radius");

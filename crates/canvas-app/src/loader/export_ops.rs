@@ -42,9 +42,8 @@ pub fn spawn_export_raster(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, None)
-            .map(|_bytes| ())
-            .map_err(|e| e.to_string());
+        let result =
+            canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, None).map(|_bytes| ());
         let _ = tx.send(AppMsg::Exported { path, result });
         ctx.request_repaint();
     });
@@ -63,11 +62,10 @@ pub fn spawn_export_vector(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = (|| -> Result<(), String> {
+        let result = (|| -> Result<(), canvas_io::IoError> {
             let mut export_images = canvas_io::ExportImages::new();
             for (id, rgba, w, h) in &images {
-                let png_base64 =
-                    canvas_io::encode_layer_png(rgba, *w, *h).map_err(|e| e.to_string())?;
+                let png_base64 = canvas_io::encode_layer_png(rgba, *w, *h)?;
                 export_images.insert(*id, png_base64);
             }
             let svg = canvas_io::document_to_svg(
@@ -75,14 +73,13 @@ pub fn spawn_export_vector(
                 &export_images,
                 scale,
                 &canvas_render::text_lines,
-            )
-            .map_err(|e| e.to_string())?;
+            )?;
             let bytes = if format == ExportFormat::Pdf {
-                canvas_io::svg_to_pdf(&svg).map_err(|e| e.to_string())?
+                canvas_io::svg_to_pdf(&svg)?
             } else {
                 svg.into_bytes()
             };
-            canvas_io::write_atomic(&path, &bytes).map_err(|e| e.to_string())
+            canvas_io::write_atomic(&path, &bytes)
         })();
         let _ = tx.send(AppMsg::Exported { path, result });
         ctx.request_repaint();

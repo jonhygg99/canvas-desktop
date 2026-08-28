@@ -15,7 +15,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<loader::LoadOutcome, String>,
+        result: Result<loader::LoadOutcome, canvas_io::IoError>,
         metadata: canvas_io::ImageMetadata,
         ctx: &egui::Context,
     ) {
@@ -90,7 +90,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<canvas_io::LoadedImage, String>,
+        result: Result<canvas_io::LoadedImage, canvas_io::IoError>,
     ) {
         if let View::Editor(state) = &mut ws.view {
             match result {
@@ -114,7 +114,7 @@ impl AppInner {
         layer: canvas_core::LayerId,
         label: String,
         source_path: Option<PathBuf>,
-        result: Result<canvas_io::LoadedImage, String>,
+        result: Result<canvas_io::LoadedImage, canvas_io::IoError>,
     ) {
         if let View::Editor(state) = &mut ws.view {
             match result {
@@ -136,7 +136,7 @@ impl AppInner {
         folder: PathBuf,
         generation: u64,
         path: PathBuf,
-        result: Result<deck::SlotDoc, String>,
+        result: Result<deck::SlotDoc, canvas_io::IoError>,
     ) {
         if ws.deck.accepts_response(&folder, generation) {
             ws.deck.loading_finished();
@@ -147,9 +147,12 @@ impl AppInner {
                     .get(idx)
                     .is_some_and(|slot| matches!(slot.content, deck::SlotContent::Loading));
                 if still_loading {
-                    let content = result.map_or_else(deck::SlotContent::Failed, |doc| {
-                        deck::SlotContent::Ready(Box::new(doc))
-                    });
+                    // `SlotContent::Failed` guarda el mensaje listo para la
+                    // UI: se aplana el error tipado aquí.
+                    let content = result.map_or_else(
+                        |e| deck::SlotContent::Failed(e.to_string()),
+                        |doc| deck::SlotContent::Ready(Box::new(doc)),
+                    );
                     if let Some(slot) = ws.deck.slots.get_mut(idx) {
                         slot.content = content;
                     }

@@ -62,7 +62,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), canvas_io::IoError>,
         new_source: bool,
         ctx: &egui::Context,
         open_after: &mut Option<Nav>,
@@ -127,7 +127,7 @@ impl AppInner {
                         ws.save.save_all_queue.clear();
                         ws.save.save_all_attempted = false;
                     }
-                    state.save_error = Some(e);
+                    state.save_error = Some(e.to_string());
                 }
             }
         }
@@ -138,7 +138,7 @@ impl AppInner {
         ws: &mut Workspace,
         folder: PathBuf,
         slot: u64,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, canvas_io::IoError>,
     ) {
         // Libera el cerrojo PRIMERO y siempre.
         if ws.deck_ops.materializing == Some(slot) {

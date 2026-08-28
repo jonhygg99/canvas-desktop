@@ -24,9 +24,7 @@ pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ct
                     }
                 }
             }
-            canvas_io::load_image(&path)
-                .map(LoadOutcome::Flat)
-                .map_err(|e| e.to_string())
+            canvas_io::load_image(&path).map(LoadOutcome::Flat)
         })();
         // ICC/EXIF del archivo en disco (mejor esfuerzo), venga el documento
         // aplanado o restaurado del sidecar: el original es el mismo.
@@ -45,9 +43,7 @@ pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ct
 /// no tiene ICC/EXIF que preservar, así que la metadata va vacía.
 pub fn spawn_load_design(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = canvas_io::read_design(&path)
-            .map(LoadOutcome::Design)
-            .map_err(|e| e.to_string());
+        let result = canvas_io::read_design(&path).map(LoadOutcome::Design);
         let _ = tx.send(AppMsg::ImageLoaded {
             path,
             result,
@@ -73,20 +69,14 @@ pub fn spawn_load_slot(
         let started = std::time::Instant::now();
         let is_canvas = canvas_io::is_canvas_file(&path);
         let result = if is_canvas {
-            canvas_io::read_design(&path)
-                .map(LoadOutcome::Design)
-                .map_err(|e| e.to_string())
+            canvas_io::read_design(&path).map(LoadOutcome::Design)
         } else {
             match canvas_io::read_sidecar(&path) {
                 Ok(Some(restored)) => Ok(LoadOutcome::Restored(restored)),
-                Ok(None) => canvas_io::load_image(&path)
-                    .map(LoadOutcome::Flat)
-                    .map_err(|e| e.to_string()),
+                Ok(None) => canvas_io::load_image(&path).map(LoadOutcome::Flat),
                 Err(e) => {
                     tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada");
-                    canvas_io::load_image(&path)
-                        .map(LoadOutcome::Flat)
-                        .map_err(|e| e.to_string())
+                    canvas_io::load_image(&path).map(LoadOutcome::Flat)
                 }
             }
         };
@@ -102,7 +92,9 @@ pub fn spawn_load_slot(
                 (!metadata.is_empty()).then_some(metadata),
                 sidecar_default,
             )
-            .ok_or_else(|| "could not build the background document".to_owned())
+            .ok_or_else(|| canvas_io::IoError::Message {
+                message: "could not build the background document".to_owned(),
+            })
         });
         tracing::debug!(
             target: "canvas.preload",

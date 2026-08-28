@@ -557,12 +557,21 @@ fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
 
     // Renderiza el panel y arrastra el campo W (fila superior de «Size»).
     let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
-            properties_ui(state, ui);
-        });
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                properties_ui(state, ui);
+            },
+        );
     };
     wrap(&mut state, vec![]);
-    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(40.0, 110.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerMoved(egui::pos2(40.0, 110.0))],
+    );
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
@@ -572,7 +581,10 @@ fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(110.0, 110.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerMoved(egui::pos2(110.0, 110.0))],
+    );
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
@@ -588,7 +600,10 @@ fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
         edited.width > original.width,
         "el arrastre debe agrandar la capa en vivo"
     );
-    assert!(state.history.can_undo(), "la edición debe ser un paso de deshacer");
+    assert!(
+        state.history.can_undo(),
+        "la edición debe ser un paso de deshacer"
+    );
 
     state.undo();
     let restored = state.doc.layer(id).unwrap().transform;
@@ -692,12 +707,21 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
     // Renderiza el panel y arrastra el campo W (fila «W/H» de la sección
     // «Size») con el candado ya activado.
     let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
-            properties_ui(state, ui);
-        });
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                properties_ui(state, ui);
+            },
+        );
     };
     wrap(&mut state, vec![]);
-    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(40.0, 112.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerMoved(egui::pos2(40.0, 112.0))],
+    );
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
@@ -707,7 +731,10 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(340.0, 112.0))]);
+    wrap(
+        &mut state,
+        vec![egui::Event::PointerMoved(egui::pos2(340.0, 112.0))],
+    );
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
@@ -753,14 +780,39 @@ fn probe_lock_toggle() {
         let _id = selected_rect(&mut state);
         assert!(state.aspect_lock, "el default debe ser true");
         let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-            let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
-                properties_ui(state, ui);
-            });
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    properties_ui(state, ui);
+                },
+            );
         };
         wrap(&mut state, vec![]);
-        wrap(&mut state, vec![egui::Event::PointerMoved(egui::pos2(12.0, y))]);
-        wrap(&mut state, vec![egui::Event::PointerButton { pos: egui::pos2(12.0, y), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }]);
-        wrap(&mut state, vec![egui::Event::PointerButton { pos: egui::pos2(12.0, y), button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }]);
+        wrap(
+            &mut state,
+            vec![egui::Event::PointerMoved(egui::pos2(12.0, y))],
+        );
+        wrap(
+            &mut state,
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(12.0, y),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        wrap(
+            &mut state,
+            vec![egui::Event::PointerButton {
+                pos: egui::pos2(12.0, y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
         if !state.aspect_lock {
             eprintln!("PROBE_LOCK_HIT toggled true->false at y={y}");
         }
@@ -796,15 +848,17 @@ fn cropped_image(state: &mut EditorState) -> canvas_core::LayerId {
 
 /// Un clic en un punto concreto dentro del panel, usando fuentes reales
 /// (los botones de texto necesitan anchos de glifo reales para pegarles).
-fn panel_click(
-    ctx: &egui::Context,
-    state: &mut EditorState,
-    pos: egui::Pos2,
-) {
+fn panel_click(ctx: &egui::Context, state: &mut EditorState, pos: egui::Pos2) {
     let r = |st: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
-            properties_ui(st, ui);
-        });
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                properties_ui(st, ui);
+            },
+        );
     };
     r(state, vec![]);
     r(state, vec![egui::Event::PointerMoved(pos)]);
@@ -867,8 +921,7 @@ fn resetting_a_crop_commits_an_undoable_composite() {
         LayerContent::Image(c) => (c.crop.unwrap(), state.doc.layer(id).unwrap().transform),
         _ => unreachable!(),
     };
-    let restored_expected =
-        canvas_core::uncrop_transform(&before.1, before.0);
+    let restored_expected = canvas_core::uncrop_transform(&before.1, before.0);
     let (orig_crop, orig_transform) = before;
 
     panel_click(&ctx, &mut state, CROP_RESET_POS);
@@ -1003,4 +1056,3 @@ fn dragging_a_crop_corner_commits_an_undoable_composite() {
         "el undo debe restaurar el crop original en un solo paso"
     );
 }
-

@@ -93,9 +93,8 @@ pub fn heart_points(w: f64, h: f64, samples: usize) -> Vec<(f64, f64)> {
     for i in 0..n {
         let t = std::f64::consts::TAU * i as f64 / n as f64;
         let x = 16.0 * t.sin().powi(3) / 17.0;
-        let y =
-            (13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos())
-                / 17.0;
+        let y = (13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos())
+            / 17.0;
         raw.push((x, y));
     }
     let min_x = raw.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
@@ -358,8 +357,14 @@ mod tests {
         for p in &pts {
             assert!((p.0 - 140.0).abs() <= 140.0);
         }
-        let left = pts.iter().map(|p| 140.0 - p.0).fold(f64::NEG_INFINITY, f64::max);
-        let right = pts.iter().map(|p| p.0 - 140.0).fold(f64::NEG_INFINITY, f64::max);
+        let left = pts
+            .iter()
+            .map(|p| 140.0 - p.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let right = pts
+            .iter()
+            .map(|p| p.0 - 140.0)
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!((left - right).abs() < 1e-6);
     }
 

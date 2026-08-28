@@ -22,7 +22,7 @@ pub fn spawn_reserve_canvas_path(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = canvas_io::reserve_numbered_path(&folder, &ext).map_err(|e| e.to_string());
+        let result = canvas_io::reserve_numbered_path(&folder, &ext);
         let _ = tx.send(AppMsg::CanvasPathReserved {
             folder,
             slot,
@@ -41,7 +41,7 @@ pub fn spawn_save_design(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = canvas_io::write_design(&path, &payload).map_err(|e| e.to_string());
+        let result = canvas_io::write_design(&path, &payload);
         let _ = tx.send(AppMsg::Saved {
             path,
             result,
@@ -132,7 +132,7 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
                 }
                 Ok(())
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e),
         };
         let _ = tx.send(AppMsg::Saved {
             path,

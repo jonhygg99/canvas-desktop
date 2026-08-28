@@ -38,9 +38,20 @@ fn run_with_keys(state: &mut EditorState, events: Vec<egui::Event>) {
 /// Inserta una capa por el camino real (con paso de deshacer) y devuelve su
 /// id.
 fn inserted(state: &mut EditorState) -> canvas_core::LayerId {
-    state.insert_layer_centered("Shape", 100.0, 80.0, LayerContent::Shape(ShapeContent::default()));
-    let page = state.doc.page().expect("un documento en blanco tiene página");
-    page.layers.last().expect("insert_layer_centered añade una capa").id
+    state.insert_layer_centered(
+        "Shape",
+        100.0,
+        80.0,
+        LayerContent::Shape(ShapeContent::default()),
+    );
+    let page = state
+        .doc
+        .page()
+        .expect("un documento en blanco tiene página");
+    page.layers
+        .last()
+        .expect("insert_layer_centered añade una capa")
+        .id
 }
 
 fn layer_count(state: &EditorState) -> usize {
@@ -54,7 +65,10 @@ fn ctrl_z_undoes_and_shift_z_or_ctrl_y_redoes() {
     inserted(&mut state);
     assert_eq!(layer_count(&state), 2);
 
-    run_with_keys(&mut state, vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+    );
     assert_eq!(layer_count(&state), 1, "Ctrl+Z deshace");
 
     run_with_keys(
@@ -66,10 +80,16 @@ fn ctrl_z_undoes_and_shift_z_or_ctrl_y_redoes() {
     );
     assert_eq!(layer_count(&state), 2, "Ctrl+Shift+Z rehace");
 
-    run_with_keys(&mut state, vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+    );
     assert_eq!(layer_count(&state), 1);
 
-    run_with_keys(&mut state, vec![key(egui::Key::Y, egui::Modifiers::COMMAND)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Y, egui::Modifiers::COMMAND)],
+    );
     assert_eq!(layer_count(&state), 2, "Ctrl+Y rehace");
 }
 
@@ -81,9 +101,16 @@ fn ctrl_g_groups_and_ctrl_shift_g_ungroups() {
     state.selection = Selection::single(a);
     state.selection.toggle(b);
 
-    run_with_keys(&mut state, vec![key(egui::Key::G, egui::Modifiers::COMMAND)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::G, egui::Modifiers::COMMAND)],
+    );
     let page = state.doc.page().unwrap();
-    let groups = page.layers.iter().filter(|l| matches!(l.content, LayerContent::Group(_))).count();
+    let groups = page
+        .layers
+        .iter()
+        .filter(|l| matches!(l.content, LayerContent::Group(_)))
+        .count();
     assert_eq!(groups, 1, "Ctrl+G agrupa la selección");
 
     run_with_keys(
@@ -94,7 +121,11 @@ fn ctrl_g_groups_and_ctrl_shift_g_ungroups() {
         )],
     );
     let page = state.doc.page().unwrap();
-    let groups = page.layers.iter().filter(|l| matches!(l.content, LayerContent::Group(_))).count();
+    let groups = page
+        .layers
+        .iter()
+        .filter(|l| matches!(l.content, LayerContent::Group(_)))
+        .count();
     assert_eq!(groups, 0, "Ctrl+Shift+G desagrupa");
 }
 
@@ -103,8 +134,14 @@ fn ctrl_backslash_toggles_the_layers_panel_flag() {
     let mut state = EditorState::new_blank(800.0, 600.0);
     assert!(!state.layers_panel_toggle);
 
-    run_with_keys(&mut state, vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)]);
-    assert!(state.layers_panel_toggle, "Ctrl+\\ pide plegar/desplegar el panel");
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Backslash, egui::Modifiers::COMMAND)],
+    );
+    assert!(
+        state.layers_panel_toggle,
+        "Ctrl+\\ pide plegar/desplegar el panel"
+    );
 }
 
 #[test]
@@ -112,12 +149,18 @@ fn delete_and_backspace_remove_the_selection() {
     let mut state = EditorState::new_blank(800.0, 600.0);
     let a = inserted(&mut state);
     state.selection = Selection::single(a);
-    run_with_keys(&mut state, vec![key(egui::Key::Delete, egui::Modifiers::NONE)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Delete, egui::Modifiers::NONE)],
+    );
     assert_eq!(layer_count(&state), 0, "Delete borra la selección");
 
     let b = inserted(&mut state);
     state.selection = Selection::single(b);
-    run_with_keys(&mut state, vec![key(egui::Key::Backspace, egui::Modifiers::NONE)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Backspace, egui::Modifiers::NONE)],
+    );
     assert_eq!(layer_count(&state), 0, "Backspace borra la selección");
 }
 
@@ -125,13 +168,22 @@ fn delete_and_backspace_remove_the_selection() {
 fn page_keys_set_the_deck_navigation() {
     let mut state = EditorState::new_blank(800.0, 600.0);
 
-    run_with_keys(&mut state, vec![key(egui::Key::PageDown, egui::Modifiers::NONE)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::PageDown, egui::Modifiers::NONE)],
+    );
     assert!(matches!(state.deck_nav, Some(DeckNav::Next)));
 
-    run_with_keys(&mut state, vec![key(egui::Key::PageUp, egui::Modifiers::NONE)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::PageUp, egui::Modifiers::NONE)],
+    );
     assert!(matches!(state.deck_nav, Some(DeckNav::Prev)));
 
-    run_with_keys(&mut state, vec![key(egui::Key::Home, egui::Modifiers::NONE)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Home, egui::Modifiers::NONE)],
+    );
     assert!(matches!(state.deck_nav, Some(DeckNav::First)));
 
     run_with_keys(&mut state, vec![key(egui::Key::End, egui::Modifiers::NONE)]);
@@ -147,8 +199,15 @@ fn ctrl_a_selects_all_the_root_layers() {
     // Solo la última insertada queda seleccionada de entrada.
     assert_eq!(state.selection.len(), 1);
 
-    run_with_keys(&mut state, vec![key(egui::Key::A, egui::Modifiers::COMMAND)]);
-    assert_eq!(state.selection.len(), 3, "Ctrl+A selecciona todas las raíces");
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
+    );
+    assert_eq!(
+        state.selection.len(),
+        3,
+        "Ctrl+A selecciona todas las raíces"
+    );
 }
 
 #[test]
@@ -158,8 +217,15 @@ fn ctrl_d_duplicates_the_selection() {
     state.selection = Selection::single(a);
     assert_eq!(layer_count(&state), 1);
 
-    run_with_keys(&mut state, vec![key(egui::Key::D, egui::Modifiers::COMMAND)]);
-    assert_eq!(layer_count(&state), 2, "Ctrl+D duplica la capa seleccionada");
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::D, egui::Modifiers::COMMAND)],
+    );
+    assert_eq!(
+        layer_count(&state),
+        2,
+        "Ctrl+D duplica la capa seleccionada"
+    );
     assert_eq!(state.selection.len(), 1, "la copia queda seleccionada");
 }
 
@@ -171,7 +237,10 @@ fn ctrl_z_is_left_for_the_text_edit_while_renaming_a_layer() {
     // undo del documento.
     state.rename_edit = Some((a, "new name".to_owned(), "Shape".to_owned()));
 
-    run_with_keys(&mut state, vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+    );
 
     assert!(
         state.doc.layer(a).is_ok(),

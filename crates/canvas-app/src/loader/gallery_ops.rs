@@ -5,137 +5,22 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
+use canvas_io::IoError;
 use eframe::egui;
+
+use super::file_ops::{
+    duplicate_into, rename_with_sidecar, restore_one, trash_locally_with_sidecar,
+    trash_with_sidecar,
+};
 
 use super::load_ops::probe_page_sizes;
 use super::{AppMsg, GalleryOp};
-
-/// Nombre de archivo sin su última extensión, y esa extensión (ambos vacíos
-/// si `path` no los tiene).
-fn split_name(path: &Path) -> (String, String) {
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    (stem, ext)
-}
-
-/// Copia `src` (y su sidecar, si es una imagen que tiene uno) a una ruta
-/// libre en `folder`. Con `force_copy_suffix`, el nombre siempre lleva
-/// « copy» (duplicar en el sitio); si no, se intenta primero el mismo
-/// nombre y solo se numera si colisiona (pegar en otra carpeta). Revierte
-/// la primera copia si la del sidecar falla, para no dejar un duplicado a
-/// medias.
-fn duplicate_into(src: &Path, folder: &Path, force_copy_suffix: bool) -> Result<PathBuf, String> {
-    let (stem, ext) = split_name(src);
-    let base = if force_copy_suffix {
-        format!("{stem} copy")
-    } else {
-        stem
-    };
-    let dst = canvas_io::reserve_unique_path(folder, &base, &ext).map_err(|e| e.to_string())?;
-    if let Err(e) = std::fs::copy(src, &dst) {
-        let _ = std::fs::remove_file(&dst);
-        return Err(e.to_string());
-    }
-    if canvas_io::is_image_file(src) {
-        if let Some(src_sidecar) = canvas_io::find_sidecar(src) {
-            // El destino de sidecar cae en la carpeta oculta de `folder`
-            // (que puede no ser la de `src` — copiar entre carpetas): hay
-            // que asegurarla antes de copiar, no solo antes de reservar `dst`.
-            if let Err(e) = canvas_io::ensure_sidecar_dir(folder) {
-                let _ = std::fs::remove_file(&dst);
-                return Err(e.to_string());
-            }
-            let dst_sidecar = canvas_io::sidecar_path(&dst);
-            if let Err(e) = std::fs::copy(&src_sidecar, &dst_sidecar) {
-                let _ = std::fs::remove_file(&dst);
-                return Err(e.to_string());
-            }
-        }
-    }
-    Ok(dst)
-}
-
-/// Cambia el nombre base de `path` a `new_stem`, conservando su extensión
-/// original. Si el destino ya existe se rechaza en vez de sobrescribir:
-/// `std::fs::rename` en Windows usa `MOVEFILE_REPLACE_EXISTING`, así que sin
-/// este chequeo previo un nombre repetido perdería el archivo que ya
-/// hubiera ahí en silencio. Si `path` es una imagen con sidecar, lo
-/// renombra también (mejor esfuerzo: un fallo ahí no deshace el renombrado
-/// principal, solo se registra).
-fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf, String> {
-    let folder = path.parent().map(PathBuf::from).unwrap_or_default();
-    let (_, ext) = split_name(path);
-    let new_name = if ext.is_empty() {
-        new_stem.to_owned()
-    } else {
-        format!("{new_stem}.{ext}")
-    };
-    let dst = folder.join(&new_name);
-    if dst.exists() {
-        return Err(format!("\"{new_name}\" already exists"));
-    }
-    std::fs::rename(path, &dst).map_err(|e| e.to_string())?;
-    if canvas_io::is_image_file(path) {
-        if let Some(src_sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = canvas_io::ensure_sidecar_dir(&folder) {
-                tracing::warn!("no se pudo preparar la carpeta de sidecars: {e}");
-            } else {
-                let dst_sidecar = canvas_io::sidecar_path(&dst);
-                if let Err(e) = std::fs::rename(&src_sidecar, &dst_sidecar) {
-                    tracing::warn!("no se pudo renombrar el sidecar: {e}");
-                }
-            }
-        }
-    }
-    Ok(dst)
-}
-
-/// Envía `path` (y su sidecar, si es una imagen que tiene uno) a la
-/// Papelera de reciclaje del sistema: recuperable si el usuario se
-/// equivoca, a diferencia de un borrado permanente. Usado por el borrado
-/// desde la GALERÍA (`GalleryOp::Delete`) — ese no tiene deshacer, así que
-/// sí le compensa depender de la papelera real del sistema.
-fn trash_with_sidecar(path: &Path) -> Result<(), String> {
-    trash::delete(path).map_err(|e| e.to_string())?;
-    if canvas_io::is_image_file(path) {
-        if let Some(sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = trash::delete(&sidecar) {
-                tracing::warn!("no se pudo borrar el sidecar: {e}");
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Mueve `path` (y su sidecar, si es una imagen que tiene uno) a la
-/// papelera PROPIA del proyecto (`canvas_io::move_to_local_trash`), no la
-/// del sistema — este borrado sí tiene deshacer (botón «Delete» del
-/// editor/cabecera de un lienzo), y restaurar con un `rename` no depende de
-/// ninguna API de plataforma (a diferencia de `trash::os_limited`, que en
-/// macOS no existe).
-fn trash_locally_with_sidecar(path: &Path) -> Result<(), String> {
-    canvas_io::move_to_local_trash(path).map_err(|e| e.to_string())?;
-    if canvas_io::is_image_file(path) {
-        if let Some(sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = canvas_io::move_to_local_trash(&sidecar) {
-                tracing::warn!("no se pudo mover el sidecar a la papelera: {e}");
-            }
-        }
-    }
-    Ok(())
-}
 
 /// Ejecuta una `GalleryOp` en un hilo de trabajo y avisa con
 /// `AppMsg::GalleryOpDone`.
 pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), String>) = match op {
+        let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), IoError>) = match op {
             GalleryOp::Duplicate { path } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
                 match duplicate_into(&path, &folder, true) {
@@ -167,8 +52,8 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
             GalleryOp::CreateFolder { parent, name } => {
                 let path = parent.join(&name);
                 match std::fs::create_dir(&path) {
-                    Ok(()) => (parent, Some(path), Ok(())),
-                    Err(e) => (parent, None, Err(e.to_string())),
+                    Ok(()) => (parent, Some(path.clone()), Ok(())),
+                    Err(source) => (parent, None, Err(canvas_io::IoError::Io { path, source })),
                 }
             }
             GalleryOp::RenameFolder { path, new_name } => {
@@ -176,23 +61,29 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                 let dst = parent.join(&new_name);
                 match std::fs::rename(&path, &dst) {
                     Ok(()) => (parent, Some(dst), Ok(())),
-                    Err(e) => (parent, None, Err(e.to_string())),
+                    Err(source) => (parent, None, Err(canvas_io::IoError::Io { path, source })),
                 }
             }
             GalleryOp::DeleteFolder { path } => {
                 let parent = path.parent().map(PathBuf::from).unwrap_or_default();
                 match trash::delete(&path) {
                     Ok(()) => (parent, None, Ok(())),
-                    Err(e) => (parent, None, Err(e.to_string())),
+                    Err(e) => (
+                        parent,
+                        None,
+                        Err(canvas_io::IoError::Message {
+                            message: e.to_string(),
+                        }),
+                    ),
                 }
             }
         };
-        let _ = tx.send(AppMsg::GalleryOpDone {
+        let _ = tx.send(AppMsg::GalleryOpDone(super::GalleryOpOutcome {
             folder,
             created,
             result,
             open,
-        });
+        }));
         ctx.request_repaint();
     });
 }
@@ -245,11 +136,6 @@ pub fn spawn_restore_from_trash(
         let _ = tx.send(AppMsg::DocumentRestored { path, result });
         ctx.request_repaint();
     });
-}
-
-fn restore_one(original: &Path) -> Result<(), String> {
-    let staged = canvas_io::local_trash_path(original);
-    canvas_io::restore_from_local_trash(&staged, original).map_err(|e| e.to_string())
 }
 
 /// Descubre los archivos que puede mostrar una galería. Mantiene el
@@ -361,7 +247,7 @@ fn send_thumb(
     path: PathBuf,
     cache_dir: Option<&Path>,
 ) {
-    let result = canvas_io::thumbnail(&path, 256, cache_dir).map_err(|e| e.to_string());
+    let result = canvas_io::thumbnail(&path, 256, cache_dir);
     let _ = tx.send(AppMsg::GalleryThumb {
         folder,
         path,
@@ -408,56 +294,5 @@ pub fn spawn_folders_auto_refresh(folder: PathBuf, tx: Sender<AppMsg>, ctx: egui
 }
 
 #[cfg(test)]
-mod tests {
-    use super::discover_gallery_files;
-    use std::fs;
-    use tempfile::tempdir;
-
-    #[test]
-    fn discovers_images_designs_and_ignores_hidden_entries() {
-        let dir = tempdir().expect("tempdir");
-        fs::write(dir.path().join("photo.png"), b"not decoded here").unwrap();
-        fs::write(dir.path().join("design.canvas"), b"standalone design").unwrap();
-        fs::write(dir.path().join(".hidden.png"), b"hidden").unwrap();
-        // En Windows un archivo «oculto» es el que lleva el atributo, no el
-        // que empieza por punto (ver `canvas_shell::is_hidden`): marcar el
-        // atributo para que el test signifique lo mismo en todas las
-        // plataformas (mismo patrón que `canvas-shell/tests/integration.rs`).
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("attrib")
-                .arg("+h")
-                .arg(dir.path().join(".hidden.png"))
-                .status();
-        }
-        fs::create_dir(dir.path().join("subfolder")).unwrap();
-        fs::create_dir(dir.path().join(canvas_io::SIDECAR_DIR)).unwrap();
-
-        let files = discover_gallery_files(dir.path()).unwrap();
-        let names: Vec<_> = files
-            .iter()
-            .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, vec!["design.canvas", "photo.png"]);
-    }
-
-    #[test]
-    fn folder_auto_refresh_backoff_doubles_and_caps() {
-        use std::time::Duration;
-        assert_eq!(super::folder_refresh_delay(0), Duration::from_secs(1));
-        assert_eq!(super::folder_refresh_delay(1), Duration::from_secs(2));
-        assert_eq!(super::folder_refresh_delay(2), Duration::from_secs(4));
-        assert_eq!(super::folder_refresh_delay(9), Duration::from_secs(4));
-        // Guarda en tiempo de compilación: la tabla de backoff de arriba
-        // asume al menos estos intentos de refresco automático.
-        const _: () = assert!(super::FOLDER_REFRESH_ATTEMPTS >= 2);
-    }
-
-    #[test]
-    fn reports_unreadable_or_missing_gallery_folder() {
-        let dir = tempdir().expect("tempdir");
-        let missing = dir.path().join("does-not-exist");
-        let error = discover_gallery_files(&missing).unwrap_err();
-        assert!(error.contains("does-not-exist"));
-    }
-}
+#[path = "gallery_ops_tests.rs"]
+mod tests;

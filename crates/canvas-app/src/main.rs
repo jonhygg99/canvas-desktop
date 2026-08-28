@@ -22,6 +22,7 @@ mod export;
 mod gallery;
 mod layers_panel;
 mod loader;
+mod lock;
 mod menus;
 mod paste_hook;
 mod settings;

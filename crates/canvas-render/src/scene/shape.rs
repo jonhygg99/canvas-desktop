@@ -106,35 +106,70 @@ pub(super) fn draw_shape(scene: &mut Scene, layer: &Layer, shape: &ShapeContent,
             draw_polygon(
                 scene,
                 &regular_polygon_points(t.width, t.height, 5),
-                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+                &PolyStyle {
+                    fa,
+                    sa,
+                    place,
+                    stroke: &stroke,
+                    fill_color,
+                    stroke_color,
+                },
             );
         }
         ShapeKind::Hexagon => {
             draw_polygon(
                 scene,
                 &regular_polygon_points(t.width, t.height, 6),
-                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+                &PolyStyle {
+                    fa,
+                    sa,
+                    place,
+                    stroke: &stroke,
+                    fill_color,
+                    stroke_color,
+                },
             );
         }
         ShapeKind::Diamond => {
             draw_polygon(
                 scene,
                 &diamond_points(t.width, t.height),
-                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+                &PolyStyle {
+                    fa,
+                    sa,
+                    place,
+                    stroke: &stroke,
+                    fill_color,
+                    stroke_color,
+                },
             );
         }
         ShapeKind::Cross => {
             draw_polygon(
                 scene,
                 &cross_points(t.width, t.height),
-                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+                &PolyStyle {
+                    fa,
+                    sa,
+                    place,
+                    stroke: &stroke,
+                    fill_color,
+                    stroke_color,
+                },
             );
         }
         ShapeKind::Heart => {
             draw_polygon(
                 scene,
                 &heart_points(t.width, t.height, 32),
-                &PolyStyle { fa, sa, place, stroke: &stroke, fill_color, stroke_color },
+                &PolyStyle {
+                    fa,
+                    sa,
+                    place,
+                    stroke: &stroke,
+                    fill_color,
+                    stroke_color,
+                },
             );
         }
     }

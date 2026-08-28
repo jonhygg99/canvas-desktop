@@ -7,6 +7,9 @@ use serde::Deserialize;
 
 use crate::{write_atomic, IoError, LoadedImage};
 
+use std::borrow::Cow;
+
+use super::container;
 use super::paths::{ensure_sidecar_dir, sidecar_path};
 use super::payload::{encode_payload, CanvasPayload, RestoredDocument};
 use super::{find_sidecar, fnv1a64, legacy_sidecar_path, SidecarFile, SIDECAR_VERSION};
@@ -53,11 +56,50 @@ struct PageSizeProbe {
 /// (documento + imágenes crudas, píxeles ya decodificados por capa).
 type ParsedCanvasFile = (SidecarFile, Vec<(u64, LoadedImage)>);
 
+/// Tope de tamaño de un `.canvas` en disco (512 MiB). El JSON embebe los
+/// píxeles de todas las capas en base64, así que un documento con varias
+/// fotos grandes es legítimamente pesado; el tope solo corta antes de
+/// volcar a memoria un archivo absurdo (corrupto o malintencionado) de
+/// varios GB.
+const MAX_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
+
+/// `fs::read` con tope de tamaño: comprueba la longitud ANTES de leer para
+/// no asignar el archivo entero si ya nació fuera de límite.
+fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
+    let meta = std::fs::metadata(path)?;
+    if meta.len() > MAX_CANVAS_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("canvas file exceeds the {MAX_CANVAS_BYTES}-byte read limit"),
+        ));
+    }
+    std::fs::read(path)
+}
+
+/// (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
+/// formatos: contenedor v5 o JSON puro v1–v4.
+type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<Vec<u8>>);
+
+/// Separa (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
+/// formatos: contenedor v5 (mágica `CANVAS5`) o JSON puro v1–v4 (el archivo
+/// entero es el JSON, sin blobs).
+fn split_canvas_file<'a>(bytes: &'a [u8], path: &Path) -> Result<SplitCanvas<'a>, IoError> {
+    if container::is_container(bytes) {
+        let (json, blobs) = container::split_container(bytes, path)?;
+        Ok((
+            Cow::Borrowed(json),
+            blobs.into_iter().map(<[u8]>::to_vec).collect(),
+        ))
+    } else {
+        Ok((Cow::Borrowed(bytes), Vec::new()))
+    }
+}
+
 /// Lee y valida el `.canvas` en `path`: probe de versión, parseo completo,
 /// reparación de la invariante de preorden y decodificación de los píxeles
 /// de cada capa. Compartido por `read_sidecar` y `read_design`.
 fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
-    let json = match std::fs::read(path) {
+    let bytes = match read_capped(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -67,6 +109,7 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
             })
         }
     };
+    let (json, blobs) = split_canvas_file(&bytes, path)?;
     // Comprueba la versión ANTES de intentar parsear el documento completo:
     // un sidecar más nuevo puede traer variantes de capa que este build no
     // conoce, y eso debe reportarse como "versión más reciente", no como
@@ -97,7 +140,29 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
 
     let mut images = Vec::with_capacity(file.images.len());
     for entry in &file.images {
-        let (rgba, width, height) = crate::png_codec::decode_layer_png(&entry.png_base64, path)?;
+        // v1–v4: PNG en base64 dentro del JSON. v5: blob binario por índice.
+        let (rgba, width, height) = match (&entry.png_base64, entry.blob) {
+            (Some(png_base64), _) => crate::png_codec::decode_layer_png(png_base64, path)?,
+            (None, Some(blob_index)) => {
+                let Some(png) = blobs.get(blob_index as usize) else {
+                    return Err(IoError::Decode {
+                        path: path.to_owned(),
+                        source: image::ImageError::IoError(std::io::Error::other(format!(
+                            "corrupt sidecar: blob index {blob_index} out of range"
+                        ))),
+                    });
+                };
+                crate::png_codec::decode_png_bytes(png, path)?
+            }
+            (None, None) => {
+                return Err(IoError::Decode {
+                    path: path.to_owned(),
+                    source: image::ImageError::IoError(std::io::Error::other(
+                        "corrupt sidecar: layer pixels missing",
+                    )),
+                })
+            }
+        };
         images.push((
             entry.layer,
             LoadedImage {
@@ -193,7 +258,7 @@ pub fn read_design(path: &Path) -> Result<RestoredDocument, IoError> {
 /// capas. `Ok(None)` si el archivo no existe o no tiene miniatura (p. ej. un
 /// diseño creado pero nunca guardado con éxito).
 pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
-    let json = match std::fs::read(path) {
+    let bytes = match read_capped(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -203,6 +268,8 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
             })
         }
     };
+    // Solo la cabecera: la miniatura vive en el JSON (v5 y legacy).
+    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PreviewProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
@@ -224,10 +291,12 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
 /// píxeles. Usado por `canvas_io::probe_page_size` para apilar la baraja del
 /// editor antes de cargar ningún documento entero.
 pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
-    let json = std::fs::read(path).map_err(|source| IoError::Open {
+    let bytes = read_capped(path).map_err(|source| IoError::Open {
         path: path.to_owned(),
         source,
     })?;
+    // Solo la cabecera: el tamaño de página vive en el JSON (v5 y legacy).
+    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PageProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),

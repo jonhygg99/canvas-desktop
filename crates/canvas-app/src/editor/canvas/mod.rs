@@ -299,9 +299,14 @@ pub fn canvas_ui(
             // `layer_interaction` y los helpers de coordenadas.
             let (px, py) = screen_to_page(&state.viewport, slot_rect, pos);
             let page_pos = (px.clamp(0.0, page_dims.0), py.clamp(0.0, page_dims.1));
-            state.unsplash.drop_on_canvas((*payload).clone(), page_pos, ctx.tx, ui.ctx());
+            state
+                .unsplash
+                .drop_on_canvas((*payload).clone(), page_pos, ctx.tx, ui.ctx());
         }
-    } else if response.dnd_hover_payload::<crate::unsplash::DragUnsplash>().is_some() {
+    } else if response
+        .dnd_hover_payload::<crate::unsplash::DragUnsplash>()
+        .is_some()
+    {
         // Pista visual mientras se arrastra: borde azul sobre la página
         // activa, para que se vea dónde caerá la foto.
         ui.painter().rect_stroke(

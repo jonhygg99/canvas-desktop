@@ -13,6 +13,7 @@
 use eframe::egui;
 
 use crate::loader;
+use crate::lock::LockExt;
 
 use super::{AppInner, Nav, View, Workspace};
 use loader::AppMsg;
@@ -51,7 +52,7 @@ impl AppInner {
         if let Some(nav) = open_after {
             let idx = self.focused.min(self.workspaces.len().saturating_sub(1));
             if let Some(ws_arc) = self.workspaces.get(idx).cloned() {
-                let mut ws = ws_arc.lock().unwrap();
+                let mut ws = ws_arc.lock_ok();
                 self.navigate(&mut ws, nav, ctx);
             }
         }
@@ -60,7 +61,7 @@ impl AppInner {
         // puede prestar `self.workspaces` y llamar `self.navigate` a la vez).
         let all = self.workspaces.clone();
         for ws_arc in all {
-            let mut ws = ws_arc.lock().unwrap();
+            let mut ws = ws_arc.lock_ok();
             let mut open_after = None;
             self.drain_ws(&mut ws, ctx, &mut open_after);
             if let Some(nav) = open_after {
@@ -163,12 +164,7 @@ impl AppInner {
                 slot,
                 result,
             } => self.on_canvas_path_reserved(ws, folder, slot, result),
-            AppMsg::GalleryOpDone {
-                folder,
-                created,
-                result,
-                open,
-            } => self.on_gallery_op_done(ws, folder, created, result, open, ctx, open_after),
+            AppMsg::GalleryOpDone(op) => self.on_gallery_op_done(ws, op, ctx, open_after),
             AppMsg::DocumentRenamed { old_path, result } => {
                 self.on_document_renamed(ws, old_path, result)
             }

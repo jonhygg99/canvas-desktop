@@ -384,13 +384,126 @@ fn preview_png_is_only_embedded_for_a_standalone_design() {
         &payload,
     )
     .unwrap();
-    let file: SidecarFile = serde_json::from_slice(&with_hash).unwrap();
+    let (json, _) = container::split_container(&with_hash, Path::new("test.canvas")).unwrap();
+    let file: SidecarFile = serde_json::from_slice(json).unwrap();
     assert!(file.preview_png.is_none());
 
     // Diseño autónomo (`image_hash: None`): miniatura embebida.
     let standalone = encode_payload(Path::new("test.canvas"), None, &payload).unwrap();
-    let file: SidecarFile = serde_json::from_slice(&standalone).unwrap();
+    let (json, _) = container::split_container(&standalone, Path::new("test.canvas")).unwrap();
+    let file: SidecarFile = serde_json::from_slice(json).unwrap();
     assert!(file.preview_png.is_some());
+}
+
+#[test]
+fn v5_container_keeps_pixel_blobs_out_of_the_json_header() {
+    let (doc, images) = sample_doc();
+    let payload = sample_payload(&doc, &images, None);
+    let bytes = encode_payload(
+        Path::new("test.canvas"),
+        Some("deadbeef".to_owned()),
+        &payload,
+    )
+    .expect("encode payload");
+
+    // Es un contenedor (mágica) y el JSON de cabecera ya no lleva los
+    // píxeles en base64: solo índices de blob.
+    assert!(container::is_container(&bytes), "debe empezar por CANVAS5");
+    let (json, blobs) =
+        container::split_container(&bytes, Path::new("test.canvas")).expect("contenedor válido");
+    let file: SidecarFile = serde_json::from_slice(json).unwrap();
+    assert_eq!(file.images.len(), images.len());
+    assert!(json
+        .windows(b"png_base64".len())
+        .all(|w| w != b"png_base64"));
+    assert_eq!(blobs.len(), images.len());
+
+    // Los blobs son PNG decodificables de vuelta a los píxeles originales.
+    for (blob, (_, rgba, w, h)) in blobs.iter().zip(&images) {
+        let (decoded, dw, dh) =
+            crate::png_codec::decode_png_bytes(blob, Path::new("test")).unwrap();
+        assert_eq!((dw, dh), (*w, *h));
+        assert_eq!(decoded, *rgba);
+    }
+
+    // Y el roundtrip completo restaura el documento con sus píxeles.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let image_path = dir.path().join("foto.png");
+    std::fs::write(&image_path, b"x").unwrap();
+    write_sidecar(&image_path, b"x", &payload).expect("escribir sidecar v5");
+    let restored = read_sidecar(&image_path)
+        .expect("leer")
+        .expect("hay sidecar");
+    assert!(restored.hash_matches);
+    assert_eq!(restored.images.len(), images.len());
+}
+
+#[test]
+fn v5_container_rejects_truncated_blobs() {
+    let (doc, images) = sample_doc();
+    let payload = sample_payload(&doc, &images, None);
+    let bytes = encode_payload(
+        Path::new("test.canvas"),
+        Some("deadbeef".to_owned()),
+        &payload,
+    )
+    .expect("encode payload");
+
+    // Cortado a mitad de un blob: el split falla, no pánico ni basura.
+    let truncated = &bytes[..bytes.len() - 3];
+    assert!(container::split_container(truncated, Path::new("test.canvas")).is_err());
+}
+
+/// Escribe `bytes` como diseño autónomo y exige que la lectura falle con
+/// `IoError::Decode` — un `.canvas` corrompido en disco es un error limpio,
+/// nunca un pánico, un cuelgue ni una lectura "exitosa" con basura.
+fn write_and_expect_decode_error(bytes: &[u8]) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("corrupt.canvas");
+    std::fs::write(&path, bytes).unwrap();
+    match read_design(&path) {
+        Err(crate::IoError::Decode { .. }) => {}
+        Err(_) => panic!("error de otro tipo; se esperaba IoError::Decode"),
+        Ok(_) => panic!("un contenedor corrupto no debe leerse con éxito"),
+    }
+}
+
+#[test]
+fn corrupted_v5_containers_fail_as_clean_decode_errors() {
+    let (doc, images) = sample_doc();
+    let payload = sample_payload(&doc, &images, None);
+    let good = encode_payload(Path::new("test.canvas"), None, &payload).expect("encode");
+    // Diseño autónomo => la cabecera lleva la miniatura; los blobs empiezan
+    // tras mágica (7) + json_len (8) + json.
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&good[7..15]);
+    let json_len = u64::from_le_bytes(len_bytes) as usize;
+    let blob_start = 7 + 8 + json_len;
+
+    // a) `json_len` miente: apunta más allá del final del archivo.
+    let mut bytes = good.clone();
+    bytes[7..15].copy_from_slice(&u64::MAX.to_le_bytes());
+    write_and_expect_decode_error(&bytes);
+
+    // b) `blob_len` miente: el blob promete más bytes de los que hay.
+    let mut bytes = good.clone();
+    bytes[blob_start..blob_start + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    write_and_expect_decode_error(&bytes);
+
+    // c) píxeles triturados: el PNG del blob ya no decodifica (CRC/zlib).
+    let mut bytes = good.clone();
+    for b in bytes[blob_start + 4..].iter_mut() {
+        *b = 0xFF;
+    }
+    write_and_expect_decode_error(&bytes);
+
+    // d) mágica correcta pero cabecera JSON podrida.
+    let mut bytes = good.clone();
+    bytes[15..23].copy_from_slice(b"not json");
+    write_and_expect_decode_error(&bytes);
+
+    // e) contenedor truncado a mitad del último blob.
+    write_and_expect_decode_error(&good[..good.len() - 5]);
 }
 
 #[test]

@@ -4,6 +4,8 @@
 
 use eframe::egui;
 
+use crate::lock::LockExt;
+
 use super::super::AppInner;
 
 impl AppInner {
@@ -11,7 +13,7 @@ impl AppInner {
         // La ventana enfocada es la que manda: traerla al frente.
         let idx = self.focused.min(self.workspaces.len().saturating_sub(1));
         if let Some(ws_arc) = self.workspaces.get(idx) {
-            let viewport = ws_arc.lock().unwrap().viewport;
+            let viewport = ws_arc.lock_ok().viewport;
             ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
         }
     }
@@ -29,7 +31,7 @@ impl AppInner {
         self.on_focus_window(ctx);
         let idx = self.focused.min(self.workspaces.len().saturating_sub(1));
         if let Some(ws_arc) = self.workspaces.get(idx).cloned() {
-            let mut ws = ws_arc.lock().unwrap();
+            let mut ws = ws_arc.lock_ok();
             // Pregunta si hay un editor con cambios sin guardar.
             self.request_nav(&mut ws, super::super::Nav::Open(path), ctx);
         }

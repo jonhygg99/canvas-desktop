@@ -8,14 +8,25 @@ use base64::Engine;
 
 use crate::IoError;
 
-/// Codifica un buffer RGBA como PNG y lo empaqueta en base64. `context` solo
-/// se usa para dar contexto al mensaje de error si algo falla.
-pub(crate) fn encode_layer_png(
+/// Tope de dimensiones de un PNG embebido (sidecar, portapapeles, miniatura):
+/// cualquier capa legítima —incluidas fotos de 100 MP— se queda muy por
+/// debajo; un PNG hostil con dimensiones desbocadas se rechaza de entrada.
+const MAX_LAYER_PNG_DIM: u32 = 20_000;
+/// Tope de asignación al decodificar: 512 MiB de RGBA ≈ 134 megapíxeles,
+/// por encima de cualquier capa legítima. Sin este tope (y sin el de
+/// dimensiones), un sidecar modificado a mano podría pedir gigabytes de
+/// memoria en `to_rgba8` antes de que nadie mire el contenido.
+const MAX_LAYER_PNG_ALLOC: u64 = 512 * 1024 * 1024;
+
+/// Codifica un buffer RGBA como PNG crudo. `context` solo se usa para dar
+/// contexto al mensaje de error si algo falla. Lo usan el contenedor v4 del
+/// sidecar (sección binaria) y `encode_layer_png` (portapapeles).
+pub(crate) fn encode_png(
     rgba: &[u8],
     width: u32,
     height: u32,
     context: &Path,
-) -> Result<String, IoError> {
+) -> Result<Vec<u8>, IoError> {
     let img = image::RgbaImage::from_raw(width, height, rgba.to_vec()).ok_or_else(|| {
         IoError::Encode {
             path: context.to_owned(),
@@ -28,10 +39,24 @@ pub(crate) fn encode_layer_png(
             path: context.to_owned(),
             message: e.to_string(),
         })?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
+    Ok(png.into_inner())
 }
 
-/// Decodifica un PNG en base64 a RGBA + dimensiones.
+/// Codifica un buffer RGBA como PNG y lo empaqueta en base64 (portapapeles
+/// interno y miniaturas del sidecar). `context` solo se usa para dar
+/// contexto al mensaje de error si algo falla.
+pub(crate) fn encode_layer_png(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    context: &Path,
+) -> Result<String, IoError> {
+    let png = encode_png(rgba, width, height, context)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png))
+}
+
+/// Decodifica un PNG en base64 a RGBA + dimensiones (portapapeles interno,
+/// sidecar legacy v1–v4 y miniaturas).
 pub(crate) fn decode_layer_png(
     png_base64: &str,
     context: &Path,
@@ -44,7 +69,26 @@ pub(crate) fn decode_layer_png(
                 "invalid base64: {e}"
             ))),
         })?;
-    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+    decode_png_bytes(&png, context)
+}
+
+/// Decodifica bytes PNG crudos a RGBA + dimensiones (blobs binarios del
+/// contenedor v5). Con límites explícitos de dimensiones y asignación: el
+/// contenido puede venir de un archivo compartido o modificado fuera de la
+/// app, y un PNG con cabeceras infladas no debe poder pedir memoria sin
+/// control.
+pub(crate) fn decode_png_bytes(png: &[u8], context: &Path) -> Result<(Vec<u8>, u32, u32), IoError> {
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
+    // `Limits` es #[non_exhaustive]: se parte de `default()` y se fija cada
+    // campo, para no depender de cuáles trae por defecto la versión actual.
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_LAYER_PNG_ALLOC);
+    limits.max_image_width = Some(MAX_LAYER_PNG_DIM);
+    limits.max_image_height = Some(MAX_LAYER_PNG_DIM);
+    reader.limits(limits);
+    let img = reader
+        .decode()
         .map_err(|source| IoError::Decode {
             path: context.to_owned(),
             source,

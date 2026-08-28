@@ -35,7 +35,7 @@ jobs:
 
       # eframe con las features x11+wayland, egui-winit y arboard necesitan
       # estas cabeceras de desarrollo en Linux; muda (menus nativos) es
-      # Windows-only y no necesita GTK. Ver PLAN.md Fase 12.
+      # Windows-only y no necesita GTK.
       - name: Install Linux GUI dependencies
         if: runner.os == 'Linux'
         run: |
@@ -54,3 +54,31 @@ jobs:
 
       - name: test
         run: cargo test --workspace --locked
+
+      # Guardia de cobertura: el suelo está muy por debajo del total real
+      # (~425 en Windows) para no fallar por tests cfg-gated por SO, pero
+      # detecta borrados masivos de archivos de test.
+      - name: test-count guard
+        shell: bash
+        run: |
+          COUNT=$(cargo test --workspace -- --list 2>/dev/null | grep -c ": test$" || true)
+          echo "tests listados: $COUNT"
+          if [ "$COUNT" -lt 320 ]; then
+            echo "::error::solo $COUNT tests listados; el suelo es 320 (¿se borraron archivos de test?)"
+            exit 1
+          fi
+
+  # La shell integration se compila para los tres SO pero solo puede
+  # enlazarse en el suyo: los checks cruzados (sin linker) son la unica
+  # forma de validar linux.rs y macos.rs desde el CI.
+  shell-cross:
+    name: shell cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p canvas-shell --target x86_64-unknown-linux-gnu --locked
+      - run: cargo check -p canvas-shell --target x86_64-apple-darwin --locked
