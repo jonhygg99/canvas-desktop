@@ -146,7 +146,12 @@ impl AppInner {
             // difiere a `pending_focus` porque el viewport de la ventana
             // nueva no existe hasta `spawn_child_viewports`.
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
-                self.new_workspace();
+                let new_ws = self.new_workspace();
+                // La ventana nueva nace con el tamaño de la actual: si nace
+                // con el tamaño por defecto de egui, al fusionarse como
+                // pestaña nativa AppKit la redimensiona y se ve un salto de
+                // tamaño (a veces sí, a veces no, según el timing).
+                new_ws.lock_ok().geometry = ws.geometry;
                 self.pending_focus = Some(self.workspaces.len() - 1);
                 // Esencial: si este pase es el de una PESTAÑA (child_frame),
                 // `pending_focus` solo lo procesa la raíz, y el viewport del
@@ -163,6 +168,8 @@ impl AppInner {
             // nuevo, cuya ventana nace al final de este frame).
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::T)) {
                 let new_ws = self.new_workspace();
+                // Misma herencia de tamaño que Cmd+N (ver arriba).
+                new_ws.lock_ok().geometry = ws.geometry;
                 let idx = self.workspaces.len() - 1;
                 self.pending_focus = Some(idx);
                 let tx = new_ws.lock_ok().tx.clone();
