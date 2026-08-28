@@ -110,9 +110,18 @@ fn main() -> Result<()> {
     if let Some(icon) = load_app_icon() {
         viewport = viewport.with_icon(icon);
     }
+    // `persist_window` por defecto es `true` en eframe: guarda la geometría
+    // de la ventana (incluido fullscreen/maximized) en `app.ron` y la
+    // RESTAURA al arrancar. La app deliberadamente arranca siempre limpia
+    // (home, tamaño por defecto — ver `bootstrap`), y un fullscreen/maximized
+    // restaurado es justo el estado que reproducía los bugs de ventanas
+    // (fullscreen que se quitaba solo, ventanas apiladas). Lo desactivamos:
+    // la posición/tamaño de las ventanas hijas se persiste en `settings.json`
+    // por la propia app; la raíz siempre abre con su tamaño por defecto.
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport,
+        persist_window: false,
         event_loop_builder: Some(Box::new(paste_hook::install)),
         ..Default::default()
     };

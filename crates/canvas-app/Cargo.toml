@@ -86,8 +86,12 @@ windows = { workspace = true, features = [
 # NSEvent local monitor (paste_hook.rs): detecta Cmd+V con un bitmap en el
 # portapapeles, igual que el MSG hook en Windows. objc2-app-kit 0.3 +
 # block2 0.6 ya están en el árbol (arboard, rfd, eframe).
-objc2 = "0.6"
+objc2 = { version = "0.6", features = ["exception"] }
 objc2-app-kit = { version = "0.3", features = ["NSEvent", "block2"] }
+# Pestañas nativas de macOS: `NSString` para el `tabbingIdentifier` del
+# grupo de pestañas del sistema (Cmd+N abre como pestaña nativa en la barra
+# de título). Misma versión que ya está en el árbol (objc2-app-kit 0.3).
+objc2-foundation = "0.3"
 block2 = "0.6"
 
 [dev-dependencies]
