@@ -254,9 +254,12 @@ fn reorder_layer_works_inside_a_group_and_is_undoable() {
     let b = shape(&mut state, "b");
     let c = shape(&mut state, "c");
     let page = state.doc.page_mut().expect("hay página");
-    page.move_subtree(a, Some(g), 0).expect("a dentro del grupo");
-    page.move_subtree(b, Some(g), 1).expect("b dentro del grupo");
-    page.move_subtree(c, Some(g), 2).expect("c dentro del grupo");
+    page.move_subtree(a, Some(g), 0)
+        .expect("a dentro del grupo");
+    page.move_subtree(b, Some(g), 1)
+        .expect("b dentro del grupo");
+    page.move_subtree(c, Some(g), 2)
+        .expect("c dentro del grupo");
     assert_eq!(state.doc.page().unwrap().children_of(Some(g)), [a, b, c]);
     assert_eq!(sibling_position(&state, a), Some((Some(g), 0, 2)));
 

@@ -15,7 +15,7 @@ use super::AppMsg;
 /// documento abierto en vez de sustituirlo.
 pub fn spawn_load_image_as_layer(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = canvas_io::load_image(&path).map_err(|e| e.to_string());
+        let result = canvas_io::load_image(&path);
         let _ = tx.send(AppMsg::ImageLoadedForLayer { path, result });
         ctx.request_repaint();
     });
@@ -36,7 +36,7 @@ pub fn spawn_pick_replacement_image(
         }
         if let Some(path) = dialog.pick_file() {
             let label = image_label_from_path(&path);
-            let result = canvas_io::load_image(&path).map_err(|e| e.to_string());
+            let result = canvas_io::load_image(&path);
             let _ = tx.send(AppMsg::ImageLoadedForReplace {
                 layer,
                 label,
@@ -57,7 +57,7 @@ pub fn spawn_load_replacement_image_from_url(
     std::thread::spawn(move || {
         let label = image_label_from_url(&url);
         let result = download_url_to_temp(&url).and_then(|path| {
-            let loaded = canvas_io::load_image(&path).map_err(|e| e.to_string());
+            let loaded = canvas_io::load_image(&path);
             let _ = std::fs::remove_file(&path);
             loaded
         });
@@ -109,14 +109,18 @@ fn extension_from_url(url: &str) -> &str {
         .unwrap_or("png")
 }
 
-fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
+fn download_url_to_temp(url: &str) -> Result<PathBuf, canvas_io::IoError> {
     let trimmed = url.trim();
     if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-        return Err("Use an http:// or https:// image URL".to_owned());
+        return Err(canvas_io::IoError::Message {
+            message: "Use an http:// or https:// image URL".to_owned(),
+        });
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| canvas_io::IoError::Message {
+            message: format!("system clock error: {e}"),
+        })?
         .as_millis();
     let path = std::env::temp_dir().join(format!(
         "canvas-desktop-replace-{stamp}.{}",
@@ -160,7 +164,10 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
         .arg(trimmed)
         .output();
 
-    let output = output.map_err(|e| format!("Could not start downloader: {e}"))?;
+    let output = output.map_err(|source| canvas_io::IoError::Io {
+        path: path.clone(),
+        source,
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let message = if stderr.is_empty() {
@@ -169,7 +176,7 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, String> {
             stderr
         };
         let _ = std::fs::remove_file(&path);
-        return Err(message);
+        return Err(canvas_io::IoError::Message { message });
     }
     Ok(path)
 }

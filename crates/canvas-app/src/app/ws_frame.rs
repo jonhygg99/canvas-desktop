@@ -8,6 +8,7 @@
 use eframe::egui;
 
 use crate::loader;
+use crate::lock::LockExt;
 use crate::menus;
 use crate::watcher;
 
@@ -131,7 +132,7 @@ impl AppInner {
                 let new_ws = self.new_workspace();
                 let idx = self.workspaces.len() - 1;
                 self.pending_focus = Some(idx);
-                let tx = new_ws.lock().unwrap().tx.clone();
+                let tx = new_ws.lock_ok().tx.clone();
                 loader::spawn_pick_folder(tx, ctx.clone());
             }
             let now = ctx.input(|i| i.time);

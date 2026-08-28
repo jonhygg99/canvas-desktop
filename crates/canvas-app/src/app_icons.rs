@@ -5,6 +5,10 @@
 //! glifo Unicode (▲/▼ ya dieron problemas) y todos comparten materiales:
 //! trazo fino (≈1.2-1.3 px) y la paleta del estado por el que pasan.
 //!
+//! (Sobre el objetivo de 400 líneas a propósito: es una biblioteca plana de
+//! funciones `draw_*` hermanas, sin estado ni referencias cruzadas entre
+//! sí; partirla sería churn sin costura natural.)
+//!
 //! Dos piezas de interacción compartidas:
 //! - `icon_button_ui`: botón de icono puro (fondo suave al hover y color
 //!   activo, igual que cualquier `small_button` emoji de la app, pero con
@@ -621,23 +625,22 @@ pub fn draw_folder_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
 pub fn draw_images_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let s = rect.width().min(rect.height());
     let frame = egui::Rect::from_center_size(rect.center(), egui::vec2(s * 0.84, s * 0.70));
-    painter.rect_stroke(frame, 2.0, egui::Stroke::new(1.4, color), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        frame,
+        2.0,
+        egui::Stroke::new(1.4, color),
+        egui::StrokeKind::Inside,
+    );
     let sun = egui::pos2(frame.left() + s * 0.22, frame.top() + s * 0.24);
     painter.circle_stroke(sun, s * 0.085, egui::Stroke::new(1.3, color));
     let base_y = frame.bottom() - s * 0.06;
     let peak = egui::pos2(frame.center().x, frame.top() + s * 0.28);
     painter.line_segment(
-        [
-            egui::pos2(frame.left() + s * 0.10, base_y),
-            peak,
-        ],
+        [egui::pos2(frame.left() + s * 0.10, base_y), peak],
         egui::Stroke::new(1.3, color),
     );
     painter.line_segment(
-        [
-            peak,
-            egui::pos2(frame.right() - s * 0.12, base_y),
-        ],
+        [peak, egui::pos2(frame.right() - s * 0.12, base_y)],
         egui::Stroke::new(1.3, color),
     );
 }
@@ -672,13 +675,15 @@ pub fn draw_sparkle_icon(painter: &egui::Painter, rect: egui::Rect, color: egui:
 
 /// Texto: glifo «Aa» pintado con la fuente de la app (el antiguo botón
 /// «T Text»). Sin Unicode raro: son dos letras ASCII.
-pub fn draw_text_preview(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    color: egui::Color32,
-) {
+pub fn draw_text_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let font = egui::FontId::proportional(rect.height() * 0.62);
-    painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Aa", font, color);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Aa",
+        font,
+        color,
+    );
 }
 
 /// Rectángulo relleno suave con borde, como se verá en el lienzo.
@@ -732,10 +737,7 @@ pub fn draw_triangle_preview(painter: &egui::Painter, rect: egui::Rect, color: e
         color.gamma_multiply(0.35),
         egui::Stroke::NONE,
     ));
-    painter.add(egui::Shape::closed_line(
-        pts,
-        egui::Stroke::new(1.4, color),
-    ));
+    painter.add(egui::Shape::closed_line(pts, egui::Stroke::new(1.4, color)));
 }
 
 /// Estrella de cinco puntas (silueta real de la capa).
@@ -747,15 +749,10 @@ pub fn draw_star_preview(painter: &egui::Painter, rect: egui::Rect, color: egui:
     let ih = rect.height() * scale;
     let ox = (rect.width() - iw) / 2.0;
     let oy = (rect.height() - ih) / 2.0;
-    let pts: Vec<(f64, f64)> = canvas_core::star_points(
-        f64::from(iw),
-        f64::from(ih),
-        5,
-        0.45,
-    )
-    .into_iter()
-    .map(|(x, y)| (x + f64::from(ox), y + f64::from(oy)))
-    .collect();
+    let pts: Vec<(f64, f64)> = canvas_core::star_points(f64::from(iw), f64::from(ih), 5, 0.45)
+        .into_iter()
+        .map(|(x, y)| (x + f64::from(ox), y + f64::from(oy)))
+        .collect();
     polygon_preview(painter, rect, &pts, color, false);
 }
 
@@ -770,14 +767,18 @@ pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui
     let start = egui::pos2(rect.left(), y);
     // Grosor del astil proporcional al de la capa (≈8 % de la altura).
     let shaft_w = (h * 0.08).max(2.5);
-    painter.line_segment([start, egui::pos2(shaft_end, y)], egui::Stroke::new(shaft_w, color));
+    painter.line_segment(
+        [start, egui::pos2(shaft_end, y)],
+        egui::Stroke::new(shaft_w, color),
+    );
     painter.circle_filled(start, shaft_w / 2.0, color);
     // Cabeza redondeada: canvas-core devuelve la ruta en la caja local
     // (0,0)..(w,h) y aquí se traduce al rect del tile. egui no tiene
     // curvas, así que se aplana la ruta a segmentos rectos. El radio usa
     // el mismo ratio (~18 % del largo de la cabeza) que el default de
     // inserción, para que el preview muestre lo que se va a crear.
-    let head = canvas_core::arrow_head_rounded(f64::from(w), f64::from(h), f64::from(w) * 0.38 * 0.18);
+    let head =
+        canvas_core::arrow_head_rounded(f64::from(w), f64::from(h), f64::from(w) * 0.38 * 0.18);
     let pts: Vec<egui::Pos2> = head
         .to_polyline(6)
         .iter()
@@ -788,26 +789,41 @@ pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui
         color.gamma_multiply(0.35),
         egui::Stroke::NONE,
     ));
-    painter.add(egui::Shape::closed_line(
-        pts,
-        egui::Stroke::new(1.4, color),
-    ));
+    painter.add(egui::Shape::closed_line(pts, egui::Stroke::new(1.4, color)));
 }
 
 /// Pentágono regular: la MISMA geometría relativa que la capa (puntos de
 /// canvas-core sobre la caja), relleno suave + borde.
 pub fn draw_pentagon_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    polygon_preview(painter, rect, &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 5), color, true);
+    polygon_preview(
+        painter,
+        rect,
+        &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 5),
+        color,
+        true,
+    );
 }
 
 /// Hexágono regular (misma geometría que la capa).
 pub fn draw_hexagon_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    polygon_preview(painter, rect, &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 6), color, true);
+    polygon_preview(
+        painter,
+        rect,
+        &canvas_core::regular_polygon_points(f64::from(rect.width()), f64::from(rect.height()), 6),
+        color,
+        true,
+    );
 }
 
 /// Rombo (misma geometría que la capa).
 pub fn draw_diamond_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
-    polygon_preview(painter, rect, &canvas_core::diamond_points(f64::from(rect.width()), f64::from(rect.height())), color, true);
+    polygon_preview(
+        painter,
+        rect,
+        &canvas_core::diamond_points(f64::from(rect.width()), f64::from(rect.height())),
+        color,
+        true,
+    );
 }
 
 /// Cruz (misma geometría que la capa).
@@ -862,10 +878,7 @@ fn polygon_preview(
             egui::Stroke::NONE,
         ));
     }
-    cp.add(egui::Shape::closed_line(
-        pts,
-        egui::Stroke::new(1.4, color),
-    ));
+    cp.add(egui::Shape::closed_line(pts, egui::Stroke::new(1.4, color)));
 }
 
 /// Centro en página (círculo + punto).

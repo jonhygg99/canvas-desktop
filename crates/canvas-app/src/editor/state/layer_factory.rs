@@ -47,7 +47,12 @@ impl EditorState {
     /// (arrastre desde el panel de Unsplash), centrada en `pos`, con el
     /// mismo ajuste de escala que el clic (encoger si supera la página).
     /// Sin fondo automático: el usuario eligió dónde va.
-    pub fn add_image_layer_at(&mut self, name: impl Into<String>, pos: (f64, f64), img: LoadedImage) {
+    pub fn add_image_layer_at(
+        &mut self,
+        name: impl Into<String>,
+        pos: (f64, f64),
+        img: LoadedImage,
+    ) {
         self.insert_image_layer(name.into(), None, img, ImagePlacement::At(pos));
     }
 

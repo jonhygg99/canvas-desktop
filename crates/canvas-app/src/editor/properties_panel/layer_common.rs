@@ -1,6 +1,10 @@
 //! Campos de posición/tamaño/rotación/recorte/alineación de la capa
 //! seleccionada — comunes a cualquier tipo de contenido (el contenido en sí
 //! se delega a `content::content_properties_ui`).
+//!
+//! (Sobre el objetivo de 400 líneas a propósito: es UN formulario cohesivo;
+//! separar transformar/recortar del resto dispersaría un único layout egui
+//! entre archivos.)
 
 use canvas_core::{
     cover_transform, uncrop_transform, LayerContent, LayerId, SetCrop, SetTransform, Transform,

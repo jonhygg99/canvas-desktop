@@ -98,18 +98,27 @@ pub(super) fn encode_payload(
     image_hash: Option<String>,
     payload: &CanvasPayload,
 ) -> Result<Vec<u8>, IoError> {
+    // Los píxeles de las capas van a la sección BINARIA del contenedor v5
+    // (PNG crudo, sin base64): ~25 % menos de archivo y sin el coste de
+    // codificar/decodificar base64 de un documento con fotos grandes.
     let mut encoded = Vec::with_capacity(payload.images.len());
+    let mut blobs: Vec<Vec<u8>> = Vec::with_capacity(payload.images.len());
     for (layer, rgba, w, h) in &payload.images {
-        let png_base64 = crate::png_codec::encode_layer_png(rgba, *w, *h, path)?;
+        let png = crate::png_codec::encode_png(rgba, *w, *h, path)?;
+        let blob = blobs.len() as u32;
+        blobs.push(png);
         encoded.push(SidecarImage {
             layer: *layer,
-            png_base64,
+            png_base64: None,
+            blob: Some(blob),
         });
     }
     // Solo un diseño autónomo (sin imagen que lo acompañe) necesita su propia
     // miniatura embebida: el hilo de miniaturas de la galería no tiene GPU
     // para hornear la página él mismo (`thumbs::thumbnail`). El sidecar de
     // una imagen es peso muerto aquí — su miniatura sale del propio raster.
+    // La miniatura es pequeña (≤ `PREVIEW_MAX_DIM`): sigue en base64 dentro
+    // del JSON de cabecera, que es lo único que leen los probes.
     let preview_png = match (&payload.preview, image_hash.is_none()) {
         (Some(p), true) => Some(crate::png_codec::encode_layer_png(
             &p.rgba, p.width, p.height, path,
@@ -124,8 +133,9 @@ pub(super) fn encode_payload(
         document: payload.document.clone(),
         images: encoded,
     };
-    serde_json::to_vec_pretty(&file).map_err(|e| IoError::Encode {
+    let json = serde_json::to_vec_pretty(&file).map_err(|e| IoError::Encode {
         path: path.to_owned(),
         message: format!("serializing the sidecar: {e}"),
-    })
+    })?;
+    Ok(super::container::encode_container(&json, &blobs))
 }

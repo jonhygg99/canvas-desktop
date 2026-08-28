@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+use crate::loader::GalleryOpOutcome;
 use crate::{deck, loader};
 
 use super::super::{AppInner, Nav, View, Workspace};
@@ -57,7 +58,7 @@ impl AppInner {
         ws: &mut Workspace,
         folder: PathBuf,
         path: PathBuf,
-        result: Result<canvas_io::LoadedImage, String>,
+        result: Result<canvas_io::LoadedImage, canvas_io::IoError>,
         ctx: &egui::Context,
     ) {
         let want_deck = ws.deck.folder.as_deref() == Some(folder.as_path());
@@ -98,17 +99,19 @@ impl AppInner {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn on_gallery_op_done(
         &mut self,
         ws: &mut Workspace,
-        folder: PathBuf,
-        created: Option<PathBuf>,
-        result: Result<(), String>,
-        open: bool,
+        op: GalleryOpOutcome,
         ctx: &egui::Context,
         open_after: &mut Option<Nav>,
     ) {
+        let GalleryOpOutcome {
+            folder,
+            created,
+            result,
+            open,
+        } = op;
         ws.ignore_fs_events_until =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(2));
         match result {
@@ -156,7 +159,7 @@ impl AppInner {
                 tracing::warn!("operación de galería fallida: {e}");
                 if let View::Gallery(g) = &mut ws.view {
                     if g.folder == folder {
-                        g.op_error = Some(e);
+                        g.op_error = Some(e.to_string());
                     }
                 }
             }

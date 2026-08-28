@@ -9,6 +9,7 @@
 //! `unsplash_ops` (búsqueda de imágenes de Unsplash).
 
 mod export_ops;
+mod file_ops;
 mod gallery_ops;
 mod image_import;
 mod load_ops;
@@ -18,7 +19,7 @@ mod unsplash_ops;
 use std::path::PathBuf;
 
 use canvas_core::LayerId;
-use canvas_io::{ImageMetadata, LoadedImage, RestoredDocument};
+use canvas_io::{ImageMetadata, IoError, LoadedImage, RestoredDocument};
 
 pub use export_ops::{spawn_export_raster, spawn_export_vector, spawn_pick_export_path};
 pub use gallery_ops::{
@@ -47,26 +48,42 @@ pub enum LoadOutcome {
     Design(RestoredDocument),
 }
 
+/// Resultado de una operación de archivos de la galería (crear, duplicar,
+/// pegar): lo que transporta `AppMsg::GalleryOpDone`. Agrupa en un valor con
+/// nombre los cuatro campos que antes viajaban como parámetros sueltos de
+/// `on_gallery_op_done`.
+#[derive(Debug)]
+pub struct GalleryOpOutcome {
+    /// Carpeta sobre la que se hizo la operación (para el rescan).
+    pub folder: PathBuf,
+    /// Ruta resultante, para abrirla o para que la galería la resalte al
+    /// rescanear; ausente si la operación falló.
+    pub created: Option<PathBuf>,
+    pub result: Result<(), IoError>,
+    /// Si venía de «✚ New design», abre el archivo recién creado.
+    pub open: bool,
+}
+
 pub enum AppMsg {
     FilePicked(Option<PathBuf>),
     FolderPicked(Option<PathBuf>),
     ImageLoaded {
         path: PathBuf,
-        result: Result<LoadOutcome, String>,
+        result: Result<LoadOutcome, IoError>,
         /// ICC/EXIF del archivo original, para preservarlos al guardar.
         metadata: ImageMetadata,
     },
     /// Imagen cargada para AÑADIRSE como capa al documento abierto.
     ImageLoadedForLayer {
         path: PathBuf,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadedImage, IoError>,
     },
     /// Imagen cargada para REEMPLAZAR una capa de imagen concreta.
     ImageLoadedForReplace {
         layer: LayerId,
         label: String,
         source_path: Option<PathBuf>,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadedImage, IoError>,
     },
     /// Resultado de una búsqueda en Unsplash (fotos, sin miniaturas aún,
     /// y si era la última página). `seq` descarta respuestas caducas cuando
@@ -75,24 +92,24 @@ pub enum AppMsg {
         query: String,
         seq: u64,
         page: u32,
-        result: Result<crate::unsplash::SearchPage, String>,
+        result: Result<crate::unsplash::SearchPage, crate::unsplash::UnsplashError>,
     },
     /// Miniatura de un resultado de Unsplash ya descargada y decodificada.
     UnsplashThumb {
         id: String,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadedImage, crate::unsplash::UnsplashError>,
     },
     /// Imagen completa de Unsplash descargada y decodificada, lista para
     /// insertarse como capa nueva del documento abierto.
     UnsplashImageReady {
         id: String,
         label: String,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadedImage, crate::unsplash::UnsplashError>,
     },
     SaveAsPicked(Option<PathBuf>),
     Saved {
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), IoError>,
         /// true si venía de «Guardar como…» y el documento debe apuntar aquí.
         new_source: bool,
     },
@@ -100,7 +117,7 @@ pub enum AppMsg {
     ExportPathPicked(Option<PathBuf>),
     Exported {
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), IoError>,
     },
     GalleryScanned {
         folder: PathBuf,
@@ -121,7 +138,7 @@ pub enum AppMsg {
     GalleryThumb {
         folder: PathBuf,
         path: PathBuf,
-        result: Result<LoadedImage, String>,
+        result: Result<LoadedImage, IoError>,
     },
     /// Tamaños de página sondeados de toda una carpeta, en UN solo mensaje
     /// (la sonda es de cabecera: la carpeta entera son decenas de ms) para
@@ -143,7 +160,7 @@ pub enum AppMsg {
         folder: PathBuf,
         generation: u64,
         path: PathBuf,
-        result: Result<crate::deck::SlotDoc, String>,
+        result: Result<crate::deck::SlotDoc, IoError>,
     },
     /// Nombre reservado en disco para una ranura PROVISIONAL de la baraja
     /// que el usuario acaba de empezar a editar. Solo reserva: el archivo se
@@ -155,9 +172,12 @@ pub enum AppMsg {
     CanvasPathReserved {
         folder: PathBuf,
         slot: u64,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, IoError>,
     },
     /// Ruta llegada desde una segunda instancia (por el socket local).
+    /// NOTA: `GalleryScanFailed`/`FoldersRefreshed`/`ShellIntegrationDone`
+    /// siguen llevando `String` a propósito — su error ya nace redactado
+    /// para la UI (`describe_read_dir_error`, la API de `canvas-shell`).
     OpenPathExternal(PathBuf),
     /// Una segunda instancia sin rutas pide traer la ventana al frente.
     FocusWindow,
@@ -168,33 +188,26 @@ pub enum AppMsg {
     /// Resultado del registro/desregistro de la integración con el shell.
     ShellIntegrationDone(Result<String, String>),
     /// Una operación de archivos de la galería (crear, duplicar, pegar)
-    /// terminó. `created` es la ruta resultante, para abrirla o para que la
-    /// galería la resalte al rescanear; ausente si la operación falló.
-    GalleryOpDone {
-        folder: PathBuf,
-        created: Option<PathBuf>,
-        result: Result<(), String>,
-        /// Si venía de «✚ New design», abre el archivo recién creado.
-        open: bool,
-    },
+    /// terminó. Ver `GalleryOpOutcome`.
+    GalleryOpDone(GalleryOpOutcome),
     /// El archivo abierto en el editor se renombró (botón «✏» junto al
     /// nombre en el panel). No reutiliza `Saved`: renombrar no debe marcar
     /// el documento como recién guardado.
     DocumentRenamed {
         old_path: PathBuf,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, IoError>,
     },
     /// El archivo abierto en el editor se envió a la Papelera (botón
     /// «Delete» del panel).
     DocumentDeleted {
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), IoError>,
     },
     /// Se restauró `path` desde la Papelera de reciclaje al deshacer un
     /// `GlobalStep::Delete` (`editor::EditorState::pending_restore`).
     DocumentRestored {
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), IoError>,
     },
     /// Respuesta del diálogo «¿guardar los cambios?» de una ventana o de
     /// una navegación. El modal corre en un hilo aparte a propósito:

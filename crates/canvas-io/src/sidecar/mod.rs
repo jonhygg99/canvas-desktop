@@ -30,6 +30,7 @@
 //! (construcción/encode del contenido embebido) e `io` (lectura/escritura
 //! real a disco).
 
+mod container;
 mod io;
 mod paths;
 mod payload;
@@ -56,11 +57,14 @@ pub use trash::{
 
 /// Versión del formato. v2 añadió capas de texto/forma/SVG; v3 añade capas
 /// de grupo (`LayerContent::Group`, ilegible para un build v2); v4 hace
-/// `image_hash` opcional (diseño autónomo) y añade `preview_png`. Los
-/// sidecar v1/v2/v3 se siguen leyendo sin migración (los campos nuevos
-/// tienen serde(default)); `parent_id` en particular es `serde(default)` así
-/// que todo lo anterior abre como raíz de la pila.
-const SIDECAR_VERSION: u32 = 4;
+/// `image_hash` opcional (diseño autónomo) y añade `preview_png`; v5 cambia
+/// el CONTENEDOR: JSON de cabecera + blobs PNG binarios (ver
+/// `container.rs`) — antes todo era un único JSON con los PNG en base64.
+/// Los sidecar v1–v4 (JSON puro, sin mágica) se siguen leyendo sin
+/// migración (los campos nuevos tienen serde(default)); `parent_id` en
+/// particular es `serde(default)` así que todo lo anterior abre como raíz
+/// de la pila.
+const SIDECAR_VERSION: u32 = 5;
 
 /// Lado mayor de la miniatura embebida en un `.canvas`. Coincide con el
 /// `max_dim` que pide la galería, así que el redimensionado posterior en
@@ -80,7 +84,14 @@ fn legacy_sidecar_path(image_path: &Path) -> PathBuf {
 #[derive(Debug, Serialize, Deserialize)]
 struct SidecarImage {
     layer: u64,
-    png_base64: String,
+    /// v1–v4 (JSON puro): PNG de la capa en base64. En v5 queda vacío y los
+    /// píxeles van a la sección binaria del contenedor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    png_base64: Option<String>,
+    /// v5: índice del blob PNG de la capa en la sección binaria del
+    /// contenedor (ver `container.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blob: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

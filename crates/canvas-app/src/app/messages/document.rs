@@ -15,7 +15,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         old_path: PathBuf,
-        result: Result<PathBuf, String>,
+        result: Result<PathBuf, canvas_io::IoError>,
     ) {
         let is_active = matches!(&ws.view, View::Editor(state)
         if state.doc.source_path.as_deref() == Some(old_path.as_path()));
@@ -32,7 +32,7 @@ impl AppInner {
                         }
                         state.doc.source_path = Some(new_path);
                     }
-                    Err(e) => state.save_error = Some(e),
+                    Err(e) => state.save_error = Some(e.to_string()),
                 }
             }
         } else {
@@ -58,7 +58,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), canvas_io::IoError>,
         open_after: &mut Option<Nav>,
     ) {
         let mut go_to_welcome = false;
@@ -104,7 +104,7 @@ impl AppInner {
                             }
                         }
                     }
-                    Err(e) => state.save_error = Some(e),
+                    Err(e) => state.save_error = Some(e.to_string()),
                 }
             }
         } else {
@@ -132,7 +132,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), canvas_io::IoError>,
         ctx: &egui::Context,
     ) {
         match result {

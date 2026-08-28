@@ -17,7 +17,7 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), String>,
+        result: Result<(), canvas_io::IoError>,
     ) {
         if let View::Editor(state) = &mut ws.view {
             state.exporting = false;

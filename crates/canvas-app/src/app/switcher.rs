@@ -10,6 +10,7 @@
 use eframe::egui;
 
 use crate::app::Workspace;
+use crate::lock::LockExt;
 
 /// Estado del conmutador, compartido entre todas las ventanas.
 #[derive(Default)]
@@ -120,7 +121,7 @@ pub(super) fn switcher_overlay(
         if i == self_idx {
             rows.push((self_ws.label(), self_ws.is_dirty()));
         } else {
-            let ws = ws_arc.lock().unwrap();
+            let ws = ws_arc.lock_ok();
             rows.push((ws.label(), ws.is_dirty()));
         }
     }

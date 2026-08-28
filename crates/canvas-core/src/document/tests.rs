@@ -241,3 +241,185 @@ fn depth_is_bounded_with_a_corrupt_parent_chain() {
     // No debe colgarse: acotado a layers.len() (== 1) pasos.
     assert_eq!(page.depth(a), 1);
 }
+
+// ---- Test de propiedad del invariante de preorden ----
+// Aleatoriedad reproducible con un xorshift64* propio: basta para un test
+// de propiedad y evita añadir `proptest` (y su árbol de deps) al workspace.
+struct XorShift(u64);
+
+impl XorShift {
+    fn new(seed: u64) -> Self {
+        Self(seed.max(1)) // 0 es un punto fijo del xorshift
+    }
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.next() % n as u64) as usize
+        }
+    }
+}
+
+/// Orden preorden del bosque implícito en `parent_id`: raíces en orden de
+/// Vec, hijos en orden de Vec. Solo válido si `parent_id` es un bosque sin
+/// ciclos — garantizado cuando las mutaciones pasan por la API de tree.rs.
+fn expected_preorder(page: &Page) -> Vec<LayerId> {
+    fn visit(page: &Page, parent: Option<LayerId>, out: &mut Vec<LayerId>) {
+        for layer in page.layers.iter().filter(|l| l.parent_id == parent) {
+            out.push(layer.id);
+            if page.is_group(layer.id) {
+                visit(page, Some(layer.id), out);
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(page.layers.len());
+    visit(page, None, &mut out);
+    out
+}
+
+/// La lista plana está en preorden Y cada grupo cubre en su tramo contiguo
+/// exactamente a sus descendientes según la cadena de padres (calculada con
+/// `is_ancestor`, que no depende del orden del Vec).
+fn assert_preorder_invariant(page: &Page) {
+    let actual: Vec<LayerId> = page.layers.iter().map(|l| l.id).collect();
+    assert_eq!(
+        actual,
+        expected_preorder(page),
+        "la lista plana debe estar en preorden"
+    );
+    for i in 0..page.layers.len() {
+        let id = page.layers[i].id;
+        if !page.is_group(id) {
+            continue;
+        }
+        let span: Vec<LayerId> = page.layers[i + 1..i + 1 + page.subtree_len(i)]
+            .iter()
+            .map(|l| l.id)
+            .collect();
+        for other in &page.layers {
+            let inside = page.is_ancestor(id, other.id);
+            assert_eq!(
+                span.contains(&other.id),
+                inside,
+                "el tramo contiguo de {id:?} no coincide con sus descendientes"
+            );
+        }
+    }
+}
+
+#[test]
+fn random_moves_and_inserts_preserve_the_preorder_invariant() {
+    const OPS: usize = 300;
+    let mut rng = XorShift::new(0xC0FF_EE01);
+    let mut doc = Document::new(800.0, 600.0);
+    for i in 0..6 {
+        doc.add_layer(
+            format!("l{i}"),
+            Transform::new(0.0, 0.0, 10.0, 10.0),
+            image_content(),
+        )
+        .unwrap();
+    }
+    for i in 0..3 {
+        let g = doc.allocate_layer_id();
+        let page = doc.page_mut().unwrap();
+        let at = rng.below(page.layers.len() + 1);
+        page.insert_child(Layer::group(g, format!("g{i}")), None, at);
+    }
+
+    for _ in 0..OPS {
+        match rng.below(3) {
+            // Mover un subárbol cualquiera a un sitio cualquiera. Los Err
+            // son rechazos legítimos (ciclo, padre que no es grupo).
+            0 => {
+                let (id, parent, index) = random_target(&mut rng, &doc);
+                doc.page_mut().unwrap().move_subtree(id, parent, index).ok();
+            }
+            // Insertar un grupo nuevo en un sitio aleatorio.
+            1 => {
+                let (parent, index) = random_target_parent(&mut rng, &doc);
+                let g = doc.allocate_layer_id();
+                doc.page_mut()
+                    .unwrap()
+                    .insert_child(Layer::group(g, "dyn"), parent, index);
+            }
+            // Añadir una hoja al tope y moverla de inmediato.
+            _ => {
+                let leaf = doc
+                    .add_layer("dyn", Transform::new(0.0, 0.0, 5.0, 5.0), image_content())
+                    .unwrap();
+                let (parent, index) = random_target_parent(&mut rng, &doc);
+                doc.page_mut()
+                    .unwrap()
+                    .move_subtree(leaf, parent, index)
+                    .ok();
+            }
+        }
+        assert_preorder_invariant(doc.page().unwrap());
+    }
+
+    // `normalize_tree` es idempotente sobre un árbol ya sano.
+    let before: Vec<(LayerId, Option<LayerId>)> = doc
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| (l.id, l.parent_id))
+        .collect();
+    doc.page_mut().unwrap().normalize_tree();
+    let after: Vec<(LayerId, Option<LayerId>)> = doc
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| (l.id, l.parent_id))
+        .collect();
+    assert_eq!(before, after, "normalizar un árbol sano no debe cambiarlo");
+}
+
+fn random_target_parent(rng: &mut XorShift, doc: &Document) -> (Option<LayerId>, usize) {
+    let page = doc.page().unwrap();
+    let groups: Vec<LayerId> = page
+        .layers
+        .iter()
+        .filter(|l| page.is_group(l.id))
+        .map(|l| l.id)
+        .collect();
+    let parent = if rng.below(2) == 0 || groups.is_empty() {
+        None
+    } else {
+        Some(groups[rng.below(groups.len())])
+    };
+    let index = rng.below(page.children_of(parent).len() + 1);
+    (parent, index)
+}
+
+fn random_target(rng: &mut XorShift, doc: &Document) -> (LayerId, Option<LayerId>, usize) {
+    let page = doc.page().unwrap();
+    let id = page.layers[rng.below(page.layers.len())].id;
+    let (parent, index) = random_target_parent(rng, doc);
+    (id, parent, index)
+}
+
+#[test]
+fn normalize_tree_repairs_a_scrambled_flat_list() {
+    let (mut doc, group, a, b) = doc_with_group();
+    // Rompe el orden a mano (el hijo pasa a preceder a su grupo, el orden
+    // entre hermanos se invierte) y deja que `normalize_tree` lo repare.
+    doc.page_mut().unwrap().layers.reverse();
+    doc.page_mut().unwrap().normalize_tree();
+    assert_preorder_invariant(doc.page().unwrap());
+    // La jerarquía se conserva; el orden relativo entre hermanos sigue el
+    // orden de encuentro tras el barajado (b, a).
+    let page = doc.page().unwrap();
+    assert_eq!(page.children_of(Some(group)), vec![b, a]);
+    assert_eq!(page.children_of(None), vec![group]);
+}

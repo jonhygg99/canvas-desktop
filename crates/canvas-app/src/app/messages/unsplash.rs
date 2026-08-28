@@ -18,7 +18,7 @@ impl AppInner {
         _query: String,
         seq: u64,
         page: u32,
-        result: Result<crate::unsplash::SearchPage, String>,
+        result: Result<crate::unsplash::SearchPage, crate::unsplash::UnsplashError>,
         ctx: &egui::Context,
     ) {
         let View::Editor(state) = &mut ws.view else {
@@ -60,7 +60,7 @@ impl AppInner {
                     panel.error = Some("No results for that query".to_owned());
                 }
             }
-            Err(e) => panel.error = Some(e),
+            Err(e) => panel.error = Some(e.to_string()),
         }
     }
 
@@ -68,18 +68,13 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         id: String,
-        result: Result<canvas_io::LoadedImage, String>,
+        result: Result<canvas_io::LoadedImage, crate::unsplash::UnsplashError>,
         ctx: &egui::Context,
     ) {
         let View::Editor(state) = &mut ws.view else {
             return;
         };
-        let Some(item) = state
-            .unsplash
-            .photos
-            .iter_mut()
-            .find(|p| p.photo.id == id)
-        else {
+        let Some(item) = state.unsplash.photos.iter_mut().find(|p| p.photo.id == id) else {
             return;
         };
         match result {
@@ -106,7 +101,7 @@ impl AppInner {
         ws: &mut Workspace,
         id: String,
         label: String,
-        result: Result<canvas_io::LoadedImage, String>,
+        result: Result<canvas_io::LoadedImage, crate::unsplash::UnsplashError>,
     ) {
         let View::Editor(state) = &mut ws.view else {
             return;

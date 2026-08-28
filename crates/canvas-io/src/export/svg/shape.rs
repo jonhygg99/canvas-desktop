@@ -73,7 +73,11 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
                 )
             };
             // Extremos redondeados si hay corner_radius, a tajo si no.
-            let cap = if shape.corner_radius > 0.0 { "round" } else { "butt" };
+            let cap = if shape.corner_radius > 0.0 {
+                "round"
+            } else {
+                "butt"
+            };
             svg.push_str(&format!(
                 "<line x1=\"0\" y1=\"{y}\" x2=\"{w}\" y2=\"{y}\" {color} stroke-width=\"{sw}\" stroke-linecap=\"{cap}\"/>\n",
                 y = n(h / 2.0),
@@ -119,7 +123,11 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
             };
             // Extremos del astil redondeados si hay corner_radius, a tajo
             // si no (coherente con la cabeza).
-            let cap = if shape.corner_radius > 0.0 { "round" } else { "butt" };
+            let cap = if shape.corner_radius > 0.0 {
+                "round"
+            } else {
+                "butt"
+            };
             svg.push_str(&format!(
                 "<line x1=\"0\" y1=\"{y}\" x2=\"{x2}\" y2=\"{y}\" stroke=\"{c}\" stroke-opacity=\"{a}\" stroke-width=\"{sw}\" stroke-linecap=\"{cap}\"/>\n",
                 y = n(h / 2.0),
@@ -154,10 +162,20 @@ pub(super) fn shape_element(svg: &mut String, shape: &canvas_core::ShapeContent,
             ));
         }
         ShapeKind::Pentagon => {
-            polygon_element(svg, &regular_polygon_points(w, h, 5), &fill_attr, &stroke_attr);
+            polygon_element(
+                svg,
+                &regular_polygon_points(w, h, 5),
+                &fill_attr,
+                &stroke_attr,
+            );
         }
         ShapeKind::Hexagon => {
-            polygon_element(svg, &regular_polygon_points(w, h, 6), &fill_attr, &stroke_attr);
+            polygon_element(
+                svg,
+                &regular_polygon_points(w, h, 6),
+                &fill_attr,
+                &stroke_attr,
+            );
         }
         ShapeKind::Diamond => {
             polygon_element(svg, &diamond_points(w, h), &fill_attr, &stroke_attr);

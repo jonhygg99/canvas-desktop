@@ -56,10 +56,14 @@ normalization (argv parsing, hidden-file detection, `ShellEvent`).
 `crates/canvas-shell/src/single_instance.rs` has unit tests that use a
 unique-per-PID socket name to avoid colliding with a real instance.
 
-**Golden rule (from PLAN.md): every phase is verified by running the app, not
+**Golden rule: every phase is verified by running the app, not
 just by compiling.** For UI/interaction changes, actually run `cargo run -p
 canvas-app` and exercise the feature — clippy/fmt/tests catch correctness,
 not feature behavior.
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings` and the test
+suite on Windows/Linux/macOS, cross-compiles `canvas-shell` for
+linux/darwin (no linker needed), and enforces the test-count floor.
 
 ## Architecture
 
@@ -77,19 +81,24 @@ crates/
 
 ### Module layout conventions
 
-Every crate was split by responsibility (see `REFACTOR.md` for the phase log
-and the reasoning). Three conventions hold everywhere — follow them when
+Every crate is split by responsibility (the phase log lives in git history;
+module doc comments carry the reasoning). Three conventions hold everywhere — follow them when
 adding code:
 
 - **≤ 400 lines of code per file, ≤ 80 per function.** Tests don't count
-  toward it. Two files are over on purpose and say so in their doc comment:
-  `scene/mod.rs::append_document` and the orchestrators below.
+  toward it. Only two production files are over, on purpose, and say so in
+  their doc comment: `app_icons.rs` (flat library of sibling icon draw
+  functions) and `editor/properties_panel/layer_common.rs` (one cohesive
+  form). The orchestrators (`app/views/editor/mod.rs`, `editor/canvas/mod.rs`,
+  `scene/mod.rs`) stay under the target.
 - **Zero `#[allow(clippy::too_many_arguments)]` in production code.** When a
   function accumulates too many parameters, group them into a struct
   (`CanvasContext`, `SaveContext`, `PaintGeometry`, `SyncLayerRequest`,
   `PassInput`, `RenderDims`, `PressGeometry`, `RenderRefs`, `SaveInput`,
-  etc.) instead of suppressing the lint. The only remaining `#[allow]` is in
-  `examples/verify_live_blur_update.rs`, not in crate code.
+  `GalleryOpOutcome`, `PaintPass`, etc.) instead of suppressing the lint.
+  Zero `too_many_arguments` exists anywhere today; the few remaining
+  `#[allow]`s are cfg-gates for Windows-only code plus one in
+  `examples/verify_live_blur_update.rs`.
 - **Tests live in a `tests.rs` next to the code they cover**, one per folder
   (`command/tests.rs`, `deck/tests.rs`, …), or in a `*_tests.rs` sibling
   wired with `#[path]` when the module is a directory. They're kept together
@@ -193,7 +202,7 @@ canvas-render/src/
 canvas-io/src/
 ├─ export/   mod.rs (ExportFormat) · pdf.rs
 │            └─ svg/  mod.rs (document_to_svg) · image.rs · text.rs · shape.rs · util.rs
-├─ sidecar/  mod.rs · io.rs · paths.rs · payload.rs · trash.rs
+├─ sidecar/  mod.rs · io.rs · paths.rs · payload.rs · trash.rs · container.rs
 └─ load.rs  save.rs  metadata.rs  png_codec.rs  probe.rs  svg.rs  thumbs.rs  clipboard.rs
 ```
 
@@ -210,6 +219,15 @@ canvas-io/src/
   (layers + embedded pixels) next to the image; reopening the PNG restores
   editable layers instead of a flattened image. If the on-disk image changed
   independently of the sidecar, the app must detect and prompt.
+- **Sidecar format v5 is a container** (`sidecar/container.rs`):
+  `"CANVAS5"` magic + u64-LE JSON-header length + JSON header +
+  `[u32-LE blob_len · PNG blob]*`. Pixels live as binary blobs indexed from
+  the header — ~25 % smaller than the v1–v4 pure-JSON files (base64
+  pixels), which are still read with no migration. Defense against hostile
+  files: `.canvas` reads are capped at 512 MiB before allocation
+  (`MAX_CANVAS_BYTES`), layer PNG decoding runs under `image::Limits`
+  (`MAX_LAYER_PNG_DIM` / `MAX_LAYER_PNG_ALLOC`), and any corrupt container
+  fails as a clean `IoError::Decode` — never a panic.
 - SVG/GIF are load-only: `Ctrl+S` never overwrites them, it redirects to
   "Save as…".
 - Export (`export/`) supports PNG/JPEG/SVG/PDF with scale. PDF goes through
@@ -248,11 +266,20 @@ canvas-io/src/
 canvas-app/src/
 ├─ main.rs        # entry point ONLY: logging, --register-shell flags, single
 │                 # instance, eframe launch. The App itself lives in app/.
+├─ lock.rs        # lock_ok(): Mutex locking with poisoning recovery — never
+│                 # `lock().unwrap()` on shared state
 ├─ app/
-│  ├─ mod.rs      # struct App, View, Nav, and eframe::App::update
-│  ├─ frame.rs    # EditorFrame<'a>: the 11 borrows the editor view needs
+│  ├─ mod.rs      # struct App, View, Nav, eframe::App::update; shared state
+│  │              # lives in AppInner (Arc<Mutex>) + one Workspace per window
+│  ├─ bootstrap.rs            # App construction: fonts, renderer, menus,
+│  │                          # single-instance listener, root workspace
+│  ├─ workspace.rs            # Workspace: ALL state of one native window
+│  ├─ workspace_lifecycle.rs  # create/close/focus windows + persistence
+│  ├─ ws_frame.rs             # the per-window UI frame (root and children)
+│  ├─ switcher.rs             # Ctrl+Tab / Ctrl+` window switcher
+│  ├─ frame.rs    # EditorFrame<'a>: the borrows the editor view needs
 │  ├─ messages/   # mod.rs = the rx loop + one-line dispatch per AppMsg;
-│  │              # load/save/export/gallery/document/shell.rs = the bodies
+│  │              # load/save/export/gallery/document/shell/unsplash.rs = bodies
 │  ├─ views/      # welcome.rs · loading.rs · gallery.rs
 │  │  └─ editor/  # mod.rs = orchestration only; save_flow · file_ops ·
 │  │              # modals · panels · deck_nav
@@ -271,19 +298,28 @@ canvas-app/src/
 │  ├─ properties_panel/  mod.rs · layer_common · content{,_shape,_text} ·
 │  │                     effects · page
 │  └─ interaction.rs  layer_ops.rs  overlay.rs  viewport.rs
-├─ gallery/       mod.rs + ui/{mod,cell,folder_panel,shell}.rs
-├─ layers_panel/  mod.rs · ops.rs · row.rs
+├─ gallery/       mod.rs · item.rs · ui/{mod,cell,shell}.rs
+│                 # ui/folder_panel/{mod,rows}.rs
+├─ layers_panel/  mod.rs · tab_strip.rs · tab_draw.rs · insert.rs ·
+│                 # ops.rs · row.rs
 ├─ menus/         mod.rs · fallback.rs (non-Windows) · native/{mod,build}.rs
-├─ loader/        # the off-thread disk work: load/save/export/gallery ops
-└─ clipboard.rs  deck_strip.rs  export.rs  paste_hook.rs  settings.rs
-   sidebar.rs  surface.rs  watcher.rs  welcome.rs
+├─ unsplash/      mod.rs · types.rs · api.rs (Authorization header, download
+│                 # cap) · state.rs · panel.rs · card.rs
+├─ loader/        # the off-thread disk work, one file per op family:
+│                 # load_ops · save_ops · export_ops · gallery_ops ·
+│                 # image_import · file_ops · unsplash_ops
+├─ app_icons.rs   # hand-drawn egui iconography (over 400 on purpose)
+└─ clipboard.rs  crash_log.rs  deck_strip.rs  export.rs  paste_hook.rs
+   sidebar.rs  surface.rs  watcher.rs  welcome.rs  settings/{mod,choices,sort}.rs
 ```
 
-- `app/mod.rs` owns the `App` (eframe) state machine: `View` is one of
-  `Welcome` / `Loading` / `Gallery` / `Editor`. Disk work (load, save,
-  thumbnails, watcher) happens off the UI thread; results come back over
-  `std::sync::mpsc` channels into `AppMsg`. `main.rs` is just the entry
-  point.
+- The app is **multi-window**: `App` owns an `AppInner` (shared state under
+  `Arc<Mutex<>>`, locked with `lock_ok()` — poisoning recovery, not a
+  panic) and one `Workspace` per native window. Each workspace carries its
+  own `View` (`Welcome` / `Loading` / `Gallery` / `Editor`), deck, watcher
+  and save/export flows, and its own `mpsc` channel into `AppMsg` — no
+  routing by window id. Disk work (load, save, thumbnails, watcher)
+  happens off the UI thread. `main.rs` is just the entry point.
 - `App`'s fields are grouped by domain into `SaveFlow` / `ExportFlow` /
   `DeckOps` / `MenuMirror` rather than sitting flat. `SaveFlow` and
   `ExportFlow` are passed directly to `overwrite_modal_ui` / `export_flow_ui`
@@ -298,6 +334,11 @@ canvas-app/src/
   there**: `editor_view_ui` runs while `state` is borrowed out of
   `self.view`, so it takes independent `&'a mut` borrows of the *other*
   fields. Add a field here instead of adding a parameter.
+- **Loader errors are typed**: loader ops return `Result<_, IoError>` /
+  `UnsplashError` (thiserror) and `AppMsg` carries them as-is; the UI turns
+  them into user-facing messages. No `String` error plumbing. The Unsplash
+  access key travels in the `Authorization` header — never in the query
+  string — and image downloads are cut off at `unsplash::MAX_DOWNLOAD_BYTES`.
 - **`app/views/editor/mod.rs` and `editor/canvas/mod.rs` are orchestration
   only, and the order in which they call their submodules is significant** —
   the code comments say so explicitly (e.g. placeholder materialization must
@@ -324,17 +365,21 @@ canvas-app/src/
   with `cargo tree -i usvg` after touching either.
 - `arboard`'s `image-data` feature is pinned to match what `egui-winit`
   already pulls in transitively, to avoid duplicating the crate.
-- **Test count: 327** (`cargo test --workspace`, excluding 11 GPU-only
-  `#[ignore]` tests in `crates/canvas-render/tests/gpu_bake.rs`). The count
-  is a sanity checkpoint — a drop means a regression in test coverage.
+- **Test-count guard in CI** (`.github/workflows/ci.yml`): the `test` job
+  fails if `cargo test --workspace -- --list` lists fewer than 320 tests.
+  The floor sits well below the real total (~430 listed on Windows)
+  because tests are cfg-gated per OS — it exists to catch wholesale test
+  deletions, not to be an exact checkpoint. The 11 GPU-only `#[ignore]`
+  tests in `crates/canvas-render/tests/gpu_bake.rs` are outside it.
 
-## Where the plan lives
+## Where the reasoning lives
 
-`REFACTOR.md` is the companion for the *structural* decisions: the phase log
-of the split into modules, why a few files are deliberately over the size
-target, the known-bug notes found along the way, and the post-refactor
-optimization log (parameter-grouping structs, hot-path render optimizations,
-shell implementations, test additions). Read it before undoing a module
-boundary or re-litigating an architectural choice (e.g. why groups use
-`parent_id` instead of nested layers, why crop is "trim at the edges" rather
-than destructive).
+There is no separate PLAN/REFACTOR document: the *why* of each module
+boundary lives in the module doc comments (every split file says what it
+owns and what its neighbors own) and in git history. Read the sibling doc
+comments before undoing a module boundary or re-litigating an architectural
+choice — e.g. why groups use `parent_id` instead of nested layers
+(`canvas-core/src/document/tree.rs`), why the tab strip decides clicks by
+geometry instead of egui drag-and-drop (`layers_panel/tab_strip.rs`), or
+why crop is "trim at the edges" rather than destructive
+(`canvas-core/src/geometry/crop.rs`).
