@@ -22,6 +22,7 @@ impl AppInner {
             A::NewWindow => {
                 self.new_workspace();
                 self.pending_focus = Some(self.workspaces.len() - 1);
+                self.request_repaint_all_viewports(ctx);
             }
             A::NewDesign => {
                 let gallery_seed = if let View::Gallery(g) = &mut ws.view {

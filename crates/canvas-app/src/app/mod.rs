@@ -438,9 +438,15 @@ impl AppInner {
         // El ancla del grupo es la primera ventana de la app (la raíz, creada
         // al arrancar; `NSApplication::windows` las devuelve en orden de
         // creación). Las siguientes se fusionan en su grupo en cuanto aparecen.
+        //
+        // AVISO: al trabajar con ventanas de egui hay una NSWindow fantasma de
+        // infraestructura (oculta, estilo interno) que puede lanzar NSExceptions
+        // al tocar su `tabbingIdentifier`/`tabbingMode`/fusión. Una NSException
+        // NO capturada se escapa por el FFI hacia winit y aborta el proceso
+        // (panic de `foreign_exception` en `control_flow_end_handler`). Por eso
+        // TODA la manipulación de cada ventana va envuelta en un `catch` único:
+        // ninguna excepción de AppKit puede llegar al run loop de winit.
         for window in wins.iter() {
-            window.setTabbingIdentifier(&id);
-            window.setTabbingMode(NSWindowTabbingMode::Preferred);
             // `NSWindow` es un envoltorio de tamaño cero en objc2: la dirección
             // de `&*window` sería constante. `Retained::as_ptr` devuelve el
             // puntero real al objeto AppKit, estable durante su vida.
@@ -453,38 +459,32 @@ impl AppInner {
             if already {
                 continue;
             }
-            // La PRIMERA ventana de la app fija el ancla del grupo (la raíz);
-            // `NSApplication::windows` no ordena de forma estable entre frames,
-            // así que se guarda una vez. Las siguientes se fusionan en su grupo.
-            if self.tab_anchor.is_none() {
-                self.tab_anchor = Some(ptr);
-                self.tabbed_windows.insert(ptr);
-                continue;
-            }
-            if Some(ptr) == self.tab_anchor {
-                self.tabbed_windows.insert(ptr);
-                continue;
-            }
-            // Fusionar en el grupo de la raíz (ancla).
-            let merged = if let Some(anchor_win) = wins
-                .iter()
-                .find(|w| objc2::rc::Retained::as_ptr(w) as usize == self.tab_anchor.unwrap())
-            {
-                tracing::debug!("apply_native_tabbing: fusionando ventana nueva en el grupo");
-                match objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
-                    anchor_win.addTabbedWindow_ordered(&window, NSWindowOrderingMode::Above);
-                })) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        tracing::debug!("apply_native_tabbing: EXCEPCION al fusionar: {e:?}");
-                        false
+            // Tanto el identificador como el modo y la fusión pueden lanzar
+            // NSExceptions; un fallo en una ventana no debe abortar la app.
+            let result = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+                window.setTabbingIdentifier(&id);
+                window.setTabbingMode(NSWindowTabbingMode::Preferred);
+                // La PRIMERA ventana de la app fija el ancla del grupo (la
+                // raíz); `NSApplication::windows` no ordena de forma estable
+                // entre frames, así que se guarda una vez. Las siguientes se
+                // fusionan en su grupo.
+                if self.tab_anchor.is_none() {
+                    self.tab_anchor = Some(ptr);
+                    self.tabbed_windows.insert(ptr);
+                } else if Some(ptr) != self.tab_anchor {
+                    if let Some(anchor_win) = wins.iter().find(|w| {
+                        objc2::rc::Retained::as_ptr(w) as usize == self.tab_anchor.unwrap()
+                    }) {
+                        tracing::debug!(
+                            "apply_native_tabbing: fusionando ventana nueva en el grupo"
+                        );
+                        anchor_win.addTabbedWindow_ordered(&window, NSWindowOrderingMode::Above);
+                        self.tabbed_windows.insert(ptr);
                     }
                 }
-            } else {
-                false
-            };
-            if merged {
-                self.tabbed_windows.insert(ptr);
+            }));
+            if let Err(e) = result {
+                tracing::debug!("apply_native_tabbing: EXCEPCION al fusionar: {e:?}");
             }
         }
     }

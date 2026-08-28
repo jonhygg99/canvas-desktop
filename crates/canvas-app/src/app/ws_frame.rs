@@ -124,6 +124,15 @@ impl AppInner {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
                 self.new_workspace();
                 self.pending_focus = Some(self.workspaces.len() - 1);
+                // Esencial: si este pase es el de una PESTAÑA (child_frame),
+                // `pending_focus` solo lo procesa la raíz, y el viewport del
+                // workspace nuevo solo lo crea `spawn_child_viewports` de la
+                // raíz (`App::logic`/`root_frame`). `ctx.request_repaint()`
+                // en esta versión de egui repinta SOLO el viewport actual
+                // (la pestaña), así que hay que pedir explícitamente que la
+                // raíz (y el resto) repinte; si no, egui reposa y la ventana
+                // nueva no nace hasta que el usuario toca algo.
+                self.request_repaint_all_viewports(ctx);
             }
             // Ctrl/Cmd+T: nueva ventana abriendo directamente el selector
             // de carpeta (el resultado llega por el canal del workspace
@@ -134,6 +143,7 @@ impl AppInner {
                 self.pending_focus = Some(idx);
                 let tx = new_ws.lock_ok().tx.clone();
                 loader::spawn_pick_folder(tx, ctx.clone());
+                self.request_repaint_all_viewports(ctx);
             }
             let now = ctx.input(|i| i.time);
             if let Some(target) =
@@ -150,7 +160,6 @@ impl AppInner {
                 ws,
             );
         }
-
         if let Some(nav) = open_next {
             self.navigate(ws, nav, ctx);
         }
@@ -177,5 +186,21 @@ impl AppInner {
     /// workspace YA tomado (`std::sync::Mutex` no es reentrante).
     fn focused_ui_matches(&self, ws_idx: usize) -> bool {
         self.focused == ws_idx
+    }
+
+    /// Pide que la raíz y la ventana recién creada (`pending_focus`) se
+    /// repinten, además de la actual. Es lo que hace falta para que un
+    /// Cmd+N/T procesado en el pase de una PESTAÑA termine naciendo: el
+    /// `pending_focus` y el `spawn_child_viewports` los gobierna la raíz, y
+    /// `ctx.request_repaint()` en esta versión de egui repinta SOLO el
+    /// viewport actual. La raíz de la app SIEMPRE tiene `ViewportId::ROOT`
+    /// (ver `bootstrap`), así que se le puede pedir repaint sin lockear su
+    /// mutex (evita el deadlock si este pase ya lo tiene tomado).
+    pub(super) fn request_repaint_all_viewports(&self, ctx: &egui::Context) {
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        // La ventana recién creada por este Cmd+N/T: nadie la lockea aún.
+        if let Some(vp) = self.workspaces.last().map(|ws| ws.lock_ok().viewport) {
+            ctx.request_repaint_of(vp);
+        }
     }
 }
