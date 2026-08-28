@@ -409,6 +409,62 @@ fn random_target(rng: &mut XorShift, doc: &Document) -> (LayerId, Option<LayerId
     (id, parent, index)
 }
 
+/// El mismo generador de mutaciones que el test de arriba, barrido sobre
+/// MUCHAS semillas: una sola traza fija puede dejar un error latente para
+/// siempre; 256 semillas × 120 mutaciones recorren 30k pasos de árbol en
+/// milisegundos y cada fallo es reproducible por su semilla (misma meta que
+/// una estrategia de proptest, sin su árbol de deps — decisión ya tomada
+/// para este workspace, ver el comentario de `XorShift`).
+#[test]
+fn random_mutations_preserve_the_invariant_across_many_seeds() {
+    const SEEDS: u64 = 256;
+    const OPS: usize = 120;
+    for seed in 1..=SEEDS {
+        let mut rng = XorShift::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let mut doc = Document::new(800.0, 600.0);
+        for i in 0..4 {
+            doc.add_layer(
+                format!("l{i}"),
+                Transform::new(0.0, 0.0, 10.0, 10.0),
+                image_content(),
+            )
+            .unwrap();
+        }
+        for i in 0..2 {
+            let g = doc.allocate_layer_id();
+            let page = doc.page_mut().unwrap();
+            let at = rng.below(page.layers.len() + 1);
+            page.insert_child(Layer::group(g, format!("g{i}")), None, at);
+        }
+        for _ in 0..OPS {
+            match rng.below(3) {
+                0 => {
+                    let (id, parent, index) = random_target(&mut rng, &doc);
+                    doc.page_mut().unwrap().move_subtree(id, parent, index).ok();
+                }
+                1 => {
+                    let (parent, index) = random_target_parent(&mut rng, &doc);
+                    let g = doc.allocate_layer_id();
+                    doc.page_mut()
+                        .unwrap()
+                        .insert_child(Layer::group(g, "dyn"), parent, index);
+                }
+                _ => {
+                    let leaf = doc
+                        .add_layer("dyn", Transform::new(0.0, 0.0, 5.0, 5.0), image_content())
+                        .unwrap();
+                    let (parent, index) = random_target_parent(&mut rng, &doc);
+                    doc.page_mut()
+                        .unwrap()
+                        .move_subtree(leaf, parent, index)
+                        .ok();
+                }
+            }
+            assert_preorder_invariant(doc.page().unwrap());
+        }
+    }
+}
+
 #[test]
 fn normalize_tree_repairs_a_scrambled_flat_list() {
     let (mut doc, group, a, b) = doc_with_group();

@@ -48,6 +48,19 @@ pub enum LoadOutcome {
     Design(RestoredDocument),
 }
 
+/// El resultado de `canvas_io::open_document` (la política única de
+/// apertura, en canvas-io) viaja como `LoadOutcome` por `AppMsg`; no hay
+/// lógica de conversión: es la misma información con otro nombre.
+impl From<canvas_io::OpenOutcome> for LoadOutcome {
+    fn from(outcome: canvas_io::OpenOutcome) -> Self {
+        match outcome {
+            canvas_io::OpenOutcome::Flat(loaded) => LoadOutcome::Flat(loaded),
+            canvas_io::OpenOutcome::Restored(restored) => LoadOutcome::Restored(restored),
+            canvas_io::OpenOutcome::Design(restored) => LoadOutcome::Design(restored),
+        }
+    }
+}
+
 /// Resultado de una operación de archivos de la galería (crear, duplicar,
 /// pegar): lo que transporta `AppMsg::GalleryOpDone`. Agrupa en un valor con
 /// nombre los cuatro campos que antes viajaban como parámetros sueltos de

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use image::DynamicImage;
 
+use crate::sidecar::{read_design, read_sidecar, RestoredDocument};
 use crate::IoError;
 
 /// Extensiones de imagen que la app sabe abrir (minúsculas).
@@ -45,6 +46,41 @@ pub fn is_standalone_design(path: &Path) -> bool {
     }
     let inner = path.with_extension("");
     !(is_image_file(&inner) && inner.is_file())
+}
+
+/// Qué devolvió abrir una ruta de disco. `Flat` es la imagen aplanada;
+/// `Restored` trae las capas editables del sidecar de una imagen; `Design`
+/// es un `.canvas` autónomo leído como documento completo.
+pub enum OpenOutcome {
+    Flat(LoadedImage),
+    Restored(RestoredDocument),
+    Design(RestoredDocument),
+}
+
+/// Punto ÚNICO de entrada para abrir una ruta de disco, venga de argv,
+/// galería, baraja del editor o «abrir con». La política vive aquí y solo
+/// aquí (antes estaba copiada en `spawn_load_image` y `spawn_load_slot`):
+///
+/// - un `.canvas` ES el documento: se lee con `read_design`;
+/// - una imagen restaura sus capas desde su sidecar si lo tiene y es
+///   legible; un sidecar corrupto degrada a imagen aplanada con un warning
+///   (nunca impide abrir — el original siempre gana);
+/// - `with_sidecar` en `false` salta la restauración («Editable sidecar»
+///   desactivado) y va directo a los píxeles.
+pub fn open_document(path: &Path, with_sidecar: bool) -> Result<OpenOutcome, IoError> {
+    if is_canvas_file(path) {
+        return read_design(path).map(OpenOutcome::Design);
+    }
+    if with_sidecar {
+        match read_sidecar(path) {
+            Ok(Some(restored)) => return Ok(OpenOutcome::Restored(restored)),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada")
+            }
+        }
+    }
+    load_image(path).map(OpenOutcome::Flat)
 }
 
 /// Reserva una ruta libre en `folder`: `{stem}.{ext}`, `{stem} 2.{ext}`…
@@ -389,5 +425,119 @@ mod tests {
 
         // No es un `.canvas` en absoluto.
         assert!(!is_standalone_design(&image));
+    }
+
+    // ——— open_document: la política única de apertura ———
+
+    use canvas_core::{ImageContent, LayerContent, Transform};
+
+    /// Documento de prueba con una capa de imagen 4×2 (blur 7) y sus píxeles.
+    fn sample_payload() -> (crate::CanvasPayload, Vec<u8>) {
+        let mut doc = canvas_core::Document::new(200.0, 100.0);
+        let id = doc
+            .add_layer(
+                "img",
+                Transform::new(25.0, 10.0, 50.0, 40.0),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: 4,
+                    natural_height: 2,
+                    crop: None,
+                }),
+            )
+            .expect("añadir capa");
+        doc.layer_mut(id).expect("capa").effects.blur_radius = 7.0;
+        let rgba: Vec<u8> = (0..4 * 2 * 4).map(|i| (i * 7 % 256) as u8).collect();
+        (
+            crate::CanvasPayload {
+                document: doc,
+                images: vec![(id.raw(), rgba, 4, 2)],
+                background_layer: None,
+                preview: None,
+            },
+            b"bytes de la imagen guardada".to_vec(),
+        )
+    }
+
+    fn tiny_png(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        let img = image::RgbaImage::from_fn(4, 2, |x, _| image::Rgba([x as u8, 0, 0, 255]));
+        img.save(&path).expect("guardar png de prueba");
+        path
+    }
+
+    #[test]
+    fn open_document_without_sidecar_loads_flat() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = tiny_png(dir.path(), "foto.png");
+
+        let outcome = open_document(&path, true).expect("abrir");
+        let OpenOutcome::Flat(loaded) = outcome else {
+            panic!("se esperaba Flat para una imagen sin sidecar");
+        };
+        assert_eq!((loaded.width, loaded.height), (4, 2));
+    }
+
+    #[test]
+    fn open_document_restores_editable_layers_from_sidecar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = tiny_png(dir.path(), "foto.png");
+        let (payload, _) = sample_payload();
+        // El sidecar hashea los bytes REALES en disco (los del PNG), no unos
+        // cualesquiera: así `hash_matches` sale true.
+        let image_bytes = std::fs::read(&path).expect("leer png");
+        crate::write_sidecar(&path, &image_bytes, &payload).expect("escribir sidecar");
+
+        let outcome = open_document(&path, true).expect("abrir");
+        let OpenOutcome::Restored(restored) = outcome else {
+            panic!("se esperaba Restored para una imagen con sidecar válido");
+        };
+        assert!(restored.hash_matches);
+        let id = restored
+            .document
+            .page()
+            .expect("página")
+            .layers
+            .first()
+            .expect("capa")
+            .id;
+        assert_eq!(
+            restored.document.layer(id).unwrap().effects.blur_radius,
+            7.0
+        );
+    }
+
+    #[test]
+    fn open_document_skips_sidecar_when_disabled() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = tiny_png(dir.path(), "foto.png");
+        let (payload, image_bytes) = sample_payload();
+        crate::write_sidecar(&path, &image_bytes, &payload).expect("escribir sidecar");
+
+        let outcome = open_document(&path, false).expect("abrir");
+        assert!(matches!(outcome, OpenOutcome::Flat(_)));
+    }
+
+    #[test]
+    fn open_document_corrupt_sidecar_degrades_to_flat() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = tiny_png(dir.path(), "foto.png");
+        let sidecar = crate::sidecar_path(&path);
+        std::fs::create_dir_all(sidecar.parent().expect("padre")).unwrap();
+        std::fs::write(&sidecar, b"no es un contenedor v5 ni un json").unwrap();
+
+        let outcome = open_document(&path, true).expect("abrir la imagen igualmente");
+        assert!(matches!(outcome, OpenOutcome::Flat(_)));
+    }
+
+    #[test]
+    fn open_document_reads_a_canvas_file_as_design() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("Untitled.canvas");
+        let (payload, _image_bytes) = sample_payload();
+        crate::write_design(&path, &payload).expect("escribir diseño");
+
+        let outcome = open_document(&path, true).expect("abrir");
+        assert!(matches!(outcome, OpenOutcome::Design(_)));
     }
 }

@@ -22,3 +22,11 @@ anyhow = { workspace = true }
 # Reparsear el SVG generado por canvas-io::document_to_svg en export_probe:
 # la misma versión que ya usa canvas-io, así que no duplica el árbol.
 resvg = { workspace = true }
+# Coste CPU (sin GPU) de codificar la escena de vello: `append_document`
+# corre por frame y por ventana, así que su tiempo es parte del presupuesto
+# de repintado (benches/scene_build.rs).
+criterion = { workspace = true }
+
+[[bench]]
+name = "scene_build"
+harness = false
