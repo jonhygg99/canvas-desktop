@@ -285,6 +285,9 @@ impl eframe::App for App {
     /// («never used this pass») y la ventana se destruiría — el bug que
     /// hacía que el fullscreen se quitara solo con una segunda ventana.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // `inner` solo se muta en macOS (`apply_native_tabbing`); en el resto
+        // de plataformas basta con `&self` y `mut` sobra (clippy -D warnings).
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut inner = self.inner.lock_ok();
         #[cfg(target_os = "macos")]
         inner.apply_native_tabbing();
