@@ -109,11 +109,35 @@ impl AppInner {
         self.settings_window_ui(ws, ctx);
         self.about_window_ui(ws, ctx);
 
-        // Cierre de ventana (X de la barra de título o Quit del menú): la
-        // retirada real la hace el frame raíz (`finish_root_frame`).
+        // Cierre de ventana (X de la barra de título, Quit del menú o
+        // Cmd+W): con el tabbing nativo, macOS intercepta Cmd+W como
+        // `performClose:` y lo entrega aquí como `close_requested` — el MISMO
+        // flujo que el botón X (un handler manual de `Key::W` sería redundante
+        // y doble-cerraría). La retirada real la hace el frame raíz
+        // (`finish_root_frame`), que solo corre en el pase de la RAÍZ: para
+        // una hija hay que asegurar que la raíz se repinte tras marcar el
+        // cierre (si egui reposa, la pestaña quedaría marcada pero nunca
+        // retirada, y parecería que Cmd+W no hace nada).
+        // Cierre de ventana (X de la barra de título, Quit del menú o
+        // Cmd+W): con el tabbing nativo, macOS intercepta Cmd+W como
+        // `performClose:` y lo entrega aquí como `close_requested` — el MISMO
+        // flujo que el botón X. La retirada real la hace el frame raíz
+        // (`finish_root_frame`), que solo corre en el pase de la RAÍZ: para
+        // una hija hay que asegurar que la raíz se repinte tras marcar el
+        // cierre (si egui reposa, la pestaña quedaría marcada pero nunca
+        // retirada, y parecería que Cmd+W no hace nada).
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if close_requested {
-            self.confirm_window_close(ws, ctx, is_root);
+            self.handle_window_close(ws, ctx, is_root);
+        }
+        // Cmd+W por teclado: si AppKit NO interceptó la tecla (no la convirtió
+        // en `close_requested`), llega aquí. Se procesa en TODA ventana que la
+        // reciba (solo la enfocada del SO la recibe, así que no hace falta el
+        // filtro `focused_ui_matches`, que además se desincroniza tras cerrar
+        // una pestaña y dejaba de funcionar). Ambos caminos son mutuamente
+        // excluyentes en el mismo frame, no hay doble cierre.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)) {
+            self.handle_window_close(ws, ctx, is_root);
         }
 
         // Conmutador rápido: teclas + paleta en la ventana ENFOCADA.
@@ -188,19 +212,43 @@ impl AppInner {
         self.focused == ws_idx
     }
 
-    /// Pide que la raíz y la ventana recién creada (`pending_focus`) se
-    /// repinten, además de la actual. Es lo que hace falta para que un
-    /// Cmd+N/T procesado en el pase de una PESTAÑA termine naciendo: el
-    /// `pending_focus` y el `spawn_child_viewports` los gobierna la raíz, y
+    /// Cierre de la ventana/pestaña actual (X, Cmd+W por teclado o
+    /// `close_requested` nativo). Para una hija usa el camino probado
+    /// (`confirm_window_close` → `close_requested` → `finish_root_frame` la
+    /// retira). En la RAÍZ con pestañas hijas abiertas, cerrarla terminaría
+    /// la app con todas las ventanas a la vez — el teardown multi-ventana de
+    /// eframe/winit aborta en macOS (panic "cannot unwind" en
+    /// `applicationWillTerminate`) —, así que se cancela el cierre de la app
+    /// y se cierra la última pestaña hija: Cmd+W siempre cierra UNA pestaña,
+    /// y la app solo termina cuando es la única ventana restante.
+    fn handle_window_close(&mut self, ws: &mut Workspace, ctx: &egui::Context, is_root: bool) {
+        if is_root && self.workspaces.len() > 1 {
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
+            if let Some(last_idx) = self.workspaces.len().checked_sub(1).filter(|&i| i > 0) {
+                if let Some(ws_last) = self.workspaces.get(last_idx) {
+                    ws_last.lock_ok().close_requested = true;
+                }
+            }
+        } else {
+            self.confirm_window_close(ws, ctx, is_root);
+        }
+        // `finish_root_frame` (que retira la pestaña marcada) corre en la
+        // raíz; repintarla garantiza que ocurra aunque egui esté en reposo.
+        self.request_repaint_all_viewports(ctx);
+    }
+
+    /// Pide que la raíz se repinte, además de la actual. Es lo que hace
+    /// falta para que un Cmd+N/T/W procesado en el pase de una PESTAÑA
+    /// termine: el `pending_focus`/`close_requested` y el
+    /// `spawn_child_viewports`/`finish_root_frame` los gobierna la raíz, y
     /// `ctx.request_repaint()` en esta versión de egui repinta SOLO el
-    /// viewport actual. La raíz de la app SIEMPRE tiene `ViewportId::ROOT`
-    /// (ver `bootstrap`), así que se le puede pedir repaint sin lockear su
-    /// mutex (evita el deadlock si este pase ya lo tiene tomado).
+    /// viewport actual. La raíz SIEMPRE tiene `ViewportId::ROOT` (ver
+    /// `bootstrap`), así que se le pide repaint SIN tocar su mutex — este
+    /// pase puede venir de un `child_frame` que ya tiene lockeado el
+    /// workspace de una pestaña (y `Mutex` no es reentrante: relockearlo
+    /// congela la app). El viewport nuevo se pinta solo al crearse, no hace
+    /// falta pedírselo.
     pub(super) fn request_repaint_all_viewports(&self, ctx: &egui::Context) {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
-        // La ventana recién creada por este Cmd+N/T: nadie la lockea aún.
-        if let Some(vp) = self.workspaces.last().map(|ws| ws.lock_ok().viewport) {
-            ctx.request_repaint_of(vp);
-        }
     }
 }
