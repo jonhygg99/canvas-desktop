@@ -1,10 +1,14 @@
-//! Detección de la RAM física total por plataforma, sin dependencias
-//! nuevas: `windows` (ya en el árbol) en Windows, `libc::sysctlbyname` en
-//! macOS (libc ya está en el árbol vía winit/wgpu/objc2), y `/proc/meminfo`
-//! en Linux. Cualquier fallo devuelve `None` y el llamador cae al
-//! presupuesto histórico. La detección se hace una sola vez por proceso y
-//! se cachea: medir en cada frame sería desperdiciar una syscall (o un
-//! spawn de proceso) para un valor que no cambia.
+//! Detección de RAM por plataforma, sin dependencias nuevas: `windows` (ya
+//! en el árbol) en Windows, `libc::sysctlbyname` en macOS (libc ya está en
+//! el árbol vía winit/wgpu/objc2), y `/proc/meminfo` en Linux. Cualquier
+//! fallo devuelve `None` y el llamador cae al presupuesto histórico.
+//!
+//! Hay dos consultas con distinta cadencia:
+//! - La RAM física TOTAL no cambia: se detecta una sola vez por proceso y
+//!   se cachea en un `OnceLock`.
+//! - La RAM LIBRE sí cambia: es la señal de presión de memoria que reduce
+//!   el presupuesto de la baraja, y la consulta es barata (una syscall o un
+//!   `read` de `/proc/meminfo`), así que se hace en cada llamada.
 
 use std::sync::OnceLock;
 
@@ -13,6 +17,18 @@ use std::sync::OnceLock;
 pub(super) fn total_physical_ram_bytes() -> Option<u64> {
     static TOTAL: OnceLock<Option<u64>> = OnceLock::new();
     *TOTAL.get_or_init(detect_ram_bytes)
+}
+
+/// RAM libre (disponible) en bytes, o `None` si no se pudo determinar.
+/// Cada plataforma aproxima «lo que una app podría usar sin apretar al
+/// sistema»: `ullAvailPhys` (incluye la lista standby) en Windows,
+/// `MemAvailable` (incluye la caché de página reclamable) en Linux, y
+/// páginas free + speculative + purgeable en macOS — libre a secas es
+/// crónicamente bajo en macOS porque el sistema vive de caché de archivos,
+/// y el propio OS cuenta esas tres clases como reclamables para decidir
+/// presión.
+pub(super) fn free_ram_bytes() -> Option<u64> {
+    detect_free_ram_bytes()
 }
 
 #[cfg(target_os = "windows")]
@@ -48,8 +64,82 @@ fn detect_ram_bytes() -> Option<u64> {
 fn detect_ram_bytes() -> Option<u64> {
     // `/proc/meminfo` expone `MemTotal:` en kB (Linux y demás Unix con
     // procfs); leerlo es solo E/S de archivo, sin syscalls extrañas.
+    meminfo_kb("MemTotal:")
+}
+
+#[cfg(target_os = "windows")]
+fn detect_free_ram_bytes() -> Option<u64> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX::default();
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: `status` es válido y con `dwLength` correcto; la función
+    // rellena el resto de campos cuando devuelve éxito.
+    unsafe { GlobalMemoryStatusEx(&mut status) }
+        .is_ok()
+        .then_some(status.ullAvailPhys)
+}
+
+#[cfg(target_os = "macos")]
+fn detect_free_ram_bytes() -> Option<u64> {
+    // Páginas que el OS considera reclamables para presión: libres +
+    // especulativas + purgeables. `vm.page_inactive_count` NO existe como
+    // oid en este macOS; no hay que usarlo.
+    let mut pages = 0u64;
+    for oid in [
+        c"vm.page_free_count",
+        c"vm.page_speculative_count",
+        c"vm.page_purgeable_count",
+    ] {
+        let mut value = 0u64;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: consulta de solo lectura con buffer válido, igual que
+        // `detect_ram_bytes`.
+        let rc = unsafe {
+            libc::sysctlbyname(
+                oid.as_ptr(),
+                (&mut value as *mut u64).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc != 0 {
+            return None;
+        }
+        pages += value;
+    }
+    // `hw.pagesize` es un entero de 4 bytes; buffer `u32` para que la
+    // escritura de la syscall quepa exacta.
+    let mut page_size: u32 = 0;
+    let mut len = std::mem::size_of::<u32>();
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"hw.pagesize".as_ptr(),
+            (&mut page_size as *mut u32).cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    Some(pages.saturating_mul(page_size as u64))
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn detect_free_ram_bytes() -> Option<u64> {
+    // `MemAvailable` (Linux ≥ 3.14) incluye la caché de página reclamable,
+    // mejor señal de «cuánta RAM puede usar una app» que `MemFree`; en
+    // Unix sin ella se cae a `MemFree`.
+    meminfo_kb("MemAvailable:").or_else(|| meminfo_kb("MemFree:"))
+}
+
+/// Lee un campo `Clave:` de `/proc/meminfo` (en kB) y lo devuelve en bytes.
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn meminfo_kb(key: &str) -> Option<u64> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let line = meminfo.lines().find(|line| line.starts_with("MemTotal:"))?;
+    let line = meminfo.lines().find(|line| line.starts_with(key))?;
     let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
     Some(kb.saturating_mul(1024))
 }

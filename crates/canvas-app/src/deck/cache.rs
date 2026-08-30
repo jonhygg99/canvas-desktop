@@ -6,7 +6,7 @@ use canvas_render::FxScope;
 
 use super::loading::PRELOAD_RADIUS;
 use super::model::SlotContent;
-use super::system::total_physical_ram_bytes;
+use super::system::{free_ram_bytes, total_physical_ram_bytes};
 use super::Deck;
 
 impl Deck {
@@ -115,6 +115,29 @@ pub(super) fn evict_budget_from_ram(total_bytes: u64) -> usize {
     scaled.clamp(MIN_EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES)
 }
 
+/// Umbral de RAM libre por debajo del cual el presupuesto se reduce
+/// dinámicamente: con menos de 2 GiB libres la caché cede memoria a la
+/// presión del sistema (el guard anti-blanco protege el archivo, pero
+/// mejor no llegar a necesitarlo). Con 1 GiB libres el presupuesto cae a
+/// la mitad; con 512 MiB o menos, al mínimo. Por encima del umbral el
+/// presupuesto no se toca.
+pub(super) const FREE_RAM_REDUCTION_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Presupuesto bajo presión de memoria: si la RAM libre cae por debajo de
+/// `FREE_RAM_REDUCTION_THRESHOLD_BYTES`, el presupuesto se escala
+/// linealmente por `libre / umbral`, nunca por debajo del mínimo — con 0
+/// bytes libres aún queda el mínimo para no inutilizar la caché. `base`
+/// debe venir de `resolve_evict_budget`, que ya garantiza ≥ MIN. Pura: se
+/// prueba con tabla sin depender del hardware.
+pub(super) fn budget_under_free_ram(base: usize, free_bytes: u64) -> usize {
+    let threshold = FREE_RAM_REDUCTION_THRESHOLD_BYTES;
+    if free_bytes >= threshold {
+        return base;
+    }
+    let scaled = (base as f64 * (free_bytes as f64 / threshold as f64)) as usize;
+    scaled.clamp(MIN_EVICT_BUDGET_BYTES, base)
+}
+
 /// Decisión pura del presupuesto: la env var gana, si no la RAM medida, si
 /// no el histórico — siempre clampeado. Separada de `adaptive_evict_budget`
 /// para poder probar las tres ramas sin tocar variables de entorno ni
@@ -126,15 +149,35 @@ pub(super) fn resolve_evict_budget(configured: Option<usize>, ram_bytes: Option<
         .clamp(MIN_EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES)
 }
 
+/// Decisión final con presión de memoria: `resolve_evict_budget` fija el
+/// presupuesto base (env var > RAM total > histórico) y, salvo que la env
+/// var esté fijada (override manual explícito, no se reduce por presión),
+/// la RAM libre lo baja dinámicamente cuando cae por debajo del umbral.
+/// Pura: se prueba sin env vars ni hardware.
+pub(super) fn resolve_evict_budget_with_pressure(
+    configured: Option<usize>,
+    ram_bytes: Option<u64>,
+    free_bytes: Option<u64>,
+) -> usize {
+    let base = resolve_evict_budget(configured, ram_bytes);
+    match (configured, free_bytes) {
+        (Some(_), _) => base,
+        (None, Some(free)) => budget_under_free_ram(base, free),
+        (None, None) => base,
+    }
+}
+
 /// Presupuesto adaptativo. `CANVAS_PRELOAD_BUDGET_MB` sigue ganando (afinar
 /// por máquina o por prueba); sin ella, el presupuesto escala con la RAM
-/// física de la máquina (1/16, ver `RAM_BUDGET_FRACTION`), y si no se puede
-/// medir cae al valor histórico. El clamp evita valores que inutilicen la
-/// caché o comprometan la aplicación.
+/// física de la máquina (1/16, ver `RAM_BUDGET_FRACTION`) y se reduce
+/// dinámicamente cuando la RAM libre cae por debajo del umbral (ver
+/// `budget_under_free_ram`): el escalado por RAM total fija el techo, la
+/// RAM libre lo baja bajo presión. El clamp evita valores que inutilicen
+/// la caché o comprometan la aplicación.
 pub(super) fn adaptive_evict_budget() -> usize {
     let configured = std::env::var("CANVAS_PRELOAD_BUDGET_MB")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .map(|mb| mb.saturating_mul(1024 * 1024));
-    resolve_evict_budget(configured, total_physical_ram_bytes())
+    resolve_evict_budget_with_pressure(configured, total_physical_ram_bytes(), free_ram_bytes())
 }

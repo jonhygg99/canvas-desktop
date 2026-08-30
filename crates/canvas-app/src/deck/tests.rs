@@ -9,8 +9,9 @@ use canvas_render::ImageMap;
 use crate::gallery::ItemKind;
 
 use super::cache::{
-    adaptive_evict_budget, evict_budget_from_ram, resolve_evict_budget, EVICT_BUDGET_BYTES,
-    MAX_EVICT_BUDGET_BYTES, MIN_EVICT_BUDGET_BYTES,
+    adaptive_evict_budget, budget_under_free_ram, evict_budget_from_ram, resolve_evict_budget,
+    resolve_evict_budget_with_pressure, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES,
+    MIN_EVICT_BUDGET_BYTES,
 };
 use super::loading::max_inflight_loads;
 use super::model::SeedItem;
@@ -337,7 +338,10 @@ fn evict_skips_a_clean_slot_that_still_has_undo_history() {
     doc.bytes = EVICT_BUDGET_BYTES + 1;
     deck.slots[3].content = SlotContent::Ready(Box::new(doc));
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: la política no debe depender del presupuesto
+    // adaptativo (que escala con la RAM y se reduce bajo presión en la
+    // máquina de test).
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert!(
         freed.is_empty(),
@@ -424,6 +428,71 @@ fn evict_budget_scales_with_physical_ram() {
         evict_budget_from_ram(64 * gib),
         1024 * mi,
         "64 GiB → clamp máx"
+    );
+}
+
+/// Bajo presión de memoria (RAM libre < 2 GiB), el presupuesto se reduce
+/// linealmente hasta el mínimo; por encima del umbral no se toca, y con 0
+/// bytes libres queda el mínimo, nunca 0.
+#[test]
+fn budget_reduces_when_free_ram_is_low() {
+    let mi: u64 = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    let base = (1024 * mi) as usize; // el techo (16 GiB de RAM total)
+    assert_eq!(
+        budget_under_free_ram(base, 4 * gib),
+        base,
+        "4 GiB libres → sin tocar"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 2 * gib),
+        base,
+        "umbral exacto → sin tocar"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, gib),
+        (512 * mi) as usize,
+        "1 GiB libre → mitad"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 512 * mi),
+        (256 * mi) as usize,
+        "512 MiB libre → mín"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 0),
+        (256 * mi) as usize,
+        "0 libres → mín (nunca 0)"
+    );
+    // Un presupuesto base pequeño nunca sube por la reducción.
+    assert_eq!(
+        budget_under_free_ram((256 * mi) as usize, 0),
+        (256 * mi) as usize
+    );
+}
+
+/// La presión de memoria se aplica al presupuesto automático pero NO a la
+/// env var (override manual explícito), y sin medición de RAM libre el
+/// presupuesto base queda tal cual.
+#[test]
+fn pressure_reduces_auto_budget_but_not_the_env_override() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    // 16 GiB de RAM total → 1 GiB de presupuesto; con solo 1 GiB libre
+    // cae a la mitad.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(None, Some(16 * gib), Some(gib)),
+        512 * mi
+    );
+    // Sin medición de RAM libre: base intacta.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(None, Some(16 * gib), None),
+        1024 * mi
+    );
+    // La env var NO se reduce bajo presión: es el override manual.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(Some(300 * mi), Some(16 * gib), Some(0)),
+        300 * mi
     );
 }
 
