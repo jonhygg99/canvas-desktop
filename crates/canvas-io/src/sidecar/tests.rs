@@ -593,3 +593,101 @@ fn purge_of_a_folder_with_no_trash_yet_does_not_panic() {
     let dir = tempfile::tempdir().expect("tempdir");
     purge_local_trash(dir.path());
 }
+
+// ---- Corpus adversarial del parser de .canvas ----
+
+/// PRNG mínimo y determinista para los corpus (misma idea que `XorShift` en
+/// canvas-core): suficiente para mutar bytes, reproducible por semilla y sin
+/// dependencias nuevas.
+struct Lcg(u64);
+
+impl Lcg {
+    fn new(seed: u64) -> Self {
+        Self(seed | 1)
+    }
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0
+    }
+    fn below(&mut self, n: usize) -> usize {
+        if n == 0 {
+            0
+        } else {
+            (self.next() % n as u64) as usize
+        }
+    }
+}
+
+/// El `.canvas` es el ÚNICO formato que la app abre por doble clic sin que
+/// nadie le haya dicho nada sobre su contenido, así que su parser tiene que
+/// sobrevivir a bytes hostiles. Tomamos un contenedor v5 válido y le
+/// aplicamos mutaciones pseudoaleatorias (bits volcados, truncados,
+/// longitudes de cabecera/blob corrompidas): el contrato es `Err` limpio
+/// (IoError::Decode) o lectura correcta — JAMÁS un pánico ni un alloc
+/// desbocado. Cargo-fuzz daría cobertura de ramas mayor; este corpus
+/// determinista cubre el grueso sin nightly ni dependencias.
+#[test]
+fn mutated_containers_never_panic_and_fail_as_clean_errors() {
+    let (doc, images) = sample_doc();
+    let payload = sample_payload(&doc, &images, None);
+    let good = encode_payload(Path::new("fuzz.canvas"), None, &payload).expect("encode");
+    assert!(container::is_container(&good));
+
+    let mut rng = Lcg::new(0xF00D);
+    for _ in 0..2000 {
+        let mut bytes = good.clone();
+        for _ in 0..1 + rng.below(12) {
+            match rng.below(4) {
+                0 if !bytes.is_empty() => {
+                    let i = rng.below(bytes.len());
+                    bytes[i] ^= 1 << rng.below(8);
+                }
+                1 => {
+                    let cut = rng.below(bytes.len() + 1);
+                    bytes.truncate(cut);
+                }
+                2 if bytes.len() > 15 => {
+                    // Corromper el json_len de la cabecera fija (bytes 7..15).
+                    let i = 7 + rng.below(8);
+                    bytes[i] ^= 0xFF;
+                }
+                _ if bytes.len() > 20 => {
+                    // Corromper un blob_len o bytes de blob en la sección binaria.
+                    let i = 15 + rng.below(bytes.len() - 15);
+                    bytes[i] ^= 0xFF;
+                }
+                _ => {}
+            }
+            if bytes.is_empty() {
+                break;
+            }
+            // Ok parseable o Err limpio — nunca pánico.
+            let _ = container::split_container(&bytes, Path::new("fuzz.canvas"));
+        }
+    }
+}
+
+/// Igual que el corpus de arriba pero por el camino COMPLETO de lectura
+/// (`read_design`: contenedor → JSON de cabecera → decodificado de blobs
+/// PNG bajo `image::Limits`), escribiendo en disco para ejercitar también
+/// la I/O. Menos iteraciones: toca disco en cada una.
+#[test]
+fn mutated_design_files_never_panic_when_read_back() {
+    let (doc, images) = sample_doc();
+    let payload = sample_payload(&doc, &images, None);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("fuzz.canvas");
+    let mut rng = Lcg::new(0x0BAD_C0DE);
+    for _ in 0..64 {
+        let mut bytes = encode_payload(&path, None, &payload).expect("encode");
+        for _ in 0..1 + rng.below(16) {
+            let i = rng.below(bytes.len());
+            bytes[i] ^= 1 << rng.below(8);
+        }
+        std::fs::write(&path, &bytes).expect("escribir");
+        let _ = read_design(&path);
+    }
+}

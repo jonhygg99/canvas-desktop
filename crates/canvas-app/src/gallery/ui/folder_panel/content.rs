@@ -137,7 +137,7 @@ fn draw_visible_folders(
         }
         #[cfg(target_os = "macos")]
         if cloud_folder && ui.small_button("Grant access…").clicked() {
-            super::super::open_full_disk_access_pane();
+            super::super::shell::open_full_disk_access_pane();
             state.note_settings_opened();
         }
     } else if state.folders.children.is_empty() && state.new_folder_inside.is_none() {

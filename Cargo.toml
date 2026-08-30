@@ -89,6 +89,10 @@ windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
 # Incrusta el icono en el .exe (build.rs); no-op fuera de Windows.
 winresource = "0.1"
 
+# Solo para benchmarks (dev-dependency de canvas-render): coste CPU de
+# construir la escena de vello.
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
 [profile.dev]
 # vello/wgpu en debug puro son inusablemente lentos; optimiza las dependencias.
 opt-level = 1

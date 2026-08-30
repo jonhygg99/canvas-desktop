@@ -135,6 +135,17 @@ pub(crate) struct AppInner {
     pub(crate) atlas_regs: u64,
     pub(crate) atlas_reups: u64,
     pub(crate) atlas_log_frames: u64,
+    /// Pestañas nativas de macOS: punteros (`NSWindow*`) de las ventanas ya
+    /// fusionadas al grupo de pestañas de la raíz (o la propia raíz). Evita
+    /// re-fusionar las que el usuario arrastró fuera de la barra de
+    /// pestañas: solo se fusionan una vez, en cuanto aparecen.
+    #[cfg(target_os = "macos")]
+    tabbed_windows: std::collections::HashSet<usize>,
+    /// Pestañas nativas de macOS: `NSWindow*` de la ventana ancla del grupo
+    /// (la raíz). `NSApplication::windows` no garantiza un orden estable
+    /// entre frames, así que el ancla se fija UNA vez y se conserva.
+    #[cfg(target_os = "macos")]
+    tab_anchor: Option<usize>,
 }
 
 /// Todo lo que hace falta para llevar un guardado a término: lo pedido, lo
@@ -266,8 +277,23 @@ impl App {
         }
     }
 }
-
 impl eframe::App for App {
+    /// eframe ejecuta `App::logic` en TODOS los passes de la raíz — también
+    /// en los Ocultos (fullscreen, minimizada), donde `App::ui` se salta.
+    /// Las hijas se re-registran aquí, no en `App::ui`: si solo se
+    /// registraran en `App::ui`, un pass oculto las eliminaría
+    /// («never used this pass») y la ventana se destruiría — el bug que
+    /// hacía que el fullscreen se quitara solo con una segunda ventana.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // `inner` solo se muta en macOS (`apply_native_tabbing`); en el resto
+        // de plataformas basta con `&self` y `mut` sobra (clippy -D warnings).
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut inner = self.inner.lock_ok();
+        #[cfg(target_os = "macos")]
+        inner.apply_native_tabbing();
+        inner.spawn_child_viewports(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let mut inner = self.inner.lock_ok();
@@ -310,6 +336,15 @@ impl AppInner {
         self.ws_frame(ui, ctx, &mut ws0, 0, true, paste);
         drop(ws0);
 
+        // Se re-registran las hijas TAMBIÉN aquí, al final del frame de la
+        // raíz: `App::logic` (donde viven habitualmente) corre ANTES que
+        // `App::ui`, así que en el pase que crea un workspace nuevo con
+        // Cmd+N/T o el menú la hija no existía aún cuando `logic` corrió.
+        // Sin esta segunda llamada, `focus_workspace` crearía un viewport
+        // fantasma (vía `request_repaint_of`) que `end_pass` eliminaría por
+        // no estar registrado («never used this pass») y la ventana se
+        // destruiría y recrearía — el ciclo que se veía como parpadeo.
+        // `logic` sigue encargándose de los pases Ocultos (fullscreen).
         self.spawn_child_viewports(ctx);
         if let Some(idx) = self.pending_focus.take() {
             self.focus_workspace(idx, ctx);
@@ -372,6 +407,88 @@ impl AppInner {
         // asimétrico (la hija apenas editaba).
         if std::env::var_os("CANVAS_DEBUG_ATLAS").is_some() {
             ctx.request_repaint_of(ws.viewport);
+        }
+    }
+
+    /// Pestañas nativas de macOS (las de la barra de título, como Safari):
+    /// asigna a TODAS las ventanas el mismo `tabbingIdentifier` y el modo
+    /// `Preferred`, y FUSIONA EXPLÍCITAMENTE cada ventana nueva al grupo de la
+    /// raíz con `addTabbedWindow`. La fusión automática de macOS solo se evalúa
+    /// al crear/mostrar la ventana, y las hijas nacen sin identificador (egui
+    /// no lo expone en el `ViewportBuilder`), así que con solo el identificador
+    /// Cmd+N abría ventanas separadas. Se llama en `App::logic` (cada frame de
+    /// la raíz, incluso oculto) para alcanzar a las hijas cuando existen; el
+    /// conjunto `tabbed_windows` garantiza que cada ventana se fusiona UNA vez:
+    /// las que el usuario arrastra fuera de la barra de pestañas no se
+    /// re-fusionan (seguirían siendo nativas: se pueden volver a acoplar
+    /// arrastrándolas a la barra, conmutador Ctrl+Tab, botón +).
+    #[cfg(target_os = "macos")]
+    fn apply_native_tabbing(&mut self) {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSApplication, NSWindow, NSWindowOrderingMode, NSWindowTabbingMode};
+        use objc2_foundation::NSString;
+
+        // `App::logic` corre en el hilo principal de la app (los frames de egui
+        // viven ahí), así que el marcador existe; si no, no hay nada que hacer.
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        NSWindow::setAllowsAutomaticWindowTabbing(true, mtm);
+        let app = NSApplication::sharedApplication(mtm);
+        let id = NSString::from_str("canvas-desktop");
+        let wins = app.windows();
+        tracing::debug!("apply_native_tabbing: {} ventanas", wins.len());
+        // El ancla del grupo es la primera ventana de la app (la raíz, creada
+        // al arrancar; `NSApplication::windows` las devuelve en orden de
+        // creación). Las siguientes se fusionan en su grupo en cuanto aparecen.
+        //
+        // AVISO: al trabajar con ventanas de egui hay una NSWindow fantasma de
+        // infraestructura (oculta, estilo interno) que puede lanzar NSExceptions
+        // al tocar su `tabbingIdentifier`/`tabbingMode`/fusión. Una NSException
+        // NO capturada se escapa por el FFI hacia winit y aborta el proceso
+        // (panic de `foreign_exception` en `control_flow_end_handler`). Por eso
+        // TODA la manipulación de cada ventana va envuelta en un `catch` único:
+        // ninguna excepción de AppKit puede llegar al run loop de winit.
+        for window in wins.iter() {
+            // `NSWindow` es un envoltorio de tamaño cero en objc2: la dirección
+            // de `&*window` sería constante. `Retained::as_ptr` devuelve el
+            // puntero real al objeto AppKit, estable durante su vida.
+            let ptr = objc2::rc::Retained::as_ptr(&window) as usize;
+            let already = self.tabbed_windows.contains(&ptr);
+            tracing::debug!(
+                "apply_native_tabbing: ventana ptr={ptr:#x} ya={already} ancla={}",
+                self.tab_anchor.is_some()
+            );
+            if already {
+                continue;
+            }
+            // Tanto el identificador como el modo y la fusión pueden lanzar
+            // NSExceptions; un fallo en una ventana no debe abortar la app.
+            let result = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+                window.setTabbingIdentifier(&id);
+                window.setTabbingMode(NSWindowTabbingMode::Preferred);
+                // La PRIMERA ventana de la app fija el ancla del grupo (la
+                // raíz); `NSApplication::windows` no ordena de forma estable
+                // entre frames, así que se guarda una vez. Las siguientes se
+                // fusionan en su grupo.
+                if self.tab_anchor.is_none() {
+                    self.tab_anchor = Some(ptr);
+                    self.tabbed_windows.insert(ptr);
+                } else if Some(ptr) != self.tab_anchor {
+                    if let Some(anchor_win) = wins.iter().find(|w| {
+                        objc2::rc::Retained::as_ptr(w) as usize == self.tab_anchor.unwrap()
+                    }) {
+                        tracing::debug!(
+                            "apply_native_tabbing: fusionando ventana nueva en el grupo"
+                        );
+                        anchor_win.addTabbedWindow_ordered(&window, NSWindowOrderingMode::Above);
+                        self.tabbed_windows.insert(ptr);
+                    }
+                }
+            }));
+            if let Err(e) = result {
+                tracing::debug!("apply_native_tabbing: EXCEPCION al fusionar: {e:?}");
+            }
         }
     }
 }

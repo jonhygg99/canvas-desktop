@@ -18,9 +18,9 @@ pub use clipboard::{
 };
 pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
 pub use load::{
-    can_overwrite, is_canvas_file, is_image_file, is_standalone_design, load_image,
+    can_overwrite, is_canvas_file, is_image_file, is_standalone_design, load_image, open_document,
     peek_numbered_path, peek_unique_path, reserve_numbered_path, reserve_unique_path, LoadedImage,
-    CANVAS_EXTENSION, IMAGE_EXTENSIONS,
+    OpenOutcome, CANVAS_EXTENSION, IMAGE_EXTENSIONS,
 };
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,

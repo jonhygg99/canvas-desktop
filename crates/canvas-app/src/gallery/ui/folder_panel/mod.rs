@@ -158,7 +158,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     }
                     #[cfg(target_os = "macos")]
                     if cloud_folder && ui.small_button("Grant access…").clicked() {
-                        super::open_full_disk_access_pane();
+                        super::shell::open_full_disk_access_pane();
                         state.note_settings_opened();
                     }
                 } else if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
@@ -205,7 +205,7 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                         }
                         #[cfg(target_os = "macos")]
                         if cloud_folder && ui.small_button("Grant access…").clicked() {
-                            super::open_full_disk_access_pane();
+                            super::shell::open_full_disk_access_pane();
                             state.note_settings_opened();
                         }
                     } else if state.folders.children.is_empty() && state.new_folder_inside.is_none()

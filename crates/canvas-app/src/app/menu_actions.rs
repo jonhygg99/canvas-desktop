@@ -3,6 +3,7 @@
 
 use eframe::egui;
 
+use crate::lock::LockExt;
 use crate::{clipboard, editor, export, layers_panel, loader, menus};
 
 use super::{AppInner, Nav, View, Workspace};
@@ -20,8 +21,14 @@ impl AppInner {
             // Ventana nueva (workspace) con la bienvenida, desde cualquier
             // ventana — el conmutador (Ctrl+Tab) salta entre ellas.
             A::NewWindow => {
-                self.new_workspace();
+                let new_ws = self.new_workspace();
+                // La ventana nueva hereda el tamaño de la actual (ver el
+                // comentario del Cmd+N en ws_frame.rs): nacer con el tamaño
+                // por defecto de egui y fusionarse luego como pestaña nativa
+                // provoca un salto de tamaño intermitente.
+                new_ws.lock_ok().geometry = ws.geometry;
                 self.pending_focus = Some(self.workspaces.len() - 1);
+                self.request_repaint_all_viewports(ctx);
             }
             A::NewDesign => {
                 let gallery_seed = if let View::Gallery(g) = &mut ws.view {
