@@ -16,6 +16,7 @@ mod loading;
 mod model;
 mod nav;
 mod scan;
+mod system;
 
 #[cfg(test)]
 mod tests;

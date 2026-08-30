@@ -9,7 +9,8 @@ use canvas_render::ImageMap;
 use crate::gallery::ItemKind;
 
 use super::cache::{
-    adaptive_evict_budget, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES, MIN_EVICT_BUDGET_BYTES,
+    adaptive_evict_budget, evict_budget_from_ram, resolve_evict_budget, EVICT_BUDGET_BYTES,
+    MAX_EVICT_BUDGET_BYTES, MIN_EVICT_BUDGET_BYTES,
 };
 use super::loading::max_inflight_loads;
 use super::model::SeedItem;
@@ -302,7 +303,9 @@ fn evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones() {
         d.bytes = EVICT_BUDGET_BYTES;
     }
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: la política de expulsión no debe depender del
+    // presupuesto adaptativo (que escala con la RAM de la máquina de test).
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert_eq!(freed.len(), 2, "solo las dos limpias, la sucia sobrevive");
     assert!(
@@ -395,6 +398,60 @@ fn seeded_decks_get_unique_load_generations() {
 fn adaptive_budget_can_be_lowered_for_constrained_runs() {
     assert!(MIN_EVICT_BUDGET_BYTES <= adaptive_evict_budget());
     assert!(adaptive_evict_budget() <= MAX_EVICT_BUDGET_BYTES);
+}
+
+/// El presupuesto escala con la RAM física de la máquina: 1/16, clampeado
+/// a [256 MiB, 1 GiB]. Con 8 GB conserva los 512 MB históricos; máquinas
+/// con menos RAM bajan el presupuesto para no competir con el sistema.
+#[test]
+fn evict_budget_scales_with_physical_ram() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    assert_eq!(evict_budget_from_ram(gib), 256 * mi, "1 GiB → mín");
+    assert_eq!(evict_budget_from_ram(4 * gib), 256 * mi, "4 GiB → mín");
+    assert_eq!(
+        evict_budget_from_ram(8 * gib),
+        512 * mi,
+        "8 GiB → histórico"
+    );
+    assert_eq!(
+        evict_budget_from_ram(12 * gib),
+        768 * mi,
+        "12 GiB → 3/4 del techo"
+    );
+    assert_eq!(evict_budget_from_ram(16 * gib), 1024 * mi, "16 GiB → techo");
+    assert_eq!(
+        evict_budget_from_ram(64 * gib),
+        1024 * mi,
+        "64 GiB → clamp máx"
+    );
+}
+
+/// La decisión final: la env var gana sobre la RAM medida, y la RAM medida
+/// gana sobre el histórico — siempre dentro del intervalo. Probada sin
+/// tocar variables de entorno ni hardware real.
+#[test]
+fn budget_prefers_config_then_ram_then_historical() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    // Env var gana aunque la RAM medida sugiera otra cosa.
+    assert_eq!(
+        resolve_evict_budget(Some(300 * mi), Some(64 * gib)),
+        300 * mi
+    );
+    // Env var fuera de rango se clampea.
+    assert_eq!(
+        resolve_evict_budget(Some(10 * mi), None),
+        MIN_EVICT_BUDGET_BYTES
+    );
+    assert_eq!(
+        resolve_evict_budget(Some(10_000 * mi), None),
+        MAX_EVICT_BUDGET_BYTES
+    );
+    // Sin env var, la RAM medida escala el presupuesto.
+    assert_eq!(resolve_evict_budget(None, Some(8 * gib)), 512 * mi);
+    // Sin env var ni RAM medible, cae al histórico.
+    assert_eq!(resolve_evict_budget(None, None), EVICT_BUDGET_BYTES);
 }
 
 #[test]
@@ -604,7 +661,10 @@ fn evict_never_discards_a_placeholder() {
     doc.bytes = EVICT_BUDGET_BYTES + 1;
     deck.slots[5].content = SlotContent::Ready(Box::new(doc));
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: mismo motivo que en
+    // `evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones` — la
+    // política no debe depender de la RAM de la máquina de test.
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert_eq!(
         freed.len(),
