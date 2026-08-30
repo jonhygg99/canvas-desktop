@@ -12,6 +12,7 @@ use canvas_render::CanvasRenderer;
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 
+use crate::deck::{free_ram_bytes, is_critical_free_ram};
 use crate::loader::{self, AppMsg};
 use crate::{deck, editor, export, gallery, settings};
 
@@ -196,6 +197,19 @@ pub(super) fn start_save(
     if state.saving {
         return;
     }
+    // RAM crítica: no se intenta el bake (podría salir incompleto o matar la
+    // app). Falla rápido con el archivo intacto y el mensaje en el banner de
+    // `save_error`. Cierra también el hueco temporal del aviso de «Save all»:
+    // aquí la medición es en el momento del bake, no solo en el clic del menú.
+    if is_critical_free_ram(free_ram_bytes()) {
+        tracing::error!("guardado abortado por RAM crítica; no se toca el archivo");
+        state.save_error = Some(
+            "Not enough available memory to save safely — nothing was written. \
+             Close other apps to free memory and try again."
+                .into(),
+        );
+        return;
+    }
     tracing::info!("guardando en {}", path.display());
     let scope = canvas_render::FxScope(sctx.scope);
     sctx.renderer.forget_scope(scope);
@@ -309,6 +323,17 @@ pub(super) fn start_export(
     request: ExportRequest,
 ) {
     if state.exporting {
+        return;
+    }
+    // RAM crítica: mismo criterio que el guardado — no se hornea ni se toca
+    // el destino; falla rápido con el mensaje en el banner de `save_error`.
+    if is_critical_free_ram(free_ram_bytes()) {
+        tracing::error!("export abortado por RAM crítica; no se escribe nada");
+        state.save_error = Some(
+            "Not enough available memory to export safely — nothing was written. \
+             Close other apps to free memory and try again."
+                .into(),
+        );
         return;
     }
     let ExportRequest {

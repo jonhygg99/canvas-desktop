@@ -19,6 +19,15 @@ use std::sync::OnceLock;
 /// umbral para ambos: es la misma señal de presión.
 pub(crate) const FREE_RAM_REDUCTION_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+/// Umbral de «RAM crítica»: por debajo de 512 MiB libres se detiene el
+/// trabajo NO esencial — los guardados/exportaciones nuevos fallan rápido
+/// sin tocar el archivo y la baraja deja de precargar ranuras de fondo
+/// (`is_critical_free_ram`). Es el suelo del presupuesto de la caché
+/// (`MIN_EVICT_BUDGET_BYTES`): coherente que sea ese el punto de parada, no
+/// el primer síntoma de presión (ese es `FREE_RAM_REDUCTION_THRESHOLD_BYTES`,
+/// que solo reduce el ritmo).
+pub(crate) const CRITICAL_FREE_RAM_BYTES: u64 = 512 * 1024 * 1024;
+
 /// RAM física total de la máquina, en bytes, o `None` si no se pudo
 /// determinar (plataforma desconocida, syscall fallida, `/proc` ausente).
 pub(super) fn total_physical_ram_bytes() -> Option<u64> {
@@ -37,6 +46,15 @@ pub(super) fn total_physical_ram_bytes() -> Option<u64> {
 /// antes de «Save all».
 pub(crate) fn free_ram_bytes() -> Option<u64> {
     detect_free_ram_bytes()
+}
+
+/// ¿Está el sistema en RAM crítica (por debajo de `CRITICAL_FREE_RAM_BYTES`
+/// libres)? `None` (no medible) no cuenta como crítico: sin señal no se
+/// detiene nada. Pura, y por eso se prueba con tabla (no depende del
+/// hardware). Es el guard común de `persistence.rs` (abortar un Save/Export
+/// antes del bake) y de `request_loads` (pausar la precarga de fondo).
+pub(crate) fn is_critical_free_ram(free_bytes: Option<u64>) -> bool {
+    matches!(free_bytes, Some(bytes) if bytes < CRITICAL_FREE_RAM_BYTES)
 }
 
 #[cfg(target_os = "windows")]
@@ -150,4 +168,30 @@ fn meminfo_kb(key: &str) -> Option<u64> {
     let line = meminfo.lines().find(|line| line.starts_with(key))?;
     let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
     Some(kb.saturating_mul(1024))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tabla del guard común de RAM crítica (Task 3 del plan de memoria): el
+    /// predicado que aborta Save/Export antes del bake. El umbral es exclusivo
+    /// inferior — exactamente `CRITICAL_FREE_RAM_BYTES` no es crítico; por
+    /// debajo sí. `None` (no medible) nunca cuenta: sin señal no se para nada.
+    #[test]
+    fn is_critical_free_ram_boundary_table() {
+        let threshold = CRITICAL_FREE_RAM_BYTES;
+        let cases = [
+            // (bytes libres, ¿crítico?)
+            (None, false),                       // no medible → no se para
+            (Some(threshold + 1), false),        // cómodo
+            (Some(threshold), false),            // justo en el umbral
+            (Some(threshold - 1), true),         // un byte por debajo
+            (Some(512 * 1024 * 1024 / 2), true), // holgadamente por debajo
+            (Some(0), true),                     // cero
+        ];
+        for (free, expected) in cases {
+            assert_eq!(is_critical_free_ram(free), expected, "free={free:?}");
+        }
+    }
 }
