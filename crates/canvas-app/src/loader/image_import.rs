@@ -184,3 +184,73 @@ fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{download_url_to_temp, validate_http_url, MAX_REPLACEMENT_DOWNLOAD_BYTES};
+
+    #[test]
+    fn rejects_non_http_urls() {
+        let error = validate_http_url("file:///tmp/image.png").unwrap_err();
+        assert!(error.to_string().contains("http://"));
+    }
+
+    #[test]
+    fn accepts_http_urls() {
+        assert!(validate_http_url("https://example.com/image.png").is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_http_response() {
+        let address = serve_response("200 OK", b"");
+        let error = download_url_to_temp(&format!("http://{address}/empty.png")).unwrap_err();
+        assert!(error.to_string().contains("no data"));
+    }
+
+    #[test]
+    fn rejects_http_errors() {
+        let address = serve_response("404 Not Found", b"missing");
+        let error = download_url_to_temp(&format!("http://{address}/missing.png")).unwrap_err();
+        assert!(error.to_string().contains("download failed"));
+    }
+
+    #[test]
+    fn rejects_responses_over_the_download_limit() {
+        let body = vec![0u8; MAX_REPLACEMENT_DOWNLOAD_BYTES + 1];
+        let address = serve_response("200 OK", &body);
+        let error = download_url_to_temp(&format!("http://{address}/large.png")).unwrap_err();
+        assert!(error.to_string().contains("download limit"));
+    }
+
+    #[test]
+    fn writes_a_small_valid_response_to_a_unique_temp_file() {
+        let address = serve_response("200 OK", b"image bytes");
+        let path = download_url_to_temp(&format!("http://{address}/image.png")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"image bytes");
+        assert!(path.starts_with(std::env::temp_dir()));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn serve_response(status: &str, body: &[u8]) -> String {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let body = body.to_vec();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
+        });
+        address.to_string()
+    }
+}
