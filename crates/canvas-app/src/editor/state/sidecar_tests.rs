@@ -110,6 +110,74 @@ fn state_with_photo() -> EditorState {
     EditorState::from_restored(PathBuf::from("/tmp/foto.png"), restored)
 }
 
+/// Reproduce el flujo real del incidente `1.png` paso a paso y verifica el
+/// misterio de fondo: **abrir una foto de galería** (`from_image`: la foto es
+/// una capa fuente normal), **activar el `Blurred background`** (se cuela
+/// debajo de la foto), **pegar n capas por encima** y **guardar**
+/// (`sidecar_payload`).
+///
+/// Contratos que este flujo debe mantener, y que el incidente violó (la foto
+/// acabó solo en `images` sin entrada en `layers`): la capa fuente sigue viva
+/// en `doc.layers` tras pegar y guardar y su blob se embebe, y ningún blob
+/// del sidecar queda huérfano (id sin capa).
+///
+/// Si este test pasa, el fallo del `1.png` no vino del flujo limpio
+/// abrir→blur→pegar→guardar, sino de alguna acción adicional (deshacer,
+/// cortar, reemplazar, alternar el fondo). Aun sin confirmar el flujo limpio,
+/// este test lo convierte en contrato.
+#[test]
+fn open_blur_paste_save_keeps_source_photo_alive() {
+    let mut state = state_with_photo(); // from_image: la foto es capa 1 (fuente)
+    let photo_raw = state.doc.page().unwrap().layers[0].id.raw();
+
+    // Blurred background: capa cover con blur 50 insertada en el fondo.
+    state.set_blurred_background(true);
+    assert!(
+        state.doc.page().unwrap().layers.len() == 2,
+        "abrir foto + blur = 2 capas, había {}",
+        state.doc.page().unwrap().layers.len()
+    );
+
+    // Pegar n capas por encima (Ctrl+V de imágenes del sistema).
+    for i in 0..5 {
+        state.add_image_layer(format!("Pasted Image {i}"), None, loaded_image(40, 30));
+    }
+
+    let payload = state.sidecar_payload(); // el guardado
+    let layers: Vec<canvas_core::Layer> = payload.document.page().unwrap().layers.clone();
+    let live: HashSet<u64> = layers.iter().map(|l| l.id.raw()).collect();
+    let image_ids: Vec<u64> = payload.images.iter().map(|(id, ..)| *id).collect();
+
+    assert_eq!(
+        layers.len(),
+        7,
+        "foto + blur + 5 pegadas = 7 capas, había {}",
+        layers.len()
+    );
+    assert!(
+        layers.iter().any(|l| l.id.raw() == photo_raw),
+        "la capa fuente de la foto (id {photo_raw}) desapareció de doc.layers tras pegar y guardar"
+    );
+    assert!(
+        image_ids.contains(&photo_raw),
+        "el blob de la foto no está en el sidecar"
+    );
+    // Ningún blob huérfano: cada imagen del sidecar tiene su capa.
+    for id in &image_ids {
+        assert!(
+            live.contains(id),
+            "blob huérfano en el sidecar (id {id} sin capa en el documento)"
+        );
+    }
+    assert_eq!(
+        image_ids.len(),
+        live.len(),
+        "el sidecar debe contener exactamente las {} capas vivas ({} imágenes)",
+        live.len(),
+        image_ids.len()
+    );
+}
+
 /// El sidecar NO debe embeder imágenes de capas que ya no existen en el
 /// documento. Apagar el `Blurred background` retira la capa pero conserva
 /// sus píxeles en `images` por si se deshace DENTRO de la misma sesión;
