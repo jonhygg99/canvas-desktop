@@ -158,6 +158,18 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         ui.separator();
     }
 
+    // Banner de error de guardado/operación: el guard anti-blanco/incompleto
+    // (Save/Export rechazados), un fallo del hilo de guardado, un pegado
+    // vacío… Se descarta con el botón; la siguiente operación con éxito
+    // también lo limpia (`save_error = None` en `start_save`/`start_export`).
+    if let Some(error) = &state.save_error {
+        ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {error}"));
+        if ui.button("Dismiss").clicked() {
+            state.save_error = None;
+        }
+        ui.separator();
+    }
+
     if state.from_gallery.is_some()
         && icon_text_button_ui(
             ui,
