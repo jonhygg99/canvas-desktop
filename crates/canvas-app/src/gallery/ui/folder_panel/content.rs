@@ -118,6 +118,9 @@ fn draw_folder_list(
     draw_visible_folders(ui, state, cloud_folder, &visible, action);
 }
 
+/// `cloud_folder` solo se usa en macOS (botón «Grant access…»); en el
+/// resto de plataformas es un parámetro deliberadamente sin usar.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn draw_visible_folders(
     ui: &mut egui::Ui,
     state: &mut GalleryState,

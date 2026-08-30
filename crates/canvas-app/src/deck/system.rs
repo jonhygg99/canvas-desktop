@@ -69,10 +69,9 @@ pub(crate) fn is_critical_free_ram(free_bytes: Option<u64>) -> bool {
 fn detect_ram_bytes() -> Option<u64> {
     use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
     let mut kb = 0u64;
-    // SAFETY: `kb` es un puntero válido a un `u64`; la función solo escribe
-    // ahí cuando devuelve `true`.
-    unsafe { GetPhysicallyInstalledSystemMemory(&mut kb) }
-        .as_bool()
+    // SAFETY: `kb` es un puntero válido a un `u64`; la función escribe ahí
+    // solo cuando devuelve `Ok(())`.
+    unsafe { GetPhysicallyInstalledSystemMemory(&mut kb).is_ok() }
         .then_some(kb.saturating_mul(1024))
 }
 
