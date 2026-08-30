@@ -156,6 +156,7 @@ fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
 #[cfg(test)]
 mod tests {
     use super::{download_url_to_temp, validate_http_url};
+    use crate::test_server::serve_response;
 
     #[test]
     fn rejects_non_http_urls() {
@@ -199,47 +200,5 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"image bytes");
         assert!(path.starts_with(std::env::temp_dir()));
         std::fs::remove_file(path).unwrap();
-    }
-
-    /// Servidor de prueba idéntico a `http::tests::serve_response`: drena el
-    /// request antes de responder y cierra solo con `drop` (sin `shutdown`),
-    /// para que el cierre sea FIN limpio y no RST — RST choca con la
-    /// limpieza del pool de ureq (`EINVAL`) y hacía flaky estos tests.
-    fn serve_response(status: &str, body: &[u8]) -> String {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::thread;
-
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let address = listener.local_addr().unwrap();
-        let status = status.to_owned();
-        let body = body.to_vec();
-        thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            // Drena las cabeceras del request para que el cierre sea FIN
-            // limpio (sin datos sin leer → nunca RST); el GET llega completo.
-            let mut req = Vec::new();
-            let mut buf = [0u8; 1024];
-            loop {
-                match stream.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        req.extend_from_slice(&buf[..n]);
-                        if req.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                }
-            }
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.write_all(&body);
-        });
-        address.to_string()
     }
 }
