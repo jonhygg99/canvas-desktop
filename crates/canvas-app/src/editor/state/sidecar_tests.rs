@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use canvas_core::{Document, ImageContent, LayerContent, ShapeContent, Transform};
+use canvas_core::{Document, ImageContent, LayerContent, LayerId, ShapeContent, Transform};
 use canvas_io::{LoadedImage, RestoredDocument};
 use serde_json::json;
 
@@ -238,6 +238,83 @@ fn delete_source_photo_between_blur_and_save_does_not_persist_orphan() {
         "el sidecar debe contener exactamente las capas vivas"
     );
     assert!(image_ids.contains(&blur_raw), "el blur debe embeberse");
+}
+
+/// End-to-end a través de la serialización REAL de disco: borrar la foto
+/// (`delete_selected`), guardar (payload → `write_sidecar`) y recargar
+/// (`open_document` → `from_restored`) deben producir un diseño COHERENTE:
+/// la foto borrada no reaparece (ni como capa ni como blob fantasma), el
+/// fondo desenfocado sobrevive, y toda capa viva conserva sus píxeles. Es el
+/// round-trip que el fix del serializador garantiza — antes, el blob huérfano
+/// de la foto borrada se escribía y recargaba como una imagen sin capa.
+#[test]
+fn reload_after_deleting_photo_is_coherent() {
+    let mut state = state_with_photo();
+    state.set_blurred_background(true);
+    let photo_raw = state.selection.primary().unwrap().raw();
+    let blur_raw = state.doc.page().unwrap().layers[0].id.raw();
+
+    // Acción destructiva: borrar la foto dejando su blob en `images` (para
+    // deshacer en esta misma sesión).
+    crate::editor::delete_selected(&mut state);
+
+    // Guardar DE VERDAD: PNG base + sidecar v5 en disco, con el hash del PNG
+    // exactamente como hace `spawn_save`.
+    let dir = std::env::temp_dir().join(format!("canvas_sidecar_reload_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("foto.png");
+    let png_bytes = canvas_io::save_rgba(&png, vec![255u8; 4 * 4 * 4], 4, 4, 100, None).unwrap();
+    let payload = state.sidecar_payload();
+    canvas_io::write_sidecar(&png, &png_bytes, &payload).unwrap();
+
+    // Recargar por el cargador real (no por el mapa en memoria).
+    let canvas_io::OpenOutcome::Restored(restored) = canvas_io::open_document(&png, true).unwrap()
+    else {
+        panic!("se esperaba Restored para un sidecar válido");
+    };
+    let reopened = EditorState::from_restored(png.clone(), restored);
+
+    let layers: Vec<canvas_core::Layer> = reopened.doc.page().unwrap().layers.clone();
+    // Sin capas perdidas ni fantasmas: solo el blur, nada de la foto borrada.
+    assert_eq!(
+        layers.len(),
+        1,
+        "debe quedar solo el blur, había {}",
+        layers.len()
+    );
+    assert_eq!(
+        layers[0].id.raw(),
+        blur_raw,
+        "la única capa viva debe ser el fondo desenfocado"
+    );
+    assert!(
+        layers.iter().all(|l| l.id.raw() != photo_raw),
+        "la foto borrada no debe reaparecer como capa tras recargar"
+    );
+    assert_eq!(
+        reopened.background_layer,
+        Some(LayerId::from_raw(blur_raw)),
+        "el fondo desenfocado debe seguir marcado"
+    );
+    // Sin blob fantasma y con píxeles para cada capa viva.
+    for l in &layers {
+        assert!(
+            reopened.images.contains_key(&l.id),
+            "la capa viva {:?} perdió sus píxeles al recargar",
+            l.id
+        );
+    }
+    assert_eq!(
+        reopened.images.len(),
+        layers.len(),
+        "no debe haber imágenes fantasma (sin capa) ni capas sin imagen"
+    );
+    assert!(
+        !reopened.images.contains_key(&LayerId::from_raw(photo_raw)),
+        "el blob de la foto borrada no debe sobrevivir como imagen fantasma"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// El sidecar NO debe embeder imágenes de capas que ya no existen en el
