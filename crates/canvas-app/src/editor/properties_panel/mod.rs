@@ -162,13 +162,7 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     // (Save/Export rechazados), un fallo del hilo de guardado, un pegado
     // vacío… Se descarta con el botón; la siguiente operación con éxito
     // también lo limpia (`save_error = None` en `start_save`/`start_export`).
-    if let Some(error) = &state.save_error {
-        ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {error}"));
-        if ui.button("Dismiss").clicked() {
-            state.save_error = None;
-        }
-        ui.separator();
-    }
+    let _ = save_error_banner(state, ui);
 
     if state.from_gallery.is_some()
         && icon_text_button_ui(
@@ -291,5 +285,28 @@ fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                 ui.memory_mut(|m| m.request_focus(id));
             }
         });
+    }
+}
+
+/// El banner de error de guardado/operación, aislado del resto del panel
+/// para poder probarlo con el harness headless de egui de `tests.rs` sin
+/// montar todo el panel: dispara con cualquier `save_error` pendiente y su
+/// botón «Dismiss» lo descarta. Devuelve la `Response` del botón (su rect
+/// permite al test clicar sobre él sin adivinar posiciones). `None` sin
+/// error pendiente.
+pub(super) fn save_error_banner(
+    state: &mut EditorState,
+    ui: &mut egui::Ui,
+) -> Option<egui::Response> {
+    if let Some(error) = &state.save_error {
+        ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {error}"));
+        let resp = ui.button("Dismiss");
+        if resp.clicked() {
+            state.save_error = None;
+        }
+        ui.separator();
+        Some(resp)
+    } else {
+        None
     }
 }
