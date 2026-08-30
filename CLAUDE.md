@@ -34,6 +34,7 @@ cargo check -p canvas-shell --target x86_64-apple-darwin
 cargo run -p canvas-render --example bake_blur -- in.png out.png 20
 cargo run -p canvas-render --example bake_filters -- ...
 cargo run -p canvas-render --example save_roundtrip -- in.png out.png
+cargo run -p canvas-render --example recover_design -- in.png out.png   # rescate: sidecar contaminado -> PNG limpio
 cargo run -p canvas-render --example text_probe -- ...
 cargo run -p canvas-render --example export_probe -- ...
 cargo run -p canvas-shell --example instance_probe
@@ -210,6 +211,17 @@ canvas-render/src/
   `bake_came_out_blank_or_incomplete` guard in canvas-app then refuses.
 - Layer shadows use vello's `Scene::draw_blurred_rounded_rect` directly — no
   custom GPU shader for that one.
+- **`examples/recover_design.rs` is a rescue utility, not product code.**
+  When a save baked a design into a PNG and the resulting sidecar lost the
+  sharp base photo from `layers` (only its blob stays in `images` — the
+  `14.png`/contaminated-sidecar failure), this example rebuilds a clean
+  document (base photo `contain` + `Blurred background` `cover`, dropping
+  any stray pasted layers) and re-bakes `1.png` with the real GPU renderer
+  (`cargo run -p canvas-render --example recover_design -- in.png out.png`),
+  then rewrites a clean sidecar next to the output. Prefer re-baking through
+  the app's own renderer over hand-flattening with PIL: the GPU blur won't
+  match otherwise. It exists for emergencies (restoring an overwritten
+  design), not for normal export.
 - Layers are clipped to the page rect both when rendering and when baking.
 - **`vello::Scene` is a CPU-side encoding buffer**, so scene-building logic
   is unit-testable with no GPU: build the scene and read
