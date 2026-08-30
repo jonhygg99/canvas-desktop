@@ -88,6 +88,7 @@ impl AppInner {
 pub(super) fn overwrite_modal_ui(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
+    deck: &mut deck::Deck,
     save: &mut SaveFlow,
     settings: &mut settings::AppSettings,
 ) {
@@ -146,7 +147,7 @@ pub(super) fn overwrite_modal_ui(
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            start_save(state, sctx, path, false, settings.jpeg_quality);
+            start_save(state, sctx, deck, path, false, settings.jpeg_quality);
         }
         Choice::SaveAs => {
             save.overwrite_prompt = None;
@@ -286,6 +287,7 @@ pub(super) fn low_memory_modal_ui(
 pub(super) fn export_flow_ui(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
+    deck: &mut deck::Deck,
     export: &mut crate::app::ExportFlow,
 ) {
     if let Some(dialog) = &mut export.export_dialog {
@@ -322,10 +324,8 @@ pub(super) fn export_flow_ui(
     if let Some((path, settings)) = export.pending_export.take() {
         super::persistence::start_export(
             state,
-            sctx.renderer,
-            sctx.rs,
-            sctx.tx,
-            sctx.ctx,
+            sctx,
+            deck,
             super::persistence::ExportRequest {
                 path,
                 settings,

@@ -28,7 +28,7 @@ pub(super) fn show_modals(
         ignore_fs_events_until: f.ignore_fs_events_until,
         scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
     };
-    overwrite_modal_ui(state, &mut sctx, f.save, f.settings);
+    overwrite_modal_ui(state, &mut sctx, f.deck, f.save, f.settings);
 
     // Modal para SVG/GIF: no se pueden sobrescribir, se explica por qué y
     // se ofrece «Save as…» en su lugar.
@@ -48,6 +48,8 @@ pub(super) fn show_modals(
 
     // Diálogo de exportación. `sctx` ya está prestado arriba para el
     // modal de sobrescritura; se reutiliza aquí porque los modales son
-    // mutuamente excluyentes (no se muestran a la vez).
-    export_flow_ui(state, &mut sctx, f.export);
+    // mutuamente excluyentes (no se muestran a la vez). `f.deck` viaja como
+    // préstamo corto para que el gate de RAM crítica pueda evictar la caché
+    // propia antes de abortar.
+    export_flow_ui(state, &mut sctx, f.deck, f.export);
 }

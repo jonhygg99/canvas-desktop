@@ -187,9 +187,40 @@ pub(crate) fn build_slot_doc(
 
 /// Hornea la página en la GPU (hilo de UI) y delega codificar+escribir a un
 /// hilo de trabajo.
+/// ¿Sigue la RAM en crítico DESPUÉS de liberar la memoria propia? Si la
+/// medición marca crítico, primero se desecha la caché de la baraja —ranuras
+/// limpias y lejanas, `evict_with_budget(0)` protege la activa, el destino de
+/// un salto, los placeholders y el historial— y los scopes FX GPU que dejó
+/// (`forget_scope`), y se re-mide. «La app no se bloquea a sí misma»: el
+/// guardado/exportación solo aborta si SIGUE crítico tras soltar lo suyo.
+/// `None` (no medible) nunca cuenta como crítico. Sin presión devuelve
+/// `false` sin tocar nada.
+fn critical_after_freeing_own_memory(
+    deck: &mut crate::deck::Deck,
+    renderer: &mut CanvasRenderer,
+) -> bool {
+    let critical = || is_critical_free_ram(free_ram_bytes());
+    if !critical() {
+        return false;
+    }
+    tracing::info!("RAM crítica: descartando caché propia de la baraja y scopes FX");
+    // Presupuesto 0 = expulsar TODO lo que se pueda expulsar con seguridad
+    // (la activa, `jump_to`, placeholders y ranuras con historial quedan
+    // fuera, ver `Deck::evict_with_budget`). Soltar la caché ES la vía de
+    // escape cuando la presión la causa la propia app.
+    let evicted = deck.evict_with_budget(0);
+    let count = evicted.len();
+    for scope in evicted {
+        renderer.forget_scope(scope);
+    }
+    tracing::info!("liberados {count} scope(s); re-midiendo RAM libre");
+    critical()
+}
+
 pub(super) fn start_save(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
+    deck: &mut crate::deck::Deck,
     path: PathBuf,
     new_source: bool,
     jpeg_quality: u8,
@@ -201,7 +232,9 @@ pub(super) fn start_save(
     // app). Falla rápido con el archivo intacto y el mensaje en el banner de
     // `save_error`. Cierra también el hueco temporal del aviso de «Save all»:
     // aquí la medición es en el momento del bake, no solo en el clic del menú.
-    if is_critical_free_ram(free_ram_bytes()) {
+    // Primero se suelta la caché propia (ver `critical_after_freeing_own_memory`)
+    //: solo aborta si sigue crítico tras liberar lo suyo.
+    if critical_after_freeing_own_memory(deck, sctx.renderer) {
         tracing::error!("guardado abortado por RAM crítica; no se toca el archivo");
         state.save_error = Some(
             "Not enough available memory to save safely — nothing was written. \
@@ -302,8 +335,8 @@ pub(super) fn start_save_design(
 }
 
 /// Lo pedido en el diálogo de exportación ya resuelto: destino, ajustes y
-/// scope de la ranura activa. Agrupado para reducir la firma de
-/// `start_export` de 8 a 6 parámetros.
+/// scope de la ranura activa. Junto con el `&mut SaveContext` deja la firma
+/// de `start_export` en 3 parámetros (estado, contexto, petición).
 pub(super) struct ExportRequest {
     pub(super) path: PathBuf,
     pub(super) settings: export::ExportSettings,
@@ -316,10 +349,8 @@ pub(super) struct ExportRequest {
 /// mano a partir del documento.
 pub(super) fn start_export(
     state: &mut editor::EditorState,
-    renderer: &mut CanvasRenderer,
-    rs: &RenderState,
-    tx: &Sender<AppMsg>,
-    ctx: &egui::Context,
+    sctx: &mut SaveContext,
+    deck: &mut crate::deck::Deck,
     request: ExportRequest,
 ) {
     if state.exporting {
@@ -327,7 +358,9 @@ pub(super) fn start_export(
     }
     // RAM crítica: mismo criterio que el guardado — no se hornea ni se toca
     // el destino; falla rápido con el mensaje en el banner de `save_error`.
-    if is_critical_free_ram(free_ram_bytes()) {
+    // Primero se suelta la caché propia (ver `critical_after_freeing_own_memory`)
+    //: solo aborta si sigue crítico tras liberar lo suyo.
+    if critical_after_freeing_own_memory(deck, sctx.renderer) {
         tracing::error!("export abortado por RAM crítica; no se escribe nada");
         state.save_error = Some(
             "Not enough available memory to export safely — nothing was written. \
@@ -344,12 +377,12 @@ pub(super) fn start_export(
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
     let scope = canvas_render::FxScope(scope);
-    renderer.forget_scope(scope);
+    sctx.renderer.forget_scope(scope);
 
     if settings.format.needs_bake() {
-        match renderer.bake_page_counting(
-            &rs.device,
-            &rs.queue,
+        match sctx.renderer.bake_page_counting(
+            &sctx.rs.device,
+            &sctx.rs.queue,
             scope,
             &state.doc,
             &state.images,
@@ -376,8 +409,8 @@ pub(super) fn start_export(
                     width,
                     height,
                     settings.jpeg_quality,
-                    tx.clone(),
-                    ctx.clone(),
+                    sctx.tx.clone(),
+                    sctx.ctx.clone(),
                 );
             }
             Err(e) => {
@@ -391,9 +424,9 @@ pub(super) fn start_export(
     if let Ok(page) = state.doc.page() {
         for layer in &page.layers {
             if let Some(source) = state.images.get(&layer.id) {
-                renderer.sync_layer_effects(
-                    &rs.device,
-                    &rs.queue,
+                sctx.renderer.sync_layer_effects(
+                    &sctx.rs.device,
+                    &sctx.rs.queue,
                     scope,
                     layer.id,
                     source,
@@ -402,7 +435,7 @@ pub(super) fn start_export(
             }
         }
     }
-    let blurred = renderer.blur_overrides(scope);
+    let blurred = sctx.renderer.blur_overrides(scope);
     let mut images: Vec<canvas_io::LayerPixels> = Vec::new();
     if let Ok(page) = state.doc.page() {
         for layer in &page.layers {
@@ -438,8 +471,8 @@ pub(super) fn start_export(
         images,
         settings.format,
         scale,
-        tx.clone(),
-        ctx.clone(),
+        sctx.tx.clone(),
+        sctx.ctx.clone(),
     );
 }
 

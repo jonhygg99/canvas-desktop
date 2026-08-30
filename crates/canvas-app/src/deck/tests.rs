@@ -318,6 +318,48 @@ fn evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones() {
     assert!(matches!(deck.slots[5].content, SlotContent::Idle));
 }
 
+/// El camino de la Task 3 del plan de memoria: un Save/Export bajo RAM
+/// crítica expulsa con `evict_with_budget(0)` todo lo expulsable con
+/// seguridad. Regresa que, incluso con presupuesto CERO, la ranura activa
+/// (y la sucia, que puede tener pasos de deshacer) sobrevive y el resto de
+/// las lejanas se libera — la vía de escape que evita «la app se bloquea a
+/// sí misma» sin perder el documento que se está guardando.
+#[test]
+fn evict_budget_zero_frees_far_clean_but_keeps_active_and_dirty() {
+    let mut deck = Deck::from_seed(
+        seed(&["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"]),
+        Path::new("a.png"),
+    );
+    // Activo = 0, radio de precarga = 2 ⇒ 0..=2 protegidos; 3..=5 candidatas.
+    deck.slots[3].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+    deck.slots[4].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+    // Sucio: NUNCA se descarta, por mínima que sea la presión.
+    deck.slots[5].content = SlotContent::Ready(Box::new(dirty_slot_doc(10.0, 10.0)));
+    for i in 3..6 {
+        if let SlotContent::Ready(d) = &mut deck.slots[i].content {
+            d.bytes = EVICT_BUDGET_BYTES;
+        }
+    }
+
+    let freed = deck.evict_with_budget(0);
+
+    assert_eq!(
+        freed.len(),
+        2,
+        "presupuesto 0: se expulsan las dos limpias lejanas"
+    );
+    assert!(
+        matches!(deck.slots[0].content, SlotContent::Active),
+        "la ranura activa (la que se guarda) nunca se expulsa"
+    );
+    assert!(
+        matches!(deck.slots[5].content, SlotContent::Ready(_)),
+        "la sucia sigue cargada bajo presupuesto 0"
+    );
+    assert!(matches!(deck.slots[3].content, SlotContent::Idle));
+    assert!(matches!(deck.slots[4].content, SlotContent::Idle));
+}
+
 #[test]
 fn evict_skips_a_clean_slot_that_still_has_undo_history() {
     // Activa = 0, radio de precarga = 2 ⇒ la ranura 3 es candidata.
