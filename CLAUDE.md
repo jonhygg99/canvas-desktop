@@ -65,6 +65,23 @@ CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings` and the test
 suite on Windows/Linux/macOS, cross-compiles `canvas-shell` for
 linux/darwin (no linker needed), and enforces the test-count floor.
 
+## Opening a pull request
+
+Iterative branches use `gh` (install: `brew install gh`; auth: `gh auth login`
+— the git credential-helper token lacks the `read:org` scope `gh` requires,
+so `gh auth login` is the one-time setup). DO NOT open a PR from `main`:
+
+```sh
+# From a feature branch (already pushed):
+git branch --show-current          # verify this is NOT main
+git push -u origin HEAD
+gh pr create --title "type(scope): short summary" --body-file /tmp/body.md
+```
+
+Write the body to a file and pass `--body-file` (never multi-line markdown
+inline — escaping bugs). Run `cargo fmt/clippy/test` first and fix failures
+before opening.
+
 ## Architecture
 
 Cargo workspace, five crates, dependencies flow one direction only
