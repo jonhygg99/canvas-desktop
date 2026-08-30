@@ -103,8 +103,10 @@ fn detect_ram_bytes() -> Option<u64> {
 #[cfg(target_os = "windows")]
 fn detect_free_ram_bytes() -> Option<u64> {
     use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-    let mut status = MEMORYSTATUSEX::default();
-    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    let mut status = MEMORYSTATUSEX {
+        dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+        ..Default::default()
+    };
     // SAFETY: `status` es válido y con `dwLength` correcto; la función
     // rellena el resto de campos cuando devuelve éxito.
     unsafe { GlobalMemoryStatusEx(&mut status) }
