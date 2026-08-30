@@ -927,3 +927,66 @@ fn bake_survives_source_resize_under_same_layer_id() {
         "el segundo horneado es idéntico al primero: los píxeles nuevos no llegaron a la GPU"
     );
 }
+
+// ─── contador de capas omitidas del horneado ─────────────────────────────
+
+/// El guard «anti-incompleto» se apoya en que el bake informa de cuántas
+/// capas de imagen/SVG visibles se omitieron al construir la escena. Con
+/// todas las imágenes presentes el contador es 0; con una capa ausente del
+/// `ImageMap` (píxel que nunca llegó a cargarse) es ≥ 1, sin importar cómo
+/// pinte el resultado. La escena no expone esto (la omisión es silenciosa),
+/// así que se verifica en el camino de horneado completo, con GPU.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_reports_skipped_layers_for_missing_source_images() {
+    let (device, queue) = gpu_device();
+    let mut doc = Document::new(100.0, 100.0);
+    let present = doc
+        .add_layer(
+            "con imagen",
+            Transform::new(0.0, 0.0, 50.0, 50.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 4,
+                natural_height: 4,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    let missing = doc
+        .add_layer(
+            "sin imagen",
+            Transform::new(50.0, 50.0, 50.0, 50.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 4,
+                natural_height: 4,
+                crop: None,
+            }),
+        )
+        .unwrap();
+
+    // Solo la primera capa tiene píxeles en el mapa: la segunda se omite al
+    // construir la escena y el bake debe informarla.
+    let (rgba, w, h) = solid_image(4, 4, [200, 30, 30, 255]);
+    let mut images = ImageMap::new();
+    images.insert(present, image_data_from_rgba(rgba, w, h));
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (_, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, FxScope::default(), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (100, 100));
+    assert_eq!(skipped, 1, "la capa sin píxel debe contarse como omitida");
+
+    // Contraprueba: con todas las imágenes presentes, el contador vuelve a 0.
+    let (rgba2, w2, h2) = solid_image(4, 4, [30, 60, 220, 255]);
+    images.insert(missing, image_data_from_rgba(rgba2, w2, h2));
+    let (_, _, _, skipped2) = renderer
+        .bake_page_counting(&device, &queue, FxScope::default(), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!(
+        skipped2, 0,
+        "con todas las imágenes presentes no hay omitidas"
+    );
+}

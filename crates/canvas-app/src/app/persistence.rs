@@ -199,7 +199,7 @@ pub(super) fn start_save(
     tracing::info!("guardando en {}", path.display());
     let scope = canvas_render::FxScope(sctx.scope);
     sctx.renderer.forget_scope(scope);
-    match sctx.renderer.bake_page(
+    match sctx.renderer.bake_page_counting(
         &sctx.rs.device,
         &sctx.rs.queue,
         scope,
@@ -207,15 +207,16 @@ pub(super) fn start_save(
         &state.images,
         1.0,
     ) {
-        Ok((rgba, width, height)) => {
-            if bake_came_out_blank(&state.doc, &rgba) {
+        Ok((rgba, width, height, skipped)) => {
+            if bake_came_out_blank_or_incomplete(&state.doc, &rgba, skipped) {
                 tracing::error!(
-                    "horneado en blanco con capas de imagen visibles; \
-                     no se sobrescribe el archivo"
+                    "horneado en blanco o incompleto ({} capa(s) omitida(s)); \
+                     no se sobrescribe el archivo",
+                    skipped
                 );
                 state.save_error = Some(
-                    "The image came out blank — the file was not overwritten. \
-                     Close other apps to free memory and try again."
+                    "The save was refused because the image came out blank or incomplete — \
+                     the file was not overwritten. Close other apps to free memory and try again."
                         .into(),
                 );
                 return;
@@ -321,7 +322,7 @@ pub(super) fn start_export(
     renderer.forget_scope(scope);
 
     if settings.format.needs_bake() {
-        match renderer.bake_page(
+        match renderer.bake_page_counting(
             &rs.device,
             &rs.queue,
             scope,
@@ -329,14 +330,15 @@ pub(super) fn start_export(
             &state.images,
             scale,
         ) {
-            Ok((rgba, width, height)) => {
-                if bake_came_out_blank(&state.doc, &rgba) {
+            Ok((rgba, width, height, skipped)) => {
+                if bake_came_out_blank_or_incomplete(&state.doc, &rgba, skipped) {
                     tracing::error!(
-                        "export horneado en blanco con capas de imagen visibles; no se escribe"
+                        "export en blanco o incompleto ({} capa(s) omitida(s)); no se escribe",
+                        skipped
                     );
                     state.save_error = Some(
-                        "The export came out blank — nothing was written. \
-                         Close other apps to free memory and try again."
+                        "The export was refused because it came out blank or incomplete — \
+                         nothing was written. Close other apps to free memory and try again."
                             .into(),
                     );
                     return;
@@ -417,16 +419,20 @@ pub(super) fn start_export(
 }
 
 /// ¿El horneado salió UNIFORME (un solo color) pese a que el documento tiene
-/// capas de imagen visibles que deberían pintar? Un resultado así casi
-/// siempre significa que la GPU falló al dibujar las capas (presión de
-/// memoria, atlas de vello sin espacio para las texturas): escribir ese
-/// horneado sobre el archivo del usuario lo destruiría en silencio (el
-/// fondo de página es blanco, así que un bake fallido es un PNG blanco
-/// entero). La protección es deliberadamente conservadora: solo dispara con
-/// un bake de UN solo color y capas de imagen visibles; un diseño
-/// vectorial legítimamente monocromo, o una foto realmente uniforme, son
-/// casos límite aceptables — mejor un error claro que un archivo destruido.
-fn bake_came_out_blank(doc: &Document, rgba: &[u8]) -> bool {
+/// capas de imagen visibles que deberían pintar, o se OMITIÓ alguna capa de
+/// imagen/SVG visible al construir la escena (`skipped > 0`: píxel ausente
+/// del mapa o 0×0)? Ambos casos significan que el archivo que se escribiría
+/// está corrupto en silencio (un bake fallido es un PNG blanco entero; una
+/// capa omitida es contenido perdido aunque el resto pinte), así que se
+/// rechaza antes de sobrescribir. Un diseño vectorial legítimamente
+/// monocromo, o una foto realmente uniforme, no tienen capas pendientes ni
+/// omitidas: siguen permitidos.
+fn bake_came_out_blank_or_incomplete(doc: &Document, rgba: &[u8], skipped: usize) -> bool {
+    // Una capa omitida es un bake incompleto SIEMPRE, aunque el resultado no
+    // sea uniforme (la única señal que distinguiría el chequeo de abajo).
+    if skipped > 0 {
+        return true;
+    }
     let has_visible_images = doc.page().is_ok_and(|page| {
         page.layers.iter().any(|layer| {
             layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))

@@ -1,7 +1,7 @@
 //! Tests de `resolve_canvas_sidecar` (mapeo de `.canvas` a su imagen
-//! hermana), de `bake_came_out_blank` (la protección contra horneados en
-//! blanco) y del aviso de poca RAM antes de «Save all». Hermano de
-//! `persistence.rs` (convención `*_tests.rs`).
+//! hermana), de `bake_came_out_blank_or_incomplete` (la protección contra
+//! horneados en blanco o incompletos) y del aviso de poca RAM antes de
+//! «Save all». Hermano de `persistence.rs` (convención `*_tests.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +14,8 @@ use crate::gallery::ItemKind;
 use crate::settings::GallerySort;
 
 use super::{
-    bake_came_out_blank, resolve_canvas_sidecar, save_all_doc_count, should_warn_low_memory,
-    start_save_all_flow,
+    bake_came_out_blank_or_incomplete, resolve_canvas_sidecar, save_all_doc_count,
+    should_warn_low_memory, start_save_all_flow,
 };
 
 /// Documento de 100×100 con una capa de imagen visible 50×50.
@@ -68,38 +68,37 @@ fn a_standalone_design_is_returned_as_is() {
     assert_eq!(resolve_canvas_sidecar(design.clone()), design);
 }
 
-// ——— bake_came_out_blank: nunca escribir un horneado en blanco ———
+// ——— bake_came_out_blank_or_incomplete: nunca escribir un horneado en blanco o incompleto ———
 
 #[test]
-fn uniform_bake_with_visible_image_layers_is_blank() {
-    // El caso 14.png: capas de imagen visibles, horneado blanco uniforme.
-    let doc = doc_with_visible_image();
-    let rgba = vec![255u8; 100 * 100 * 4];
-    assert!(bake_came_out_blank(&doc, &rgba));
-}
+fn guard_rejects_blank_and_incomplete_bakes_by_table() {
+    let with_img = doc_with_visible_image();
+    let vector = Document::new(100.0, 100.0);
+    let uniform = vec![255u8; 100 * 100 * 4];
+    let mut varied = vec![255u8; 100 * 100 * 4];
+    varied[0..4].copy_from_slice(&[10, 20, 30, 255]);
 
-#[test]
-fn uniform_transparent_bake_is_also_blank() {
-    let doc = doc_with_visible_image();
-    let rgba = vec![0u8; 100 * 100 * 4];
-    assert!(bake_came_out_blank(&doc, &rgba));
-}
-
-#[test]
-fn varied_bake_with_image_layers_is_not_blank() {
-    // Un bake real con contenido: el primer píxel difiere del resto.
-    let doc = doc_with_visible_image();
-    let mut rgba = vec![255u8; 100 * 100 * 4];
-    rgba[0..4].copy_from_slice(&[10, 20, 30, 255]);
-    assert!(!bake_came_out_blank(&doc, &rgba));
-}
-
-#[test]
-fn uniform_bake_without_image_layers_is_allowed() {
-    // Diseño vectorial monocromo legítimo: no debe bloquearse.
-    let doc = Document::new(100.0, 100.0);
-    let rgba = vec![255u8; 100 * 100 * 4];
-    assert!(!bake_came_out_blank(&doc, &rgba));
+    // (doc, bake, capas omitidas) → ¿se rechaza el guardado?
+    let cases: [(&Document, Vec<u8>, usize, bool); 5] = [
+        // El caso 14.png: imágenes visibles, horneado blanco uniforme.
+        (&with_img, uniform.clone(), 0, true),
+        // Blanco uniforme y además capa omitida: ambas señales a la vez.
+        (&with_img, uniform.clone(), 1, true),
+        // NUEVO: el bake NO es uniforme, pero una capa visible se omitió al
+        // construir la escena: el archivo resultante está incompleto.
+        (&with_img, varied.clone(), 1, true),
+        // Horneado completo y variado con imágenes visibles: permitido.
+        (&with_img, varied.clone(), 0, false),
+        // Diseño vectorial monocromo legítimo, 0 omitidas: permitido.
+        (&vector, uniform.clone(), 0, false),
+    ];
+    for (i, (doc, rgba, skipped, rejected)) in cases.iter().enumerate() {
+        assert_eq!(
+            bake_came_out_blank_or_incomplete(doc, rgba, *skipped),
+            *rejected,
+            "caso {i}: skipped={skipped} → rechazado={rejected}"
+        );
+    }
 }
 
 #[test]
@@ -110,7 +109,7 @@ fn uniform_bake_with_only_hidden_image_layers_is_allowed() {
         .expect("capa")
         .visible = false;
     let rgba = vec![255u8; 100 * 100 * 4];
-    assert!(!bake_came_out_blank(&doc, &rgba));
+    assert!(!bake_came_out_blank_or_incomplete(&doc, &rgba, 0));
 }
 
 // ——— Save All: aviso de poca RAM ———
