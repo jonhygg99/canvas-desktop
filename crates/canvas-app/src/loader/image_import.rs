@@ -201,8 +201,12 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// Servidor de prueba idéntico a `http::tests::serve_response`: drena el
+    /// request antes de responder y cierra solo con `drop` (sin `shutdown`),
+    /// para que el cierre sea FIN limpio y no RST — RST choca con la
+    /// limpieza del pool de ureq (`EINVAL`) y hacía flaky estos tests.
     fn serve_response(status: &str, body: &[u8]) -> String {
-        use std::io::Write;
+        use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::thread;
 
@@ -214,13 +218,27 @@ mod tests {
             let Ok((mut stream, _)) = listener.accept() else {
                 return;
             };
+            // Drena las cabeceras del request para que el cierre sea FIN
+            // limpio (sin datos sin leer → nunca RST); el GET llega completo.
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        req.extend_from_slice(&buf[..n]);
+                        if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                }
+            }
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
-            stream.write_all(response.as_bytes()).unwrap();
-            stream.write_all(&body).unwrap();
-            stream.shutdown(std::net::Shutdown::Both).unwrap();
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(&body);
         });
         address.to_string()
     }
