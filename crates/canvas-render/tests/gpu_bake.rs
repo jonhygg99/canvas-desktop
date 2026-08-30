@@ -353,6 +353,94 @@ fn save_roundtrip_preserves_edit() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+// ─── open_document → sidecar restaurado → bake: el caso 14.png ─────────
+
+/// El contrato del informe "se exporta en blanco": un documento restaurado
+/// desde sidecar (capa con blur, como el fondo de `14.png`) debe hornear con
+/// contenido opaco — nunca un PNG blanco. Cubre la composición que ningún
+/// otro test toca: `open_document` → `read_sidecar` → `ImageMap` →
+/// `bake_page` con scope de ranura NO-default (el de `start_export`/`start_save`).
+#[test]
+#[ignore = "requiere GPU"]
+fn restored_sidecar_document_bakes_with_content() {
+    let (device, queue) = gpu_device();
+    let dir = std::env::temp_dir().join(format!("canvas_gpu_sidecar_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("foto.png");
+
+    // PNG base blanco (como 14.png) + sidecar con UNA capa desenfocada que
+    // cubre la página: suficiente para ejercitar blur + restauración.
+    image::RgbaImage::from_pixel(64, 48, image::Rgba([255, 255, 255, 255]))
+        .save(&path)
+        .unwrap();
+    let mut doc = Document::new(64.0, 48.0);
+    let bg = doc
+        .add_layer(
+            "Blurred background",
+            Transform::new(0.0, -8.0, 64.0, 60.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 64,
+                natural_height: 60,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(bg).unwrap().effects.blur_radius = 50.0;
+    let (bg_rgba, ..) = gradient_image(64, 60);
+    let payload = canvas_io::CanvasPayload {
+        document: doc,
+        images: vec![(bg.raw(), bg_rgba, 64, 60)],
+        background_layer: Some(bg.raw()),
+        preview: None,
+    };
+    canvas_io::write_sidecar(&path, &std::fs::read(&path).unwrap(), &payload).unwrap();
+
+    // Abre con sidecar (debe restaurar las capas) y hornea con un scope de
+    // ranura NO-default, como la app.
+    let canvas_io::OpenOutcome::Restored(restored) = canvas_io::open_document(&path, true).unwrap()
+    else {
+        panic!("se esperaba Restored para una imagen con sidecar válido");
+    };
+    let mut images = ImageMap::new();
+    for (raw, img) in restored.images {
+        images.insert(
+            canvas_core::LayerId::from_raw(raw),
+            image_data_from_rgba(img.rgba, img.width, img.height),
+        );
+    }
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let scope = FxScope(7);
+    renderer.forget_scope(scope);
+    let (rgba, bw, bh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope,
+        &restored.document,
+        &images,
+        1.0,
+    );
+    assert_eq!((bw, bh), (64, 48));
+
+    // Ni mayoritariamente blanco ni transparente: un visor nunca lo muestra
+    // en blanco.
+    let mut non_white = 0usize;
+    let mut opaque = 0usize;
+    for px in rgba.chunks_exact(4) {
+        non_white += usize::from(px[..3] != [255, 255, 255]);
+        opaque += usize::from(px[3] == 255);
+    }
+    let n = rgba.len() / 4;
+    assert!(
+        non_white * 100 / n > 50,
+        "el horneado salió mayoritariamente blanco ({non_white}/{n} píxeles no blancos)"
+    );
+    assert_eq!(opaque, n, "el horneado debe ser opaco por completo");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ─── sync_layer + re-bake: caché de efectos GPU ────────────────────────
 
 /// `sync_layer` debe detectar cuando los píxeles de origen cambiaron (vía
