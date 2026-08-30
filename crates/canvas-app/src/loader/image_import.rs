@@ -248,8 +248,9 @@ mod tests {
                 "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
             );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.write_all(&body);
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+            stream.shutdown(std::net::Shutdown::Both).unwrap();
         });
         address.to_string()
     }

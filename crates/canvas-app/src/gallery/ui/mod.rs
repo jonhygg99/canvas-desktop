@@ -20,7 +20,8 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     gallery_view_show(state, ui)
 }
 
-/* pub fn show_old(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+/* LEGACY_REMOVED_START
+pub fn show_old(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
 
     // Reintento unico tras dar permiso en Ajustes (macOS): al volver el
@@ -302,7 +303,8 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     action
 }
 
-} */
+}
+LEGACY_REMOVED_END */
 
 /// Abre el panel «Full Disk Access» de Ajustes del Sistema. Solo macOS:
 /// el fallo tipico con carpetas de nube es que el proceso que lanzo la app

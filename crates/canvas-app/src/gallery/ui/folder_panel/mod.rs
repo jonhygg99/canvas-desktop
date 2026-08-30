@@ -72,7 +72,8 @@ pub(super) fn filter_folders(children: &[PathBuf], filter: &str) -> Vec<PathBuf>
         .collect()
 }
 
-/* fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+/* LEGACY_REMOVED_START
+fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
     // Solo macOS consume este valor hoy (botón «Grant access…» del pane
     // de Full Disk Access): en las demás plataformas el flujo de permisos
@@ -272,7 +273,7 @@ fn new_folder_ui(
         }
     }
 }
-
+LEGACY_REMOVED_END
 */
 pub(super) fn show_folder_panel(
     state: &mut GalleryState,
