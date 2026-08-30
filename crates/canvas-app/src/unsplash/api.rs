@@ -3,9 +3,6 @@
 //! viaja en el header `Authorization` (nunca en la query string, que acaba
 //! en logs y proxies).
 
-use std::io::Read;
-use std::time::Duration;
-
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -38,28 +35,12 @@ pub enum UnsplashError {
     Decode(String),
 }
 
-/// Tope de descarga (64 MB): las imágenes legítimas de Unsplash se quedan
-/// muy por debajo (la variante `regular` rara vez supera unos pocos MB).
-/// Sin tope, una respuesta maliciosa o desbocada podría llenar la memoria
-/// del proceso entera en un hilo worker.
-pub const MAX_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
-
 /// Lee la Access Key del entorno; `None` si no está definida (o está vacía).
 pub fn access_key() -> Option<String> {
     std::env::var(ACCESS_KEY_ENV)
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-}
-
-/// Agente HTTP con tiempos de espera acotados: una red colgada no puede
-/// bloquear un hilo worker para siempre.
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .build()
 }
 
 /// Busca fotos en Unsplash con los filtros dados. `page` es 1-based;
@@ -76,7 +57,7 @@ pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<SearchPa
             reached_end: true,
         });
     }
-    let req = agent()
+    let req = crate::http::agent()
         .get(SEARCH_URL)
         .query("query", query)
         .query("page", &page.to_string())
@@ -135,26 +116,14 @@ pub(super) fn reached_end(total_pages: Option<u32>, page: u32, returned: usize) 
 
 /// Descarga el contenido de una URL (miniatura o imagen completa). Solo se
 /// llama desde hilos worker. Corta con error al superar `MAX_DOWNLOAD_BYTES`
-/// en vez de acumular sin límite.
+/// en vez de acumular sin límite. Reutiliza el helper compartido y mapea su
+/// error al tipo de este dominio.
 pub fn download(url: &str) -> Result<Vec<u8>, UnsplashError> {
-    let resp = agent()
-        .get(url)
-        .call()
-        .map_err(|e| UnsplashError::Download(e.to_string()))?;
-    // `take` corta la lectura un byte después del tope: si llega al final
-    // con más de MAX bytes, la respuesta era demasiado grande.
-    let mut reader = resp.into_reader().take((MAX_DOWNLOAD_BYTES + 1) as u64);
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|e| UnsplashError::Download(e.to_string()))?;
-    if bytes.len() > MAX_DOWNLOAD_BYTES {
-        return Err(UnsplashError::TooLarge(MAX_DOWNLOAD_BYTES));
-    }
-    if bytes.is_empty() {
-        return Err(UnsplashError::Empty);
-    }
-    Ok(bytes)
+    crate::http::get_bytes_bounded(url).map_err(|e| match e {
+        crate::http::HttpError::Download(err) => UnsplashError::Download(err),
+        crate::http::HttpError::TooLarge(n) => UnsplashError::TooLarge(n),
+        crate::http::HttpError::Empty => UnsplashError::Empty,
+    })
 }
 
 /// Decodifica bytes (PNG/JPEG/WebP…) a `LoadedImage` RGBA8, listo para

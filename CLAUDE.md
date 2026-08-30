@@ -359,7 +359,9 @@ canvas-app/src/
   `UnsplashError` (thiserror) and `AppMsg` carries them as-is; the UI turns
   them into user-facing messages. No `String` error plumbing. The Unsplash
   access key travels in the `Authorization` header — never in the query
-  string — and image downloads are cut off at `unsplash::MAX_DOWNLOAD_BYTES`.
+  string — and image downloads share one bounded client (`http::get_bytes_bounded`,
+  agent + limit in `app/http.rs`) used by both Unsplash and URL replacement,
+  each mapping `HttpError` to its own error type.
 - **`app/views/editor/mod.rs` and `editor/canvas/mod.rs` are orchestration
   only, and the order in which they call their submodules is significant** —
   the code comments say so explicitly (e.g. placeholder materialization must

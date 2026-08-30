@@ -1,10 +1,9 @@
 //! Añadir una imagen como capa nueva, o reemplazar la de una capa existente
 //! (desde disco o descargada de una URL).
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use canvas_core::LayerId;
 use eframe::egui;
@@ -109,11 +108,13 @@ fn extension_from_url(url: &str) -> &str {
         .unwrap_or("png")
 }
 
-const MAX_REPLACEMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
-
 fn download_url_to_temp(url: &str) -> Result<PathBuf, canvas_io::IoError> {
     let trimmed = url.trim();
     validate_http_url(trimmed)?;
+    let bytes =
+        crate::http::get_bytes_bounded(trimmed).map_err(|e| canvas_io::IoError::Message {
+            message: http_error_message(e),
+        })?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| canvas_io::IoError::Message {
@@ -124,55 +125,22 @@ fn download_url_to_temp(url: &str) -> Result<PathBuf, canvas_io::IoError> {
         "canvas-desktop-replace-{stamp}.{}",
         extension_from_url(trimmed)
     ));
-    let response = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .timeout_write(Duration::from_secs(30))
-        .build()
-        .get(trimmed)
-        .call()
-        .map_err(|e| canvas_io::IoError::Message {
-            message: format!("image download failed: {e}"),
-        })?;
-
-    if response
-        .header("Content-Length")
-        .and_then(|value| value.parse::<usize>().ok())
-        .is_some_and(|length| length > MAX_REPLACEMENT_DOWNLOAD_BYTES)
-    {
-        return Err(canvas_io::IoError::Message {
-            message: format!(
-                "image exceeds the {MAX_REPLACEMENT_DOWNLOAD_BYTES}-byte download limit"
-            ),
-        });
-    }
-
-    let mut reader = response
-        .into_reader()
-        .take((MAX_REPLACEMENT_DOWNLOAD_BYTES + 1) as u64);
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|e| canvas_io::IoError::Message {
-            message: format!("image download failed: {e}"),
-        })?;
-    if bytes.len() > MAX_REPLACEMENT_DOWNLOAD_BYTES {
-        return Err(canvas_io::IoError::Message {
-            message: format!(
-                "image exceeds the {MAX_REPLACEMENT_DOWNLOAD_BYTES}-byte download limit"
-            ),
-        });
-    }
-    if bytes.is_empty() {
-        return Err(canvas_io::IoError::Message {
-            message: "image download returned no data".to_owned(),
-        });
-    }
     std::fs::write(&path, bytes).map_err(|source| canvas_io::IoError::Io {
         path: path.clone(),
         source,
     })?;
     Ok(path)
+}
+
+/// Mapea un `HttpError` compartido al mensaje de usuario que ya presentaba
+/// este camino (reemplazo por URL): conserva los mensajes que los tests y la
+/// UI esperan (`image download failed`, `download limit`, `no data`).
+fn http_error_message(error: crate::http::HttpError) -> String {
+    match error {
+        crate::http::HttpError::Download(e) => format!("image download failed: {e}"),
+        crate::http::HttpError::TooLarge(n) => format!("image exceeds the {n}-byte download limit"),
+        crate::http::HttpError::Empty => "image download returned no data".to_owned(),
+    }
 }
 
 fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
@@ -187,7 +155,7 @@ fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{download_url_to_temp, validate_http_url, MAX_REPLACEMENT_DOWNLOAD_BYTES};
+    use super::{download_url_to_temp, validate_http_url};
 
     #[test]
     fn rejects_non_http_urls() {
@@ -214,13 +182,14 @@ mod tests {
         let error = download_url_to_temp(&format!("http://{address}/missing.png")).unwrap_err();
         assert!(error.to_string().contains("download failed"));
     }
-
     #[test]
     fn rejects_responses_over_the_download_limit() {
-        let body = vec![0u8; MAX_REPLACEMENT_DOWNLOAD_BYTES + 1];
-        let address = serve_response("200 OK", &body);
-        let error = download_url_to_temp(&format!("http://{address}/large.png")).unwrap_err();
-        assert!(error.to_string().contains("download limit"));
+        // El mapeo de `TooLarge` al mensaje de usuario es la parte propia de
+        // este camino; el corte real por bytes vive en `http::tests` con un
+        // tope pequeño (evita materializar 64 MiB aquí).
+        let limit = crate::http::MAX_DOWNLOAD_BYTES;
+        let message = super::http_error_message(crate::http::HttpError::TooLarge(limit));
+        assert!(message.contains("download limit"));
     }
 
     #[test]

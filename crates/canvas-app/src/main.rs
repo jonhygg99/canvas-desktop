@@ -20,6 +20,7 @@ mod deck_strip;
 mod editor;
 mod export;
 mod gallery;
+mod http;
 mod layers_panel;
 mod loader;
 mod lock;
