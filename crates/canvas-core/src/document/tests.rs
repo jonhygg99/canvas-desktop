@@ -4,6 +4,49 @@
 use super::*;
 use crate::layer::ImageContent;
 
+/// Un sidecar hostil (o simplemente un documento ajeno desalineado) puede
+/// deserializar un `Document` cuyo `next_layer_id` se queda por debajo de
+/// ids ya presentes: si `allocate_layer_id` devolviera un id en uso, la capa
+/// nueva pisaría a la existente (selección, pintado y guardado). El alocador
+/// debe saltarse los ids ocupados — regresión del choque de ids visto al
+/// pegar sobre un documento restaurado.
+#[test]
+fn allocate_layer_id_skips_ids_already_present_in_a_restored_document() {
+    let mut src = Document::new(100.0, 100.0);
+    let _ = src
+        .add_layer("a", Transform::new(0.0, 0.0, 10.0, 10.0), image_content())
+        .unwrap();
+    let _ = src
+        .add_layer("b", Transform::new(10.0, 0.0, 10.0, 10.0), image_content())
+        .unwrap();
+    let _ = src
+        .add_layer("c", Transform::new(20.0, 0.0, 10.0, 10.0), image_content())
+        .unwrap();
+    // `next_layer_id` quedó en 4; un sidecar hostil lo baja a 1 ignorando a,
+    // b y c — el alocador tendría que devolver 1, 2 o 3 (todos en uso).
+    let mut json = serde_json::to_value(&src).unwrap();
+    json["next_layer_id"] = serde_json::json!(1);
+    let mut hostile: Document = serde_json::from_value(json).unwrap();
+
+    let used: Vec<u64> = hostile
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| l.id.raw())
+        .collect();
+    let fresh = hostile.allocate_layer_id();
+    assert!(
+        !used.contains(&fresh.raw()),
+        "el id {fresh:?} ya está en uso ({used:?}): pegar sobre un doc hostil rompería la unicidad"
+    );
+    assert_eq!(
+        fresh.raw(),
+        4,
+        "debe saltar 1, 2 y 3 y repartir el siguiente"
+    );
+}
+
 fn image_content() -> LayerContent {
     LayerContent::Image(ImageContent {
         source_path: None,

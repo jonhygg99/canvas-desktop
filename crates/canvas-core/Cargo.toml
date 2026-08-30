@@ -8,3 +8,9 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Para los tests de unicidad de ids ante un sidecar hostil: se deserializa un
+# `Document` con el `next_layer_id` desalineado a propósito (serde_json ya es
+# el JSON del workspace, no añade nada al árbol).
+serde_json = { workspace = true }
