@@ -1,10 +1,10 @@
 //! Añadir una imagen como capa nueva, o reemplazar la de una capa existente
 //! (desde disco o descargada de una URL).
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::Sender;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use canvas_core::LayerId;
 use eframe::egui;
@@ -109,74 +109,78 @@ fn extension_from_url(url: &str) -> &str {
         .unwrap_or("png")
 }
 
+const MAX_REPLACEMENT_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
+
 fn download_url_to_temp(url: &str) -> Result<PathBuf, canvas_io::IoError> {
     let trimmed = url.trim();
-    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-        return Err(canvas_io::IoError::Message {
-            message: "Use an http:// or https:// image URL".to_owned(),
-        });
-    }
+    validate_http_url(trimmed)?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| canvas_io::IoError::Message {
             message: format!("system clock error: {e}"),
         })?
-        .as_millis();
+        .as_nanos();
     let path = std::env::temp_dir().join(format!(
         "canvas-desktop-replace-{stamp}.{}",
         extension_from_url(trimmed)
     ));
-    let out = path.to_string_lossy().into_owned();
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(30))
+        .timeout_write(Duration::from_secs(30))
+        .build()
+        .get(trimmed)
+        .call()
+        .map_err(|e| canvas_io::IoError::Message {
+            message: format!("image download failed: {e}"),
+        })?;
 
-    // `-Command` no vincula argumentos extra del proceso a `$args` (eso solo
-    // pasa con `-File script.ps1 arg1 arg2`) — se pegarían sueltos al final
-    // del script, dejando `$args[0]`/`$args[1]` siempre en `$null`. La URL y
-    // la ruta van incrustadas como literales `'...'` del propio comando, con
-    // la comilla simple escapada duplicándola (`''`), la forma estándar de
-    // PowerShell — a diferencia de comillas dobles, no interpola variables.
-    #[cfg(windows)]
-    let output = {
-        use std::os::windows::process::CommandExt;
-        // `CREATE_NO_WINDOW`: sin esto, `powershell.exe` (subsistema de
-        // consola) abre y parpadea su propia ventana un instante aunque
-        // este binario sea GUI.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let escaped_url = trimmed.replace('\'', "''");
-        let escaped_out = out.replace('\'', "''");
-        Command::new("powershell")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(format!(
-                "Invoke-WebRequest -Uri '{escaped_url}' -OutFile '{escaped_out}'"
-            ))
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-    };
+    if response
+        .header("Content-Length")
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_REPLACEMENT_DOWNLOAD_BYTES)
+    {
+        return Err(canvas_io::IoError::Message {
+            message: format!(
+                "image exceeds the {MAX_REPLACEMENT_DOWNLOAD_BYTES}-byte download limit"
+            ),
+        });
+    }
 
-    #[cfg(not(windows))]
-    let output = Command::new("curl")
-        .arg("--location")
-        .arg("--fail")
-        .arg("--silent")
-        .arg("--show-error")
-        .arg("--output")
-        .arg(&out)
-        .arg(trimmed)
-        .output();
-
-    let output = output.map_err(|source| canvas_io::IoError::Io {
+    let mut reader = response
+        .into_reader()
+        .take((MAX_REPLACEMENT_DOWNLOAD_BYTES + 1) as u64);
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|e| canvas_io::IoError::Message {
+            message: format!("image download failed: {e}"),
+        })?;
+    if bytes.len() > MAX_REPLACEMENT_DOWNLOAD_BYTES {
+        return Err(canvas_io::IoError::Message {
+            message: format!(
+                "image exceeds the {MAX_REPLACEMENT_DOWNLOAD_BYTES}-byte download limit"
+            ),
+        });
+    }
+    if bytes.is_empty() {
+        return Err(canvas_io::IoError::Message {
+            message: "image download returned no data".to_owned(),
+        });
+    }
+    std::fs::write(&path, bytes).map_err(|source| canvas_io::IoError::Io {
         path: path.clone(),
         source,
     })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let message = if stderr.is_empty() {
-            format!("Downloader exited with {}", output.status)
-        } else {
-            stderr
-        };
-        let _ = std::fs::remove_file(&path);
-        return Err(canvas_io::IoError::Message { message });
-    }
     Ok(path)
+}
+
+fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(canvas_io::IoError::Message {
+            message: "Use an http:// or https:// image URL".to_owned(),
+        })
+    }
 }
