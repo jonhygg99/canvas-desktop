@@ -24,6 +24,7 @@ pub use folder_panel::next_folder_panel_side;
 // lo toma directo de `cell`.
 #[cfg(test)]
 pub(super) use cell::gallery_cell_size;
+
 use folder_panel::show_folder_panel;
 
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {

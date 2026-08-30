@@ -79,6 +79,11 @@ fn app_settings_round_trip_through_json() {
 }
 
 #[test]
+fn new_canvas_default_is_full_hd() {
+    assert_eq!(AppSettings::default().last_page_size, (1920.0, 1080.0));
+}
+
+#[test]
 fn a_partial_settings_json_fills_the_missing_fields_with_defaults() {
     // `#[serde(default)]`: un JSON antiguo o incompleto no debe romper
     // la carga — los campos que faltan toman los valores por defecto.

@@ -2,7 +2,6 @@
 //! (desde disco o descargada de una URL).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -111,72 +110,118 @@ fn extension_from_url(url: &str) -> &str {
 
 fn download_url_to_temp(url: &str) -> Result<PathBuf, canvas_io::IoError> {
     let trimmed = url.trim();
-    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
-        return Err(canvas_io::IoError::Message {
-            message: "Use an http:// or https:// image URL".to_owned(),
-        });
-    }
+    validate_http_url(trimmed)?;
+    let bytes =
+        crate::http::get_bytes_bounded(trimmed).map_err(|e| canvas_io::IoError::Message {
+            message: http_error_message(e),
+        })?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| canvas_io::IoError::Message {
             message: format!("system clock error: {e}"),
         })?
-        .as_millis();
+        .as_nanos();
     let path = std::env::temp_dir().join(format!(
         "canvas-desktop-replace-{stamp}.{}",
         extension_from_url(trimmed)
     ));
-    let out = path.to_string_lossy().into_owned();
-
-    // `-Command` no vincula argumentos extra del proceso a `$args` (eso solo
-    // pasa con `-File script.ps1 arg1 arg2`) — se pegarían sueltos al final
-    // del script, dejando `$args[0]`/`$args[1]` siempre en `$null`. La URL y
-    // la ruta van incrustadas como literales `'...'` del propio comando, con
-    // la comilla simple escapada duplicándola (`''`), la forma estándar de
-    // PowerShell — a diferencia de comillas dobles, no interpola variables.
-    #[cfg(windows)]
-    let output = {
-        use std::os::windows::process::CommandExt;
-        // `CREATE_NO_WINDOW`: sin esto, `powershell.exe` (subsistema de
-        // consola) abre y parpadea su propia ventana un instante aunque
-        // este binario sea GUI.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let escaped_url = trimmed.replace('\'', "''");
-        let escaped_out = out.replace('\'', "''");
-        Command::new("powershell")
-            .arg("-NoProfile")
-            .arg("-Command")
-            .arg(format!(
-                "Invoke-WebRequest -Uri '{escaped_url}' -OutFile '{escaped_out}'"
-            ))
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-    };
-
-    #[cfg(not(windows))]
-    let output = Command::new("curl")
-        .arg("--location")
-        .arg("--fail")
-        .arg("--silent")
-        .arg("--show-error")
-        .arg("--output")
-        .arg(&out)
-        .arg(trimmed)
-        .output();
-
-    let output = output.map_err(|source| canvas_io::IoError::Io {
+    std::fs::write(&path, bytes).map_err(|source| canvas_io::IoError::Io {
         path: path.clone(),
         source,
     })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let message = if stderr.is_empty() {
-            format!("Downloader exited with {}", output.status)
-        } else {
-            stderr
-        };
-        let _ = std::fs::remove_file(&path);
-        return Err(canvas_io::IoError::Message { message });
-    }
     Ok(path)
+}
+
+/// Mapea un `HttpError` compartido al mensaje de usuario que ya presentaba
+/// este camino (reemplazo por URL): conserva los mensajes que los tests y la
+/// UI esperan (`image download failed`, `download limit`, `no data`).
+fn http_error_message(error: crate::http::HttpError) -> String {
+    match error {
+        crate::http::HttpError::Download(e) => format!("image download failed: {e}"),
+        crate::http::HttpError::TooLarge(n) => format!("image exceeds the {n}-byte download limit"),
+        crate::http::HttpError::Empty => "image download returned no data".to_owned(),
+    }
+}
+
+fn validate_http_url(url: &str) -> Result<(), canvas_io::IoError> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(canvas_io::IoError::Message {
+            message: "Use an http:// or https:// image URL".to_owned(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{download_url_to_temp, validate_http_url};
+
+    #[test]
+    fn rejects_non_http_urls() {
+        let error = validate_http_url("file:///tmp/image.png").unwrap_err();
+        assert!(error.to_string().contains("http://"));
+    }
+
+    #[test]
+    fn accepts_http_urls() {
+        assert!(validate_http_url("https://example.com/image.png").is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_http_response() {
+        let address = serve_response("200 OK", b"");
+        let error = download_url_to_temp(&format!("http://{address}/empty.png")).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("no data") || message.contains("download failed"));
+    }
+
+    #[test]
+    fn rejects_http_errors() {
+        let address = serve_response("404 Not Found", b"missing");
+        let error = download_url_to_temp(&format!("http://{address}/missing.png")).unwrap_err();
+        assert!(error.to_string().contains("download failed"));
+    }
+    #[test]
+    fn rejects_responses_over_the_download_limit() {
+        // El mapeo de `TooLarge` al mensaje de usuario es la parte propia de
+        // este camino; el corte real por bytes vive en `http::tests` con un
+        // tope pequeño (evita materializar 64 MiB aquí).
+        let limit = crate::http::MAX_DOWNLOAD_BYTES;
+        let message = super::http_error_message(crate::http::HttpError::TooLarge(limit));
+        assert!(message.contains("download limit"));
+    }
+
+    #[test]
+    fn writes_a_small_valid_response_to_a_unique_temp_file() {
+        let address = serve_response("200 OK", b"image bytes");
+        let path = download_url_to_temp(&format!("http://{address}/image.png")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"image bytes");
+        assert!(path.starts_with(std::env::temp_dir()));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn serve_response(status: &str, body: &[u8]) -> String {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let body = body.to_vec();
+        thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+            stream.shutdown(std::net::Shutdown::Both).unwrap();
+        });
+        address.to_string()
+    }
 }

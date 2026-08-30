@@ -12,7 +12,7 @@ use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 use vello::kurbo::Affine;
 
-use crate::deck::{Deck, DeckRect, SlotContent};
+use crate::deck::{Deck, DeckRect};
 use crate::loader::{self, AppMsg};
 use crate::surface::CanvasSurface;
 
@@ -36,6 +36,7 @@ use super::viewport::screen_to_page;
 use super::EditorState;
 
 mod camera;
+mod layout;
 
 #[cfg(test)]
 #[path = "camera_tests.rs"]
@@ -47,6 +48,7 @@ mod url_popup;
 
 use camera::{apply_camera, Camera};
 use context_menu::canvas_context_menu;
+use layout::{active_slot_rect, sync_deck_layout};
 use paint::paint;
 use picking::handle_press;
 use url_popup::replace_url_popup_ui;
@@ -103,59 +105,12 @@ pub fn canvas_ui(
         Err(_) => (1.0, 1.0),
     };
 
-    // La ranura activa siempre conoce su tamaño real (es el documento que se
-    // está editando; no hace falta esperar a `DeckProbed`) — mantenerla al
-    // día aquí cubre tanto la primera carga como un cambio de tamaño de
-    // página desde el panel, sin ningún caso especial.
-    let mut sizes_changed = false;
-    if let Some(slot) = deck.slots.get_mut(deck.active) {
-        if slot.page != Some(page_dims) {
-            slot.page = Some(page_dims);
-            sizes_changed = true;
-        }
-    }
-    // Defensa en profundidad: cualquier ranura YA cargada (no solo la
-    // activa) conoce su tamaño real por su propio documento, sin depender
-    // de que `DeckProbed` haya llegado ni de que el sondeo funcione para su
-    // formato. Sin esto, un lienzo mayor que la estimación de `Slot::size()`
-    // se pinta fuera de su `rect` de layout y se come el hueco con el
-    // vecino. Acumulador local porque no se puede escribir
-    // `deck.layout_dirty` mientras `&mut deck.slots` sigue prestado por el
-    // bucle.
-    for slot in &mut deck.slots {
-        if let SlotContent::Ready(d) = &slot.content {
-            if let Ok(p) = d.doc.page() {
-                let real = (p.width, p.height);
-                if slot.page != Some(real) {
-                    slot.page = Some(real);
-                    sizes_changed = true;
-                }
-            }
-        }
-    }
-    deck.layout_dirty |= sizes_changed;
-    if deck.layout_dirty {
-        // Recolocar puede desplazar el origen del lienzo ACTIVO como efecto
-        // secundario (el centrado en el eje transversal usa el máximo
-        // ancho/alto de TODAS las ranuras: aprender el tamaño real de un
-        // vecino cambia ese máximo). Compensar el pan para que el lienzo
-        // activo se quede clavado en pantalla — el usuario no pidió mover
-        // nada. No aplica en el primer frame: `needs_fit`/`AutoFit` van a
-        // reescribir el pan entero de todos modos, y no-op con una sola
-        // ranura (su origen activo siempre es `(0,0)`).
-        let before = deck.active_origin();
-        deck.relayout();
-        if !state.viewport.needs_fit {
-            let after = deck.active_origin();
-            let (dx, dy) = (after.0 - before.0, after.1 - before.1);
-            if dx != 0.0 || dy != 0.0 {
-                state.viewport.pan -= egui::vec2(
-                    (dx * state.viewport.zoom) as f32,
-                    (dy * state.viewport.zoom) as f32,
-                );
-            }
-        }
-    }
+    sync_deck_layout(
+        deck,
+        page_dims,
+        state.viewport.needs_fit,
+        &mut state.viewport.pan,
+    );
 
     let Camera {
         panning,
@@ -169,12 +124,7 @@ pub fn canvas_ui(
     // lienzo que no esté en el origen de la baraja se seleccione/arrastre/
     // redimensione igual que si fuera el único, sin tocar ni una línea de
     // esa lógica.
-    let (origin_x, origin_y) = deck.active_origin();
-    let slot_offset = egui::vec2(
-        (origin_x * state.viewport.zoom) as f32,
-        (origin_y * state.viewport.zoom) as f32,
-    );
-    let slot_rect = egui::Rect::from_min_size(rect.min + slot_offset, rect.size());
+    let slot_rect = active_slot_rect(deck, rect, state.viewport.zoom);
 
     // Qué ranuras están a la vista (con margen de precarga), y sella cuándo
     // se vieron por última vez (política de descarte LRU). Calculado AQUÍ

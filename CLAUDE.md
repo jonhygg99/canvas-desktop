@@ -65,6 +65,23 @@ CI (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings` and the test
 suite on Windows/Linux/macOS, cross-compiles `canvas-shell` for
 linux/darwin (no linker needed), and enforces the test-count floor.
 
+## Opening a pull request
+
+Iterative branches use `gh` (install: `brew install gh`; auth: `gh auth login`
+— the git credential-helper token lacks the `read:org` scope `gh` requires,
+so `gh auth login` is the one-time setup). DO NOT open a PR from `main`:
+
+```sh
+# From a feature branch (already pushed):
+git branch --show-current          # verify this is NOT main
+git push -u origin HEAD
+gh pr create --title "type(scope): short summary" --body-file /tmp/body.md
+```
+
+Write the body to a file and pass `--body-file` (never multi-line markdown
+inline — escaping bugs). Run `cargo fmt/clippy/test` first and fix failures
+before opening.
+
 ## Architecture
 
 Cargo workspace, five crates, dependencies flow one direction only
@@ -154,8 +171,8 @@ canvas-core/src/
 ```
 canvas-render/src/
 ├─ blur/    mod.rs (types) · params.rs · engine.rs (pipelines, lifecycle)
-│           · passes.rs (the color → blur-H → blur-V chain) · *.wgsl
-└─ scene/   mod.rs (build_scene, append_document) · raster.rs · text.rs · shape.rs
+│           · passes.rs (effect passes) · sync.rs (layer synchronization) · *.wgsl
+└─ scene/   mod.rs (build_scene) · document.rs (append_document) · raster.rs · text.rs · shape.rs
 ```
 
 - `CanvasRenderer` wraps a vello `Renderer` sharing the **same wgpu
@@ -246,9 +263,13 @@ canvas-io/src/
     `~/.local/share/applications/` (or `$XDG_DATA_HOME`) with `MimeType=`,
     deduplicated, and runs `update-desktop-database`. `unregister` removes
     the file.
-  - **`macos.rs`**: generates an `Info.plist` with `CFBundleDocumentTypes`
-    + `UTExportedTypeDeclarations` in a temp dir and registers it via
-    `lsregister`. `unregister` calls `lsregister -u`.
+  - **`macos.rs`**: creates a temporary `Canvas Desktop.app` bundle with
+    `Contents/MacOS` and `Contents/Info.plist`, then registers the complete
+    bundle via `lsregister`; `unregister` removes that bundle after calling
+    `lsregister -u`. Production packaging should register the final bundle.
+  - **`linux.rs`**: installs a `.desktop` entry under
+    `~/.local/share/applications/` or `$XDG_DATA_HOME`, escapes special
+    characters in `Exec=`, and removes the entry during unregister.
   Cross-compile verification: `cargo check -p canvas-shell --target
   x86_64-unknown-linux-gnu` / `x86_64-apple-darwin` from any OS.
 - Single-instance enforcement (`single_instance.rs`, via `interprocess`): a
@@ -290,7 +311,7 @@ canvas-app/src/
 │                 #               max_inflight_loads() = dynamic by core count)
 │                 # scan.rs (disk sync) · nav.rs
 ├─ editor/
-│  ├─ canvas/     # mod.rs = canvas_ui, orchestration only; context_menu ·
+│  ├─ canvas/     # mod.rs = canvas_ui, orchestration only; layout · context_menu ·
 │  │              # picking · camera · paint · url_popup
 │  ├─ state/      # mod.rs (EditorState) · constructors · layer_factory ·
 │  │              # background · shortcuts · history · sidecar
@@ -298,8 +319,8 @@ canvas-app/src/
 │  ├─ properties_panel/  mod.rs · layer_common · content{,_shape,_text} ·
 │  │                     effects · page
 │  └─ interaction.rs  layer_ops.rs  overlay.rs  viewport.rs
-├─ gallery/       mod.rs · item.rs · ui/{mod,cell,shell}.rs
-│                 # ui/folder_panel/{mod,rows}.rs
+├─ gallery/          mod.rs · item.rs · ui/{mod,cell,shell,gallery_view}.rs
+│                 # ui/folder_panel/{mod,rows,content}.rs
 ├─ layers_panel/  mod.rs · tab_strip.rs · tab_draw.rs · insert.rs ·
 │                 # ops.rs · row.rs
 ├─ menus/         mod.rs · fallback.rs (non-Windows) · native/{mod,build}.rs
@@ -338,7 +359,9 @@ canvas-app/src/
   `UnsplashError` (thiserror) and `AppMsg` carries them as-is; the UI turns
   them into user-facing messages. No `String` error plumbing. The Unsplash
   access key travels in the `Authorization` header — never in the query
-  string — and image downloads are cut off at `unsplash::MAX_DOWNLOAD_BYTES`.
+  string — and image downloads share one bounded client (`http::get_bytes_bounded`,
+  agent + limit in `app/http.rs`) used by both Unsplash and URL replacement,
+  each mapping `HttpError` to its own error type.
 - **`app/views/editor/mod.rs` and `editor/canvas/mod.rs` are orchestration
   only, and the order in which they call their submodules is significant** —
   the code comments say so explicitly (e.g. placeholder materialization must

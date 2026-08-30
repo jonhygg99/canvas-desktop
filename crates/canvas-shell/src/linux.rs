@@ -51,14 +51,14 @@ impl ShellIntegration for LinuxShell {
         mime_types.sort();
         mime_types.dedup();
 
-        let exe_str = exe.to_string_lossy();
+        let exe_str = escape_desktop_exec(exe.to_string_lossy().as_ref());
         let mut content = String::new();
         content.push_str("[Desktop Entry]\n");
         content.push_str("Type=Application\n");
         content.push_str(&format!("Name={}\n", "Canvas Desktop"));
         content.push_str("GenericName=Image Editor\n");
         content.push_str("Comment=Canva-like design editor\n");
-        content.push_str(&format!("Exec=\"{}\" \"%f\"\n", exe_str));
+        content.push_str(&format!("Exec=\"{exe_str}\" \"%f\"\n"));
         content.push_str(&format!("Icon={}\n", APP_ID));
         content.push_str("Terminal=false\n");
         content.push_str("Categories=Graphics;Photography;2DGraphics;\n");
@@ -118,6 +118,14 @@ fn applications_dir() -> Result<PathBuf, ShellError> {
 /// Mejor esfuerzo: si el comando no existe (algunos escritorios no lo
 /// instalan), la asociación seguirá funcionando, solo tardará más en
 /// reflejarse.
+fn escape_desktop_exec(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$")
+}
+
 fn update_desktop_database(dir: &Path) {
     let _ = std::process::Command::new("update-desktop-database")
         .arg(dir)
@@ -160,6 +168,14 @@ mod tests {
             std::env::remove_var("XDG_DATA_HOME");
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn escapes_desktop_exec_arguments() {
+        assert_eq!(
+            escape_desktop_exec(r#"/tmp/Canvas \"Desktop\"/$bin`"#),
+            r#"/tmp/Canvas \\\"Desktop\\\"/\\$bin\\`"#
+        );
     }
 
     #[test]
