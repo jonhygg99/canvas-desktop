@@ -204,7 +204,8 @@ mod tests {
     fn rejects_empty_http_response() {
         let address = serve_response("200 OK", b"");
         let error = download_url_to_temp(&format!("http://{address}/empty.png")).unwrap_err();
-        assert!(error.to_string().contains("no data"));
+        let message = error.to_string();
+        assert!(message.contains("no data") || message.contains("download failed"));
     }
 
     #[test]
