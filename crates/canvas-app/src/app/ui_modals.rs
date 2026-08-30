@@ -14,9 +14,9 @@ use canvas_shell::ShellIntegration as _;
 use eframe::egui;
 
 use crate::loader::{self, AppMsg};
-use crate::{editor, export, settings};
+use crate::{deck, editor, export, settings};
 
-use super::persistence::{is_jpeg_path, start_save, SaveContext};
+use super::persistence::{is_jpeg_path, start_save, start_save_all_flow, SaveContext};
 use super::{AppInner, Nav, SaveFlow, Workspace};
 
 impl AppInner {
@@ -88,6 +88,7 @@ impl AppInner {
 pub(super) fn overwrite_modal_ui(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
+    deck: &mut deck::Deck,
     save: &mut SaveFlow,
     settings: &mut settings::AppSettings,
 ) {
@@ -146,7 +147,7 @@ pub(super) fn overwrite_modal_ui(
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            start_save(state, sctx, path, false, settings.jpeg_quality);
+            start_save(state, sctx, deck, path, false, settings.jpeg_quality);
         }
         Choice::SaveAs => {
             save.overwrite_prompt = None;
@@ -232,11 +233,61 @@ pub(super) fn readonly_modal_ui(
     }
 }
 
+/// Modal de aviso de poca RAM antes de un «Save all» masivo: un horneado
+/// bajo presión de memoria es la receta del PNG blanco (el guard
+/// anti-blanco protege el archivo, pero mejor avisar antes de lanzar N
+/// horneados). «Save all anyway» confirma y arranca la cola; «Cancel»
+/// descarta el lote (nada se guarda).
+pub(super) fn low_memory_modal_ui(
+    state: &mut editor::EditorState,
+    deck: &mut deck::Deck,
+    save: &mut SaveFlow,
+    ctx: &egui::Context,
+) {
+    let Some(count) = save.low_memory_prompt else {
+        return;
+    };
+    let mut proceed = false;
+    let mut cancel = false;
+    let plural = if count == 1 { "file" } else { "files" };
+    let modal = egui::Modal::new(egui::Id::new("low_memory_save_all")).show(ctx, |ui| {
+        ui.set_max_width(400.0);
+        ui.heading("Low on memory — save anyway?");
+        ui.add_space(6.0);
+        ui.label(format!(
+            "Your system is low on available RAM and Save All will write \
+             {count} {plural}. Baking under memory pressure can come out \
+             blank; the app refuses to overwrite your files in that case, \
+             but the save would fail. Close other apps to free memory, or \
+             continue anyway."
+        ));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button("Save All anyway").clicked() {
+                proceed = true;
+            }
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
+        });
+    });
+    if modal.should_close() && !proceed {
+        cancel = true;
+    }
+    if proceed {
+        save.low_memory_prompt = None;
+        start_save_all_flow(state, deck, save);
+    } else if cancel {
+        save.low_memory_prompt = None;
+    }
+}
+
 /// Diálogo de exportación (elegir formato/escala) y arranque del hilo de
 /// export en cuanto el usuario ya eligió también la ruta de destino.
 pub(super) fn export_flow_ui(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
+    deck: &mut deck::Deck,
     export: &mut crate::app::ExportFlow,
 ) {
     if let Some(dialog) = &mut export.export_dialog {
@@ -273,10 +324,8 @@ pub(super) fn export_flow_ui(
     if let Some((path, settings)) = export.pending_export.take() {
         super::persistence::start_export(
             state,
-            sctx.renderer,
-            sctx.rs,
-            sctx.tx,
-            sctx.ctx,
+            sctx,
+            deck,
             super::persistence::ExportRequest {
                 path,
                 settings,

@@ -958,6 +958,109 @@ fn resetting_a_crop_commits_an_undoable_composite() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Banner de error de guardado (`save_error`): regresión del hallazgo de la
+// verificación UI — `save_error` se escribía en 31 sitios pero ninguna vista
+// lo renderizaba, así que el guard anti-blanco/incompleto protegía el archivo
+// sin que el usuario viera el mensaje. Este test fija que el banner SÍ se
+// dibuja (el texto del mensaje llega a los galifos) y que su botón «Dismiss»
+// lo descarta. Usa el mismo harness headless de egui que el resto del panel.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn save_error_banner_renders_the_message_and_dismiss_clears_it() {
+    let ctx = egui::Context::default(); // fuentes reales
+    let mut state = EditorState::new_blank(400.0, 400.0);
+    state.save_error = Some(
+        "The save was refused because the image came out blank or incomplete. \
+         Close other apps to free memory and try again."
+            .to_owned(),
+    );
+
+    let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(260.0, 200.0));
+    let mut dismiss_rect = None;
+    let mut error_was_drawn = false;
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+        |ui| {
+            if let Some(resp) = save_error_banner(&mut state, ui) {
+                dismiss_rect = Some(resp.rect);
+            }
+        },
+    );
+
+    // El texto del mensaje llega de verdad a los glifos (el hallazgo que
+    // este test fija: que `save_error` no quede desconectado de la UI).
+    for clipped in &output.shapes {
+        if let egui::Shape::Text(t) = &clipped.shape {
+            if t.galley.text().contains("refused") {
+                error_was_drawn = true;
+            }
+        }
+    }
+    assert!(
+        error_was_drawn,
+        "el mensaje de error debe dibujarse: save_error no puede quedar sin pintar"
+    );
+
+    // El botón «Dismiss» existe: un clic real (mover, pulsar, soltar) lo
+    // descarta. Ubicamos su rect del frame anterior para no adivinar nada.
+    let pos = dismiss_rect
+        .expect("con save_error el banner debe pintar el botón Dismiss")
+        .center();
+    let click = |state: &mut EditorState, events: Vec<egui::Event>| {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen_rect),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                save_error_banner(state, ui);
+            },
+        );
+    };
+    click(&mut state, vec![egui::Event::PointerMoved(pos)]);
+    click(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    click(
+        &mut state,
+        vec![egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert!(
+        state.save_error.is_none(),
+        "pulsar «Dismiss» debe limpiar save_error"
+    );
+
+    // Sin error pendiente, el banner no pinta nada (None, sin botón).
+    let mut nothing = false;
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+        |ui| {
+            nothing = save_error_banner(&mut state, ui).is_none();
+        },
+    );
+    assert!(nothing, "sin save_error el banner no debe pintarse");
+}
+
 /// Arrastrar una esquina en modo recorte (gesto sobre el lienzo) muta el
 /// crop/transform en vivo y, al soltar, lo consolida en UN `Composite`
 /// deshacible que un solo Ctrl+Z revierte.

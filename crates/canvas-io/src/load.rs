@@ -62,9 +62,10 @@ pub enum OpenOutcome {
 /// aquí (antes estaba copiada en `spawn_load_image` y `spawn_load_slot`):
 ///
 /// - un `.canvas` ES el documento: se lee con `read_design`;
-/// - una imagen restaura sus capas desde su sidecar si lo tiene y es
-///   legible; un sidecar corrupto degrada a imagen aplanada con un warning
-///   (nunca impide abrir — el original siempre gana);
+/// - una imagen restaura sus capas desde su sidecar SOLO si este coincide
+///   con el archivo actual (`hash_matches`); un sidecar desactualizado o
+///   ilegible degrada a imagen aplanada con un warning (nunca impide abrir
+///   — el original siempre gana);
 /// - `with_sidecar` en `false` salta la restauración («Editable sidecar»
 ///   desactivado) y va directo a los píxeles.
 pub fn open_document(path: &Path, with_sidecar: bool) -> Result<OpenOutcome, IoError> {
@@ -73,11 +74,16 @@ pub fn open_document(path: &Path, with_sidecar: bool) -> Result<OpenOutcome, IoE
     }
     if with_sidecar {
         match read_sidecar(path) {
-            Ok(Some(restored)) => return Ok(OpenOutcome::Restored(restored)),
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada")
+            Ok(Some(restored)) if restored.hash_matches => {
+                return Ok(OpenOutcome::Restored(restored));
             }
+            // Restauraciones descartadas y errores: solo warn, y el flujo
+            // cae al `load_image` común de abajo.
+            Ok(Some(_)) => {
+                tracing::warn!("sidecar desactualizado; abriendo la imagen actual aplanada")
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("sidecar ilegible ({e}); abriendo la imagen aplanada"),
         }
     }
     load_image(path).map(OpenOutcome::Flat)
@@ -505,6 +511,23 @@ mod tests {
             restored.document.layer(id).unwrap().effects.blur_radius,
             7.0
         );
+    }
+
+    #[test]
+    fn open_document_uses_current_pixels_when_sidecar_is_stale() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("foto.png");
+        let current = image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 255, 255]));
+        current.save(&path).expect("guardar png actual");
+        let (payload, _) = sample_payload();
+        crate::write_sidecar(&path, b"old image bytes", &payload).expect("escribir sidecar");
+
+        let outcome = open_document(&path, true).expect("abrir imagen actual");
+        let OpenOutcome::Flat(loaded) = outcome else {
+            panic!("un sidecar desactualizado no debe restaurarse");
+        };
+        assert_eq!((loaded.width, loaded.height), (1, 1));
+        assert_eq!(loaded.rgba, [0, 0, 255, 255]);
     }
 
     #[test]

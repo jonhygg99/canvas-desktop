@@ -194,6 +194,7 @@ pub(super) fn resolve(
     }
     let save_modal_pending = f.save.overwrite_prompt.is_some()
         || f.save.readonly_prompt.is_some()
+        || f.save.low_memory_prompt.is_some()
         || f.deck_ops.materializing.is_some();
     if !save_modal_pending
         && deck::apply_jump(f.deck, state)

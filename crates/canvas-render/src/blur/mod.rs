@@ -9,11 +9,13 @@ use canvas_core::LayerId;
 use vello::peniko::ImageData;
 use vello::wgpu;
 
+mod budget;
 mod engine;
 mod params;
 pub mod passes;
 mod sync;
 
+pub use budget::resolve_fx_budget;
 pub use params::ColorParams;
 pub use sync::SyncLayerRequest;
 
@@ -110,6 +112,10 @@ struct LayerFx {
     out: wgpu::Texture,
     /// Handle de vello que redirige a `out`.
     image: ImageData,
+    /// Tick del último `sync_layer` en el que se usó esta entrada. Lo
+    /// mantiene `BlurEngine::tick` (monótono); el máximo por scope da el
+    /// orden LRU de la evicción del presupuesto GPU del documento activo.
+    last_used: u64,
     last: Option<(ColorParams, f32)>,
 }
 
@@ -123,6 +129,20 @@ pub struct BlurEngine {
     /// `DisplayEntry`). Fuera de `cache` a propósito: no son texturas de
     /// efectos y no necesitan registro en vello.
     display: HashMap<(FxScope, LayerId), DisplayEntry>,
+    /// Reloj monótono de uso de la caché: cada `sync_layer` con efectos
+    /// anota `tick` en la entrada y avanza. Alimenta `last_used(scope)`,
+    /// el orden LRU del presupuesto GPU (Task 6 del plan de memoria).
+    tick: u64,
+}
+
+/// Bytes GPU de un juego de texturas de efectos de UNA capa: 4 texturas
+/// (`src`, `mid_a`, `mid_b`, `out`) × `w×h` píxeles × 4 bytes/píxel
+/// (`Rgba8Unorm`). Todas las texturas de un `LayerFx` comparten el tamaño
+/// de la imagen de trabajo (ver `create_fx_entry`), así que el recuento es
+/// exacto sin consultar cada textura. Es la unidad de contabilidad del
+/// presupuesto GPU del documento activo (`total_bytes`/`bytes_in_scope`).
+pub(super) fn fx_bytes(width: u32, height: u32) -> u64 {
+    4 * u64::from(width) * u64::from(height) * 4
 }
 
 /// Resultado de `BlurEngine::sync_layer`, para que el llamador sepa si tiene
@@ -235,5 +255,14 @@ mod tests {
         // chocaba con la textura de 2000 px del informe de crash.
         let img = crate::image_data_from_rgba(vec![0u8; 2154 * 2170 * 4], 2154, 2170);
         assert_eq!(capped_dims(&img), (2033, 2048));
+    }
+
+    #[test]
+    fn fx_bytes_counts_four_rgba_textures() {
+        // 4 texturas × w×h px × 4 bytes/px: el juego completo de efectos de
+        // una capa (src, mid_a, mid_b, out).
+        assert_eq!(fx_bytes(1, 1), 16);
+        assert_eq!(fx_bytes(100, 50), 80_000);
+        assert_eq!(fx_bytes(2048, 1024), 16 * 2048 * 1024);
     }
 }

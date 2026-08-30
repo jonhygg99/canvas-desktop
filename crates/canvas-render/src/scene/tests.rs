@@ -11,7 +11,7 @@ use canvas_core::{
 use vello::kurbo::Affine;
 use vello::Scene;
 
-use super::{append_document, image_data_from_rgba, ImageMap};
+use super::{append_document, append_document_counting, image_data_from_rgba, ImageMap};
 
 fn image_layer(doc: &mut Document, name: &str) -> LayerId {
     doc.add_layer(
@@ -136,6 +136,71 @@ fn a_missing_texture_does_not_stop_the_layers_above_it_from_painting() {
         painted.encoding().n_paths > baseline.encoding().n_paths,
         "la forma de encima de la capa sin cargar no llegó a pintarse"
     );
+}
+
+#[test]
+fn counting_reports_a_visible_layer_without_pixels() {
+    // El contrato del contador de omitidas: una capa de imagen visible cuya
+    // textura no está disponible (carga pendiente / ausente del mapa) se
+    // omite al pintar y debe contarse, porque un horneado que la omita es un
+    // archivo incompleto.
+    let mut doc = Document::new(800.0, 600.0);
+    image_layer(&mut doc, "sin cargar");
+    let mut scene = Scene::new();
+    let skipped = append_document_counting(
+        &mut scene,
+        &doc,
+        &ImageMap::new(),
+        &ImageMap::new(),
+        Affine::IDENTITY,
+        false,
+    );
+    assert_eq!(skipped, 1);
+}
+
+#[test]
+fn counting_reports_svg_and_zero_sized_layers_but_not_loaded_ones() {
+    let mut doc = Document::new(800.0, 600.0);
+    let loaded = image_layer(&mut doc, "cargada");
+    svg_layer(&mut doc, "svg sin píxel");
+    let empty = image_layer(&mut doc, "mapa 0x0");
+    let mut images = ImageMap::new();
+    images.insert(loaded, image_data_from_rgba(vec![255; 4 * 10 * 10], 10, 10));
+    images.insert(empty, image_data_from_rgba(Vec::new(), 0, 0));
+
+    let mut scene = Scene::new();
+    let skipped = append_document_counting(
+        &mut scene,
+        &doc,
+        &images,
+        &ImageMap::new(),
+        Affine::IDENTITY,
+        false,
+    );
+    assert_eq!(
+        skipped, 2,
+        "el SVG sin píxel y el mapa 0x0 cuentan; la cargada no"
+    );
+}
+
+#[test]
+fn counting_ignores_hidden_layers_and_non_image_content() {
+    // Solo cuentan las capas de imagen/SVG VISIBLES: una capa oculta (o su
+    // subárbol) se salta entera y un diseño vectorial sin píxel es completo.
+    let mut doc = Document::new(800.0, 600.0);
+    let hidden = image_layer(&mut doc, "oculta sin cargar");
+    doc.layer_mut(hidden).expect("recién insertada").visible = false;
+    shape_layer(&mut doc, "forma");
+    let mut scene = Scene::new();
+    let skipped = append_document_counting(
+        &mut scene,
+        &doc,
+        &ImageMap::new(),
+        &ImageMap::new(),
+        Affine::IDENTITY,
+        false,
+    );
+    assert_eq!(skipped, 0);
 }
 
 #[test]

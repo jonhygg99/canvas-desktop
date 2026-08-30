@@ -22,6 +22,15 @@ pub(super) fn show_panels(
 ) {
     let mut strip_action = None;
     let mut canvas_action = None;
+    // Barra de estado, PRIMERA de los paneles inferiores: se queda pegada al
+    // borde inferior de la ventana y la tira de la baraja (si cae en el
+    // borde inferior) queda encima, sin robarle ni un píxel al lienzo.
+    egui::Panel::bottom("editor_status_bar")
+        .exact_size(20.0)
+        .resizable(false)
+        .show(ui, |ui| {
+            status_bar_ui(f, ui);
+        });
     if f.deck.is_visible() && !state.isolate {
         let active_dirty = state.is_dirty();
         match f.deck.strip_side {
@@ -176,4 +185,59 @@ pub(super) fn show_panels(
         });
 
     (strip_action, canvas_action)
+}
+
+/// Barra de estado del editor: RAM libre, presupuesto GPU de efectos y bytes
+/// FX en uso. La RAM libre se pinta por umbrales — naranja por debajo de 2
+/// GiB (presupuesto reducido) y rojo por debajo de 512 MiB (guardado
+/// bloqueado) — para que se vea de un vistazo cuándo el presupuesto se está
+/// reduciendo. Pura lectura: no roba eventos y cuesta una syscall de RAM
+/// (la misma señal que ya usan la caché y los guards de persistencia).
+fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
+    let free = deck::free_ram_bytes();
+    let budget = canvas_render::resolve_fx_budget(deck::total_physical_ram_bytes(), free);
+    let used = f.renderer.fx_total_bytes();
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(egui::RichText::new("RAM libre").weak());
+        match free {
+            Some(bytes) => {
+                let (color, note) = if deck::is_critical_free_ram(free) {
+                    (
+                        ui.visuals().error_fg_color,
+                        " · crítica (guardado bloqueado)",
+                    )
+                } else if bytes < deck::FREE_RAM_REDUCTION_THRESHOLD_BYTES {
+                    (
+                        egui::Color32::from_rgb(230, 170, 50),
+                        " · presupuesto reducido",
+                    )
+                } else {
+                    (ui.visuals().text_color(), "")
+                };
+                ui.colored_label(color, format!("{}{note}", fmt_bytes(bytes)));
+            }
+            None => {
+                ui.label(egui::RichText::new("—").weak());
+            }
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("FX GPU").weak());
+        ui.label(format!("{} / {}", fmt_bytes(used), fmt_bytes(budget)));
+    });
+}
+
+/// Formatea bytes para la barra de estado: GiB con un decimal, MiB entero,
+/// bytes a secas por debajo.
+fn fmt_bytes(bytes: u64) -> String {
+    const GIB: u64 = 1 << 30;
+    const MIB: u64 = 1 << 20;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.0} MiB", bytes as f64 / MIB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }

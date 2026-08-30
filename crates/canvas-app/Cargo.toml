@@ -80,6 +80,9 @@ windows = { workspace = true, features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_DataExchange",
+  # `GetPhysicallyInstalledSystemMemory`: RAM total para el presupuesto
+  # adaptativo de la baraja (deck/system.rs).
+  "Win32_System_SystemInformation",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -93,6 +96,9 @@ objc2-app-kit = { version = "0.3", features = ["NSEvent", "block2"] }
 # de título). Misma versión que ya está en el árbol (objc2-app-kit 0.3).
 objc2-foundation = "0.3"
 block2 = "0.6"
+# RAM total (`sysctlbyname`/`hw.memsize`) para el presupuesto adaptativo de
+# la baraja: libc ya está en el árbol (winit/wgpu/objc2), sin dependencia nueva.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }

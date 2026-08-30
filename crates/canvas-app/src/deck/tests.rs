@@ -9,8 +9,11 @@ use canvas_render::ImageMap;
 use crate::gallery::ItemKind;
 
 use super::cache::{
-    adaptive_evict_budget, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES, MIN_EVICT_BUDGET_BYTES,
+    adaptive_evict_budget, budget_under_free_ram, evict_budget_from_ram, resolve_evict_budget,
+    resolve_evict_budget_with_pressure, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES,
+    MIN_EVICT_BUDGET_BYTES,
 };
+use super::loading::keep_under_critical;
 use super::loading::max_inflight_loads;
 use super::model::SeedItem;
 use super::*;
@@ -302,7 +305,9 @@ fn evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones() {
         d.bytes = EVICT_BUDGET_BYTES;
     }
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: la política de expulsión no debe depender del
+    // presupuesto adaptativo (que escala con la RAM de la máquina de test).
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert_eq!(freed.len(), 2, "solo las dos limpias, la sucia sobrevive");
     assert!(
@@ -311,6 +316,48 @@ fn evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones() {
     );
     assert!(matches!(deck.slots[4].content, SlotContent::Idle));
     assert!(matches!(deck.slots[5].content, SlotContent::Idle));
+}
+
+/// El camino de la Task 3 del plan de memoria: un Save/Export bajo RAM
+/// crítica expulsa con `evict_with_budget(0)` todo lo expulsable con
+/// seguridad. Regresa que, incluso con presupuesto CERO, la ranura activa
+/// (y la sucia, que puede tener pasos de deshacer) sobrevive y el resto de
+/// las lejanas se libera — la vía de escape que evita «la app se bloquea a
+/// sí misma» sin perder el documento que se está guardando.
+#[test]
+fn evict_budget_zero_frees_far_clean_but_keeps_active_and_dirty() {
+    let mut deck = Deck::from_seed(
+        seed(&["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"]),
+        Path::new("a.png"),
+    );
+    // Activo = 0, radio de precarga = 2 ⇒ 0..=2 protegidos; 3..=5 candidatas.
+    deck.slots[3].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+    deck.slots[4].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
+    // Sucio: NUNCA se descarta, por mínima que sea la presión.
+    deck.slots[5].content = SlotContent::Ready(Box::new(dirty_slot_doc(10.0, 10.0)));
+    for i in 3..6 {
+        if let SlotContent::Ready(d) = &mut deck.slots[i].content {
+            d.bytes = EVICT_BUDGET_BYTES;
+        }
+    }
+
+    let freed = deck.evict_with_budget(0);
+
+    assert_eq!(
+        freed.len(),
+        2,
+        "presupuesto 0: se expulsan las dos limpias lejanas"
+    );
+    assert!(
+        matches!(deck.slots[0].content, SlotContent::Active),
+        "la ranura activa (la que se guarda) nunca se expulsa"
+    );
+    assert!(
+        matches!(deck.slots[5].content, SlotContent::Ready(_)),
+        "la sucia sigue cargada bajo presupuesto 0"
+    );
+    assert!(matches!(deck.slots[3].content, SlotContent::Idle));
+    assert!(matches!(deck.slots[4].content, SlotContent::Idle));
 }
 
 #[test]
@@ -334,7 +381,10 @@ fn evict_skips_a_clean_slot_that_still_has_undo_history() {
     doc.bytes = EVICT_BUDGET_BYTES + 1;
     deck.slots[3].content = SlotContent::Ready(Box::new(doc));
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: la política no debe depender del presupuesto
+    // adaptativo (que escala con la RAM y se reduce bajo presión en la
+    // máquina de test).
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert!(
         freed.is_empty(),
@@ -395,6 +445,125 @@ fn seeded_decks_get_unique_load_generations() {
 fn adaptive_budget_can_be_lowered_for_constrained_runs() {
     assert!(MIN_EVICT_BUDGET_BYTES <= adaptive_evict_budget());
     assert!(adaptive_evict_budget() <= MAX_EVICT_BUDGET_BYTES);
+}
+
+/// El presupuesto escala con la RAM física de la máquina: 1/16, clampeado
+/// a [256 MiB, 1 GiB]. Con 8 GB conserva los 512 MB históricos; máquinas
+/// con menos RAM bajan el presupuesto para no competir con el sistema.
+#[test]
+fn evict_budget_scales_with_physical_ram() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    assert_eq!(evict_budget_from_ram(gib), 256 * mi, "1 GiB → mín");
+    assert_eq!(evict_budget_from_ram(4 * gib), 256 * mi, "4 GiB → mín");
+    assert_eq!(
+        evict_budget_from_ram(8 * gib),
+        512 * mi,
+        "8 GiB → histórico"
+    );
+    assert_eq!(
+        evict_budget_from_ram(12 * gib),
+        768 * mi,
+        "12 GiB → 3/4 del techo"
+    );
+    assert_eq!(evict_budget_from_ram(16 * gib), 1024 * mi, "16 GiB → techo");
+    assert_eq!(
+        evict_budget_from_ram(64 * gib),
+        1024 * mi,
+        "64 GiB → clamp máx"
+    );
+}
+
+/// Bajo presión de memoria (RAM libre < 2 GiB), el presupuesto se reduce
+/// linealmente hasta el mínimo; por encima del umbral no se toca, y con 0
+/// bytes libres queda el mínimo, nunca 0.
+#[test]
+fn budget_reduces_when_free_ram_is_low() {
+    let mi: u64 = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    let base = (1024 * mi) as usize; // el techo (16 GiB de RAM total)
+    assert_eq!(
+        budget_under_free_ram(base, 4 * gib),
+        base,
+        "4 GiB libres → sin tocar"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 2 * gib),
+        base,
+        "umbral exacto → sin tocar"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, gib),
+        (512 * mi) as usize,
+        "1 GiB libre → mitad"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 512 * mi),
+        (256 * mi) as usize,
+        "512 MiB libre → mín"
+    );
+    assert_eq!(
+        budget_under_free_ram(base, 0),
+        (256 * mi) as usize,
+        "0 libres → mín (nunca 0)"
+    );
+    // Un presupuesto base pequeño nunca sube por la reducción.
+    assert_eq!(
+        budget_under_free_ram((256 * mi) as usize, 0),
+        (256 * mi) as usize
+    );
+}
+
+/// La presión de memoria se aplica al presupuesto automático pero NO a la
+/// env var (override manual explícito), y sin medición de RAM libre el
+/// presupuesto base queda tal cual.
+#[test]
+fn pressure_reduces_auto_budget_but_not_the_env_override() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    // 16 GiB de RAM total → 1 GiB de presupuesto; con solo 1 GiB libre
+    // cae a la mitad.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(None, Some(16 * gib), Some(gib)),
+        512 * mi
+    );
+    // Sin medición de RAM libre: base intacta.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(None, Some(16 * gib), None),
+        1024 * mi
+    );
+    // La env var NO se reduce bajo presión: es el override manual.
+    assert_eq!(
+        resolve_evict_budget_with_pressure(Some(300 * mi), Some(16 * gib), Some(0)),
+        300 * mi
+    );
+}
+
+/// La decisión final: la env var gana sobre la RAM medida, y la RAM medida
+/// gana sobre el histórico — siempre dentro del intervalo. Probada sin
+/// tocar variables de entorno ni hardware real.
+#[test]
+fn budget_prefers_config_then_ram_then_historical() {
+    let mi: usize = 1024 * 1024;
+    let gib: u64 = 1024 * 1024 * 1024;
+    // Env var gana aunque la RAM medida sugiera otra cosa.
+    assert_eq!(
+        resolve_evict_budget(Some(300 * mi), Some(64 * gib)),
+        300 * mi
+    );
+    // Env var fuera de rango se clampea.
+    assert_eq!(
+        resolve_evict_budget(Some(10 * mi), None),
+        MIN_EVICT_BUDGET_BYTES
+    );
+    assert_eq!(
+        resolve_evict_budget(Some(10_000 * mi), None),
+        MAX_EVICT_BUDGET_BYTES
+    );
+    // Sin env var, la RAM medida escala el presupuesto.
+    assert_eq!(resolve_evict_budget(None, Some(8 * gib)), 512 * mi);
+    // Sin env var ni RAM medible, cae al histórico.
+    assert_eq!(resolve_evict_budget(None, None), EVICT_BUDGET_BYTES);
 }
 
 #[test]
@@ -604,7 +773,10 @@ fn evict_never_discards_a_placeholder() {
     doc.bytes = EVICT_BUDGET_BYTES + 1;
     deck.slots[5].content = SlotContent::Ready(Box::new(doc));
 
-    let freed = deck.evict();
+    // Presupuesto EXPLÍCITO: mismo motivo que en
+    // `evict_skips_dirty_and_nearby_slots_but_takes_clean_far_ones` — la
+    // política no debe depender de la RAM de la máquina de test.
+    let freed = deck.evict_with_budget(EVICT_BUDGET_BYTES);
 
     assert_eq!(
         freed.len(),
@@ -912,4 +1084,27 @@ fn deck_rect_intersects_only_overlapping_rects() {
         "solo tocar el borde no es intersectar"
     );
     assert!(!a.intersects(disjoint));
+}
+
+/// Tabla de la pausa de precarga (Task 4 del plan de memoria): bajo RAM
+/// crítica, `keep_under_critical` deja solo el destino de un salto pendiente
+/// y descarta toda la precarga de fondo (visible o vecina).
+#[test]
+fn keep_under_critical_keeps_only_a_pending_jump() {
+    let cases: Vec<(Vec<usize>, Option<usize>, Vec<usize>)> = vec![
+        // (candidatos, jump, lo que sobrevive)
+        (vec![0, 1, 2], None, vec![]),     // sin salto → todo se pausa
+        (vec![0, 1, 2], Some(1), vec![1]), // salto pendiente → solo él
+        (vec![3, 1, 2], Some(2), vec![2]), // destino lejano del radio
+        (vec![2], Some(2), vec![2]),       // solo el destino
+        (vec![4], Some(2), vec![]),        // el salto no estaba en la lista
+        (vec![], Some(2), vec![]),         // nada que cargar
+    ];
+    for (candidates, jump, expected) in &cases {
+        assert_eq!(
+            keep_under_critical(candidates.clone(), *jump),
+            *expected,
+            "candidates={candidates:?} jump={jump:?}",
+        );
+    }
 }

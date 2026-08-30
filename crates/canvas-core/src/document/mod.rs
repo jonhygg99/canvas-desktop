@@ -44,7 +44,23 @@ impl Document {
 
     /// Reserva un id de capa único (para construir capas que luego se
     /// insertan mediante comandos deshacibles).
+    ///
+    /// El contador monótono garantiza unicidad mientras todos los ids hayan
+    /// salido de él, pero un documento restaurado de un sidecar ajeno (o
+    /// hostil) puede traer ids de capa dentro del rango que el contador ya
+    /// considera repartido — o un `next_layer_id` que los ignore — sin pasar
+    /// por aquí. Si el contador devuelve el id de una capa existente, la capa
+    /// nueva la pisaría (selección, pintado y guardado del lado ajeno). Se
+    /// saltan los ids ya presentes en el documento.
     pub fn allocate_layer_id(&mut self) -> LayerId {
+        let used: std::collections::HashSet<u64> = self
+            .pages
+            .iter()
+            .flat_map(|p| p.layers.iter().map(|l| l.id.raw()))
+            .collect();
+        while used.contains(&self.next_layer_id) {
+            self.next_layer_id += 1;
+        }
         let id = LayerId::new(self.next_layer_id);
         self.next_layer_id += 1;
         id

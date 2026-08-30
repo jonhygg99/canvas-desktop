@@ -176,6 +176,11 @@ pub(super) struct SaveFlow {
     pub(super) save_all_queue: Vec<u64>,
     /// Ya se pulsó «Guardar» para la ranura al frente de `save_all_queue`.
     pub(super) save_all_attempted: bool,
+    /// Aviso de poca RAM libre antes de un «Save all» masivo: cuántos
+    /// documentos se escribirían. `Some` mientras el modal está abierto;
+    /// «Save all anyway» lo limpia y arranca la cola, «Cancel» lo limpia y
+    /// descarta el lote.
+    pub(super) low_memory_prompt: Option<usize>,
 }
 
 /// El diálogo de exportación y lo que queda pendiente de él. Uno por

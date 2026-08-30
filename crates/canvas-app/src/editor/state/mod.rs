@@ -30,6 +30,10 @@ mod sidecar;
 #[path = "shortcuts_tests.rs"]
 mod shortcuts_tests;
 
+#[cfg(test)]
+#[path = "sidecar_tests.rs"]
+mod sidecar_tests;
+
 pub(crate) use history::{DeleteRecord, GlobalStep};
 
 pub struct EditorState {

@@ -18,6 +18,23 @@ pub(super) fn append_document(
     view: Affine,
     decorated: bool,
 ) {
+    // El camino de pantalla conserva la omisión silenciosa (la carga
+    // asíncrona de texturas es legítima); el contador es para el horneado,
+    // que la rechaza como bake incompleto.
+    append_document_counting(scene, doc, images, blurred, view, decorated, &mut 0);
+}
+
+/// Variante con contador de capas de imagen/SVG visibles sin píxel que
+/// pintar (`drawable_image` → `None`: carga pendiente, mapa ausente o 0×0).
+pub(super) fn append_document_counting(
+    scene: &mut Scene,
+    doc: &Document,
+    images: &ImageMap,
+    blurred: &ImageMap,
+    view: Affine,
+    decorated: bool,
+    skipped: &mut usize,
+) {
     draw_atlas_anchor(scene);
     let Ok(page) = doc.page() else { return };
     let page_rect = Rect::new(0.0, 0.0, page.width, page.height);
@@ -80,7 +97,7 @@ pub(super) fn append_document(
             continue;
         }
         draw_shadow(scene, layer, view);
-        draw_content(scene, layer, images, blurred, view);
+        draw_content(scene, layer, images, blurred, view, skipped);
         if fade {
             scene.pop_layer();
         }
@@ -138,12 +155,13 @@ fn draw_content(
     images: &ImageMap,
     blurred: &ImageMap,
     view: Affine,
+    skipped: &mut usize,
 ) {
     match &layer.content {
         LayerContent::Image(content) => {
-            draw_image(scene, layer, content.crop, images, blurred, view)
+            draw_image(scene, layer, content.crop, images, blurred, view, skipped)
         }
-        LayerContent::Svg(_) => draw_svg(scene, layer, images, blurred, view),
+        LayerContent::Svg(_) => draw_svg(scene, layer, images, blurred, view, skipped),
         LayerContent::Text(text) => {
             let t = layer.transform;
             draw_text(scene, view * place_transform(&t), text, t.width);
@@ -160,8 +178,10 @@ fn draw_image(
     images: &ImageMap,
     blurred: &ImageMap,
     view: Affine,
+    skipped: &mut usize,
 ) {
     let Some(image) = drawable_image(blurred, images, layer.id) else {
+        *skipped += 1;
         return;
     };
     let t = layer.transform;
@@ -196,8 +216,10 @@ fn draw_svg(
     images: &ImageMap,
     blurred: &ImageMap,
     view: Affine,
+    skipped: &mut usize,
 ) {
     let Some(image) = drawable_image(blurred, images, layer.id) else {
+        *skipped += 1;
         return;
     };
     let t = layer.transform;

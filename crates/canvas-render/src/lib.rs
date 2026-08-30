@@ -4,7 +4,7 @@
 mod blur;
 mod scene;
 
-pub use blur::{ColorParams, FxScope, SyncLayerRequest};
+pub use blur::{resolve_fx_budget, ColorParams, FxScope, SyncLayerRequest};
 pub use scene::{
     append_document, build_scene, draw_atlas_anchor, image_data_from_rgba, text_lines, ImageMap,
 };
@@ -147,6 +147,44 @@ impl CanvasRenderer {
         }
     }
 
+    /// Bytes GPU totales de las texturas de efectos (todos los scopes). Es
+    /// la señal del presupuesto del documento activo — el monto que la
+    /// evicción LRU (Task 6 del plan de memoria) intenta acotar.
+    pub fn fx_total_bytes(&self) -> u64 {
+        self.blur.total_bytes()
+    }
+
+    /// Bytes GPU de las texturas de efectos de un scope (un documento).
+    pub fn fx_bytes_in_scope(&self, scope: FxScope) -> u64 {
+        self.blur.bytes_in_scope(scope)
+    }
+
+    /// Tick del último uso de un scope — el orden LRU para la evicción del
+    /// presupuesto GPU (ver `BlurEngine::last_used`). `None` si el scope no
+    /// tiene texturas de efectos.
+    pub fn fx_scope_last_used(&self, scope: FxScope) -> Option<u64> {
+        self.blur.last_used(scope)
+    }
+
+    /// Presupuesto GPU del documento activo (Task 6 del plan de memoria):
+    /// expulsa scopes de efectos por LRU (ver `BlurEngine::evict_to_budget`),
+    /// salvo `active`, hasta que `fx_total_bytes() <= budget`, y des-registra
+    /// de vello las texturas retiradas — sin esto el atlas las mantendría
+    /// vivas aunque la caché las soltara. Devuelve los scopes expulsados
+    /// (diagnóstico). Inofensivo por frame: vuelve sin tocar nada cuando ya
+    /// se está bajo presupuesto.
+    pub fn evict_fx_to_budget(&mut self, budget: u64, active: FxScope) -> Vec<FxScope> {
+        let mut evicted = Vec::new();
+        for (scope, images) in self.blur.evict_to_budget(budget, active) {
+            evicted.push(scope);
+            self.atlas.removals += images.len() as u64;
+            for image in images {
+                self.renderer.override_image(&image, None);
+            }
+        }
+        evicted
+    }
+
     /// Contadores acumulados de actividad del atlas desde la creación o el
     /// último `reset_atlas_stats`.
     pub fn atlas_stats(&self) -> AtlasStats {
@@ -243,6 +281,27 @@ impl CanvasRenderer {
         images: &ImageMap,
         scale: f64,
     ) -> Result<(Vec<u8>, u32, u32), RenderError> {
+        // El guard de guardado/exportación usa la variante con contador;
+        // este envoltorio conserva la firma histórica (ejemplos y tests).
+        self.bake_page_counting(device, queue, scope, doc, images, scale)
+            .map(|(rgba, width, height, _)| (rgba, width, height))
+    }
+
+    /// Variante de `bake_page` que además informa de cuántas capas de
+    /// imagen/SVG visibles se omitieron al construir la escena (píxel
+    /// ausente del `ImageMap` o mapa 0×0). El guard de guardado la usa para
+    /// rechazar bakes incompletos antes de sobrescribir el archivo: un
+    /// horneado que se saltó capas es un archivo corrupto aunque no sea
+    /// uniforme.
+    pub fn bake_page_counting(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scope: FxScope,
+        doc: &canvas_core::Document,
+        images: &ImageMap,
+        scale: f64,
+    ) -> Result<(Vec<u8>, u32, u32, usize), RenderError> {
         let page = doc.page().map_err(|e| RenderError::Bake(e.to_string()))?;
         let width = (page.width * scale).round().max(1.0) as u32;
         let height = (page.height * scale).round().max(1.0) as u32;
@@ -255,7 +314,9 @@ impl CanvasRenderer {
         }
 
         let blurred = self.blur_overrides(scope);
-        let scene = build_scene(
+        let mut scene = Scene::new();
+        let skipped = scene::append_document_counting(
+            &mut scene,
             doc,
             images,
             &blurred,
@@ -291,7 +352,7 @@ impl CanvasRenderer {
         )?;
 
         let rgba = read_texture_rgba(device, queue, &target, width, height)?;
-        Ok((rgba, width, height))
+        Ok((rgba, width, height, skipped))
     }
 }
 

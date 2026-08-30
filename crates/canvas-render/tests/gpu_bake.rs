@@ -353,6 +353,94 @@ fn save_roundtrip_preserves_edit() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+// ─── open_document → sidecar restaurado → bake: el caso 14.png ─────────
+
+/// El contrato del informe "se exporta en blanco": un documento restaurado
+/// desde sidecar (capa con blur, como el fondo de `14.png`) debe hornear con
+/// contenido opaco — nunca un PNG blanco. Cubre la composición que ningún
+/// otro test toca: `open_document` → `read_sidecar` → `ImageMap` →
+/// `bake_page` con scope de ranura NO-default (el de `start_export`/`start_save`).
+#[test]
+#[ignore = "requiere GPU"]
+fn restored_sidecar_document_bakes_with_content() {
+    let (device, queue) = gpu_device();
+    let dir = std::env::temp_dir().join(format!("canvas_gpu_sidecar_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("foto.png");
+
+    // PNG base blanco (como 14.png) + sidecar con UNA capa desenfocada que
+    // cubre la página: suficiente para ejercitar blur + restauración.
+    image::RgbaImage::from_pixel(64, 48, image::Rgba([255, 255, 255, 255]))
+        .save(&path)
+        .unwrap();
+    let mut doc = Document::new(64.0, 48.0);
+    let bg = doc
+        .add_layer(
+            "Blurred background",
+            Transform::new(0.0, -8.0, 64.0, 60.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 64,
+                natural_height: 60,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(bg).unwrap().effects.blur_radius = 50.0;
+    let (bg_rgba, ..) = gradient_image(64, 60);
+    let payload = canvas_io::CanvasPayload {
+        document: doc,
+        images: vec![(bg.raw(), bg_rgba, 64, 60)],
+        background_layer: Some(bg.raw()),
+        preview: None,
+    };
+    canvas_io::write_sidecar(&path, &std::fs::read(&path).unwrap(), &payload).unwrap();
+
+    // Abre con sidecar (debe restaurar las capas) y hornea con un scope de
+    // ranura NO-default, como la app.
+    let canvas_io::OpenOutcome::Restored(restored) = canvas_io::open_document(&path, true).unwrap()
+    else {
+        panic!("se esperaba Restored para una imagen con sidecar válido");
+    };
+    let mut images = ImageMap::new();
+    for (raw, img) in restored.images {
+        images.insert(
+            canvas_core::LayerId::from_raw(raw),
+            image_data_from_rgba(img.rgba, img.width, img.height),
+        );
+    }
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let scope = FxScope(7);
+    renderer.forget_scope(scope);
+    let (rgba, bw, bh) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope,
+        &restored.document,
+        &images,
+        1.0,
+    );
+    assert_eq!((bw, bh), (64, 48));
+
+    // Ni mayoritariamente blanco ni transparente: un visor nunca lo muestra
+    // en blanco.
+    let mut non_white = 0usize;
+    let mut opaque = 0usize;
+    for px in rgba.chunks_exact(4) {
+        non_white += usize::from(px[..3] != [255, 255, 255]);
+        opaque += usize::from(px[3] == 255);
+    }
+    let n = rgba.len() / 4;
+    assert!(
+        non_white * 100 / n > 50,
+        "el horneado salió mayoritariamente blanco ({non_white}/{n} píxeles no blancos)"
+    );
+    assert_eq!(opaque, n, "el horneado debe ser opaco por completo");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ─── sync_layer + re-bake: caché de efectos GPU ────────────────────────
 
 /// `sync_layer` debe detectar cuando los píxeles de origen cambiaron (vía
@@ -837,5 +925,224 @@ fn bake_survives_source_resize_under_same_layer_id() {
         px(&first, PW / 2, PH / 2),
         px(&second, PW / 2, PH / 2),
         "el segundo horneado es idéntico al primero: los píxeles nuevos no llegaron a la GPU"
+    );
+}
+
+// ─── contador de capas omitidas del horneado ─────────────────────────────
+
+/// El guard «anti-incompleto» se apoya en que el bake informa de cuántas
+/// capas de imagen/SVG visibles se omitieron al construir la escena. Con
+/// todas las imágenes presentes el contador es 0; con una capa ausente del
+/// `ImageMap` (píxel que nunca llegó a cargarse) es ≥ 1, sin importar cómo
+/// pinte el resultado. La escena no expone esto (la omisión es silenciosa),
+/// así que se verifica en el camino de horneado completo, con GPU.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_reports_skipped_layers_for_missing_source_images() {
+    let (device, queue) = gpu_device();
+    let mut doc = Document::new(100.0, 100.0);
+    let present = doc
+        .add_layer(
+            "con imagen",
+            Transform::new(0.0, 0.0, 50.0, 50.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 4,
+                natural_height: 4,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    let missing = doc
+        .add_layer(
+            "sin imagen",
+            Transform::new(50.0, 50.0, 50.0, 50.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 4,
+                natural_height: 4,
+                crop: None,
+            }),
+        )
+        .unwrap();
+
+    // Solo la primera capa tiene píxeles en el mapa: la segunda se omite al
+    // construir la escena y el bake debe informarla.
+    let (rgba, w, h) = solid_image(4, 4, [200, 30, 30, 255]);
+    let mut images = ImageMap::new();
+    images.insert(present, image_data_from_rgba(rgba, w, h));
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (_, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, FxScope::default(), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (100, 100));
+    assert_eq!(skipped, 1, "la capa sin píxel debe contarse como omitida");
+
+    // Contraprueba: con todas las imágenes presentes, el contador vuelve a 0.
+    let (rgba2, w2, h2) = solid_image(4, 4, [30, 60, 220, 255]);
+    images.insert(missing, image_data_from_rgba(rgba2, w2, h2));
+    let (_, _, _, skipped2) = renderer
+        .bake_page_counting(&device, &queue, FxScope::default(), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!(
+        skipped2, 0,
+        "con todas las imágenes presentes no hay omitidas"
+    );
+}
+
+// ─── contabilidad de bytes GPU por scope (Task 5) ──────────────────────
+
+/// La contabilidad de bytes GPU (Task 5 del plan de memoria) debe reflejar la
+/// caché de efectos en vivo: `fx_total_bytes`/`fx_bytes_in_scope` suman los
+/// juegos de 4 texturas de cada capa con efectos, `forget_scope` libera su
+/// monto, y `fx_scope_last_used` ordena los scopes por recencia (LRU). Es
+/// exactamente lo que leerá el presupuesto GPU de la Task 6 para evictar.
+#[test]
+#[ignore = "requiere GPU"]
+fn blur_engine_accounts_gpu_bytes_and_last_used() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+
+    // Dos scopes con tamaños de trabajo distintos: A=64×48, B=32×24.
+    let (doc_a, images_a) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_b, images_b) = doc_with_blur_image(32, 24, 10.0);
+    let scope_a = FxScope(1);
+    let scope_b = FxScope(2);
+
+    // Sin nada horneado no hay bytes ni recencia.
+    assert_eq!(renderer.fx_total_bytes(), 0);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), 0);
+    assert_eq!(renderer.fx_scope_last_used(scope_a), None);
+
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    // Un juego de efectos = 4 texturas × w×h px × 4 bytes.
+    let bytes_a = 16 * 64 * 48;
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), bytes_a);
+    assert_eq!(renderer.fx_total_bytes(), bytes_a);
+
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_b,
+        &doc_b,
+        &images_b,
+        1.0,
+    );
+    let bytes_b = 16 * 32 * 24;
+    assert_eq!(renderer.fx_bytes_in_scope(scope_b), bytes_b);
+    assert_eq!(renderer.fx_total_bytes(), bytes_a + bytes_b);
+
+    // Orden LRU: B se usó después de A.
+    let used_a = renderer.fx_scope_last_used(scope_a).unwrap();
+    let used_b = renderer.fx_scope_last_used(scope_b).unwrap();
+    assert!(
+        used_a < used_b,
+        "B debería ser más reciente que A ({used_a} vs {used_b})"
+    );
+
+    // Volver a hornear A la marca como la más reciente.
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    assert!(
+        renderer.fx_scope_last_used(scope_a).unwrap()
+            > renderer.fx_scope_last_used(scope_b).unwrap(),
+        "re-hornear A debería hacerla más reciente que B"
+    );
+
+    // Olvidar A libera su monto; B queda intacto.
+    renderer.forget_scope(scope_a);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), 0);
+    assert_eq!(renderer.fx_scope_last_used(scope_a), None);
+    assert_eq!(renderer.fx_total_bytes(), bytes_b);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_b), bytes_b);
+}
+
+// ─── evicción LRU por presupuesto GPU (Task 6) ─────────────────────────
+
+/// La evicción del presupuesto GPU (Task 6 del plan de memoria): con más
+/// scopes horneados de los que caben en el presupuesto, `evict_fx_to_budget`
+/// expulsa los menos usados (LRU) salvo el scope en render activo, y un
+/// scope expulsado se re-sincroniza al volver a hornearse (vuelve a pintar
+/// con 0 capas omitidas). Sin esta acotación, la caché de efectos crecería
+/// sin límite y el atlas de vello podría descartar texturas en silencio —
+/// la clase «bake parcial» que este presupuesto cierra en origen.
+#[test]
+#[ignore = "requiere GPU"]
+fn fx_budget_evicts_lru_scopes_keeping_active_and_rebake_restores() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+
+    // 4 scopes idénticos con blur; cada uno ocupa 16·64·48 = 49152 bytes.
+    let (doc_a, images_a) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_b, images_b) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_c, images_c) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_d, images_d) = doc_with_blur_image(64, 48, 20.0);
+    let (sa, sb, sc, sd) = (FxScope(11), FxScope(12), FxScope(13), FxScope(14));
+    let active = sd; // D es el que se está renderizando
+
+    for (scope, doc, images) in [
+        (sa, &doc_a, &images_a),
+        (sb, &doc_b, &images_b),
+        (sc, &doc_c, &images_c),
+        (sd, &doc_d, &images_d),
+    ] {
+        bake(&mut renderer, &device, &queue, scope, doc, images, 1.0);
+    }
+    let per_scope = 16 * 64 * 48;
+    assert_eq!(renderer.fx_total_bytes(), 4 * per_scope);
+
+    // Presupuesto para 2 scopes: expulsa los 2 más antiguos NO activos
+    // (A y B se hornearon primero; C es reciente; D es el activo).
+    let evicted = renderer.evict_fx_to_budget(2 * per_scope, active);
+    assert!(
+        evicted.contains(&sa) && evicted.contains(&sb),
+        "debería expulsar A y B (los más viejos), expulsó {evicted:?}"
+    );
+    assert!(
+        !evicted.contains(&sc),
+        "C es reciente y debe conservarse: {evicted:?}"
+    );
+    assert!(
+        !evicted.contains(&active),
+        "el scope activo nunca se expulsa: {evicted:?}"
+    );
+    assert_eq!(renderer.fx_total_bytes(), 2 * per_scope);
+    assert_eq!(renderer.fx_bytes_in_scope(sa), 0);
+    assert_eq!(renderer.fx_bytes_in_scope(active), per_scope);
+
+    // Re-hornear el scope expulsado lo restaura por completo: 0 omitidas y
+    // su footprint vuelve a la caché (la capa «reaparece»).
+    let (rgba, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, sa, &doc_a, &images_a, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (64, 48));
+    assert_eq!(skipped, 0, "el scope re-sincronizado no debe omitir capas");
+    let n = rgba.len() / 4;
+    let opaque = rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+    assert!(
+        opaque * 100 / n.max(1) > 50,
+        "el scope re-horneado debe volver a pintar contenido opaco ({opaque}/{n})"
+    );
+    assert_eq!(
+        renderer.fx_bytes_in_scope(sa),
+        per_scope,
+        "el scope re-horneado debe volver a la caché de efectos"
     );
 }

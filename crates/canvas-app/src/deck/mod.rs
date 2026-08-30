@@ -16,6 +16,7 @@ mod loading;
 mod model;
 mod nav;
 mod scan;
+mod system;
 
 #[cfg(test)]
 mod tests;
@@ -26,6 +27,14 @@ pub use nav::apply_jump;
 
 use loading::{next_generation, next_scope};
 use model::idle_slot;
+
+/// RAM libre del sistema y umbral de «poca memoria», para que `App` avise
+/// antes de un guardado masivo (`Save all`) — la caché ya los usa
+/// internamente (ver `budget_under_free_ram`).
+pub(crate) use system::{
+    free_ram_bytes, is_critical_free_ram, total_physical_ram_bytes,
+    FREE_RAM_REDUCTION_THRESHOLD_BYTES,
+};
 
 /// La baraja del editor: todos los archivos de `folder`, con el activo
 /// marcado por índice. `folder` es `None` para un archivo abierto suelto

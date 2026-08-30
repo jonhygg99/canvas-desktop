@@ -110,7 +110,14 @@ pub(super) fn handle_save(
                             ignore_fs_events_until: f.ignore_fs_events_until,
                             scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
                         };
-                        start_save(state, &mut sctx, path, false, f.settings.jpeg_quality);
+                        start_save(
+                            state,
+                            &mut sctx,
+                            f.deck,
+                            path,
+                            false,
+                            f.settings.jpeg_quality,
+                        );
                     }
                 }
                 // Sin origen en disco: cae a «Guardar como…».
@@ -143,7 +150,14 @@ pub(super) fn handle_save(
                 ignore_fs_events_until: f.ignore_fs_events_until,
                 scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
             };
-            start_save(state, &mut sctx, path, true, f.settings.jpeg_quality);
+            start_save(
+                state,
+                &mut sctx,
+                f.deck,
+                path,
+                true,
+                f.settings.jpeg_quality,
+            );
         }
     }
 }
