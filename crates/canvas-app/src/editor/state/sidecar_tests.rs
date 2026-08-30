@@ -178,6 +178,68 @@ fn open_blur_paste_save_keeps_source_photo_alive() {
     );
 }
 
+/// La vía destructiva que SÍ reproduce la pérdida del `1.png`: con el fondo
+/// desenfocado activo, borrar la capa fuente (seleccionar la foto + Delete,
+/// `delete_selected`) la retira de `doc.layers` pero deja su blob en `images`
+/// para deshacer dentro de la MISMA sesión. Guardar en ese estado no debe
+/// persistir el huérfano: el sidecar solo embebe las capas vivas (el blur,
+/// no la foto borrada). Confirma las dos mitades del misterio: el borrado es
+/// donde se pierde la capa, y el guardado ya no congela el blob huérfano.
+#[test]
+fn delete_source_photo_between_blur_and_save_does_not_persist_orphan() {
+    let mut state = state_with_photo();
+    state.set_blurred_background(true);
+    let photo_raw = state.selection.primary().unwrap().raw(); // la foto queda seleccionada
+    let blur_raw = state.doc.page().unwrap().layers[0].id.raw(); // el blur al fondo
+
+    // Acción destructiva: seleccionar la foto + Delete.
+    crate::editor::delete_selected(&mut state);
+
+    let layer_ids: Vec<u64> = state
+        .doc
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| l.id.raw())
+        .collect();
+    assert!(
+        !layer_ids.contains(&photo_raw),
+        "la foto debe quedar fuera de doc.layers tras el borrado (es la pérdida del 1.png)"
+    );
+    assert!(
+        layer_ids.contains(&blur_raw),
+        "el blur de fondo debe seguir vivo tras borrar la foto"
+    );
+
+    let payload = state.sidecar_payload();
+    let live: HashSet<u64> = payload
+        .document
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| l.id.raw())
+        .collect();
+    let image_ids: Vec<u64> = payload.images.iter().map(|(id, ..)| *id).collect();
+
+    // Guardado limpio: el blob de la foto borrada NO se persiste (sería un
+    // huérfano), y ningún blob del sidecar queda sin su capa viva.
+    assert!(
+        !image_ids.contains(&photo_raw),
+        "el sidecar no debe persistir el blob de la capa borrada (id {photo_raw})"
+    );
+    for id in &image_ids {
+        assert!(live.contains(id), "blob huérfano persistido (id {id})");
+    }
+    assert_eq!(
+        image_ids.len(),
+        live.len(),
+        "el sidecar debe contener exactamente las capas vivas"
+    );
+    assert!(image_ids.contains(&blur_raw), "el blur debe embeberse");
+}
+
 /// El sidecar NO debe embeder imágenes de capas que ya no existen en el
 /// documento. Apagar el `Blurred background` retira la capa pero conserva
 /// sus píxeles en `images` por si se deshace DENTRO de la misma sesión;
