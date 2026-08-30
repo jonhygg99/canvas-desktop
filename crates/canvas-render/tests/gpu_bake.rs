@@ -990,3 +990,86 @@ fn bake_reports_skipped_layers_for_missing_source_images() {
         "con todas las imágenes presentes no hay omitidas"
     );
 }
+
+// ─── contabilidad de bytes GPU por scope (Task 5) ──────────────────────
+
+/// La contabilidad de bytes GPU (Task 5 del plan de memoria) debe reflejar la
+/// caché de efectos en vivo: `fx_total_bytes`/`fx_bytes_in_scope` suman los
+/// juegos de 4 texturas de cada capa con efectos, `forget_scope` libera su
+/// monto, y `fx_scope_last_used` ordena los scopes por recencia (LRU). Es
+/// exactamente lo que leerá el presupuesto GPU de la Task 6 para evictar.
+#[test]
+#[ignore = "requiere GPU"]
+fn blur_engine_accounts_gpu_bytes_and_last_used() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+
+    // Dos scopes con tamaños de trabajo distintos: A=64×48, B=32×24.
+    let (doc_a, images_a) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_b, images_b) = doc_with_blur_image(32, 24, 10.0);
+    let scope_a = FxScope(1);
+    let scope_b = FxScope(2);
+
+    // Sin nada horneado no hay bytes ni recencia.
+    assert_eq!(renderer.fx_total_bytes(), 0);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), 0);
+    assert_eq!(renderer.fx_scope_last_used(scope_a), None);
+
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    // Un juego de efectos = 4 texturas × w×h px × 4 bytes.
+    let bytes_a = 16 * 64 * 48;
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), bytes_a);
+    assert_eq!(renderer.fx_total_bytes(), bytes_a);
+
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_b,
+        &doc_b,
+        &images_b,
+        1.0,
+    );
+    let bytes_b = 16 * 32 * 24;
+    assert_eq!(renderer.fx_bytes_in_scope(scope_b), bytes_b);
+    assert_eq!(renderer.fx_total_bytes(), bytes_a + bytes_b);
+
+    // Orden LRU: B se usó después de A.
+    let used_a = renderer.fx_scope_last_used(scope_a).unwrap();
+    let used_b = renderer.fx_scope_last_used(scope_b).unwrap();
+    assert!(
+        used_a < used_b,
+        "B debería ser más reciente que A ({used_a} vs {used_b})"
+    );
+
+    // Volver a hornear A la marca como la más reciente.
+    bake(
+        &mut renderer,
+        &device,
+        &queue,
+        scope_a,
+        &doc_a,
+        &images_a,
+        1.0,
+    );
+    assert!(
+        renderer.fx_scope_last_used(scope_a).unwrap()
+            > renderer.fx_scope_last_used(scope_b).unwrap(),
+        "re-hornear A debería hacerla más reciente que B"
+    );
+
+    // Olvidar A libera su monto; B queda intacto.
+    renderer.forget_scope(scope_a);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_a), 0);
+    assert_eq!(renderer.fx_scope_last_used(scope_a), None);
+    assert_eq!(renderer.fx_total_bytes(), bytes_b);
+    assert_eq!(renderer.fx_bytes_in_scope(scope_b), bytes_b);
+}

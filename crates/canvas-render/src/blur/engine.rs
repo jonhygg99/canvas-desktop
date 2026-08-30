@@ -8,7 +8,7 @@ use canvas_core::LayerId;
 use vello::peniko::ImageData;
 use vello::wgpu;
 
-use super::{BlurEngine, FxScope};
+use super::{fx_bytes, BlurEngine, FxScope};
 
 impl BlurEngine {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -96,7 +96,42 @@ impl BlurEngine {
             sampler,
             cache: HashMap::new(),
             display: HashMap::new(),
+            tick: 0,
         }
+    }
+
+    /// Bytes GPU totales en la caché de efectos: todas las texturas de todos
+    /// los scopes (cada capa con efectos = 4 texturas, ver `fx_bytes`). Es la
+    /// señal del presupuesto del documento activo — el monto que la evicción
+    /// LRU (Task 6 del plan de memoria) intenta acotar. O(n) sobre la caché,
+    /// pensado para la comprobación de presupuesto, no para el hot path.
+    pub fn total_bytes(&self) -> u64 {
+        self.cache
+            .values()
+            .map(|entry| fx_bytes(entry.src.width(), entry.src.height()))
+            .sum()
+    }
+
+    /// Bytes GPU de un scope concreto (un documento). Las copias `display`
+    /// (CPU) no entran: el presupuesto acota memoria GPU.
+    pub fn bytes_in_scope(&self, scope: FxScope) -> u64 {
+        self.cache
+            .iter()
+            .filter(|((s, _), _)| *s == scope)
+            .map(|((_, _), entry)| fx_bytes(entry.src.width(), entry.src.height()))
+            .sum()
+    }
+
+    /// Tick del último uso de `scope` — el máximo de `last_used` de sus
+    /// capas con efectos, o `None` si el scope no tiene ninguna. Es el orden
+    /// de evicción LRU del presupuesto GPU: el scope más antiguo es el
+    /// candidato a liberar primero (salvo el que se está renderizando).
+    pub fn last_used(&self, scope: FxScope) -> Option<u64> {
+        self.cache
+            .iter()
+            .filter(|((s, _), _)| *s == scope)
+            .map(|((_, _), entry)| entry.last_used)
+            .max()
     }
 
     /// Imágenes sustitutas por capa de `scope`, para la escena: las texturas

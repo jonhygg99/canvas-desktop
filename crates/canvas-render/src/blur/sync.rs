@@ -85,6 +85,11 @@ impl BlurEngine {
             .cache
             .entry(key)
             .or_insert_with(|| create_fx_entry(device, queue, request, register));
+        // Uso de la entrada: anota el tick para el orden LRU del presupuesto
+        // GPU (ver `BlurEngine::last_used`). Cada `sync_layer` es un uso — lo
+        // llama la ruta de render por cada capa visible de cada frame.
+        entry.last_used = self.tick;
+        self.tick = self.tick.wrapping_add(1);
         let source_changed = entry.src_blob_id != request.source.data.id();
         if source_changed {
             let working = capped_or_original(request.source);
@@ -238,6 +243,10 @@ fn create_fx_entry(
         mid_b,
         out,
         image,
+        // El tick real lo anota `sync_layer` al usarla; aquí un 0 provisional
+        // (si algo la consultara antes del primer sync, sería el uso más
+        // antiguo posible, y evictaría antes — inocuo).
+        last_used: 0,
         last: None,
     }
 }

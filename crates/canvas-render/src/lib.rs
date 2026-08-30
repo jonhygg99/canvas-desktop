@@ -147,6 +147,25 @@ impl CanvasRenderer {
         }
     }
 
+    /// Bytes GPU totales de las texturas de efectos (todos los scopes). Es
+    /// la señal del presupuesto del documento activo — el monto que la
+    /// evicción LRU (Task 6 del plan de memoria) intenta acotar.
+    pub fn fx_total_bytes(&self) -> u64 {
+        self.blur.total_bytes()
+    }
+
+    /// Bytes GPU de las texturas de efectos de un scope (un documento).
+    pub fn fx_bytes_in_scope(&self, scope: FxScope) -> u64 {
+        self.blur.bytes_in_scope(scope)
+    }
+
+    /// Tick del último uso de un scope — el orden LRU para la evicción del
+    /// presupuesto GPU (ver `BlurEngine::last_used`). `None` si el scope no
+    /// tiene texturas de efectos.
+    pub fn fx_scope_last_used(&self, scope: FxScope) -> Option<u64> {
+        self.blur.last_used(scope)
+    }
+
     /// Contadores acumulados de actividad del atlas desde la creación o el
     /// último `reset_atlas_stats`.
     pub fn atlas_stats(&self) -> AtlasStats {
