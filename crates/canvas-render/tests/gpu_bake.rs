@@ -16,7 +16,9 @@
 //! GPU (shaders de blur, readback de textura, codificación PNG/JPEG).
 
 use canvas_core::{Document, Effects, ImageContent, LayerContent, Transform};
-use canvas_render::{image_data_from_rgba, CanvasRenderer, FxScope, ImageMap};
+use canvas_render::{
+    image_data_from_rgba, recover_sharp_over_blur_design, CanvasRenderer, FxScope, ImageMap,
+};
 use vello::util::RenderContext;
 
 /// Crea una imagen RGBA sintética de `w×h` con un degradado rojo→azul
@@ -439,6 +441,156 @@ fn restored_sidecar_document_bakes_with_content() {
     assert_eq!(opaque, n, "el horneado debe ser opaco por completo");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ─── reconstrucción de un sidecar contaminado (recover_design) ────────
+
+/// Reproduce el incidente de los sidecars desenfocados contaminados
+/// (`14.png`/`1.png`): un guardado horneó el PNG y el sidecar quedó con la
+/// foto base FUERA de `layers` (su blob solo vive en `images`, sin ninguna
+/// capa que la dibuje) mientras sobre el `Blurred background` (capa 2)
+/// aterrizaron capas espurias (`Pasted Image`, ids 3..=7). La recuperación
+/// reconstruye el documento limpio — foto nítida `contain` sobre blur
+/// `cover` — SIN las capas contaminantes, y el horneado debe volver a
+/// mostrar la foto (nada de blanco) sin ningún rastro de los cuadros rojos.
+///
+/// La reconstrucción corre la MISMA función compartida que el ejemplo
+/// (`recover_sharp_over_blur_design`): este test fija su contrato como
+/// regresión GPU (el desenfoque del fondo se hornea de verdad).
+#[test]
+#[ignore = "requiere GPU"]
+fn recover_design_restores_sharp_photo_and_drops_spurious_layers() {
+    let (device, queue) = gpu_device();
+    let (page_w, page_h) = (100.0, 100.0);
+
+    // La foto nítida (id 1 en `images`): degradado determinista 4:3. Con
+    // `contain`, la foto ocupa x 0..=100, y 12.5..=87.5: el centro es el
+    // degradado nítido, la franja superior es blur+fondo.
+    let (photo_rgba, photo_w, photo_h) = patterned_image(40, 30, 0);
+    // El `Blurred background` (id 2) cubre la página (cover) con blur 50;
+    // su fuente es la misma foto con un canal rotado para distinguirla.
+    let (blur_rgba, blur_w, blur_h) = patterned_image(40, 30, 2);
+    let (red_rgba, red_w, red_h) = solid_image(10, 6, [255, 0, 0, 255]);
+
+    // Documento contaminado: NO tiene la foto (id 1). Solo el blur (id 2) y
+    // 5 capas espurias rojas (ids 3..=7) pegadas en la franja superior.
+    let mut contam = Document::new(page_w, page_h);
+    let mut bg = canvas_core::Layer::new(
+        canvas_core::LayerId::from_raw(2),
+        "Blurred background",
+        Transform::new(0.0, 0.0, page_w, page_h),
+        LayerContent::Image(ImageContent {
+            source_path: None,
+            natural_width: blur_w,
+            natural_height: blur_h,
+            crop: None,
+        }),
+    );
+    bg.effects.blur_radius = 50.0;
+    contam.page_mut().unwrap().layers.push(bg);
+    for i in 0u64..5 {
+        contam
+            .page_mut()
+            .unwrap()
+            .layers
+            .push(canvas_core::Layer::new(
+                canvas_core::LayerId::from_raw(3 + i),
+                "Pasted Image",
+                Transform::new(i as f64 * 14.0, 0.0, 10.0, 6.0),
+                LayerContent::Image(ImageContent {
+                    source_path: None,
+                    natural_width: red_w,
+                    natural_height: red_h,
+                    crop: None,
+                }),
+            ));
+    }
+    // El estado contaminado conserva foto+blur+las 5 rojas en `images`;
+    // la foto (id 1) NO está en `layers`, que es exactamente el fallo.
+    let mut contaminated_images = ImageMap::new();
+    contaminated_images.insert(
+        canvas_core::LayerId::from_raw(1),
+        image_data_from_rgba(photo_rgba.clone(), photo_w, photo_h),
+    );
+    contaminated_images.insert(
+        canvas_core::LayerId::from_raw(2),
+        image_data_from_rgba(blur_rgba.clone(), blur_w, blur_h),
+    );
+    for i in 0u64..5 {
+        contaminated_images.insert(
+            canvas_core::LayerId::from_raw(3 + i),
+            image_data_from_rgba(red_rgba.clone(), red_w, red_h),
+        );
+    }
+
+    // Los cuadros rojos solo se distinguen del rojo real del degradado de la
+    // foto (esquina superior derecha) restringiendo el rastreo a la franja
+    // superior (`y < 7`), donde se pegaban y donde la foto `contain` no llega
+    // (empieza en y 12.5). Detector estricto de rojo sólido (250,0,0) para no
+    // cazar el rojo del propio degradado.
+    let pure_red = |p: &[u8]| p[0] > 250 && p[1] < 8 && p[2] < 8;
+    let top_band_has_red = |rgba: &[u8]| {
+        (0..7).any(|y| {
+            let base = (y * 100) as usize * 4;
+            (0..100).step_by(8).any(|x| {
+                let i = base + (x * 4) as usize;
+                pure_red(&rgba[i..i + 4])
+            })
+        })
+    };
+
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    // Referencia negativa: hornear el documento contaminado SIN recuperar
+    // sí dibuja los cuadros rojos (y no la foto nítida).
+    let (contam_rgba, ..) = renderer
+        .bake_page_counting(
+            &device,
+            &queue,
+            FxScope(61),
+            &contam,
+            &contaminated_images,
+            1.0,
+        )
+        .unwrap();
+    assert!(
+        top_band_has_red(&contam_rgba),
+        "el documento contaminado debe pintar las capas rojas en la franja superior"
+    );
+
+    // Recuperación compartida (la misma del ejemplo `recover_design`).
+    let (recovered, images) = recover_sharp_over_blur_design(
+        (page_w, page_h),
+        (&photo_rgba, photo_w, photo_h),
+        (&blur_rgba, blur_w, blur_h),
+    );
+    // Descarta las capas espurias: exactamente la foto + el blur.
+    assert_eq!(
+        recovered.page().unwrap().layers.len(),
+        2,
+        "la reconstrucción debe quedar solo con foto + blur"
+    );
+
+    let (rgba, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, FxScope(62), &recovered, &images, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (100, 100));
+    assert_eq!(skipped, 0, "nada debe omitirse tras la recuperación");
+
+    // 1) La foto nítida volvió: el centro (toda la anchura cae en la foto
+    // con `contain`) conserva el degradado → muchos colores, no blanco ni
+    // el blur plano (que, con blur 50, promedia casi todo a gris).
+    let mid_uniq = row_unique_colors(&rgba, 100, 50, 0, 100);
+    assert!(
+        mid_uniq > 6,
+        "la foto nítida no se recuperó ({mid_uniq} colores en el centro)"
+    );
+
+    // 2) Las capas espurias rojas ya no pintan: la franja superior (donde
+    // estaban pegadas y donde la foto no llega) queda sin rojo sólido.
+    assert!(
+        !top_band_has_red(&rgba),
+        "una capa espuria roja sobrevivió a la recuperación en la franja superior"
+    );
 }
 
 // ─── sync_layer + re-bake: caché de efectos GPU ────────────────────────

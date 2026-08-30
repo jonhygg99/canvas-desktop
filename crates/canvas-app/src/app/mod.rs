@@ -171,6 +171,15 @@ pub(super) struct SaveFlow {
     /// El original no admite sobrescritura (SVG/GIF): modal que redirige a
     /// «Save as…».
     pub(super) readonly_prompt: Option<PathBuf>,
+    /// Guardado raster (imagen) a punto de sobrescribir un archivo cuyo
+    /// documento ya no tiene NINGUNA capa de imagen/SVG (p. ej. tras borrar
+    /// la última foto): pide confirmación antes de aplanar y descartar la
+    /// copia editable. `Some(ruta)` mientras el modal está abierto.
+    pub(super) discard_raster_prompt: Option<PathBuf>,
+    /// El usuario ya confirmó «Save anyway» para un documento sin capas de
+    /// imagen en esta sesión (mismo criterio que `overwrite_confirmed`): no
+    /// volver a avisar en guardados posteriores.
+    pub(super) discard_raster_confirmed: bool,
     /// «Save all»: ids (estables) de las ranuras sucias que faltan por
     /// guardar, el activo excluido.
     pub(super) save_all_queue: Vec<u64>,

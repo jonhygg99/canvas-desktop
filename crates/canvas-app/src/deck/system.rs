@@ -69,10 +69,9 @@ pub(crate) fn is_critical_free_ram(free_bytes: Option<u64>) -> bool {
 fn detect_ram_bytes() -> Option<u64> {
     use windows::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
     let mut kb = 0u64;
-    // SAFETY: `kb` es un puntero válido a un `u64`; la función solo escribe
-    // ahí cuando devuelve `true`.
-    unsafe { GetPhysicallyInstalledSystemMemory(&mut kb) }
-        .as_bool()
+    // SAFETY: `kb` es un puntero válido a un `u64`; la función escribe ahí
+    // solo cuando devuelve `Ok(())`.
+    unsafe { GetPhysicallyInstalledSystemMemory(&mut kb).is_ok() }
         .then_some(kb.saturating_mul(1024))
 }
 
@@ -104,8 +103,10 @@ fn detect_ram_bytes() -> Option<u64> {
 #[cfg(target_os = "windows")]
 fn detect_free_ram_bytes() -> Option<u64> {
     use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-    let mut status = MEMORYSTATUSEX::default();
-    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    let mut status = MEMORYSTATUSEX {
+        dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+        ..Default::default()
+    };
     // SAFETY: `status` es válido y con `dwLength` correcto; la función
     // rellena el resto de campos cuando devuelve éxito.
     unsafe { GlobalMemoryStatusEx(&mut status) }

@@ -89,33 +89,7 @@ pub fn get_bytes_bounded(url: &str) -> Result<Vec<u8>, HttpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Servidor HTTP en loopback que devuelve una respuesta controlada. El
-    /// hilo se queda vivo sirviendo una sola petición (el cliente cierra la
-    /// conexión al terminar).
-    fn serve_response(status: &str, body: &[u8]) -> String {
-        use std::io::Write;
-        use std::net::TcpListener;
-        use std::thread;
-
-        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let address = listener.local_addr().unwrap();
-        let status = status.to_owned();
-        let body = body.to_vec();
-        thread::spawn(move || {
-            let Ok((mut stream, _)) = listener.accept() else {
-                return;
-            };
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-            stream.write_all(&body).unwrap();
-            stream.shutdown(std::net::Shutdown::Both).unwrap();
-        });
-        address.to_string()
-    }
+    use crate::test_server::serve_response;
 
     #[test]
     fn downloads_a_small_body() {

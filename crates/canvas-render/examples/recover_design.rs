@@ -17,11 +17,8 @@
 //! Uso: cargo run -p canvas-render --example recover_design -- <foto.png> <salida.png>
 
 use anyhow::{anyhow, Context, Result};
-use canvas_core::{
-    contain_transform, cover_transform, Document, ImageContent, Layer, LayerContent, LayerId,
-};
-use canvas_io::{CanvasPayload, LayerPixels};
-use canvas_render::{image_data_from_rgba, CanvasRenderer, FxScope, ImageMap};
+use canvas_io::CanvasPayload;
+use canvas_render::{recover_sharp_over_blur_design, CanvasRenderer, FxScope};
 use std::path::Path;
 use vello::util::RenderContext;
 
@@ -39,10 +36,10 @@ fn main() -> Result<()> {
     // El sidecar contaminado guardó la foto nítida en `images` (capa 1) pero
     // NO como capa en `page.layers` (solo quedaron el blur, capa 2, y las 5
     // capas rojas de la prueba, 3..=7). Para recuperar el diseño original
-    // hay que reconstruir el DOCUMENTO: capa 1 = foto nítida (contain sobre
-    // la página) + capa 2 = fondo desenfocado (cover, blur 50) DEBAJO.
-
-    // Localiza las imágenes por id: 1 = foto nítida, 2 = blur.
+    // se localizan por id la foto (1) y el blur (2) y se reconstruye el
+    // documento limpio con `recover_sharp_over_blur_design` (la misma lógica
+    // que cubre el test GPU `gpu_bake::recover_*`): capa foto `contain` +
+    // capa `Blurred background` `cover` debajo.
     let at = |id: u64| {
         restored
             .images
@@ -58,56 +55,18 @@ fn main() -> Result<()> {
         .page()
         .map(|p| (p.width, p.height))
         .unwrap_or((1920.0, 1080.0));
-    let (pw, ph) = (page_size.0, page_size.1);
 
-    // Imitación exacta de `set_blurred_background` + `add_image_layer` sobre
-    // lienzo vacío: la foto como capa 1 en el centro (contain) y la MISMA
-    // foto a página entera (cover) con blur 50 como capa 2 en el fondo de la
-    // pila. `add_layer` asigna id 1 a la foto; el blur usa id 2 con from_raw.
-    let mut doc = Document::new(pw, ph);
-    if let Ok(page) = doc.page_mut() {
-        page.background = Some([255, 255, 255, 255]);
-    }
-    doc.add_layer(
-        "1.png",
-        contain_transform(f64::from(photo.width), f64::from(photo.height), pw, ph),
-        LayerContent::Image(ImageContent {
-            source_path: None,
-            natural_width: photo.width,
-            natural_height: photo.height,
-            crop: None,
-        }),
-    )
-    .unwrap();
-    let mut bg = Layer::new(
-        LayerId::from_raw(2),
-        "Blurred background",
-        cover_transform(f64::from(blurp.width), f64::from(blurp.height), pw, ph),
-        LayerContent::Image(ImageContent {
-            source_path: None,
-            natural_width: blurp.width,
-            natural_height: blurp.height,
-            crop: None,
-        }),
+    let (doc, images) = recover_sharp_over_blur_design(
+        page_size,
+        (&photo.rgba, photo.width, photo.height),
+        (&blurp.rgba, blurp.width, blurp.height),
     );
-    bg.effects.blur_radius = 50.0;
-    if let Ok(page) = doc.page_mut() {
-        page.layers.insert(0, bg); // el blur queda DEBAJO de la foto nítida
-    }
 
-    let mut images = ImageMap::new();
-    let mut sidecar_images: Vec<LayerPixels> = Vec::new();
-    // Capa 1 (foto): id 1. Capa 2 (blur): id 2.
-    images.insert(
-        LayerId::from_raw(1),
-        image_data_from_rgba(photo.rgba.clone(), photo.width, photo.height),
-    );
-    sidecar_images.push((1, photo.rgba.clone(), photo.width, photo.height));
-    images.insert(
-        LayerId::from_raw(2),
-        image_data_from_rgba(blurp.rgba.clone(), blurp.width, blurp.height),
-    );
-    sidecar_images.push((2, blurp.rgba.clone(), blurp.width, blurp.height));
+    // El sidecar limpio conserva las dos imágenes por id: 1 = foto, 2 = blur.
+    let sidecar_images = vec![
+        (1, photo.rgba.clone(), photo.width, photo.height),
+        (2, blurp.rgba.clone(), blurp.width, blurp.height),
+    ];
 
     let mut ctx = RenderContext::new();
     let device_id = pollster::block_on(ctx.device(None))

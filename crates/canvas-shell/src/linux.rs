@@ -172,9 +172,12 @@ mod tests {
 
     #[test]
     fn escapes_desktop_exec_arguments() {
+        // Por el spec de freedesktop.org, `$` → `\$` y `\`` → `\\`` (un
+        // backslash cada uno, como hace `escape_desktop_exec`); los `\` y
+        // `"` se doblan/escapan igual que en las shell.
         assert_eq!(
             escape_desktop_exec(r#"/tmp/Canvas \"Desktop\"/$bin`"#),
-            r#"/tmp/Canvas \\\"Desktop\\\"/\\$bin\\`"#
+            r#"/tmp/Canvas \\\"Desktop\\\"/\$bin\`"#
         );
     }
 

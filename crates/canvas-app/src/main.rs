@@ -29,6 +29,10 @@ mod paste_hook;
 mod settings;
 mod sidebar;
 mod surface;
+// Servidor HTTP de prueba compartido (solo compila en `cargo test`):
+// corrección del «FIN limpio» de las descargas, un único sitio.
+#[cfg(test)]
+mod test_server;
 mod unsplash;
 mod watcher;
 mod welcome;
