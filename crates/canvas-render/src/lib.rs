@@ -18,7 +18,9 @@ pub struct RenderDims {
 }
 
 use blur::BlurEngine;
-use canvas_core::LayerId;
+use canvas_core::{
+    contain_transform, cover_transform, Document, ImageContent, Layer, LayerContent, LayerId,
+};
 use thiserror::Error;
 use vello::peniko::color::palette;
 use vello::peniko::ImageData;
@@ -47,6 +49,75 @@ pub struct AtlasStats {
     pub registrations: u64,
     pub reuploads: u64,
     pub removals: u64,
+}
+
+/// Reconstruye el diseño «foto nítida sobre fondo desenfocado» que se degrada
+/// cuando un guardado hornea el PNG y el sidecar pierde la foto base de
+/// `layers` — su blob queda solo en `images`, sin ninguna capa que lo dibuje
+/// (la clase de fallo del `14.png`/`1.png` contaminado). Es la pieza central
+/// de `examples/recover_design.rs` y del test GPU `gpu_bake::recover_*`.
+///
+/// Dado el tamaño de página y los píxeles de la foto (nítida) y de su fondo
+/// desenfocado, devuelve el documento limpio — capa foto (`contain`) sobre
+/// capa `Blurred background` (`cover`, blur 50) DEBAJO — y el `ImageMap`
+/// correspondiente, listos para hornear. Replica `set_blurred_background` +
+/// `add_image_layer` sobre lienzo vacío; las capas espurias contaminantes se
+/// descartan por construcción (no se copian).
+pub fn recover_sharp_over_blur_design(
+    page: (f64, f64),
+    photo: (&[u8], u32, u32),
+    blur: (&[u8], u32, u32),
+) -> (Document, ImageMap) {
+    let (pw, ph) = page;
+    let (photo_rgba, photo_w, photo_h) = photo;
+    let (blur_rgba, blur_w, blur_h) = blur;
+
+    let mut doc = Document::new(pw, ph);
+    if let Ok(page) = doc.page_mut() {
+        page.background = Some([255, 255, 255, 255]);
+    }
+    // La foto como capa nítida, centrada (contain). `add_layer` asigna su id
+    // (`1` en un documento nuevo); la imagen se indexa por ESE id.
+    let photo_id = doc
+        .add_layer(
+            "1.png",
+            contain_transform(f64::from(photo_w), f64::from(photo_h), pw, ph),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: photo_w,
+                natural_height: photo_h,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    // La misma foto a página entera (cover) con blur 50, como capa de fondo
+    // con id 2 (el `background_layer` del sidecar real).
+    let mut bg = Layer::new(
+        LayerId::from_raw(2),
+        "Blurred background",
+        cover_transform(f64::from(blur_w), f64::from(blur_h), pw, ph),
+        LayerContent::Image(ImageContent {
+            source_path: None,
+            natural_width: blur_w,
+            natural_height: blur_h,
+            crop: None,
+        }),
+    );
+    bg.effects.blur_radius = 50.0;
+    if let Ok(page) = doc.page_mut() {
+        page.layers.insert(0, bg); // el blur queda DEBAJO de la foto nítida
+    }
+
+    let mut images = ImageMap::new();
+    images.insert(
+        photo_id,
+        image_data_from_rgba(photo_rgba.to_vec(), photo_w, photo_h),
+    );
+    images.insert(
+        LayerId::from_raw(2),
+        image_data_from_rgba(blur_rgba.to_vec(), blur_w, blur_h),
+    );
+    (doc, images)
 }
 
 /// Renderizador del lienzo sobre un device wgpu ajeno (el de la ventana).
