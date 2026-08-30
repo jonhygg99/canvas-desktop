@@ -243,6 +243,27 @@ impl CanvasRenderer {
         images: &ImageMap,
         scale: f64,
     ) -> Result<(Vec<u8>, u32, u32), RenderError> {
+        // El guard de guardado/exportación usa la variante con contador;
+        // este envoltorio conserva la firma histórica (ejemplos y tests).
+        self.bake_page_counting(device, queue, scope, doc, images, scale)
+            .map(|(rgba, width, height, _)| (rgba, width, height))
+    }
+
+    /// Variante de `bake_page` que además informa de cuántas capas de
+    /// imagen/SVG visibles se omitieron al construir la escena (píxel
+    /// ausente del `ImageMap` o mapa 0×0). El guard de guardado la usa para
+    /// rechazar bakes incompletos antes de sobrescribir el archivo: un
+    /// horneado que se saltó capas es un archivo corrupto aunque no sea
+    /// uniforme.
+    pub fn bake_page_counting(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scope: FxScope,
+        doc: &canvas_core::Document,
+        images: &ImageMap,
+        scale: f64,
+    ) -> Result<(Vec<u8>, u32, u32, usize), RenderError> {
         let page = doc.page().map_err(|e| RenderError::Bake(e.to_string()))?;
         let width = (page.width * scale).round().max(1.0) as u32;
         let height = (page.height * scale).round().max(1.0) as u32;
@@ -255,7 +276,9 @@ impl CanvasRenderer {
         }
 
         let blurred = self.blur_overrides(scope);
-        let scene = build_scene(
+        let mut scene = Scene::new();
+        let skipped = scene::append_document_counting(
+            &mut scene,
             doc,
             images,
             &blurred,
@@ -291,7 +314,7 @@ impl CanvasRenderer {
         )?;
 
         let rgba = read_texture_rgba(device, queue, &target, width, height)?;
-        Ok((rgba, width, height))
+        Ok((rgba, width, height, skipped))
     }
 }
 

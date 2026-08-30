@@ -101,6 +101,23 @@ pub fn append_document(
     document::append_document(scene, doc, images, blurred, view, decorated);
 }
 
+/// Variante con contador de capas de imagen/SVG visibles sin píxel que
+/// pintar (carga pendiente, mapa ausente o 0×0). El camino de horneado la
+/// usa para que el guard de guardado pueda rechazar bakes incompletos; la
+/// pantalla conserva la omisión silenciosa a través de `append_document`.
+pub fn append_document_counting(
+    scene: &mut Scene,
+    doc: &Document,
+    images: &ImageMap,
+    blurred: &ImageMap,
+    view: Affine,
+    decorated: bool,
+) -> usize {
+    let mut skipped = 0usize;
+    document::append_document_counting(scene, doc, images, blurred, view, decorated, &mut skipped);
+    skipped
+}
+
 /*
 
     // Antes del retorno temprano: el ancla tiene que estar aunque la página
