@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::cache::{adaptive_evict_budget, MAX_LOADED_SLOTS};
 use super::model::SlotContent;
+use super::system::{free_ram_bytes, is_critical_free_ram};
 use super::Deck;
 
 impl Deck {
@@ -53,6 +54,13 @@ impl Deck {
         candidates.retain(|&i| {
             matches!(self.slots.get(i), Some(s) if matches!(s.content, SlotContent::Idle) && !s.is_placeholder)
         });
+        // Bajo RAM crítica no se precargan ranuras de fondo: solo el destino
+        // de un salto pendiente (lo que el usuario está esperando) sigue
+        // cargando. Evita el churn cargar→expulsar justo cuando la memoria
+        // es más escasa; la activa ya vive cargada en `EditorState`.
+        if is_critical_free_ram(free_ram_bytes()) {
+            candidates = keep_under_critical(candidates, jump);
+        }
         // Rango de visibilidad precalculado: `visible` es una lista pequeña,
         // pero el comparador corre O(n·log n) veces y un `contains` lineal
         // dentro de ella escala cuadrático con carpetas grandes.
@@ -112,6 +120,20 @@ impl Deck {
 /// Ranuras vecinas a la activa que se cargan siempre, se vean o no: al
 /// saltar con `PageUp`/`PageDown` el destino inmediato ya está listo.
 pub(super) const PRELOAD_RADIUS: usize = 2;
+
+/// Ranuras que siguen cargando cuando la precarga de fondo está pausada por
+/// RAM crítica: solo el destino de un salto pendiente (`jump`); todo lo demás
+/// se descarta, porque son cargas → expulso justo cuando la memoria es más
+/// escasa (la ranura activa ya vive cargada en `EditorState`). Pura e
+/// intencionadamente trivial: separa la DECISIÓN de la medición de RAM, para
+/// que la prueba de tabla la fije sin depender del hardware — mismo patrón que
+/// `budget_under_free_ram` en cache.rs.
+pub(super) fn keep_under_critical(candidates: Vec<usize>, jump: Option<usize>) -> Vec<usize> {
+    candidates
+        .into_iter()
+        .filter(|&i| Some(i) == jump)
+        .collect()
+}
 
 /// Cargas simultáneas en vuelo, por defecto. Se adapta al número de
 /// núcleos: con 8+ cores sube a 6, con 4-7 se queda en 4, con menos en 2.

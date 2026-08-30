@@ -13,6 +13,7 @@ use super::cache::{
     resolve_evict_budget_with_pressure, EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES,
     MIN_EVICT_BUDGET_BYTES,
 };
+use super::loading::keep_under_critical;
 use super::loading::max_inflight_loads;
 use super::model::SeedItem;
 use super::*;
@@ -1041,4 +1042,27 @@ fn deck_rect_intersects_only_overlapping_rects() {
         "solo tocar el borde no es intersectar"
     );
     assert!(!a.intersects(disjoint));
+}
+
+/// Tabla de la pausa de precarga (Task 4 del plan de memoria): bajo RAM
+/// crítica, `keep_under_critical` deja solo el destino de un salto pendiente
+/// y descarta toda la precarga de fondo (visible o vecina).
+#[test]
+fn keep_under_critical_keeps_only_a_pending_jump() {
+    let cases: Vec<(Vec<usize>, Option<usize>, Vec<usize>)> = vec![
+        // (candidatos, jump, lo que sobrevive)
+        (vec![0, 1, 2], None, vec![]),     // sin salto → todo se pausa
+        (vec![0, 1, 2], Some(1), vec![1]), // salto pendiente → solo él
+        (vec![3, 1, 2], Some(2), vec![2]), // destino lejano del radio
+        (vec![2], Some(2), vec![2]),       // solo el destino
+        (vec![4], Some(2), vec![]),        // el salto no estaba en la lista
+        (vec![], Some(2), vec![]),         // nada que cargar
+    ];
+    for (candidates, jump, expected) in &cases {
+        assert_eq!(
+            keep_under_critical(candidates.clone(), *jump),
+            *expected,
+            "candidates={candidates:?} jump={jump:?}",
+        );
+    }
 }
