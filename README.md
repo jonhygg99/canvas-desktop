@@ -247,6 +247,9 @@ cargo test                                  # tests de core, io y shell
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 
+# Verificar también los 11 tests GPU ignorados (requiere GPU)
+cargo test -p canvas-render --test gpu_bake -- --ignored
+
 # Ejemplos headless (sin ventana) que ejercitan el render GPU real:
 cargo run -p canvas-render --example bake_blur -- entrada.png salida.png 20
 cargo run -p canvas-render --example save_roundtrip -- entrada.png destino.png

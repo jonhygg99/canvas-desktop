@@ -13,6 +13,8 @@ use super::{AppInner, Nav, View, Workspace};
 
 use super::persistence::{resolve_canvas_sidecar, seed_gallery_from_deck};
 
+const DEFAULT_NEW_CANVAS_SIZE: (f64, f64) = (1920.0, 1080.0);
+
 impl AppInner {
     /// Punto único de entrada para abrir algo en UN workspace, venga de
     /// argv, diálogo, arrastrar y soltar, un clic en la galería o una
@@ -56,9 +58,14 @@ impl AppInner {
 
     /// Documento nuevo en blanco en un workspace.
     pub(crate) fn new_design(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
-        ws.deck = deck::Deck::default();
+        let (w, h) = DEFAULT_NEW_CANVAS_SIZE;
+        ws.deck = deck::Deck::single(PathBuf::new());
         self.apply_deck_prefs(ws);
-        let (w, h) = self.settings.last_page_size;
+        if let Some(slot) = ws.deck.slots.first_mut() {
+            slot.page = Some((w, h));
+            slot.is_placeholder = true;
+            slot.name = "Untitled".to_owned();
+        }
         let state = if self.settings.new_canvas_format == settings::NewCanvasFormat::Canvas {
             let mut state = editor::EditorState::new_blank(w, h);
             state.sidecar_enabled = self.settings.sidecar_default;

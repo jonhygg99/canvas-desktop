@@ -154,8 +154,8 @@ canvas-core/src/
 ```
 canvas-render/src/
 ├─ blur/    mod.rs (types) · params.rs · engine.rs (pipelines, lifecycle)
-│           · passes.rs (the color → blur-H → blur-V chain) · *.wgsl
-└─ scene/   mod.rs (build_scene, append_document) · raster.rs · text.rs · shape.rs
+│           · passes.rs (effect passes) · sync.rs (layer synchronization) · *.wgsl
+└─ scene/   mod.rs (build_scene) · document.rs (append_document) · raster.rs · text.rs · shape.rs
 ```
 
 - `CanvasRenderer` wraps a vello `Renderer` sharing the **same wgpu
@@ -290,7 +290,7 @@ canvas-app/src/
 │                 #               max_inflight_loads() = dynamic by core count)
 │                 # scan.rs (disk sync) · nav.rs
 ├─ editor/
-│  ├─ canvas/     # mod.rs = canvas_ui, orchestration only; context_menu ·
+│  ├─ canvas/     # mod.rs = canvas_ui, orchestration only; layout · context_menu ·
 │  │              # picking · camera · paint · url_popup
 │  ├─ state/      # mod.rs (EditorState) · constructors · layer_factory ·
 │  │              # background · shortcuts · history · sidecar
@@ -298,8 +298,8 @@ canvas-app/src/
 │  ├─ properties_panel/  mod.rs · layer_common · content{,_shape,_text} ·
 │  │                     effects · page
 │  └─ interaction.rs  layer_ops.rs  overlay.rs  viewport.rs
-├─ gallery/       mod.rs · item.rs · ui/{mod,cell,shell}.rs
-│                 # ui/folder_panel/{mod,rows}.rs
+├─ gallery/          mod.rs · item.rs · ui/{mod,cell,shell,gallery_view}.rs
+│                 # ui/folder_panel/{mod,rows,content}.rs
 ├─ layers_panel/  mod.rs · tab_strip.rs · tab_draw.rs · insert.rs ·
 │                 # ops.rs · row.rs
 ├─ menus/         mod.rs · fallback.rs (non-Windows) · native/{mod,build}.rs

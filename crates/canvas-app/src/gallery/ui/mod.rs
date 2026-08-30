@@ -3,26 +3,24 @@
 
 use eframe::egui;
 
-use crate::app_icons::{
-    draw_close_icon, draw_minus_icon, draw_plus_icon, icon_button_ui, icon_text_button_ui,
-};
-
-use crate::settings::GallerySort;
-
-use super::{copy_to_slot, slot_contents, GalleryAction, GalleryState};
+use super::{GalleryAction, GalleryState};
 
 mod cell;
 mod folder_panel;
+mod gallery_view;
 mod shell;
 
 pub use folder_panel::next_folder_panel_side;
 
 pub(super) use cell::gallery_cell_size;
 
-use cell::{gallery_add_cell, gallery_cell, CELL_GAP, ROW_GAP};
-use folder_panel::show_folder_panel;
+use gallery_view::show as gallery_view_show;
 
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+    gallery_view_show(state, ui)
+}
+
+/* pub fn show_old(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
 
     // Reintento unico tras dar permiso en Ajustes (macOS): al volver el
@@ -303,6 +301,8 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
     });
     action
 }
+
+} */
 
 /// Abre el panel «Full Disk Access» de Ajustes del Sistema. Solo macOS:
 /// el fallo tipico con carpetas de nube es que el proceso que lanzo la app

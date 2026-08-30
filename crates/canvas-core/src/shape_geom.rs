@@ -2,6 +2,10 @@
 //! flecha): los puntos de sus contornos en la caja local (0,0)..(w,h).
 //! Una sola fuente de verdad compartida por el render (vello) y la
 //! exportación a SVG, para que pantalla y archivo no diverjan.
+//!
+//! La maquinaria de esquinas redondeadas ([`RoundedPath`] y
+//! [`rounded_polygon_path`]) vive en `rounded_path.rs`; aquí solo
+//! quedan las primitivas de contorno y los puentes que las usan.
 
 /// Triángulo regular apuntando hacia arriba, centrado en la caja.
 pub fn triangle_points(w: f64, h: f64) -> [(f64, f64); 3] {
@@ -123,86 +127,7 @@ pub fn arrow_head_points(w: f64, h: f64) -> [(f64, f64); 3] {
     ]
 }
 
-/// Un segmento de esquina redondeada: `(entrada en la arista, vértice de
-/// control, salida de la esquina)`. Tras la entrada se traza una línea
-/// hasta el vértice y una cuadrática con ese control hasta la salida.
-pub type RoundedSegment = ((f64, f64), (f64, f64), (f64, f64));
-
-/// Ruta de un polígono cerrado con esquinas redondeadas, en un formato
-/// agnóstico que cada backend consume: arranca en `start` y por cada
-/// segmento traza una línea hasta `a`, una cuadrática con el vértice `c`
-/// de control, y termina en `b`; la ruta se cierra después del último
-/// segmento.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RoundedPath {
-    pub start: (f64, f64),
-    pub segments: Vec<RoundedSegment>,
-}
-
-impl RoundedPath {
-    /// Puntos del contorno aplanado a segmentos rectos, para backends sin
-    /// curvas (el painter de egui). `smooth` = segmentos por esquina.
-    pub fn to_polyline(&self, smooth: usize) -> Vec<(f64, f64)> {
-        let smooth = smooth.max(1);
-        let mut pts = Vec::with_capacity(1 + self.segments.len() * (smooth + 1));
-        pts.push(self.start);
-        for (a, c, b) in &self.segments {
-            for i in 1..=smooth {
-                let t = i as f64 / smooth as f64;
-                let u = 1.0 - t;
-                pts.push((
-                    u * u * a.0 + 2.0 * u * t * c.0 + t * t * b.0,
-                    u * u * a.1 + 2.0 * u * t * c.1 + t * t * b.1,
-                ));
-            }
-        }
-        pts
-    }
-}
-
-/// Redondea las esquinas de un polígono cerrado: en cada vértice las dos
-/// aristas adyacentes se recortan `radius` y se unen con una cuadrática
-/// cuyo control es el propio vértice. El radio se recorta para no superar
-/// ~40 % de la arista más corta (si no, las tangentes se cruzan).
-pub fn rounded_polygon_path(corners: &[(f64, f64)], radius: f64) -> RoundedPath {
-    let n = corners.len();
-    if n == 0 {
-        return RoundedPath {
-            start: (0.0, 0.0),
-            segments: Vec::new(),
-        };
-    }
-    let min_edge = (0..n)
-        .map(|i| {
-            let a = corners[i];
-            let b = corners[(i + 1) % n];
-            (a.0 - b.0).hypot(a.1 - b.1)
-        })
-        .fold(f64::INFINITY, f64::min);
-    let r = radius.max(0.0).min(min_edge * 0.4);
-    let along = |from: (f64, f64), to: (f64, f64)| {
-        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-        let len = dx.hypot(dy).max(1e-9);
-        (from.0 + dx / len * r, from.1 + dy / len * r)
-    };
-    let mut segments = Vec::with_capacity(n);
-    let mut start = None;
-    for i in 0..n {
-        let prev = corners[(i + n - 1) % n];
-        let c = corners[i];
-        let next = corners[(i + 1) % n];
-        let a = along(c, prev);
-        let b = along(c, next);
-        if start.is_none() {
-            start = Some(a);
-        }
-        segments.push((a, c, b));
-    }
-    RoundedPath {
-        start: start.expect("n > 0 garantiza una primera esquina"),
-        segments,
-    }
-}
+pub use crate::rounded_path::{rounded_polygon_path, RoundedPath};
 
 /// Contorno de la cabeza de la flecha en la caja local (0,0)..(w,h) con
 /// `radius` como radio de esquina: 0 = triángulo a tajo, > 0 = punta y

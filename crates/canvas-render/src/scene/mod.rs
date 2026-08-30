@@ -2,12 +2,12 @@
 
 use std::sync::{Arc, OnceLock};
 
-use canvas_core::{Document, LayerContent};
-use vello::kurbo::{Affine, Rect};
-use vello::peniko::color::palette;
-use vello::peniko::{Blob, Fill, ImageAlphaType, ImageData, ImageFormat};
+use canvas_core::Document;
+use vello::kurbo::Affine;
+use vello::peniko::{Blob, ImageAlphaType, ImageData, ImageFormat};
 use vello::Scene;
 
+mod document;
 mod raster;
 mod shape;
 mod text;
@@ -17,10 +17,6 @@ mod tests;
 
 pub use raster::{image_data_from_rgba, ImageMap};
 pub use text::text_lines;
-
-use raster::{checker_image, place_transform};
-use shape::draw_shape;
-use text::draw_text;
 
 /// Píxel de 1x1 transparente que se dibuja (fuera de página) en TODA escena
 /// que se mande al renderizador compartido. Ver `draw_atlas_anchor`.
@@ -102,6 +98,11 @@ pub fn append_document(
     view: Affine,
     decorated: bool,
 ) {
+    document::append_document(scene, doc, images, blurred, view, decorated);
+}
+
+/*
+
     // Antes del retorno temprano: el ancla tiene que estar aunque la página
     // no exista (ver `draw_atlas_anchor`).
     draw_atlas_anchor(scene);
@@ -311,3 +312,4 @@ pub fn append_document(
         );
     }
 }
+*/

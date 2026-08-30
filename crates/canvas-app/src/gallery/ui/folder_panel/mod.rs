@@ -1,19 +1,20 @@
 //! El panel de carpetas (hermanas y de dentro): la lista de botones, el campo
 //! para crear una carpeta nueva, y de que lado de la ventana se ancla.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::app_icons::{draw_plus_icon, icon_text_button_ui};
-
 use crate::deck::StripSide;
 
-use self::rows::{folder_button_list, folder_name};
+use self::rows::folder_name;
 
 use super::super::{GalleryAction, GalleryState};
 
+mod content;
 mod rows;
+
+use content::folder_panel_contents;
 
 pub fn next_folder_panel_side(side: StripSide) -> StripSide {
     match side {
@@ -28,7 +29,8 @@ pub fn next_folder_panel_side(side: StripSide) -> StripSide {
 /// de limpiar. El texto vive en la memoria de egui, así que se conserva al
 /// navegar entre carpetas dentro de la misma sesión de galería. Devuelve el
 /// filtro escrito (puede estar vacío).
-fn folder_search_ui(ui: &mut egui::Ui, width: f32) -> String {
+#[allow(dead_code)]
+pub(super) fn folder_search_ui(ui: &mut egui::Ui, width: f32) -> String {
     let filter_id = egui::Id::new("gallery_folder_filter");
     let mut query: String = ui.data_mut(|d| d.get_temp(filter_id).unwrap_or_default());
     ui.horizontal(|ui| {
@@ -59,7 +61,7 @@ fn folder_search_ui(ui: &mut egui::Ui, width: f32) -> String {
 /// Devuelve una lista PROPIA (clonada), no referencias a `state`: así la
 /// lista filtrada no ata un préstamo de `state` dentro del closure que
 /// también pide `&mut state` (p. ej. `refresh_folder_lists`).
-fn filter_folders(children: &[PathBuf], filter: &str) -> Vec<PathBuf> {
+pub(super) fn filter_folders(children: &[PathBuf], filter: &str) -> Vec<PathBuf> {
     if filter.is_empty() {
         return children.to_vec();
     }
@@ -70,7 +72,7 @@ fn filter_folders(children: &[PathBuf], filter: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+/* fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
     // Solo macOS consume este valor hoy (botón «Grant access…» del pane
     // de Full Disk Access): en las demás plataformas el flujo de permisos
@@ -271,6 +273,7 @@ fn new_folder_ui(
     }
 }
 
+*/
 pub(super) fn show_folder_panel(
     state: &mut GalleryState,
     ui: &mut egui::Ui,
