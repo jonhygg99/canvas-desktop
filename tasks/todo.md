@@ -21,13 +21,16 @@ archivos reclamable (~6 GiB) y marca «crítico» en falso.
 - [ ] `cargo test -p canvas-app deck::` verde; clippy/fmt limpios.
 
 ## Task 3: Evictar cachés propias antes de bloquear Save/Export
-- [ ] En presión crítica real: evictar baraja + scopes FX, re-medir,
-      reintentar una vez; solo bloquear si sigue crítico.
-- [ ] Sin presión, el flujo de guardado no cambia.
+- [x] En presión crítica real: evictar baraja + scopes FX, re-medir,
+      reintentar una vez; solo bloquear si sigue crítico. (`df50c68`)
+- [x] Sin presión, el flujo de guardado no cambia (el helper vuelve sin tocar
+      nada si no hay crítica).
 
 ## Checkpoint: Task 3
-- [ ] `cargo test -p canvas-app` verde; clippy/fmt limpios.
-- [ ] Manual con memhog: save bajo presión crítica evicta y guarda si libera.
+- [x] `cargo test -p canvas-app` verde (467 workspace, clippy/fmt limpios.
+- [ ] Manual con memhog: save bajo presión crítica evicta y guarda si libera
+      (requiere apurar la máquina a crítico genuino: con la métrica corregida
+      son ~8 GiB de memhog; se pide OK al usuario por el impacto en su equipo).
 
 ## Task 4: Verificación UI real en la carpeta de Julián Gil
 - [ ] Barra de estado en normal con la carpeta abierta.
