@@ -388,16 +388,36 @@ canvas-app/src/
   shows a "Reload / Keep mine" banner; the app's own saves must not
   self-trigger it.
 - **Memory-pressure behavior** (`deck/system.rs`): `free_ram_bytes()` reads
-  free+speculative+purgeable pages per platform. `CRITICAL_FREE_RAM_BYTES`
-  (512 MiB) is the floor under which `start_save` / `start_export` abort
-  **before** touching the GPU or the file, showing the save/export error
-  banner (`persistence.rs`) — measured at the moment of the bake, not just at
-  the menu click; Save All warns with a modal when free RAM drops below
-  `FREE_RAM_REDUCTION_THRESHOLD_BYTES` (2 GiB, `deck/system.rs`). Under
-  critical RAM the deck also pauses background preloads (`loading.rs`
-  `keep_under_critical`: only a pending `jump_to` destination still loads).
-  Decisions are pure functions taking the measured bytes (tested via tables),
-  not global overrides.
+  the per-platform available figure — on **macOS** it is *not* just
+  free+speculative+purgeable: those exclude the reclaimable file cache, so an
+  idle Mac full of cache reported «critical» and blocked saves while the OS
+  said 78 % free and never swapped. It sums free+speculative+purgeable+**inactive**
+  via `host_statistics64` (the source of `vm_stat`; the `vm.page_*` sysctls
+  don't expose `inactive_count`), then floors it with the official kernel
+  pressure level `kern.memorystatus_vm_pressure_level` (2 → <2 GiB,
+  4 → <512 MiB) so counting the cache as free never masks real pressure.
+  Linux (`MemAvailable`) and Windows (`ullAvailPhys`) already include
+  reclaimable cache. `CRITICAL_FREE_RAM_BYTES` (512 MiB) is the floor under
+  which `start_save` / `start_export` abort **before** touching the GPU or the
+  file, showing the save/export error banner (`persistence.rs`) — measured at
+  the moment of the bake, not just at the menu click; Save All warns with a
+  modal when free RAM drops below `FREE_RAM_REDUCTION_THRESHOLD_BYTES`
+  (2 GiB, `deck/system.rs`). Under critical RAM the deck also pauses
+  background preloads (`loading.rs` `keep_under_critical`: only a pending
+  `jump_to` destination still loads). Decisions are pure functions taking the
+  measured bytes (tested via tables), not global overrides.
+- **The app never blocks itself** (`persistence.rs`
+  `critical_after_freeing_own_memory`): when `start_save` / `start_export`
+  trip the critical-RAM gate, they first shed the deck cache
+  (`evict_with_budget(0)` — evicts far clean slots but keeps the active one
+  being saved, the `jump_to` target, placeholders and dirty/undo-bearing
+  slots) and `forget_scope` the freed FX textures, then re-measure: they only
+  abort if still critical after letting go of their own memory. The deck
+  travels as a short-lived borrow through `start_save` / `start_export` /
+  `overwrite_modal_ui` / `export_flow_ui` (not in `SaveContext`) because
+  `show_modals` shares the same deck between the overwrite, export and
+  low-memory modals. `start_save_design` has no gate (it only bakes a small
+  preview).
 - **Anti-incomplete save guard** (`app/persistence.rs`
   `bake_came_out_blank_or_incomplete`): after baking, a skipped layer or a
   fully-uniform RGBA output on a document with visible image/SVG layers
