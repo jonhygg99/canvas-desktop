@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
+use canvas_core::{Document, LayerContent};
 use canvas_render::CanvasRenderer;
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
@@ -153,6 +154,18 @@ pub(super) fn start_save(
         1.0,
     ) {
         Ok((rgba, width, height)) => {
+            if bake_came_out_blank(&state.doc, &rgba) {
+                tracing::error!(
+                    "horneado en blanco con capas de imagen visibles; \
+                     no se sobrescribe el archivo"
+                );
+                state.save_error = Some(
+                    "The image came out blank — the file was not overwritten. \
+                     Close other apps to free memory and try again."
+                        .into(),
+                );
+                return;
+            }
             state.saving = true;
             state.save_error = None;
             *sctx.ignore_fs_events_until =
@@ -263,6 +276,17 @@ pub(super) fn start_export(
             scale,
         ) {
             Ok((rgba, width, height)) => {
+                if bake_came_out_blank(&state.doc, &rgba) {
+                    tracing::error!(
+                        "export horneado en blanco con capas de imagen visibles; no se escribe"
+                    );
+                    state.save_error = Some(
+                        "The export came out blank — nothing was written. \
+                         Close other apps to free memory and try again."
+                            .into(),
+                    );
+                    return;
+                }
                 state.exporting = true;
                 state.save_error = None;
                 loader::spawn_export_raster(
@@ -336,6 +360,37 @@ pub(super) fn start_export(
         tx.clone(),
         ctx.clone(),
     );
+}
+
+/// ¿El horneado salió UNIFORME (un solo color) pese a que el documento tiene
+/// capas de imagen visibles que deberían pintar? Un resultado así casi
+/// siempre significa que la GPU falló al dibujar las capas (presión de
+/// memoria, atlas de vello sin espacio para las texturas): escribir ese
+/// horneado sobre el archivo del usuario lo destruiría en silencio (el
+/// fondo de página es blanco, así que un bake fallido es un PNG blanco
+/// entero). La protección es deliberadamente conservadora: solo dispara con
+/// un bake de UN solo color y capas de imagen visibles; un diseño
+/// vectorial legítimamente monocromo, o una foto realmente uniforme, son
+/// casos límite aceptables — mejor un error claro que un archivo destruido.
+fn bake_came_out_blank(doc: &Document, rgba: &[u8]) -> bool {
+    let has_visible_images = doc.page().is_ok_and(|page| {
+        page.layers.iter().any(|layer| {
+            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+        })
+    });
+    if !has_visible_images {
+        return false;
+    }
+    let mut first: Option<[u8; 4]> = None;
+    for px in rgba.chunks_exact(4) {
+        let current = [px[0], px[1], px[2], px[3]];
+        match first {
+            None => first = Some(current),
+            Some(prev) if prev != current => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// ¿La extensión de `path` es JPEG? (para el aviso de calidad de recompresión)
