@@ -7,8 +7,13 @@
 //! - La RAM física TOTAL no cambia: se detecta una sola vez por proceso y
 //!   se cachea en un `OnceLock`.
 //! - La RAM LIBRE sí cambia: es la señal de presión de memoria que reduce
-//!   el presupuesto de la baraja, y la consulta es barata (una syscall o un
-//!   `read` de `/proc/meminfo`), así que se hace en cada llamada.
+//!   el presupuesto de la baraja, y la consulta es barata (una o dos
+//!   syscalls, o un `read` de `/proc/meminfo`), así que se hace en cada
+//!   llamada. En macOS mide como el OS — incluye la caché de archivos
+//!   reclamable (`inactive`) y cruza con el nivel oficial de presión
+//!   (`kern.memorystatus_vm_pressure_level`) como techo duro; sin eso, un
+//!   Mac normal lleno de caché marca «crítico» en falso y bloquea guardados
+//!   con el sistema al 78 % de RAM libre y sin swap.
 
 use std::sync::OnceLock;
 
@@ -110,35 +115,109 @@ fn detect_free_ram_bytes() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn detect_free_ram_bytes() -> Option<u64> {
-    // Páginas que el OS considera reclamables para presión: libres +
-    // especulativas + purgeables. `vm.page_inactive_count` NO existe como
-    // oid en este macOS; no hay que usarlo.
-    let mut pages = 0u64;
-    for oid in [
-        c"vm.page_free_count",
-        c"vm.page_speculative_count",
-        c"vm.page_purgeable_count",
-    ] {
-        let mut value = 0u64;
-        let mut len = std::mem::size_of::<u64>();
-        // SAFETY: consulta de solo lectura con buffer válido, igual que
-        // `detect_ram_bytes`.
-        let rc = unsafe {
-            libc::sysctlbyname(
-                oid.as_ptr(),
-                (&mut value as *mut u64).cast(),
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc != 0 {
-            return None;
-        }
-        pages += value;
+    let stats = vm_statistics()?;
+    let bytes = reclaimable_free_bytes(
+        u64::from(stats.free_count),
+        u64::from(stats.speculative_count),
+        u64::from(stats.purgeable_count),
+        u64::from(stats.inactive_count),
+        page_size_bytes()?,
+    );
+    // El nivel oficial de presión del OS manda: si dice warning/critical,
+    // la medición de páginas no puede contradecirlo (la caché inactiva
+    // puede dejar de ser reclamable en un pico). Ver `apply_pressure_ceiling`.
+    Some(apply_pressure_ceiling(bytes, memory_pressure_level()))
+}
+
+/// RAM libre reclamable en macOS, en la misma moneda que el OS: páginas
+/// libres + especulativas + purgeables + **inactivas** (la caché de archivos
+/// que el sistema recicla bajo presión). Sumar la caché inactiva es lo que
+/// evita el «crítico en falso»: un Mac normal vive de caché de archivos y
+/// `vm.page_free_count` a secas es crónicamente bajo. Pura, testeable con
+/// tabla.
+#[cfg(target_os = "macos")]
+fn reclaimable_free_bytes(
+    free_pages: u64,
+    speculative_pages: u64,
+    purgeable_pages: u64,
+    inactive_pages: u64,
+    page_size: u64,
+) -> u64 {
+    free_pages
+        .saturating_add(speculative_pages)
+        .saturating_add(purgeable_pages)
+        .saturating_add(inactive_pages)
+        .saturating_mul(page_size)
+}
+
+/// Estadísticas de VM en una sola syscall (`host_statistics64`, la misma
+/// fuente que `vm_stat`). Incluye `inactive_count`, que los oids sysctl
+/// `vm.page_*` no exponen (verificado en macOS 15). `None` si falla.
+///
+/// `mach_host_self` está deprecado en `libc` (sugiere la crate `mach2`);
+/// se permite el deprecado a propósito: es la única vía en `libc` sin
+/// añadir una dependencia nueva, que el proyecto evita.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn vm_statistics() -> Option<libc::vm_statistics64> {
+    let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::uninit();
+    let mut count = libc::HOST_VM_INFO64_COUNT;
+    // SAFETY: buffer válido (MaybeUninit del tipo exacto) con el contador
+    // correcto; la función rellena `stats` y devuelve `KERN_SUCCESS` (0).
+    let rc = unsafe {
+        libc::host_statistics64(
+            libc::mach_host_self(),
+            libc::HOST_VM_INFO64,
+            stats.as_mut_ptr().cast(),
+            &mut count,
+        )
+    };
+    (rc == 0).then(|| unsafe { stats.assume_init() })
+}
+
+/// Nivel oficial de presión de macOS: 1 normal, 2 warning, 4 critical.
+/// `kern.memorystatus_vm_pressure_level` es la decisión del propio kernel
+/// (la misma que pinta el indicador del sistema); sin él (syscall fallida o
+/// valor inesperado) se asume normal — sin señal no se detiene nada.
+#[cfg(target_os = "macos")]
+fn memory_pressure_level() -> u32 {
+    let mut level = 0u32;
+    let mut len = std::mem::size_of::<u32>();
+    // SAFETY: consulta de solo lectura con buffer válido, igual que
+    // `detect_ram_bytes`.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"kern.memorystatus_vm_pressure_level".as_ptr(),
+            (&mut level as *mut u32).cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || !matches!(level, 1 | 2 | 4) {
+        return 1;
     }
-    // `hw.pagesize` es un entero de 4 bytes; buffer `u32` para que la
-    // escritura de la syscall quepa exacta.
+    level
+}
+
+/// Tope duro de la medición según el nivel oficial del OS, para que contar
+/// la caché inactiva como libre no enmascare presión real: `warning` (2)
+/// reporta a lo sumo por debajo del umbral de reducción, `critical` (4) por
+/// debajo del de RAM crítica. `normal` (1) y niveles desconocidos dejan la
+/// medición intacta. Pura, testeable con tabla.
+#[cfg(target_os = "macos")]
+fn apply_pressure_ceiling(bytes: u64, pressure_level: u32) -> u64 {
+    match pressure_level {
+        2 => bytes.min(FREE_RAM_REDUCTION_THRESHOLD_BYTES - 1),
+        4 => bytes.min(CRITICAL_FREE_RAM_BYTES - 1),
+        _ => bytes,
+    }
+}
+
+/// Tamaño de página del sistema (`hw.pagesize`, entero de 4 bytes; buffer
+/// `u32` para que la escritura de la syscall quepa exacta).
+#[cfg(target_os = "macos")]
+fn page_size_bytes() -> Option<u64> {
     let mut page_size: u32 = 0;
     let mut len = std::mem::size_of::<u32>();
     let rc = unsafe {
@@ -150,10 +229,7 @@ fn detect_free_ram_bytes() -> Option<u64> {
             0,
         )
     };
-    if rc != 0 {
-        return None;
-    }
-    Some(pages.saturating_mul(page_size as u64))
+    (rc == 0).then_some(u64::from(page_size))
 }
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
@@ -181,6 +257,79 @@ mod tests {
     /// predicado que aborta Save/Export antes del bake. El umbral es exclusivo
     /// inferior — exactamente `CRITICAL_FREE_RAM_BYTES` no es crítico; por
     /// debajo sí. `None` (no medible) nunca cuenta: sin señal no se para nada.
+    /// Tabla de la suma reclamable en macOS (Task 1 del plan): las páginas
+    /// inactivas (caché de archivos) cuentan como libres, igual que en el
+    /// cálculo de presión del kernel. Regresión del reporte del usuario:
+    /// un sistema normal con ~5 GiB de caché inactiva y poca free real.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reclaimable_free_bytes_table() {
+        let page = 4096u64;
+        let mib = 1024 * 1024u64;
+        let gib = 1024 * mib;
+        let cases = [
+            // (free, spec, purgeable, inactive, esperado en bytes)
+            (0, 0, 0, 0, 0),
+            (1, 0, 0, 0, page),
+            (gib / page, gib / page, gib / page, gib / page, 4 * gib),
+            // El caso del usuario: free baja de verdad, pero la caché
+            // inactiva (~5 GiB) es reclamable → no debe marcar crítico.
+            (300 * mib / page, 0, 0, 5 * gib / page, 300 * mib + 5 * gib),
+        ];
+        for (f, s, p, i, expected) in cases {
+            assert_eq!(
+                reclaimable_free_bytes(f, s, p, i, page),
+                expected,
+                "free={f} spec={s} purge={p} inactive={i}"
+            );
+        }
+    }
+
+    /// Tabla del tope duro por nivel oficial de presión: `warning` (2) y
+    /// `critical` (4) recortan la medición aunque la caché inactiva sea
+    /// grande; `normal` (1) y niveles desconocidos la dejan intacta.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn pressure_ceiling_table() {
+        let big = 8 * 1024 * 1024 * 1024u64;
+        let cases = [
+            // (bytes medidos, nivel oficial, esperado)
+            (big, 1, big),
+            (big, 0, big),
+            (big, 2, FREE_RAM_REDUCTION_THRESHOLD_BYTES - 1),
+            (big, 4, CRITICAL_FREE_RAM_BYTES - 1),
+            // Ya por debajo del techo: la medición no se infla.
+            (10 * 1024 * 1024, 4, 10 * 1024 * 1024),
+        ];
+        for (bytes, level, expected) in cases {
+            assert_eq!(
+                apply_pressure_ceiling(bytes, level),
+                expected,
+                "bytes={bytes} level={level}"
+            );
+        }
+    }
+
+    /// Regresión end-to-end del reporte del usuario: con el sistema en
+    /// presión normal (nivel 1) y ~5 GiB de caché inactiva, el valor final
+    /// que consume el resto de la app supera el umbral de reducción y no
+    /// dispara el guard de RAM crítica.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn user_case_is_not_critical() {
+        let page = 4096u64;
+        let bytes = reclaimable_free_bytes(
+            300 * 1024 * 1024 / page,
+            0,
+            0,
+            5 * 1024 * 1024 * 1024 / page,
+            page,
+        );
+        let reported = apply_pressure_ceiling(bytes, 1);
+        assert!(reported >= FREE_RAM_REDUCTION_THRESHOLD_BYTES);
+        assert!(!is_critical_free_ram(Some(reported)));
+    }
+
     #[test]
     fn is_critical_free_ram_boundary_table() {
         let threshold = CRITICAL_FREE_RAM_BYTES;
