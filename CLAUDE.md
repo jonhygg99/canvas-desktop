@@ -246,9 +246,13 @@ canvas-io/src/
     `~/.local/share/applications/` (or `$XDG_DATA_HOME`) with `MimeType=`,
     deduplicated, and runs `update-desktop-database`. `unregister` removes
     the file.
-  - **`macos.rs`**: generates an `Info.plist` with `CFBundleDocumentTypes`
-    + `UTExportedTypeDeclarations` in a temp dir and registers it via
-    `lsregister`. `unregister` calls `lsregister -u`.
+  - **`macos.rs`**: creates a temporary `Canvas Desktop.app` bundle with
+    `Contents/MacOS` and `Contents/Info.plist`, then registers the complete
+    bundle via `lsregister`; `unregister` removes that bundle after calling
+    `lsregister -u`. Production packaging should register the final bundle.
+  - **`linux.rs`**: installs a `.desktop` entry under
+    `~/.local/share/applications/` or `$XDG_DATA_HOME`, escapes special
+    characters in `Exec=`, and removes the entry during unregister.
   Cross-compile verification: `cargo check -p canvas-shell --target
   x86_64-unknown-linux-gnu` / `x86_64-apple-darwin` from any OS.
 - Single-instance enforcement (`single_instance.rs`, via `interprocess`): a

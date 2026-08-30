@@ -75,6 +75,10 @@ El canvas mínimo funcionando de punta a punta:
 - **Vigilancia del archivo** (`notify`): si el archivo abierto cambia en
   disco por fuera, un banner ofrece «Reload / Keep mine». Los guardados
   propios no disparan el aviso.
+- **Integración con el shell del sistema**: botones «Register / Unregister»
+  en Settings activan las asociaciones de archivos de la plataforma. En
+  Windows usan el registro y el Explorador; en macOS LaunchServices; en Linux
+  un archivo `.desktop` freedesktop.
 - **Integración con el Explorador de Windows**: botones «Register /
   Unregister» en Settings crean (y limpian) las asociaciones «Open with» bajo
   `HKCU\Software\Classes` y el menú contextual de carpetas, con
@@ -207,10 +211,15 @@ backtrace sale simbolizado).
   «Elegir otra aplicación» → «Buscar otra aplicación en el equipo» →
   selecciona `target\debug\canvas-desktop.exe`. También puedes arrastrar un
   archivo o carpeta sobre la ventana abierta.
-- **macOS / Linux**: `cargo run -p canvas-app -- /ruta/a/foto.png` o arrastrar
-  el archivo sobre la ventana. (El registro por `Info.plist` / `.desktop`
-  llega con el empaquetado; los stubs de `canvas-shell` compilan pero
-  devuelven `NotImplemented`.)
+- **macOS**: la integración genera un bundle `Canvas Desktop.app` temporal,
+  escribe `Contents/Info.plist` y lo registra con `lsregister`. En producción,
+  es preferible registrar el bundle `.app` generado por el empaquetador.
+- **Linux**: la integración instala
+  `~/.local/share/applications/canvas-desktop.desktop` (o el directorio de
+  `$XDG_DATA_HOME`), con `Exec=` escapado y los MIME types soportados.
+- En ambos sistemas, `unregister` elimina el registro creado por la app.
+  `cargo run -p canvas-app -- /ruta/a/foto.png` sigue siendo suficiente para
+  abrir una imagen directamente.
 
 Con la app ya abierta, cualquier apertura nueva (Explorador, terminal,
 `canvas-desktop otra.png`) reutiliza la misma ventana: el segundo proceso
