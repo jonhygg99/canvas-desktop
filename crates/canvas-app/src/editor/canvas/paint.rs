@@ -10,7 +10,7 @@ use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 use vello::kurbo::Affine;
 
-use crate::deck::{Deck, SlotContent};
+use crate::deck::{free_ram_bytes, total_physical_ram_bytes, Deck, SlotContent};
 use crate::surface::CanvasSurface;
 
 use super::super::overlay::{draw_grid, draw_rulers, draw_selection_overlay};
@@ -80,6 +80,19 @@ pub(super) fn paint(
             }
         }
     }
+    // Presupuesto GPU del documento activo (Task 6 del plan de memoria):
+    // tras sincronizar las ranuras visibles, si la caché de efectos supera
+    // el presupuesto (1/16 de RAM, reducido por RAM libre) se expulsan los
+    // scopes menos usados que no sean el activo. Los visibles se
+    // re-sincronizan cada frame (su `last_used` está fresco), así que solo
+    // se expulsan inactivos — el atlas no se llena con lo que se ve, y un
+    // scope expulsado reaparece al volver a sincronizarse. Inofensivo por
+    // frame: `evict_fx_to_budget` vuelve sin tocar nada bajo presupuesto.
+    if let Some(active_slot) = deck.slots.get(deck.active) {
+        let budget = canvas_render::resolve_fx_budget(total_physical_ram_bytes(), free_ram_bytes());
+        renderer.evict_fx_to_budget(budget, FxScope(active_slot.scope));
+    }
+
     if let Err(e) = surface.render(rs, renderer, surface.scene_ref()) {
         tracing::error!("fallo renderizando el lienzo: {e}");
     }

@@ -4,7 +4,7 @@
 mod blur;
 mod scene;
 
-pub use blur::{ColorParams, FxScope, SyncLayerRequest};
+pub use blur::{resolve_fx_budget, ColorParams, FxScope, SyncLayerRequest};
 pub use scene::{
     append_document, build_scene, draw_atlas_anchor, image_data_from_rgba, text_lines, ImageMap,
 };
@@ -164,6 +164,25 @@ impl CanvasRenderer {
     /// tiene texturas de efectos.
     pub fn fx_scope_last_used(&self, scope: FxScope) -> Option<u64> {
         self.blur.last_used(scope)
+    }
+
+    /// Presupuesto GPU del documento activo (Task 6 del plan de memoria):
+    /// expulsa scopes de efectos por LRU (ver `BlurEngine::evict_to_budget`),
+    /// salvo `active`, hasta que `fx_total_bytes() <= budget`, y des-registra
+    /// de vello las texturas retiradas — sin esto el atlas las mantendría
+    /// vivas aunque la caché las soltara. Devuelve los scopes expulsados
+    /// (diagnóstico). Inofensivo por frame: vuelve sin tocar nada cuando ya
+    /// se está bajo presupuesto.
+    pub fn evict_fx_to_budget(&mut self, budget: u64, active: FxScope) -> Vec<FxScope> {
+        let mut evicted = Vec::new();
+        for (scope, images) in self.blur.evict_to_budget(budget, active) {
+            evicted.push(scope);
+            self.atlas.removals += images.len() as u64;
+            for image in images {
+                self.renderer.override_image(&image, None);
+            }
+        }
+        evicted
     }
 
     /// Contadores acumulados de actividad del atlas desde la creación o el

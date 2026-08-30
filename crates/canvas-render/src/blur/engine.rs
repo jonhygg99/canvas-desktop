@@ -134,6 +134,50 @@ impl BlurEngine {
             .max()
     }
 
+    /// Presupuesto GPU del documento activo (Task 6 del plan de memoria):
+    /// si `total_bytes()` supera `budget`, expulsa scopes de efectos por LRU
+    /// (el de `last_used` más antiguo primero) hasta volver al presupuesto,
+    /// NUNCA el `active` — el que se está renderizando en pantalla, para que
+    /// no parpadee. Los scopes visibles se re-sincronizan cada frame, así que
+    /// su `last_used` está fresco y la evicción solo alcanza a los inactivos.
+    /// Devuelve, por scope expulsado, sus `ImageData` retiradas para que el
+    /// llamador las des-registre de vello (mismo contrato que `forget_scope`:
+    /// si no, el atlas las retendría vivas aunque la caché las soltara).
+    /// Barato cuando ya se está bajo presupuesto: vuelve sin tocar nada.
+    pub fn evict_to_budget(
+        &mut self,
+        budget: u64,
+        active: FxScope,
+    ) -> Vec<(FxScope, Vec<ImageData>)> {
+        if self.total_bytes() <= budget {
+            return Vec::new();
+        }
+        // Máximo `last_used` por scope candidato, ordenado de más antiguo a
+        // más reciente — el orden de expulsión.
+        let mut by_scope: HashMap<FxScope, u64> = HashMap::new();
+        for ((scope, _), entry) in &self.cache {
+            if *scope == active {
+                continue;
+            }
+            let last = by_scope.entry(*scope).or_default();
+            *last = (*last).max(entry.last_used);
+        }
+        let mut scopes: Vec<(FxScope, u64)> = by_scope.into_iter().collect();
+        scopes.sort_by_key(|&(_, last)| last);
+
+        let mut evicted = Vec::new();
+        for (scope, _) in scopes {
+            if self.total_bytes() <= budget {
+                break;
+            }
+            let removed = self.forget_scope(scope);
+            if !removed.is_empty() {
+                evicted.push((scope, removed));
+            }
+        }
+        evicted
+    }
+
     /// Imágenes sustitutas por capa de `scope`, para la escena: las texturas
     /// procesadas (efectos GPU) y las copias reducidas de las capas sin
     /// efectos demasiado grandes (`display`). La clave devuelta es el

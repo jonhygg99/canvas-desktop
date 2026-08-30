@@ -9,11 +9,13 @@ use canvas_core::LayerId;
 use vello::peniko::ImageData;
 use vello::wgpu;
 
+mod budget;
 mod engine;
 mod params;
 pub mod passes;
 mod sync;
 
+pub use budget::resolve_fx_budget;
 pub use params::ColorParams;
 pub use sync::SyncLayerRequest;
 

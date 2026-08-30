@@ -30,7 +30,10 @@ pub(crate) const CRITICAL_FREE_RAM_BYTES: u64 = 512 * 1024 * 1024;
 
 /// RAM física total de la máquina, en bytes, o `None` si no se pudo
 /// determinar (plataforma desconocida, syscall fallida, `/proc` ausente).
-pub(super) fn total_physical_ram_bytes() -> Option<u64> {
+/// `pub(crate)` para que el render en vivo (`editor/canvas/paint.rs`) pueda
+/// pedir el presupuesto GPU del documento activo vía la re-exportación de
+/// `deck`.
+pub(crate) fn total_physical_ram_bytes() -> Option<u64> {
     static TOTAL: OnceLock<Option<u64>> = OnceLock::new();
     *TOTAL.get_or_init(detect_ram_bytes)
 }

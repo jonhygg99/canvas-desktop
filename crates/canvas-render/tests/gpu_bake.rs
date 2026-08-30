@@ -1073,3 +1073,76 @@ fn blur_engine_accounts_gpu_bytes_and_last_used() {
     assert_eq!(renderer.fx_total_bytes(), bytes_b);
     assert_eq!(renderer.fx_bytes_in_scope(scope_b), bytes_b);
 }
+
+// ─── evicción LRU por presupuesto GPU (Task 6) ─────────────────────────
+
+/// La evicción del presupuesto GPU (Task 6 del plan de memoria): con más
+/// scopes horneados de los que caben en el presupuesto, `evict_fx_to_budget`
+/// expulsa los menos usados (LRU) salvo el scope en render activo, y un
+/// scope expulsado se re-sincroniza al volver a hornearse (vuelve a pintar
+/// con 0 capas omitidas). Sin esta acotación, la caché de efectos crecería
+/// sin límite y el atlas de vello podría descartar texturas en silencio —
+/// la clase «bake parcial» que este presupuesto cierra en origen.
+#[test]
+#[ignore = "requiere GPU"]
+fn fx_budget_evicts_lru_scopes_keeping_active_and_rebake_restores() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+
+    // 4 scopes idénticos con blur; cada uno ocupa 16·64·48 = 49152 bytes.
+    let (doc_a, images_a) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_b, images_b) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_c, images_c) = doc_with_blur_image(64, 48, 20.0);
+    let (doc_d, images_d) = doc_with_blur_image(64, 48, 20.0);
+    let (sa, sb, sc, sd) = (FxScope(11), FxScope(12), FxScope(13), FxScope(14));
+    let active = sd; // D es el que se está renderizando
+
+    for (scope, doc, images) in [
+        (sa, &doc_a, &images_a),
+        (sb, &doc_b, &images_b),
+        (sc, &doc_c, &images_c),
+        (sd, &doc_d, &images_d),
+    ] {
+        bake(&mut renderer, &device, &queue, scope, doc, images, 1.0);
+    }
+    let per_scope = 16 * 64 * 48;
+    assert_eq!(renderer.fx_total_bytes(), 4 * per_scope);
+
+    // Presupuesto para 2 scopes: expulsa los 2 más antiguos NO activos
+    // (A y B se hornearon primero; C es reciente; D es el activo).
+    let evicted = renderer.evict_fx_to_budget(2 * per_scope, active);
+    assert!(
+        evicted.contains(&sa) && evicted.contains(&sb),
+        "debería expulsar A y B (los más viejos), expulsó {evicted:?}"
+    );
+    assert!(
+        !evicted.contains(&sc),
+        "C es reciente y debe conservarse: {evicted:?}"
+    );
+    assert!(
+        !evicted.contains(&active),
+        "el scope activo nunca se expulsa: {evicted:?}"
+    );
+    assert_eq!(renderer.fx_total_bytes(), 2 * per_scope);
+    assert_eq!(renderer.fx_bytes_in_scope(sa), 0);
+    assert_eq!(renderer.fx_bytes_in_scope(active), per_scope);
+
+    // Re-hornear el scope expulsado lo restaura por completo: 0 omitidas y
+    // su footprint vuelve a la caché (la capa «reaparece»).
+    let (rgba, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, sa, &doc_a, &images_a, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (64, 48));
+    assert_eq!(skipped, 0, "el scope re-sincronizado no debe omitir capas");
+    let n = rgba.len() / 4;
+    let opaque = rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+    assert!(
+        opaque * 100 / n.max(1) > 50,
+        "el scope re-horneado debe volver a pintar contenido opaco ({opaque}/{n})"
+    );
+    assert_eq!(
+        renderer.fx_bytes_in_scope(sa),
+        per_scope,
+        "el scope re-horneado debe volver a la caché de efectos"
+    );
+}
