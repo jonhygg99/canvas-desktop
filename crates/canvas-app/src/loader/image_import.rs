@@ -170,16 +170,18 @@ mod tests {
 
     #[test]
     fn rejects_empty_http_response() {
-        let address = serve_response("200 OK", b"");
+        let (address, server) = serve_response("200 OK", b"");
         let error = download_url_to_temp(&format!("http://{address}/empty.png")).unwrap_err();
+        server.join().unwrap();
         let message = error.to_string();
         assert!(message.contains("no data") || message.contains("download failed"));
     }
 
     #[test]
     fn rejects_http_errors() {
-        let address = serve_response("404 Not Found", b"missing");
+        let (address, server) = serve_response("404 Not Found", b"missing");
         let error = download_url_to_temp(&format!("http://{address}/missing.png")).unwrap_err();
+        server.join().unwrap();
         assert!(error.to_string().contains("download failed"));
     }
     #[test]
@@ -194,14 +196,16 @@ mod tests {
 
     #[test]
     fn writes_a_small_valid_response_to_a_unique_temp_file() {
-        let address = serve_response("200 OK", b"image bytes");
-        let path = download_url_to_temp(&format!("http://{address}/image.png")).unwrap();
+        let (address, server) = serve_response("200 OK", b"image bytes");
+        let path = download_url_to_temp(&format!("http://{address}/image.png"));
+        server.join().unwrap();
+        let path = path.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"image bytes");
         assert!(path.starts_with(std::env::temp_dir()));
         std::fs::remove_file(path).unwrap();
     }
 
-    fn serve_response(status: &str, body: &[u8]) -> String {
+    fn serve_response(status: &str, body: &[u8]) -> (String, std::thread::JoinHandle<()>) {
         use std::io::Write;
         use std::net::TcpListener;
         use std::thread;
@@ -210,7 +214,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let status = status.to_owned();
         let body = body.to_vec();
-        thread::spawn(move || {
+        let thread = thread::spawn(move || {
             let Ok((mut stream, _)) = listener.accept() else {
                 return;
             };
@@ -220,8 +224,10 @@ mod tests {
             );
             stream.write_all(response.as_bytes()).unwrap();
             stream.write_all(&body).unwrap();
-            stream.shutdown(std::net::Shutdown::Both).unwrap();
+            stream.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(stream);
         });
-        address.to_string()
+        (address.to_string(), thread)
     }
 }
