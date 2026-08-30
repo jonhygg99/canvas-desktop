@@ -12,6 +12,13 @@
 
 use std::sync::OnceLock;
 
+/// Umbral de «poca RAM»: por debajo de 2 GiB libres, la caché de la baraja
+/// reduce su presupuesto dinámicamente (ver `budget_under_free_ram` en
+/// cache.rs) y `App` avisa antes de un «Save all» masivo. Con 1 GiB libres
+/// el presupuesto cae a la mitad; con 512 MiB o menos, al mínimo. Un solo
+/// umbral para ambos: es la misma señal de presión.
+pub(crate) const FREE_RAM_REDUCTION_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// RAM física total de la máquina, en bytes, o `None` si no se pudo
 /// determinar (plataforma desconocida, syscall fallida, `/proc` ausente).
 pub(super) fn total_physical_ram_bytes() -> Option<u64> {
@@ -26,8 +33,9 @@ pub(super) fn total_physical_ram_bytes() -> Option<u64> {
 /// páginas free + speculative + purgeable en macOS — libre a secas es
 /// crónicamente bajo en macOS porque el sistema vive de caché de archivos,
 /// y el propio OS cuenta esas tres clases como reclamables para decidir
-/// presión.
-pub(super) fn free_ram_bytes() -> Option<u64> {
+/// presión. `pub(crate)` porque `App` la usa para el aviso de poca RAM
+/// antes de «Save all».
+pub(crate) fn free_ram_bytes() -> Option<u64> {
     detect_free_ram_bytes()
 }
 

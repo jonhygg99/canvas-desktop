@@ -9,7 +9,9 @@ use crate::editor;
 
 use super::super::super::frame::EditorFrame;
 use super::super::super::persistence::SaveContext;
-use super::super::super::ui_modals::{export_flow_ui, overwrite_modal_ui, readonly_modal_ui};
+use super::super::super::ui_modals::{
+    export_flow_ui, low_memory_modal_ui, overwrite_modal_ui, readonly_modal_ui,
+};
 
 pub(super) fn show_modals(
     state: &mut editor::EditorState,
@@ -38,6 +40,11 @@ pub(super) fn show_modals(
         &mut f.save.close_after_save,
         &mut f.save.after_save,
     );
+
+    // Aviso de poca RAM antes de «Save all» masivo. Préstamos disjuntos de
+    // `sctx` (que lleva renderer/tx/ignore_fs_events_until): aquí se usan
+    // `f.deck` y `f.save`, que no están en él.
+    low_memory_modal_ui(state, f.deck, f.save, ctx);
 
     // Diálogo de exportación. `sctx` ya está prestado arriba para el
     // modal de sobrescritura; se reutiliza aquí porque los modales son

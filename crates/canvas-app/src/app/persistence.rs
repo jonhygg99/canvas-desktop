@@ -15,7 +15,7 @@ use eframe::egui_wgpu::RenderState;
 use crate::loader::{self, AppMsg};
 use crate::{deck, editor, export, gallery, settings};
 
-use super::{AppInner, View, Workspace};
+use super::{AppInner, SaveFlow, View, Workspace};
 
 /// Préstamos que las funciones de guardado necesitan del `AppInner` y del
 /// workspace durante un frame.
@@ -36,34 +36,88 @@ pub(in crate::app) struct SaveContext<'a> {
 
 impl AppInner {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no
-    /// índice). El documento ACTIVO, si está sucio, se guarda aparte y de
-    /// inmediato; la cola solo lleva lo demás. Deja fuera SVG/GIF.
+    /// índice) y guarda el documento ACTIVO, si está sucio, de inmediato.
+    /// Deja fuera SVG/GIF. Si la RAM libre del sistema está por debajo del
+    /// umbral, NO encola nada y abre el aviso de poca memoria: un horneado
+    /// masivo bajo presión es la receta del PNG blanco (ver
+    /// `bake_came_out_blank`), y mejor avisar antes de lanzar N horneados.
+    /// El botón «Save all anyway» del modal llama a `start_save_all_flow`
+    /// directamente.
     pub(crate) fn start_save_all(&mut self, ws: &mut Workspace) {
         let View::Editor(state) = &mut ws.view else {
             return;
         };
-        if state.is_dirty()
-            && state
-                .doc
-                .source_path
-                .as_deref()
-                .is_some_and(canvas_io::can_overwrite)
-        {
-            state.save_clicked = true;
+        if should_warn_low_memory(crate::deck::free_ram_bytes()) {
+            let count = save_all_doc_count(&ws.deck, state);
+            if count > 0 {
+                ws.save.low_memory_prompt = Some(count);
+                return;
+            }
         }
-        ws.save.save_all_queue = ws
-            .deck
-            .slots
-            .iter()
-            .filter(|s| {
-                !s.is_placeholder
-                    && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
-                    && canvas_io::can_overwrite(&s.path)
-            })
-            .map(|s| s.id)
-            .collect();
-        ws.save.save_all_attempted = false;
+        start_save_all_flow(state, &mut ws.deck, &mut ws.save);
     }
+}
+
+/// Construye la cola de «Save all»: guarda el documento activo (si está
+/// sucio y es sobrescribible) y encola las ranuras de fondo sucias (id
+/// estable, no índice). Libre para poder re-dispararse desde el modal de
+/// aviso de poca RAM, donde `state`/`deck`/`save` son préstamos disjuntos
+/// del mismo workspace.
+pub(super) fn start_save_all_flow(
+    state: &mut editor::EditorState,
+    deck: &mut deck::Deck,
+    save: &mut SaveFlow,
+) {
+    if state.is_dirty()
+        && state
+            .doc
+            .source_path
+            .as_deref()
+            .is_some_and(canvas_io::can_overwrite)
+    {
+        state.save_clicked = true;
+    }
+    save.save_all_queue = deck
+        .slots
+        .iter()
+        .filter(|s| {
+            !s.is_placeholder
+                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
+                && canvas_io::can_overwrite(&s.path)
+        })
+        .map(|s| s.id)
+        .collect();
+    save.save_all_attempted = false;
+}
+
+/// Cuántos documentos escribiría «Save all» (el activo, si está sucio y es
+/// sobrescribible, más las ranuras de fondo sucias) — para el aviso de
+/// poca RAM. Pura: se prueba con barajas construidas a mano.
+fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
+    let active = state.is_dirty()
+        && state
+            .doc
+            .source_path
+            .as_deref()
+            .is_some_and(canvas_io::can_overwrite);
+    let background = deck
+        .slots
+        .iter()
+        .filter(|s| {
+            !s.is_placeholder
+                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
+                && canvas_io::can_overwrite(&s.path)
+        })
+        .count();
+    background + usize::from(active)
+}
+
+/// ¿Conviene avisar de poca RAM antes de «Save all»? Pura para poder
+/// probarla sin hardware ni variables de entorno: sin medición no se
+/// avisa, y el umbral es `FREE_RAM_REDUCTION_THRESHOLD_BYTES` (el mismo
+/// con el que la caché de la baraja empieza a reducir su presupuesto).
+fn should_warn_low_memory(free_bytes: Option<u64>) -> bool {
+    free_bytes.is_some_and(|free| free < crate::deck::FREE_RAM_REDUCTION_THRESHOLD_BYTES)
 }
 
 /// Al volver a la galería desde el editor, siembra la rejilla con lo que ya

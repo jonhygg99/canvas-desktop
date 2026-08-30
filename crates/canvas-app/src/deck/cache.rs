@@ -6,7 +6,7 @@ use canvas_render::FxScope;
 
 use super::loading::PRELOAD_RADIUS;
 use super::model::SlotContent;
-use super::system::{free_ram_bytes, total_physical_ram_bytes};
+use super::system::{free_ram_bytes, total_physical_ram_bytes, FREE_RAM_REDUCTION_THRESHOLD_BYTES};
 use super::Deck;
 
 impl Deck {
@@ -114,14 +114,6 @@ pub(super) fn evict_budget_from_ram(total_bytes: u64) -> usize {
     let scaled = (total_bytes as f64 * RAM_BUDGET_FRACTION) as usize;
     scaled.clamp(MIN_EVICT_BUDGET_BYTES, MAX_EVICT_BUDGET_BYTES)
 }
-
-/// Umbral de RAM libre por debajo del cual el presupuesto se reduce
-/// dinámicamente: con menos de 2 GiB libres la caché cede memoria a la
-/// presión del sistema (el guard anti-blanco protege el archivo, pero
-/// mejor no llegar a necesitarlo). Con 1 GiB libres el presupuesto cae a
-/// la mitad; con 512 MiB o menos, al mínimo. Por encima del umbral el
-/// presupuesto no se toca.
-pub(super) const FREE_RAM_REDUCTION_THRESHOLD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Presupuesto bajo presión de memoria: si la RAM libre cae por debajo de
 /// `FREE_RAM_REDUCTION_THRESHOLD_BYTES`, el presupuesto se escala
