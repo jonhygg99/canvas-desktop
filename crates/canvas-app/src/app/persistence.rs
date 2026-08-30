@@ -476,6 +476,20 @@ pub(super) fn start_export(
     );
 }
 
+/// ¿El documento tiene al menos una capa que hornea píxeles reales
+/// (imagen o SVG) VISIBLE? Mismo criterio que `bake_came_out_blank_or_incomplete`:
+/// si NO hay ninguna, guardar el documento como raster aplanado solo escribe
+/// texto/formas — y al sobrescribir un archivo de imagen en disco se descarta
+/// la copia editable de la foto original que abrió el usuario. Se comprueba
+/// ANTES de horneos para confirmar con el usuario (ver `discard_raster_modal_ui`).
+pub(super) fn has_raster_layers(doc: &Document) -> bool {
+    doc.page().is_ok_and(|page| {
+        page.layers.iter().any(|layer| {
+            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+        })
+    })
+}
+
 /// ¿El horneado salió UNIFORME (un solo color) pese a que el documento tiene
 /// capas de imagen visibles que deberían pintar, o se OMITIÓ alguna capa de
 /// imagen/SVG visible al construir la escena (`skipped > 0`: píxel ausente

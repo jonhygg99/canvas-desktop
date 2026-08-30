@@ -10,7 +10,8 @@ use crate::editor;
 use super::super::super::frame::EditorFrame;
 use super::super::super::persistence::SaveContext;
 use super::super::super::ui_modals::{
-    export_flow_ui, low_memory_modal_ui, overwrite_modal_ui, readonly_modal_ui,
+    discard_raster_modal_ui, export_flow_ui, low_memory_modal_ui, overwrite_modal_ui,
+    readonly_modal_ui,
 };
 
 pub(super) fn show_modals(
@@ -40,6 +41,13 @@ pub(super) fn show_modals(
         &mut f.save.close_after_save,
         &mut f.save.after_save,
     );
+
+    // Aviso de guardar un raster SIN capas de imagen (tras borrar la última
+    // foto): el modal de sobrescritura puede encadenarlo (Choice::Overwrite),
+    // y el guardado directo lo fija en `save_flow`. Va DESPUÉS de
+    // `overwrite_modal_ui` para que, si ambos aplican, el usuario vea primero
+    // el de sobrescritura y después este, más específico.
+    discard_raster_modal_ui(state, f.save, &mut sctx, f.deck, f.settings);
 
     // Aviso de poca RAM antes de «Save all» masivo. Préstamos disjuntos de
     // `sctx` (que lleva renderer/tx/ignore_fs_events_until): aquí se usan

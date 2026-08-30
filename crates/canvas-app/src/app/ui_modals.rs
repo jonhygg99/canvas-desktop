@@ -147,7 +147,19 @@ pub(super) fn overwrite_modal_ui(
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
             }
-            start_save(state, sctx, deck, path, false, settings.jpeg_quality);
+            // Aun confirmando la sobrescritura, si el documento ya no tiene
+            // ninguna capa de imagen (se borró la última foto), se encadena
+            // el aviso de «sin capas de imagen» antes de aplanar: el usuario
+            // acaba de confirmar PISAR el archivo, no necesariamente
+            // descartar la copia editable del `borrado`.
+            if !state.born_blank
+                && !save.discard_raster_confirmed
+                && !super::persistence::has_raster_layers(&state.doc)
+            {
+                save.discard_raster_prompt = Some(path);
+            } else {
+                start_save(state, sctx, deck, path, false, settings.jpeg_quality);
+            }
         }
         Choice::SaveAs => {
             save.overwrite_prompt = None;
@@ -230,6 +242,83 @@ pub(super) fn readonly_modal_ui(
         *readonly_prompt = None;
         *close_after_save = false;
         *after_save = None;
+    }
+}
+
+/// Modal de aviso: un guardado raster a punto de sobrescribir un archivo de
+/// imagen cuyo documento ya no tiene NINGUNA capa de imagen/SVG (tras borrar
+/// la última foto). El aplanado escribiría solo texto/formas y perdería la
+/// copia editable de la foto que abrió el usuario. «Save anyway» confirma y
+/// hornea igual; «Save as design…» conserva la editabilidad; «Cancel» aborta.
+pub(super) fn discard_raster_modal_ui(
+    state: &mut editor::EditorState,
+    save: &mut SaveFlow,
+    sctx: &mut SaveContext,
+    deck: &mut deck::Deck,
+    settings: &mut settings::AppSettings,
+) {
+    let Some(path) = save.discard_raster_prompt.clone() else {
+        return;
+    };
+    enum Choice {
+        None,
+        Flatten,
+        Design,
+        Cancel,
+    }
+    let mut choice = Choice::None;
+    let jpeg_quality = settings.jpeg_quality;
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let modal = egui::Modal::new(egui::Id::new("discard_raster")).show(sctx.ctx, |ui| {
+        ui.set_max_width(400.0);
+        ui.heading("Save without any images?");
+        ui.add_space(6.0);
+        ui.label(format!(
+            "The document you're saving as \"{file_name}\" has no image \
+             layers left — you deleted the last photo. Saving flattens it to \
+             a plain picture and overwrites \"{file_name}\" on disk, so \
+             reopening the file won't bring back the original photo. Keep the \
+             whole design editable with Save as design, or flatten anyway."
+        ));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button("Save anyway").clicked() {
+                choice = Choice::Flatten;
+            }
+            if ui.button("Save as design…").clicked() {
+                choice = Choice::Design;
+            }
+            if ui.button("Cancel").clicked() {
+                choice = Choice::Cancel;
+            }
+        });
+    });
+    if modal.should_close() && matches!(choice, Choice::None) {
+        choice = Choice::Cancel;
+    }
+    match choice {
+        Choice::None => {}
+        Choice::Flatten => {
+            save.discard_raster_prompt = None;
+            save.discard_raster_confirmed = true;
+            start_save(state, sctx, deck, path, false, jpeg_quality);
+        }
+        Choice::Design => {
+            save.discard_raster_prompt = None;
+            loader::spawn_pick_design_path(
+                Some(state.file_name()),
+                sctx.tx.clone(),
+                sctx.ctx.clone(),
+            );
+        }
+        Choice::Cancel => {
+            save.discard_raster_prompt = None;
+            save.close_after_save = false;
+            save.after_save = None;
+        }
     }
 }
 

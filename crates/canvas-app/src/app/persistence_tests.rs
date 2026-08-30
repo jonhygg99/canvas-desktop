@@ -14,8 +14,8 @@ use crate::gallery::ItemKind;
 use crate::settings::GallerySort;
 
 use super::{
-    bake_came_out_blank_or_incomplete, resolve_canvas_sidecar, save_all_doc_count,
-    should_warn_low_memory, start_save_all_flow,
+    bake_came_out_blank_or_incomplete, has_raster_layers, resolve_canvas_sidecar,
+    save_all_doc_count, should_warn_low_memory, start_save_all_flow,
 };
 
 /// Documento de 100×100 con una capa de imagen visible 50×50.
@@ -110,6 +110,49 @@ fn uniform_bake_with_only_hidden_image_layers_is_allowed() {
         .visible = false;
     let rgba = vec![255u8; 100 * 100 * 4];
     assert!(!bake_came_out_blank_or_incomplete(&doc, &rgba, 0));
+}
+
+// ——— has_raster_layers: ¿el documento hornea algún píxel de imagen? ———
+
+#[test]
+fn raster_layers_presence_by_table() {
+    // Imagen visible → sí.
+    let img_visible = doc_with_visible_image();
+    // Imagen oculta → no aporta píxeles al horneado → no.
+    let img_hidden = {
+        let mut doc = doc_with_visible_image();
+        doc.layer_mut(doc.page().unwrap().layers[0].id)
+            .unwrap()
+            .visible = false;
+        doc
+    };
+    // Solo texto/formas (p. ej. tras borrar la última foto) → no.
+    let vector_only = Document::new(100.0, 100.0);
+    // SVG visible cuenta como contenido que hornear → sí.
+    let svg = {
+        let mut doc = Document::new(100.0, 100.0);
+        doc.add_layer(
+            "svg",
+            Transform::new(0.0, 0.0, 50.0, 50.0),
+            LayerContent::Svg(canvas_core::SvgContent {
+                source: "<svg/>".to_owned(),
+                natural_width: 10,
+                natural_height: 10,
+            }),
+        )
+        .expect("añadir capa svg");
+        doc
+    };
+
+    let cases = [
+        (&img_visible, true),
+        (&img_hidden, false),
+        (&vector_only, false),
+        (&svg, true),
+    ];
+    for (i, (doc, expected)) in cases.iter().enumerate() {
+        assert_eq!(has_raster_layers(doc), *expected, "caso {i}");
+    }
 }
 
 // ——— Save All: aviso de poca RAM ———

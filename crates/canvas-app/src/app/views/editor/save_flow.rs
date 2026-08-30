@@ -89,6 +89,20 @@ pub(super) fn handle_save(
                 Some(path) if !canvas_io::can_overwrite(&path) => {
                     f.save.readonly_prompt = Some(path);
                 }
+                // El documento ya no tiene NINGUNA capa de imagen (el usuario
+                // borró la última foto): sobrescribir el raster aplanado
+                // descartaría la copia editable y destruiría la foto original
+                // sin dejar rastro. Se pide confirmación ANTES de hornear
+                // (se salta también el modal de sobrescritura: este aviso es
+                // más específico). Un lienzo `born_blank` —creado por la app,
+                // sin foto que pudo borrarse— no recibe el aviso.
+                Some(path)
+                    if !state.born_blank
+                        && !f.save.discard_raster_confirmed
+                        && !crate::app::persistence::has_raster_layers(&state.doc) =>
+                {
+                    f.save.discard_raster_prompt = Some(path);
+                }
                 Some(path) => {
                     // Aviso de sobrescritura destructiva: la primera vez de
                     // cada sesión (salvo que el usuario pidiera no volver a
