@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use canvas_core::{Document, LayerContent, ShapeContent, Transform};
+use canvas_core::{Document, ImageContent, LayerContent, ShapeContent, Transform};
 use canvas_io::{LoadedImage, RestoredDocument};
 use serde_json::json;
 
@@ -83,4 +83,78 @@ fn pasting_over_a_restored_hostile_document_keeps_all_layer_ids_unique() {
     let pasted = state.selection.primary().unwrap();
     assert!(state.images.contains_key(&pasted));
     assert_eq!(state.doc.layer(pasted).unwrap().name, "Pasted Image");
+}
+
+/// Un documento con una sola capa de imagen (la foto), listo para editar.
+fn state_with_photo() -> EditorState {
+    let mut doc = Document::new(800.0, 600.0);
+    let id = doc
+        .add_layer(
+            "foto",
+            Transform::new(0.0, 0.0, 800.0, 600.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: 800,
+                natural_height: 600,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    let restored = RestoredDocument {
+        document: doc,
+        images: vec![(id.raw(), loaded_image(800, 600))],
+        background_layer: None,
+        hash_matches: true,
+        standalone: false,
+    };
+    EditorState::from_restored(PathBuf::from("/tmp/foto.png"), restored)
+}
+
+/// El sidecar NO debe embeder imágenes de capas que ya no existen en el
+/// documento. Apagar el `Blurred background` retira la capa pero conserva
+/// sus píxeles en `images` por si se deshace DENTRO de la misma sesión;
+/// guardar en ese estado serializaba un blob huérfano (imagen en `images`
+/// sin entrada en `layers`) — la inconsistencia detrás de los diseños
+/// `14.png`/`1.png` que obligaron a crear `recover_design`. Sin historial
+/// persistido, ese blob no sirve de nada tras recargar.
+#[test]
+fn sidecar_payload_excludes_orphaned_layer_images() {
+    let mut state = state_with_photo();
+
+    // Fondo desenfocado activo: capa viva + su blob; el payload embebe ambos.
+    state.set_blurred_background(true);
+    let on = state.sidecar_payload();
+    assert_eq!(on.images.len(), 2, "foto + blur deben embeberse");
+    assert!(on
+        .document
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .any(|l| l.name == "Blurred background"));
+
+    // Desactivar el fondo retira la capa del documento pero DEJA sus píxeles
+    // en `images` (deshacer en sesión). El sidecar no debe serializarlos.
+    state.set_blurred_background(false);
+    let off = state.sidecar_payload();
+    let live: HashSet<u64> = off
+        .document
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .map(|l| l.id.raw())
+        .collect();
+    assert_eq!(live.len(), 1, "la foto sigue siendo la única capa viva");
+    for (img_id, ..) in &off.images {
+        assert!(
+            live.contains(img_id),
+            "sidecar con imagen huérfana (id {img_id} sin capa en el documento)"
+        );
+    }
+    assert_eq!(
+        off.images.len(),
+        live.len(),
+        "el sidecar debe contener exactamente las capas vivas"
+    );
 }
