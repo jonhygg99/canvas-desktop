@@ -10,6 +10,19 @@
 //! - El `RenderState` de wgpu es UNO para todo el proceso (eframe crea un
 //!   único device/renderer y cada ventana solo es una surface más); se clona
 //!   al arrancar y lo usan también las ventanas hijas.
+//! - El fullscreen es el `ViewportCommand::Fullscreen` NATIVO en todas las
+//!   plataformas (incluido macOS) y NO hay tabbing nativo: en macOS 26 el
+//!   `NSWindowStackController` lanza una excepción asíncrona e incapturable
+//!   (`titlebarAccessoryViewControllers not supported for this window style`)
+//!   en cualquier sincronización de la barra de pestañas — tanto al entrar en
+//!   la transición de fullscreen como al ocultar la barra de título de una
+//!   ventana de un grupo — que escapa por el FFI hacia Rust (sin handler de
+//!   excepciones ObjC) y aborta el proceso. Por eso `apply_native_tabbing`
+//!   se eliminó: Cmd+N/Ctrl+T abren ventanas separadas gestionadas por el
+//!   conmutador propio (Ctrl+Tab). Un «simple fullscreen» propio (ocultar la
+//!   barra de título con objc2) también se descartó: exigía tocar el
+//!   `styleMask`, y ocultar la barra de una ventana en un grupo dispara la
+//!   misma excepción.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};

@@ -368,6 +368,21 @@ canvas-app/src/
   and save/export flows, and its own `mpsc` channel into `AppMsg` — no
   routing by window id. Disk work (load, save, thumbnails, watcher)
   happens off the UI thread. `main.rs` is just the entry point.
+- **Fullscreen is the native `ViewportCommand::Fullscreen` on every platform,
+  and there is deliberately NO native macOS tabbing.** On macOS 26,
+  `NSWindowStackController` throws an async, uncatchable exception
+  (`titlebarAccessoryViewControllers not supported for this window style`)
+  during ANY native tab-bar sync — both when entering the fullscreen
+  transition and when hiding/reshaping the title bar of a window in a tab
+  group. Because it escapes through the FFI into Rust (no ObjC exception
+  handler) it aborts the process. So `apply_native_tabbing`
+  (tabbingIdentifier/tabbingMode/addTabbedWindow) was REMOVED: `Cmd+N`/
+  `Ctrl+T` open separate windows managed by the app's own `Ctrl+Tab`
+  switcher. A “simple fullscreen” workaround (hiding the title bar via
+  objc2) was also discarded: it inevitably changes the `styleMask`, and
+  hiding the title bar of a tab-group window throws the same exception.
+  If you ever reintroduce native tabbing, re-validate fullscreen (1 and 2
+  windows) under lldb on macOS 26.
 - `App`'s fields are grouped by domain into `SaveFlow` / `ExportFlow` /
   `DeckOps` / `MenuMirror` rather than sitting flat. `SaveFlow` and
   `ExportFlow` are passed directly to `overwrite_modal_ui` / `export_flow_ui`
