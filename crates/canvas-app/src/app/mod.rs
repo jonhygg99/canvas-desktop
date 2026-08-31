@@ -24,6 +24,8 @@ use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
 mod bootstrap;
 mod frame;
+#[cfg(target_os = "macos")]
+mod macos_fullscreen;
 mod menu_actions;
 mod messages;
 mod navigation;
@@ -481,6 +483,11 @@ impl AppInner {
             let result = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
                 window.setTabbingIdentifier(&id);
                 window.setTabbingMode(NSWindowTabbingMode::Preferred);
+                // El botón verde no puede entrar en la transición NATIVA de
+                // fullscreen (crashea con el tabbing activo): se le quita esa
+                // capacidad y hace zoom. El fullscreen real lo gestiona
+                // `macos_fullscreen` desde el menú.
+                macos_fullscreen::neutralize_fullscreen_button(&window);
                 // La PRIMERA ventana de la app fija el ancla del grupo (la
                 // raíz); `NSApplication::windows` no ordena de forma estable
                 // entre frames, así que se guarda una vez. Las siguientes se

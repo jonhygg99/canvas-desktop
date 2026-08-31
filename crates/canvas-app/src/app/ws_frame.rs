@@ -206,9 +206,19 @@ impl AppInner {
 
         self.sync_title(ctx, ws);
 
-        // Geometría de la ventana (persistencia del workspace).
+        // Geometría de la ventana (persistencia del workspace). En el
+        // fullscreen simple de macOS no se captura: la ventana está a tamaño
+        // de pantalla, y la app deliberadamente nunca restaura
+        // fullscreen/maximized al arrancar (ver `main.rs`); al salir del
+        // fullscreen la geometría vuelve a la real.
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect.or(i.viewport().inner_rect)) {
-            ws.geometry = Some((rect.min, rect.size()));
+            #[cfg(target_os = "macos")]
+            let capture = ws.macos_simple_fs.is_none();
+            #[cfg(not(target_os = "macos"))]
+            let capture = true;
+            if capture {
+                ws.geometry = Some((rect.min, rect.size()));
+            }
         }
     }
 

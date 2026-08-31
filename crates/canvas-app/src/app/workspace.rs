@@ -72,6 +72,10 @@ pub(crate) struct Workspace {
     /// en puntos lógicos), capturada cada frame del `ViewportInfo`; se
     /// persiste al cerrar y al salir de la app para restaurarla.
     pub(crate) geometry: Option<(egui::Pos2, egui::Vec2)>,
+    /// Fullscreen simple de macOS: estado de la ventana antes de entrar,
+    /// mientras dura (ver `app/macos_fullscreen.rs`). `None` = modo normal.
+    #[cfg(target_os = "macos")]
+    pub(crate) macos_simple_fs: Option<super::macos_fullscreen::SavedFullscreen>,
 }
 
 /// Etiqueta del workspace para el conmutador y la persistencia: el nombre
@@ -97,6 +101,8 @@ impl Workspace {
             unsaved_dialog: None,
             viewport,
             geometry: None,
+            #[cfg(target_os = "macos")]
+            macos_simple_fs: None,
         }
     }
 

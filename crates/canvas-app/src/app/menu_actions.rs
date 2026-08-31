@@ -121,8 +121,17 @@ impl AppInner {
             }
             A::AddCanvas => self.add_canvas(ws),
             A::FullScreen => {
-                let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+                // En macOS la transición NATIVA de fullscreen crashea con las
+                // pestañas nativas activas (ver `macos_fullscreen.rs`); aquí el
+                // fullscreen es propio (borde sin Space nuevo). El botón verde
+                // se neutralizó al crear cada ventana y hace zoom.
+                #[cfg(target_os = "macos")]
+                super::macos_fullscreen::toggle(ws);
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+                }
             }
             A::Settings => ws.show_settings = true,
             A::About => ws.show_about = true,
