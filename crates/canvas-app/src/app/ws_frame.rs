@@ -110,22 +110,14 @@ impl AppInner {
         self.about_window_ui(ws, ctx);
 
         // Cierre de ventana (X de la barra de título, Quit del menú o
-        // Cmd+W): con el tabbing nativo, macOS intercepta Cmd+W como
-        // `performClose:` y lo entrega aquí como `close_requested` — el MISMO
-        // flujo que el botón X (un handler manual de `Key::W` sería redundante
-        // y doble-cerraría). La retirada real la hace el frame raíz
-        // (`finish_root_frame`), que solo corre en el pase de la RAÍZ: para
-        // una hija hay que asegurar que la raíz se repinte tras marcar el
-        // cierre (si egui reposa, la pestaña quedaría marcada pero nunca
-        // retirada, y parecería que Cmd+W no hace nada).
-        // Cierre de ventana (X de la barra de título, Quit del menú o
-        // Cmd+W): con el tabbing nativo, macOS intercepta Cmd+W como
-        // `performClose:` y lo entrega aquí como `close_requested` — el MISMO
-        // flujo que el botón X. La retirada real la hace el frame raíz
-        // (`finish_root_frame`), que solo corre en el pase de la RAÍZ: para
-        // una hija hay que asegurar que la raíz se repinte tras marcar el
-        // cierre (si egui reposa, la pestaña quedaría marcada pero nunca
-        // retirada, y parecería que Cmd+W no hace nada).
+        // Cmd+W): macOS entrega Cmd+W a la ventana clave como `performClose:`
+        // y llega aquí como `close_requested` — el MISMO flujo que el botón X
+        // (un handler manual de `Key::W` sería redundante y doble-cerraría).
+        // La retirada real la hace el frame raíz (`finish_root_frame`), que
+        // solo corre en el pase de la RAÍZ: para una hija hay que asegurar
+        // que la raíz se repinte tras marcar el cierre (si egui reposa, la
+        // ventana quedaría marcada pero nunca retirada, y parecería que
+        // Cmd+W no hace nada).
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if close_requested {
             self.handle_window_close(ws, ctx, is_root);
@@ -147,10 +139,8 @@ impl AppInner {
             // nueva no existe hasta `spawn_child_viewports`.
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
                 let new_ws = self.new_workspace();
-                // La ventana nueva nace con el tamaño de la actual: si nace
-                // con el tamaño por defecto de egui, al fusionarse como
-                // pestaña nativa AppKit la redimensiona y se ve un salto de
-                // tamaño (a veces sí, a veces no, según el timing).
+                // La ventana nueva nace con el tamaño de la actual para que
+                // abra en la misma posición/tamaño que la que la creó.
                 new_ws.lock_ok().geometry = ws.geometry;
                 self.pending_focus = Some(self.workspaces.len() - 1);
                 // Esencial: si este pase es el de una PESTAÑA (child_frame),
@@ -206,19 +196,9 @@ impl AppInner {
 
         self.sync_title(ctx, ws);
 
-        // Geometría de la ventana (persistencia del workspace). En el
-        // fullscreen simple de macOS no se captura: la ventana está a tamaño
-        // de pantalla, y la app deliberadamente nunca restaura
-        // fullscreen/maximized al arrancar (ver `main.rs`); al salir del
-        // fullscreen la geometría vuelve a la real.
+        // Geometría de la ventana (persistencia del workspace).
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect.or(i.viewport().inner_rect)) {
-            #[cfg(target_os = "macos")]
-            let capture = ws.macos_simple_fs.is_none();
-            #[cfg(not(target_os = "macos"))]
-            let capture = true;
-            if capture {
-                ws.geometry = Some((rect.min, rect.size()));
-            }
+            ws.geometry = Some((rect.min, rect.size()));
         }
     }
 

@@ -23,9 +23,8 @@ impl AppInner {
             A::NewWindow => {
                 let new_ws = self.new_workspace();
                 // La ventana nueva hereda el tamaño de la actual (ver el
-                // comentario del Cmd+N en ws_frame.rs): nacer con el tamaño
-                // por defecto de egui y fusionarse luego como pestaña nativa
-                // provoca un salto de tamaño intermitente.
+                // comentario del Cmd+N en ws_frame.rs) para que abra en la
+                // misma posición/tamaño que la que la creó.
                 new_ws.lock_ok().geometry = ws.geometry;
                 self.pending_focus = Some(self.workspaces.len() - 1);
                 self.request_repaint_all_viewports(ctx);
@@ -121,17 +120,8 @@ impl AppInner {
             }
             A::AddCanvas => self.add_canvas(ws),
             A::FullScreen => {
-                // En macOS la transición NATIVA de fullscreen crashea con las
-                // pestañas nativas activas (ver `macos_fullscreen.rs`); aquí el
-                // fullscreen es propio (borde sin Space nuevo). El botón verde
-                // se neutralizó al crear cada ventana y hace zoom.
-                #[cfg(target_os = "macos")]
-                super::macos_fullscreen::toggle(ws);
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
-                }
+                let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
             }
             A::Settings => ws.show_settings = true,
             A::About => ws.show_about = true,

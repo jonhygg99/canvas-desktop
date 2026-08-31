@@ -107,10 +107,6 @@ impl App {
             atlas_regs: 0,
             atlas_reups: 0,
             atlas_log_frames: 0,
-            #[cfg(target_os = "macos")]
-            tabbed_windows: Default::default(),
-            #[cfg(target_os = "macos")]
-            tab_anchor: None,
         };
 
         // La app arranca SIEMPRE en la home (bienvenida) de la única ventana
