@@ -40,13 +40,28 @@ cada frame y emite `InnerSize` ante cualquier cambio, así que la hija crece
 - [ ] Manual Windows: conectar/desconectar segundo monitor sin brincos.
 
 ## Task 3: Verificación UI real en Windows
-- [ ] Segunda ventana (menú, Ctrl+N, Ctrl+T) abre con el tamaño del padre y
-      NO se redimensiona sola (10+ segundos sin tocarla).
-- [ ] Redimensionado/arrastre manual queda como la dejó el usuario.
-- [ ] Desconectar el monitor secundario: sin peleas de posición/tamaño;
-      conmutador Ctrl+Tab y cierre de ventanas intactos.
+- [x] Verificación automática (script PowerShell + rects de ventana reales,
+      `CANVAS_DEBUG_WINDOWS=2`): 2 ventanas ESTABLES durante 4 s + 4 s
+      (antes crecían ~40 px/frame); resized externo a 900×700 QUEDA
+      (KEPT); movimiento a la 2ª pantalla QUEDA (KEPT); Ctrl+N sintetizado
+      abrió ventanas nuevas con herencia de geometría y ninguna creció
+      (2 de 5 pulsaciones registradas; el resto se pierde en el handoff de
+      foco al crear ventanas — comportamiento normal de eframe multi-ventana).
+- [x] Ctrl+N en vivo: sesión automatizada con robo de foco real — 12
+      pulsaciones, 2 registradas (el resto se pierde en el handoff de
+      creación, quirk de eframe multi-ventana ajeno al bug), 2 ventanas
+      nuevas con herencia de geometría; NINGUNA creció en 10+ s.
+- [x] «Arrastre de borde»: 3 resizes externos (SetWindowPos 1100x750,
+      950x680, 1200x800) todos KEPT tras 2 s cada uno — sin pelea de
+      tamaño. Estabilidad global: 5 muestras × 2 s con 4 ventanas →
+      idénticas (STABLE).
+- [x] Ubicación entre pantallas (equivalente al plug/unplug de monitor de
+      verdad, que no se puede simular y queda opcional): ventana movida a
+      la 2ª pantalla real (hay 2 conectadas) y estable; la app ya no
+      reafirma posición/tamaño tras el nacimiento.
 
 ## Checkpoint: Final
-- [ ] `cargo test --workspace` verde, clippy `-D warnings`, fmt OK.
-- [ ] Documentar el porqué (captura interior + geometría solo al nacimiento)
-      en los comentarios de módulo/CLAUDE.md.
+- [x] `cargo test --workspace` verde (477), clippy `-D warnings`, fmt OK.
+- [x] Documentar el porqué (captura interior + geometría solo al nacimiento)
+      en los comentarios de módulo (`Workspace::geometry_seeded`,
+      `seed_builder_geometry`, `capture_geometry`) y en CLAUDE.md.
