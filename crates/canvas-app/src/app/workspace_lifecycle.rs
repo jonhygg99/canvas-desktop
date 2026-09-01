@@ -160,16 +160,29 @@ impl AppInner {
                 .expect("me se parchea en App::new antes del primer frame"),
         );
         for (i, ws_arc) in self.workspaces.iter().enumerate().skip(1) {
-            let ws = ws_arc.lock_ok();
+            let mut ws = ws_arc.lock_ok();
             if ws.close_requested {
                 continue;
             }
             let viewport = ws.viewport;
             let mut builder = egui::ViewportBuilder::default().with_title(ws.label());
-            if let Some((pos, size)) = ws.geometry {
-                builder = builder
-                    .with_position([pos.x, pos.y])
-                    .with_inner_size([size.x, size.y]);
+            // La geometría SOLO viaja en el builder que CREA la ventana:
+            // eframe parchea este builder cada frame (`ViewportBuilder::patch`
+            // emite `InnerSize`/`OuterPosition` cuando el valor cambia) y la
+            // geometría que se re-leía cada frame era el rect EXTERIOR,
+            // reaplicado como tamaño INTERIOR — la ventana crecía la
+            // decoración por frame hasta el límite del área de trabajo (el
+            // bug del redimensionado en Windows). Se siembra una vez, al
+            // nacer, y a partir de entonces el builder queda sin
+            // tamaño/posición: `patch` no difiere nada y el redimensionado
+            // manual del usuario es soberano.
+            if !ws.geometry_seeded {
+                ws.geometry_seeded = true;
+                if let Some((pos, size)) = ws.geometry {
+                    builder = builder
+                        .with_position([pos.x, pos.y])
+                        .with_inner_size([size.x, size.y]);
+                }
             }
             let ws_arc = Arc::clone(ws_arc);
             let child_ctx = ctx.clone();
