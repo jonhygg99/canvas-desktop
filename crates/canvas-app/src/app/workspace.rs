@@ -70,8 +70,18 @@ pub(crate) struct Workspace {
     pub(crate) viewport: egui::ViewportId,
     /// Última geometría conocida de la ventana (esquina sup. izq. y tamaño,
     /// en puntos lógicos), capturada cada frame del `ViewportInfo`; se
-    /// persiste al cerrar y al salir de la app para restaurarla.
+    /// persiste al cerrar y al salir de la app para restaurarla. El tamaño
+    /// es SIEMPRE el del rect interior (ver `capture_geometry`).
     pub(crate) geometry: Option<(egui::Pos2, egui::Vec2)>,
+    /// La geometría ya se pasó al builder de NACIMIENTO del viewport de
+    /// esta ventana hija. Tras el nacimiento el builder no vuelve a
+    /// ofrecer tamaño/posición: eframe difiere el builder de cada frame
+    /// contra el anterior y emite `InnerSize`/`OuterPosition` ante
+    /// cualquier cambio, y reaplicar la geometría capturada (rect
+    /// EXTERIOR reaplicado como tamaño INTERIOR) hacía crecer la ventana
+    /// la decoración por frame — el bug de redimensionado en Windows.
+    /// Ver `spawn_child_viewports`.
+    pub(crate) geometry_seeded: bool,
 }
 
 /// Etiqueta del workspace para el conmutador y la persistencia: el nombre
@@ -97,6 +107,7 @@ impl Workspace {
             unsaved_dialog: None,
             viewport,
             geometry: None,
+            geometry_seeded: false,
         }
     }
 

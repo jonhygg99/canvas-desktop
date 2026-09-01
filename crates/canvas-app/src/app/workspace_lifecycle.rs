@@ -160,13 +160,18 @@ impl AppInner {
                 .expect("me se parchea en App::new antes del primer frame"),
         );
         for (i, ws_arc) in self.workspaces.iter().enumerate().skip(1) {
-            let ws = ws_arc.lock_ok();
+            let mut ws = ws_arc.lock_ok();
             if ws.close_requested {
                 continue;
             }
             let viewport = ws.viewport;
+            // La geometría SOLO viaja en el builder que CREA la ventana: la
+            // siembra es un contrato puro, probado en
+            // `workspace_lifecycle_tests.rs` (ver `seed_builder_geometry`).
+            let (spawn_geometry, seeded) = seed_builder_geometry(ws.geometry_seeded, ws.geometry);
+            ws.geometry_seeded = seeded;
             let mut builder = egui::ViewportBuilder::default().with_title(ws.label());
-            if let Some((pos, size)) = ws.geometry {
+            if let Some((pos, size)) = spawn_geometry {
                 builder = builder
                     .with_position([pos.x, pos.y])
                     .with_inner_size([size.x, size.y]);
@@ -189,3 +194,35 @@ impl AppInner {
         }
     }
 }
+
+/// Siembra de la geometría en el builder de NACIMIENTO de una ventana
+/// hija: dado el estado actual del flag y la geometría conocida, devuelve
+/// la geometría que el builder debe ofrecer y el nuevo valor del flag.
+///
+/// Contrato: la PRIMERA vez que se registra el viewport (`seeded ==
+/// false`) el builder puede llevar la geometría heredada (Ctrl+N/Ctrl+T);
+/// desde entonces NUNCA vuelve a ofrecer tamaño/posición, aunque la
+/// geometría capturada en vivo cambie — el flag se siembra también cuando
+/// no había geometría (p. ej. `CANVAS_DEBUG_WINDOWS`), porque una
+/// geometría posterior es captura, no intención.
+///
+/// Por qué: eframe parchea este builder cada frame
+/// (`ViewportBuilder::patch` emite `InnerSize`/`OuterPosition` ante
+/// cualquier cambio) y la geometría que se re-leía cada frame era el rect
+/// EXTERIOR, reaplicado como tamaño INTERIOR — la ventana crecía la
+/// decoración por frame hasta el límite del área de trabajo (el bug del
+/// redimensionado en Windows). Tras el nacimiento `patch` no difiere nada
+/// y el redimensionado manual del usuario es soberano.
+fn seed_builder_geometry(
+    seeded: bool,
+    geometry: Option<(egui::Pos2, egui::Vec2)>,
+) -> (Option<(egui::Pos2, egui::Vec2)>, bool) {
+    if seeded {
+        return (None, true);
+    }
+    (geometry, true)
+}
+
+#[cfg(test)]
+#[path = "workspace_lifecycle_tests.rs"]
+mod tests;

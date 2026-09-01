@@ -383,6 +383,16 @@ canvas-app/src/
   hiding the title bar of a tab-group window throws the same exception.
   If you ever reintroduce native tabbing, re-validate fullscreen (1 and 2
   windows) under lldb on macOS 26.
+- **Window geometry is seeded at birth, never re-applied per frame.** The
+  child-window builder (`spawn_child_viewports`) carries position/size
+  exactly once, on the first registration (`Workspace::geometry_seeded`);
+  eframe diffs the deferred-viewport builder every frame and re-emitting
+  geometry made the second window grow by its chrome (~40 px/frame on
+  Windows) until the work-area clamp — the auto-resize feedback loop.
+  Captured/persisted geometry stores the INNER size (`capture_geometry`,
+  outer position), matching `with_inner_size`/`StoredWorkspace::size`
+  semantics; the seeding contract is unit-tested in
+  `workspace_lifecycle_tests.rs`.
 - `App`'s fields are grouped by domain into `SaveFlow` / `ExportFlow` /
   `DeckOps` / `MenuMirror` rather than sitting flat. `SaveFlow` and
   `ExportFlow` are passed directly to `overwrite_modal_ui` / `export_flow_ui`

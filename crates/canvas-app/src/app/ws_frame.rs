@@ -196,9 +196,17 @@ impl AppInner {
 
         self.sync_title(ctx, ws);
 
-        // Geometría de la ventana (persistencia del workspace).
-        if let Some(rect) = ctx.input(|i| i.viewport().outer_rect.or(i.viewport().inner_rect)) {
-            ws.geometry = Some((rect.min, rect.size()));
+        // Geometría de la ventana (persistencia del workspace). Posición
+        // del rect EXTERIOR y tamaño SIEMPRE del INTERIOR (el convenio de
+        // `with_inner_size` / `StoredWorkspace::size`): capturar el rect
+        // exterior como tamaño era la mitad del bucle de redimensionado
+        // (ver `spawn_child_viewports`), así que el contrato se fija con
+        // `capture_geometry`. Sin rect en este frame (ventana sin mapear
+        // todavía), se conserva el valor anterior.
+        if let Some(geometry) =
+            ctx.input(|i| capture_geometry(i.viewport().outer_rect, i.viewport().inner_rect))
+        {
+            ws.geometry = Some(geometry);
         }
     }
 
@@ -249,3 +257,21 @@ impl AppInner {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 }
+
+/// Geometría de una ventana para persistir, con un convenio coherente con
+/// `ViewportBuilder::with_inner_size` y `StoredWorkspace::size`: posición
+/// del rect EXTERIOR (con fallback al interior) y tamaño SIEMPRE del rect
+/// INTERIOR. `None` si no hay ningún rect disponible (p. ej. ventana aún
+/// sin mapear): el llamador conserva el anterior en vez de persistir un
+/// tamaño exterior que `with_inner_size` leería como interior.
+fn capture_geometry(
+    outer: Option<egui::Rect>,
+    inner: Option<egui::Rect>,
+) -> Option<(egui::Pos2, egui::Vec2)> {
+    let pos = outer.map(|r| r.min).or_else(|| inner.map(|r| r.min))?;
+    Some((pos, inner?.size()))
+}
+
+#[cfg(test)]
+#[path = "ws_frame_tests.rs"]
+mod capture_geometry_tests;
