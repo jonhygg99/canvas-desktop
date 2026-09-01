@@ -1,163 +1,182 @@
-# Plan: el bloqueo de guardado se dispara en falso en macOS
+# Plan: en Windows la segunda ventana se redimensiona sola
 
-Supersede al plan anterior (Fases 1-3, cerrado en `8534713`). Estado del
-trabajo nuevo en `tasks/todo.md`.
+Plan anterior archivado en `tasks/archive/` (bug de RAM falsa en macOS).
+Estado del trabajo nuevo en `tasks/todo.md`.
 
 ## Overview
 
-Con solo la app y el chat abiertos, la barra de estado marca RAM
-«crítica» y el guardado se bloquea al añadir algo al proyecto. El
-diagnóstico (medido en la máquina del usuario) demuestra que **no es ni
-un ordenador malo ni una app que consuma mucho**: es un error de medición
-de la RAM libre en macOS.
+Al abrir una segunda ventana (Ctrl+N / Ctrl+T / menú «New Window») en
+Windows, la ventana nueva **se va agrandando sola** (~40 px por frame, el
+alto de la barra de título + bordes) hasta llenar el área de trabajo, y
+sigue «luchando» por redimensionarse si se toca el monitor o se arrastra.
+No es un bug del SO: es un **bucle de realimentación** dentro de la app.
 
-| Señal | Valor medido | Interpretación |
-|---|---|---|
-| RAM total | 16 GiB | máquina normal |
-| Presión oficial macOS (`kern.memorystatus_vm_pressure_level`) | 1 (NORMAL) | el OS no ve presión |
-| `memory_pressure -Q` | 78 % libre | sistema holgado |
-| Swap usado | 0 B (nunca ha paginado) | no hay hambre de memoria |
-| RSS de canvas-desktop con carpeta abierta | 0.22 GiB | la app consume poco |
-| RSS de Freebuff (chat) | ~1.1 GiB | normal |
-| Métrica de la app (`free_ram_bytes`) | 0.39 GiB → «CRÍTICA» | **el bug** |
+### Causa raíz (verificada contra las fuentes de eframe 0.35 del registro)
 
-**Causa raíz:** `detect_free_ram_bytes` en macOS suma solo
-`vm.page_free_count + vm.page_speculative_count + vm.page_purgeable_count`
-y **excluye la caché de archivos reclamable** (páginas inactivas, ~6 GiB
-en esta máquina según `vm_stat`: `Pages inactive: 1641824`). El OS
-considera esa caché reclamable para decidir presión (por eso dice 78 %
-libre), así que la app marca «crítico» mientras el sistema está normal.
-Linux (`MemAvailable`) y Windows (`ullAvailPhys`) ya incluyen la caché
-reclamable: el bug es solo de macOS.
+1. **Captura por frame** (`app/ws_frame.rs`, final del frame de cada
+   ventana): `ws.geometry` se reescribe cada frame desde el rect vivo de la
+   ventana — `outer_rect.or(inner_rect)`.
+2. **Reaplicación por frame** (`app/workspace_lifecycle.rs`,
+   `spawn_child_viewports`): el frame raíz reconstruye CADA frame el
+   `ViewportBuilder` del viewport diferido de cada hija con
+   `with_position(…)` y **`with_inner_size(tamaño_capturado)`** — y lo hace
+   en los dos puntos de registro de las hijas (`App::logic`, pases ocultos,
+   y `root_frame`).
+3. **El amplificador** (eframe 0.35, `native/wgpu_integration.rs:1282`):
+   eframe llama `viewport.builder.patch(builder)` **cada frame** con el
+   builder que se le pasa a `show_viewport_deferred`; `patch` (egui
+   `viewport.rs:770`) compara con el del frame anterior y emite
+   `ViewportCommand::InnerSize` cada vez que `inner_size` **cambió**.
+
+La trampa: el tamaño capturado es el rect **EXTERIOR** (cliente + barra de
+título + bordes), pero se reaplica como tamaño **interior**. Cada frame el
+interior pasa a medir lo que antes medía el exterior → la ventana crece el
+alto de la decoración → el exterior nuevo es más grande → se captura y se
+reaplica → **crece ~40 px por frame** hasta que Windows la recorta al área
+de trabajo. En Windows la decoración es gruesa y cada `Resized` repinta, así
+que el bucle rueda continuo y es muy visible; en Ctrl+N/Ctrl+T la hija
+**nace ya inflada** porque hereda el `geometry` (exterior) del padre. El
+fallback `outer_rect.or(inner_rect)` además puede alternar entre ambos rect
+en cambios de DPI/monitor, lo que añade oscilación de posición.
 
 ## Architecture Decisions
 
-- **Medir la RAM libre en macOS como el OS**: free + speculative +
-  purgeable + **inactive**, vía `host_statistics64(HOST_VM_INFO64)` — la
-  misma fuente que `vm_stat`. `vm.page_inactive_count` no existe como
-  sysctl (verificado), pero sí como campo de `host_statistics64`, y `libc`
-  ya expone `mach_host_self`/`host_statistics64` (sin dependencias nuevas).
-- **Nivel oficial de presión como red de seguridad**: leer
-  `kern.memorystatus_vm_pressure_level` (1 normal / 2 warning / 4
-  critical). Si el OS dice warning o critical, la medición en bytes no
-  puede contradecirlo: se reporta por debajo del umbral correspondiente
-  (2 GiB / 512 MiB). Evita que contar inactive como libre enmascare
-  presión real en picos.
-- **Linux y Windows no se tocan**: ya miden lo reclamable.
-- **Nunca bloquear por la propia memoria**: en presión crítica REAL, un
-  Save/Export evicta primero las cachés propias (baraja + scopes FX) y
-  reintenta una vez antes de mostrar el error — la app no debe bloquear al
-  usuario por memoria que ella misma retiene.
+- **La geometría solo se aplica al NACIMIENTO de la ventana hija.** Un flag
+  por workspace (`geometry_seeded`): la primera vez que `spawn_child_viewports`
+  registra un viewport incluye `with_position`/`with_inner_size` con la
+  geometría heredada; a partir de ahí el builder solo lleva el título. Como
+  `patch` solo emite comandos cuando cambia un valor, tras el nacimiento
+  **nunca** viaja un `InnerSize`/`OuterPosition` — el redimensionado manual
+  del usuario queda intacto y no hay bucle posible. No depende de los
+  detalles internos del diff de `patch` (aunque estén verificados): el
+  builder literalmente deja de ofrecer tamaño/posición.
+- **Captura consistente = tamaño interior.** `ws.geometry` pasa a guardar
+  SIEMPRE el tamaño del `inner_rect` (lo que `with_inner_size`/
+  `StoredWorkspace.size` significan: «tamaño interior») y la posición del
+  `outer_rect.min` (con fallback al `inner_rect.min` y a conservar el valor
+  anterior si no hay ninguno). Se extrae como función pura
+  `capture_geometry(outer, inner) -> Option<(Pos2, Vec2)>` con tests de
+  tabla (convención del repo: `ws_frame_tests.rs` con `#[path]` o `tests.rs`
+  según lo que ya use la crate).
+- **La herencia de Ctrl+N/T no cambia**: la hija sigue naciendo con la
+  geometría del padre (ahora ya coherente: interior = interior).
+- **La persistencia en `settings.json` no cambia de semántica**: se siguen
+  escribiendo pos/tamaño (historial; `bootstrap` ya los descarta al arrancar
+  — la app siempre abre en la home con su tamaño por defecto). Solo se
+  corrige que «size» sea lo que su doc dice que es (interior).
+- **La raíz no se toca**: nace de `main.rs` (`NativeOptions`) y su
+  `geometry` solo se captura para persistir, nunca se reaplica.
 
 ## Task List
 
-### Task 1: Medir en macOS la RAM libre reclamable (S)
+### Task 1: Aplicar la geometría solo al nacer la ventana hija (S)
 
-**Description:** Reemplazar la suma de tres oids por `host_statistics64`
-(free + speculative + purgeable + inactive) con red de seguridad del
-nivel oficial de presión.
+**Description:** Añadir `geometry_seeded: bool` a `Workspace` (por defecto
+`false`). En `spawn_child_viewports`, incluir `with_position` +
+`with_inner_size` en el builder únicamente la primera vez que se registra el
+viewport de una hija; a partir de entonces builder = título solo. El flag se
+marca la primera vez, también cuando la geometría era `None` (p. ej.
+`CANVAS_DEBUG_WINDOWS`). La llamada a `show_viewport_deferred` sigue
+haciéndose todos los frames con el mismo `ViewportId` (requisito de egui:
+si no se llama, la ventana se cierra).
 
 **Acceptance criteria:**
-- [ ] En esta máquina (nivel 1, ~6 GiB inactivos) `free_ram_bytes()` reporta > 2 GiB.
-- [ ] Con nivel oficial 4, la medición reporta < 512 MiB aunque haya páginas inactivas.
-- [ ] Syscall fallida → `None` (sin regresión).
+- [ ] La hija nace con la geometría heredada (Ctrl+N/T idéntico a hoy).
+- [ ] Tras el nacimiento el builder no lleva tamaño/posición: `patch` no
+      emite `InnerSize`/`OuterPosition` nunca más (verificable con el
+      logging de comandos o leyendo `raw.viewports[id].builder`… mejor con
+      la verificación de comportamiento: la ventana no crece frame a frame).
+- [ ] Arrastre/redimensionado manual de la hija: el SO manda, la app no
+      revierte ni reafirma nada.
 
 **Verification:**
-- [ ] `cargo test -p canvas-app` verde.
-- [ ] `cargo clippy -p canvas-app --all-targets -- -D warnings` limpio.
-- [ ] Manual: abrir la app y comprobar la barra de estado en estado normal.
+- [ ] `cargo test -p canvas-app` verde; `cargo clippy -p canvas-app --all-targets -- -D warnings` limpio; `cargo fmt --check` OK.
+- [ ] Manual en Windows: Ctrl+N ×5 seguidas → las ventanas conservan el
+      tamaño del padre y ninguna crece; arrastrar un borde → se queda.
+- [ ] Sin regresión: Ctrl+Tab/conmutador y foco entre ventanas intactos.
 
 **Dependencies:** None
 
 **Files likely touched:**
-- `crates/canvas-app/src/deck/system.rs`
+- `crates/canvas-app/src/app/workspace.rs` (campo nuevo)
+- `crates/canvas-app/src/app/workspace_lifecycle.rs` (builder)
 
-**Estimated scope:** Small (1-2 files)
+**Estimated scope:** Small (2 files)
 
-### Task 2: Tests de tabla del contrato (S)
+### Task 2: Captura de geometría consistente (interior) con tests (S)
 
-**Description:** Extraer el cálculo a una función pura (sin hardware) y
-fijar con tabla: mucha caché inactiva no es crítico; nivel oficial 4 sí
-lo es; el umbral de 2 GiB se respeta; `None` no es crítico.
+**Description:** Reemplazar la captura `outer_rect.or(inner_rect)` del final
+de `ws_frame` por la función pura `capture_geometry`: posición =
+`outer_rect.min` (fallback `inner_rect.min`), tamaño = `inner_rect.size()`;
+ambos `None` → conservar la geometría anterior. Tests de tabla fijando el
+contrato (rect exterior e interior presentes → posición del exterior, tamaño
+del interior; solo interior → ambos de él; ninguno → `None` para que el
+llamador conserve el previo).
 
 **Acceptance criteria:**
-- [ ] Tabla que cubre: libre alto/inactiva alta → normal; libre baja +
-  inactiva alta → normal (el caso del usuario); nivel 2 → reducido;
-  nivel 4 → crítico; `None` → no crítico.
-- [ ] Los tests no dependen del hardware (funciones puras).
+- [ ] `StoredWorkspace.size` persistido es SIEMPRE el tamaño interior
+      (coherente con su documentación y con `with_inner_size`).
+- [ ] Sin alternancia exterior/interior en cambios de DPI o `outer_rect`
+      momentáneamente ausente.
+- [ ] Tabla de tests nueva cubre los tres casos + el de conservar previo.
 
 **Verification:**
-- [ ] `cargo test -p canvas-app deck::` verde.
+- [ ] `cargo test -p canvas-app` verde (tests de la tabla incluidos).
+- [ ] Manual en Windows: conectar/desconectar un segundo monitor no hace
+      que las ventanas brinquen ni se redimensionen.
 
 **Dependencies:** Task 1
 
 **Files likely touched:**
-- `crates/canvas-app/src/deck/system.rs` (tests)
+- `crates/canvas-app/src/app/ws_frame.rs` (helper + captura)
+- `crates/canvas-app/src/app/ws_frame_tests.rs` (nuevo, con `#[path]` según
+  convención del crate) o `tests.rs` del módulo
 
-**Estimated scope:** Small
+**Estimated scope:** Small (2 files)
 
-### Task 3: Evictar cachés propias antes de bloquear un Save/Export (M)
+### Task 3: Verificación UI real en Windows (XS)
 
-**Description:** Cuando el gate de RAM crítica se dispare en un
-Save/Export, evictar primero la caché de la baraja (`Deck::evict`) y los
-scopes FX GPU (`evict_fx_to_budget` con presupuesto mínimo), re-medir, y
-solo bloquear si sigue crítico. La app nunca se bloquea a sí misma.
+**Description:** Ejercitar el flujo completo en la máquina del usuario
+(Windows): segunda ventana vía menú, Ctrl+N, Ctrl+T; redimensionado manual;
+monitor secundario conectado/desconectado; maximizar; rearranque.
 
 **Acceptance criteria:**
-- [ ] Con RAM crítica real, un save dispara la evicción y solo muestra el
-      banner si tras liberar sigue crítico.
-- [ ] El archivo nunca se toca si el bloqueo final se mantiene.
-- [ ] Sin presión, el flujo de guardado no cambia (sin evicción).
+- [ ] Segunda ventana abre con el tamaño del padre y NO se redimensiona sola
+      (observar 10+ segundos sin tocarla).
+- [ ] Redimensionar/arrastrar a mano queda como el usuario la dejó.
+- [ ] Sin monitor secundario tras desconectarlo: la app sigue usable y las
+      ventanas no pelean por posición/tamaño.
 
 **Verification:**
-- [ ] `cargo test -p canvas-app` verde; clippy/fmt limpios.
-- [ ] Manual con memhog real: save bajo presión crítica evicta y, si
-      libera suficiente, guarda.
+- [ ] Manual en Windows, con la app real (`cargo run -p canvas-app`).
+- [ ] Repaso rápido del conmutador Ctrl+Tab y del cierre de ventanas.
 
 **Dependencies:** Tasks 1-2
 
-**Files likely touched:**
-- `crates/canvas-app/src/app/persistence.rs`
-- `crates/canvas-app/src/deck/mod.rs` (si falta exponer la evicción)
-
-**Estimated scope:** Medium (3-5 files)
-
-### Task 4: Verificación UI real en la carpeta de Julián Gil (XS)
-
-**Description:** Abrir la carpeta real del usuario
-(`…/Material Youtube/1. Chismes MX/21. Alejandra Jaramillo/1. IMG/11. Julián Gil`),
-añadir una imagen al proyecto y guardar/exportar.
-
-**Acceptance criteria:**
-- [ ] La barra de estado muestra RAM normal (no crítica) con la carpeta abierta.
-- [ ] Añadir una imagen y Cmd+S guarda sin banner de bloqueo.
-- [ ] Exportar produce un PNG completo (no blanco).
-
-**Verification:**
-- [ ] Manual, con la carpeta real.
-
-**Dependencies:** Tasks 1-3
-
-**Files likely touched:** none (verificación)
+**Files likely touched:** ninguno (verificación)
 
 **Estimated scope:** XS
 
 ### Checkpoint: Final
-- [ ] `cargo test --workspace` verde (≥463), clippy `-D warnings`, fmt OK.
-- [ ] Verificación en la carpeta real del usuario: guardado permitido.
-- [ ] Documentar en CLAUDE.md el matiz de la métrica macOS (red de
-      seguridad por nivel oficial).
+- [ ] `cargo test --workspace` verde, clippy `-D warnings`, fmt OK.
+- [ ] Verificación manual en Windows: ninguna ventana se redimensiona sola,
+      tamaño heredado al nacer, redimensionado manual respetado.
+- [ ] Documentar en CLAUDE.md el porqué (captura interior + geometría solo
+      al nacimiento) si el comentario del módulo no basta.
 
 ## Risks and Mitigations
 
-| Risk | Impact | Mitigation |
+| Risk | Impact | Mitigación |
 |------|--------|------------|
-| Contar inactive como libre enmascara presión real | Med | El nivel oficial del OS (warning/critical) actúa de techo duro |
-| `kern.memorystatus_vm_pressure_level` ausente en macOS antiguo | Bajo | Syscall fallida → caer a la medición de páginas sola (ya correcta con inactive) |
-| `host_statistics64` falla | Bajo | Devolver `None` como hoy (los llamadores ya caen al histórico) |
-| La evicción previa al bloqueo libera poco | Med | El guard solo se bloquea si SIGUE crítico tras evictar; el mensaje explica qué hacer |
+| Regresión: la hija nace con tamaño equivocado | Med | El camino del primer frame es idéntico al actual (misma geometría heredada); el flag solo corta la reaplicación posterior |
+| Bug de la ventana que «se cierra si no se registra» cada frame | Alto | La llamada a `show_viewport_deferred` con el mismo `ViewportId` se mantiene TODOS los frames; solo desaparecen tamaño/posición del builder |
+| `patch` cambia de semántica al subir eframe | Bajo | El fix no depende del diff: tras el nacimiento el builder no ofrece tamaño/posición, no hay nada que difiere |
+| Oscilación de posición por DPI/monitor | Bajo | Posición solo al nacimiento + captura con fallback estable (Task 2) |
+| La raíz arrastra el bucle | Ninguno | La raíz nunca se registra vía builder (nace de `main.rs`); su geometría solo se persiste |
 
 ## Open Questions
 
-- ¿Debe la barra de estado mostrar también el nivel oficial de presión
-  (p.ej. «presión del sistema: normal»)? Nicety, no bloqueante.
+- ¿Conviene además **recortar** la geometría heredada al área de trabajo del
+  monitor (monitores desconectados entre sesiones)? Hoy `bootstrap` descarta
+  lo persistido y la herencia es en vivo (padre visible), así que no hace
+  falta — se deja como mejora opcional si se reactiva la restauración.
