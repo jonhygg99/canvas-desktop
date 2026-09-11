@@ -104,6 +104,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # libfontconfig1-dev es obligatorio para COMPILAR: egui-winit enlaza
+      # `yeslogic-fontconfig-sys`, cuyo build script falla con exit 101 sin las
+      # cabeceras de fontconfig. La lista es la misma que la del job `test` de
+      # ci.yml (que sí lo tenía) más fuse/libfuse2, que solo hace falta para
+      # generar el AppImage.
       - name: Install Linux GUI + packaging dependencies
         run: |
           sudo apt-get update
@@ -111,6 +116,7 @@ jobs:
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
+            libfontconfig1-dev \
             fuse libfuse2
       - run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked -p canvas-app
