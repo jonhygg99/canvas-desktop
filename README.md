@@ -15,7 +15,7 @@ descarga el archivo de tu sistema y listo.
 | Sistema | Archivo | Cómo se instala |
 |---|---|---|
 | **Windows 10/11 (x64)** | `canvas-desktop_*_x64-setup.exe` | Doble clic y sigue el asistente. Registra las asociaciones «Abrir con» del Explorador y crea accesos directos; se desinstala desde «Agregar o quitar programas» |
-| macOS (Apple Silicon) | `canvas-desktop_*.dmg` | Arrastra *Canvas Desktop* a *Aplicaciones*. La primera vez: clic derecho → Abrir (va sin firmar) |
+| macOS (Apple Silicon) | `Canvas.Desktop_*.dmg` | Arrastra *Canvas Desktop* a *Aplicaciones*. La primera vez: clic derecho → Abrir (va sin firmar) |
 | Linux (x64) | `canvas-desktop_*.AppImage` | `chmod +x` y ejecutar |
 | Linux (Debian/Ubuntu) | `canvas-desktop_*.deb` | `sudo apt install ./canvas-desktop_*.deb` |
 
