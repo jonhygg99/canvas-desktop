@@ -4,6 +4,25 @@ Editor de diseño sobre lienzo (tipo Canva) **nativo**, escrito en Rust: sin
 Electron, sin webview, sin JavaScript. Un único binario por plataforma sobre
 `winit` + `wgpu` + `egui` + `vello`.
 
+## Descargar
+
+[![Última release](https://img.shields.io/github/v/release/jonhygg99/canvas-desktop?label=descargar&color=2f6feb)](https://github.com/jonhygg99/canvas-desktop/releases/latest)
+
+No hace falta tener Rust ni compilar nada: entra en
+[**Releases**](https://github.com/jonhygg99/canvas-desktop/releases/latest),
+descarga el archivo de tu sistema y listo.
+
+| Sistema | Archivo | Cómo se instala |
+|---|---|---|
+| **Windows 10/11 (x64)** | `canvas-desktop_*_x64-setup.exe` | Doble clic y sigue el asistente. Registra las asociaciones «Abrir con» del Explorador y crea accesos directos; se desinstala desde «Agregar o quitar programas» |
+| macOS (Apple Silicon) | `canvas-desktop_*.dmg` | Arrastra *Canvas Desktop* a *Aplicaciones*. La primera vez: clic derecho → Abrir (va sin firmar) |
+| Linux (x64) | `canvas-desktop_*.AppImage` | `chmod +x` y ejecutar |
+| Linux (Debian/Ubuntu) | `canvas-desktop_*.deb` | `sudo apt install ./canvas-desktop_*.deb` |
+
+Solo el instalador de **Windows x64** está soportado de verdad hoy (ver
+`CLAUDE.md`); los paquetes de macOS y Linux se publican *best-effort* y aún no
+se han verificado en hardware real.
+
 ## Estado: primera entrega
 
 El canvas mínimo funcionando de punta a punta:
@@ -228,11 +247,23 @@ reenvía la ruta por el socket local y sale con código 0.
 ## Instalar en Windows
 
 No hace falta tener Rust instalado si ya descargaste un `*-setup.exe` desde
-[Releases](https://github.com/jonhygg99/canvas-desktop/releases) (se publica
-al empujar un tag `v*`, ver `.github/workflows/release.yml`): ejecútalo y
+[Releases](https://github.com/jonhygg99/canvas-desktop/releases): ejecútalo y
 sigue el asistente. Instala el `.exe`, registra las asociaciones «Abrir con»
 del Explorador y crea accesos directos en el menú Inicio/escritorio, con su
 propio desinstalador en «Agregar o quitar programas».
+
+La release se publica sola al empujar un tag `v*` (`.github/workflows/release.yml`):
+los cuatro jobs de build solo suben artefactos y un único job `release` los
+publica juntos, así que basta con
+
+```sh
+git tag -a v0.1.0 -m "Canvas Desktop v0.1.0"
+git push origin v0.1.0
+```
+
+Se puede ensayar sin publicar nada con `gh workflow run release.yml`:
+`workflow_dispatch` no crea release, solo deja los instaladores como artifacts
+del run.
 
 Para generarlo tú mismo (necesitas Rust estable con toolchain MSVC):
 
