@@ -13,6 +13,7 @@
 
 mod app;
 mod app_icons;
+mod audio;
 mod clipboard;
 mod crash_log;
 mod deck;

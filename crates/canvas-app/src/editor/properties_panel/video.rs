@@ -45,13 +45,11 @@ pub fn video_controls_ui(
             if is_playing {
                 state.video_playing_layer = None;
                 state.video_last_tick = None;
+                crate::audio::pause();
             } else {
                 state.video_playing_layer = Some(sel);
                 state.video_last_tick = Some(std::time::Instant::now());
-                // Asegurar que el frame actual está cargado
-                if duration.is_some() {
-                    // Ya está en poster_time
-                }
+                let _ = crate::audio::play(&path, current);
                 ctx.request_repaint();
             }
         }
@@ -64,6 +62,9 @@ pub fn video_controls_ui(
                     v.poster_time = 0.0;
                 }
             }
+            crate::audio::stop();
+            let _ = crate::audio::play(&path, 0.0);
+            crate::audio::pause();
             loader::spawn_video_frame(path.clone(), sel, 0.0, tx.clone(), ctx.clone());
         }
     });
@@ -91,6 +92,8 @@ pub fn video_controls_ui(
         // Si estaba reproduciendo, pausar al scruBBear
         state.video_playing_layer = None;
         state.video_last_tick = None;
+        crate::audio::seek(current);
+        crate::audio::pause();
         loader::spawn_video_frame(path.clone(), sel, current, tx.clone(), ctx.clone());
     }
     if slider_resp.drag_stopped() {
@@ -99,6 +102,10 @@ pub fn video_controls_ui(
 
     // Avance automático si está reproduciendo
     if is_playing {
+        // Asegurar audio en sync
+        if !crate::audio::is_playing() {
+            let _ = crate::audio::play(&path, current);
+        }
         let now = std::time::Instant::now();
         if let Some(last) = state.video_last_tick {
             let dt = now.duration_since(last).as_secs_f64();
@@ -118,6 +125,9 @@ pub fn video_controls_ui(
                     if let LayerContent::Video(v) = &mut l.content {
                         v.poster_time = next;
                     }
+                }
+                if next == 0.0 {
+                    crate::audio::seek(0.0);
                 }
                 state.video_last_tick = Some(now);
                 loader::spawn_video_frame(path.clone(), sel, next, tx.clone(), ctx.clone());

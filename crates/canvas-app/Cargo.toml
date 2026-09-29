@@ -65,6 +65,7 @@ ureq = { workspace = true }
 dotenvy = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+rodio = { workspace = true }
 
 # Menús nativos solo en Windows (en Linux muda exige GTK: allí se usa una
 # barra de menús egui como fallback).
