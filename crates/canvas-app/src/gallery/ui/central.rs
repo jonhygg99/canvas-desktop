@@ -11,7 +11,7 @@ use super::cell::{gallery_add_cell, gallery_cell, gallery_cell_size, CELL_GAP, R
 use crate::app_icons::{
     draw_close_icon, draw_minus_icon, draw_plus_icon, icon_button_ui, icon_text_button_ui,
 };
-use crate::settings::GallerySort;
+use crate::settings::{GallerySort, MediaFilter};
 
 pub(super) fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
     let mut action = None;
@@ -142,6 +142,24 @@ fn toolbar_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<G
         {
             *action = Some(GalleryAction::NewDesign);
         }
+        ui.add_space(12.0);
+        // Filtro arriba: Todos / Imágenes / Videos (requisito del usuario)
+        let mut filter = state.media_filter;
+        ui.horizontal(|ui| {
+            for f in [
+                MediaFilter::All,
+                MediaFilter::ImagesOnly,
+                MediaFilter::VideosOnly,
+            ] {
+                if ui.selectable_label(filter == f, f.label()).clicked() {
+                    filter = f;
+                }
+            }
+        });
+        if filter != state.media_filter {
+            state.media_filter = filter;
+            *action = Some(GalleryAction::MediaFilterChanged(filter));
+        }
     });
 }
 
@@ -242,15 +260,45 @@ fn scan_error_ui(
 
 /// La cuadrícula: filas de `columns` celdas con su miniatura, y la celda
 /// «+» al final de la última fila incompleta (o en fila propia si la última
-/// fila estaba llena).
+/// fila estaba llena). Respeta `media_filter` (Todos/Imágenes/Videos).
 fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         let columns = state.gallery_columns.clamp(1, 12);
         let cell_size = gallery_cell_size(ui.available_width(), columns);
         ui.spacing_mut().item_spacing.y = ROW_GAP;
-        let row_count = state.items.chunks(columns).len();
+        let visible: Vec<_> = state
+            .items
+            .iter()
+            .filter(|i| match state.media_filter {
+                crate::settings::MediaFilter::All => true,
+                crate::settings::MediaFilter::ImagesOnly => {
+                    matches!(
+                        i.kind,
+                        crate::gallery::ItemKind::Image | crate::gallery::ItemKind::Design
+                    )
+                }
+                crate::settings::MediaFilter::VideosOnly => {
+                    matches!(i.kind, crate::gallery::ItemKind::Video)
+                }
+            })
+            .collect();
+        if visible.is_empty() && state.scanned && state.scan_error.is_none() {
+            let label = match state.media_filter {
+                crate::settings::MediaFilter::VideosOnly => "No videos in this folder.",
+                crate::settings::MediaFilter::ImagesOnly => "No images in this folder.",
+                crate::settings::MediaFilter::All => "",
+            };
+            if !label.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(20.0);
+                    ui.weak(label);
+                });
+                return;
+            }
+        }
+        let row_count = visible.chunks(columns).len();
         let mut add_cell_rendered = false;
-        for (row_index, row) in state.items.chunks(columns).enumerate() {
+        for (row_index, row) in visible.chunks(columns).enumerate() {
             let is_last_row = row_index + 1 == row_count;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_GAP;

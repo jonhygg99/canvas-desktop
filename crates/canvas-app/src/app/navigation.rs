@@ -23,12 +23,13 @@ impl AppInner {
         let path = resolve_canvas_sidecar(path);
         if path.is_dir() {
             let path = gallery::normalize_folder(path);
-            let gallery_state = seed_gallery_from_deck(
+            let mut gallery_state = seed_gallery_from_deck(
                 &ws.deck,
                 path.clone(),
                 self.settings.gallery_sort,
                 self.settings.gallery_folder_panel_side,
             );
+            gallery_state.media_filter = self.settings.media_filter;
             loader::spawn_gallery_scan(
                 path.clone(),
                 self.thumb_cache.clone(),
@@ -231,12 +232,13 @@ impl AppInner {
             Nav::OpenGallery { path, navigation } => {
                 let path = gallery::normalize_folder(path);
                 canvas_io::purge_local_trash(&path);
-                let gallery_state = gallery::GalleryState::with_navigation(
+                let mut gallery_state = gallery::GalleryState::with_navigation(
                     path.clone(),
                     self.settings.gallery_sort,
                     navigation,
                     self.settings.gallery_folder_panel_side,
                 );
+                gallery_state.media_filter = self.settings.media_filter;
                 loader::spawn_gallery_scan(
                     path.clone(),
                     self.thumb_cache.clone(),

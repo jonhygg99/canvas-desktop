@@ -17,6 +17,25 @@ pub use sort::natural_cmp;
 
 #[cfg(test)]
 mod tests;
+/// Filtro de la galería / baraja: qué tipos de archivo mostrar.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum MediaFilter {
+    #[default]
+    All,
+    ImagesOnly,
+    VideosOnly,
+}
+
+impl MediaFilter {
+    pub fn label(self) -> &'static str {
+        match self {
+            MediaFilter::All => "All",
+            MediaFilter::ImagesOnly => "Images",
+            MediaFilter::VideosOnly => "Videos",
+        }
+    }
+}
+
 /// Orden de las pestañas del panel izquierdo del editor (Page/Layers): el
 /// usuario las arrastra para reordenarlas y el orden queda guardado aquí.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
@@ -95,6 +114,7 @@ pub struct AppSettings {
     pub serper_last_folder: Option<PathBuf>,
     /// Tamaño de página de cada lienzo creado por el bulk web.
     pub serper_bulk_size: BulkCanvasSize,
+    pub media_filter: MediaFilter,
     /// Workspaces abiertos en la última sesión, para restaurarlos al
     /// arrancar. El orden es el de creación (la ventana 0 es la raíz). Se
     /// vuelve a escribir cada vez que un workspace se abre o se cierra, y al
@@ -142,6 +162,7 @@ impl Default for AppSettings {
             serper_credits_total: 0,
             serper_last_folder: None,
             serper_bulk_size: BulkCanvasSize::default(),
+            media_filter: MediaFilter::default(),
             workspaces: Vec::new(),
         }
     }
