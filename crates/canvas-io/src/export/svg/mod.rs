@@ -122,6 +122,16 @@ pub fn document_to_svg(
                     content.natural_height,
                 );
             }
+            LayerContent::Video(content) => {
+                image_element(
+                    &mut svg,
+                    images.get(&layer.id.raw()),
+                    &t,
+                    content.crop,
+                    content.natural_width,
+                    content.natural_height,
+                );
+            }
             LayerContent::Svg(content) => {
                 if content.source.is_empty() {
                     image_element(

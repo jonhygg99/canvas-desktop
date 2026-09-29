@@ -27,7 +27,7 @@ pub use geometry::{
 };
 pub use layer::{
     CropRect, Effects, GroupContent, ImageContent, Layer, LayerContent, LayerId, Shadow,
-    ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform,
+    ShapeContent, ShapeKind, SvgContent, TextAlign, TextContent, TextLine, Transform, VideoContent,
 };
 pub use rounded_path::{rounded_polygon_path, RoundedPath};
 pub use selection::Selection;

@@ -36,6 +36,9 @@ pub fn probe_page_size_with(path: &Path, sidecar: Option<&Path>) -> Result<(f64,
     if let Some(sidecar) = sidecar {
         return crate::sidecar::read_page_size(sidecar);
     }
+    if crate::is_video_file(path) {
+        return probe_video_size_ffprobe(path);
+    }
     let is_svg = path
         .extension()
         .and_then(|e| e.to_str())
@@ -44,6 +47,11 @@ pub fn probe_page_size_with(path: &Path, sidecar: Option<&Path>) -> Result<(f64,
         return probe_svg_size(path);
     }
     probe_raster_size(path)
+}
+
+fn probe_video_size_ffprobe(path: &Path) -> Result<(f64, f64), IoError> {
+    let (w, h, _) = crate::video::probe_video_size(path)?;
+    Ok((f64::from(w), f64::from(h)))
 }
 
 /// Cabecera de una imagen rasterizada (PNG/JPEG/WebP/GIF/BMP), orientada.

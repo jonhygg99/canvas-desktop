@@ -15,10 +15,11 @@ impl EditorState {
             .is_some_and(|id| self.doc.layer(id).is_ok())
     }
 
-    /// Capa de imagen que serviría de fuente para el fondo desenfocado.
+    /// Capa de imagen/video que serviría de fuente para el fondo desenfocado.
     pub(in crate::editor) fn background_source(&self) -> Option<LayerId> {
         let is_candidate = |l: &Layer| {
-            matches!(l.content, LayerContent::Image(_)) && Some(l.id) != self.background_layer
+            matches!(l.content, LayerContent::Image(_) | LayerContent::Video(_))
+                && Some(l.id) != self.background_layer
         };
         // La seleccionada si vale; si no, la capa de imagen más alta.
         if let Some(sel) = self.selection.primary() {
@@ -58,8 +59,18 @@ impl EditorState {
         let Ok(source) = self.doc.layer(source_id) else {
             return;
         };
-        let LayerContent::Image(content) = source.content.clone() else {
-            return;
+        let (natural_w, natural_h, cloned_content) = match source.content.clone() {
+            LayerContent::Image(c) => (
+                f64::from(c.natural_width),
+                f64::from(c.natural_height),
+                LayerContent::Image(c),
+            ),
+            LayerContent::Video(c) => (
+                f64::from(c.natural_width),
+                f64::from(c.natural_height),
+                LayerContent::Video(c),
+            ),
+            _ => return,
         };
         let source_t = source.transform;
         let Some(pixels) = self.images.get(&source_id).cloned() else {
@@ -77,10 +88,7 @@ impl EditorState {
             && source_t.x + source_t.width >= pw
             && source_t.y + source_t.height >= ph;
         if covers_page {
-            let (nw, nh) = (
-                f64::from(content.natural_width),
-                f64::from(content.natural_height),
-            );
+            let (nw, nh) = (natural_w, natural_h);
             let mut scale = (pw / nw).min(ph / nh);
             // Si el aspecto coincide con la página, «contain» seguiría
             // tapándola entera y el fondo no se vería: deja un margen.
@@ -95,19 +103,9 @@ impl EditorState {
             }));
         }
 
-        let transform = cover_transform(
-            f64::from(content.natural_width),
-            f64::from(content.natural_height),
-            pw,
-            ph,
-        );
+        let transform = cover_transform(natural_w, natural_h, pw, ph);
         let id = self.doc.allocate_layer_id();
-        let mut layer = Layer::new(
-            id,
-            "Blurred background",
-            transform,
-            LayerContent::Image(content),
-        );
+        let mut layer = Layer::new(id, "Blurred background", transform, cloned_content);
         layer.effects.blur_radius = 50.0;
         commands.push(Box::new(InsertLayer { index: 0, layer }));
 
@@ -130,16 +128,17 @@ impl EditorState {
         let id = self.background_layer.filter(|_| self.background_active())?;
         let (pw, ph) = self.doc.page().map(|p| (p.width, p.height)).ok()?;
         let layer = self.doc.layer(id).ok()?;
-        let LayerContent::Image(img) = &layer.content else {
-            return None;
+        let (nw, nh) = match &layer.content {
+            LayerContent::Image(img) => {
+                (f64::from(img.natural_width), f64::from(img.natural_height))
+            }
+            LayerContent::Video(vid) => {
+                (f64::from(vid.natural_width), f64::from(vid.natural_height))
+            }
+            _ => return None,
         };
         let before = layer.transform;
-        let after = cover_transform(
-            f64::from(img.natural_width),
-            f64::from(img.natural_height),
-            pw,
-            ph,
-        );
+        let after = cover_transform(nw, nh, pw, ph);
         if after == before {
             return None;
         }

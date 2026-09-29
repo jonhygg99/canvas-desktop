@@ -161,6 +161,9 @@ fn draw_content(
         LayerContent::Image(content) => {
             draw_image(scene, layer, content.crop, images, blurred, view, skipped)
         }
+        LayerContent::Video(content) => {
+            draw_image(scene, layer, content.crop, images, blurred, view, skipped)
+        }
         LayerContent::Svg(_) => draw_svg(scene, layer, images, blurred, view, skipped),
         LayerContent::Text(text) => {
             let t = layer.transform;

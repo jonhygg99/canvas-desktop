@@ -200,6 +200,24 @@ pub struct ImageContent {
     pub crop: Option<CropRect>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VideoContent {
+    /// Ruta de origen del video, si vino de disco.
+    pub source_path: Option<PathBuf>,
+    /// Dimensiones del frame del video (poster).
+    pub natural_width: u32,
+    pub natural_height: u32,
+    /// Recorte no destructivo; `None` = frame completo.
+    #[serde(default)]
+    pub crop: Option<CropRect>,
+    /// Duración en segundos si se conoce (ffprobe).
+    #[serde(default)]
+    pub duration_secs: Option<f64>,
+    /// Tiempo del poster / frame actual en segundos.
+    #[serde(default)]
+    pub poster_time: f64,
+}
+
 /// Alineación del texto dentro de su caja.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TextAlign {
@@ -316,6 +334,7 @@ pub struct GroupContent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LayerContent {
     Image(ImageContent),
+    Video(VideoContent),
     Text(TextContent),
     Shape(ShapeContent),
     Svg(SvgContent),

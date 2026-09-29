@@ -477,7 +477,7 @@ pub(super) fn start_export(
 }
 
 /// ¿El documento tiene al menos una capa que hornea píxeles reales
-/// (imagen o SVG) VISIBLE? Mismo criterio que `bake_came_out_blank_or_incomplete`:
+/// (imagen/video o SVG) VISIBLE? Mismo criterio que `bake_came_out_blank_or_incomplete`:
 /// si NO hay ninguna, guardar el documento como raster aplanado solo escribe
 /// texto/formas — y al sobrescribir un archivo de imagen en disco se descarta
 /// la copia editable de la foto original que abrió el usuario. Se comprueba
@@ -485,7 +485,11 @@ pub(super) fn start_export(
 pub(super) fn has_raster_layers(doc: &Document) -> bool {
     doc.page().is_ok_and(|page| {
         page.layers.iter().any(|layer| {
-            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+            layer.visible
+                && matches!(
+                    layer.content,
+                    LayerContent::Image(_) | LayerContent::Video(_) | LayerContent::Svg(_)
+                )
         })
     })
 }
@@ -507,7 +511,11 @@ fn bake_came_out_blank_or_incomplete(doc: &Document, rgba: &[u8], skipped: usize
     }
     let has_visible_images = doc.page().is_ok_and(|page| {
         page.layers.iter().any(|layer| {
-            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+            layer.visible
+                && matches!(
+                    layer.content,
+                    LayerContent::Image(_) | LayerContent::Video(_) | LayerContent::Svg(_)
+                )
         })
     });
     if !has_visible_images {

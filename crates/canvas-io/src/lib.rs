@@ -12,6 +12,7 @@ mod save;
 mod sidecar;
 mod svg;
 mod thumbs;
+mod video;
 
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
@@ -39,6 +40,7 @@ pub use sidecar::{
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;
+pub use video::{ffmpeg_path, ffprobe_path, load_video_frame, probe_video_size};
 
 use std::path::PathBuf;
 

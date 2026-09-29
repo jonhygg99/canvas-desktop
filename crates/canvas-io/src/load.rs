@@ -224,8 +224,12 @@ pub struct LoadedImage {
 
 /// Carga una imagen de disco respetando su orientación EXIF. Los SVG se
 /// rasterizan a su tamaño natural; de un GIF animado se toma el primer
-/// fotograma (comportamiento por defecto de `image`).
+/// fotograma (comportamiento por defecto de `image`). Los videos se cargan
+/// como poster vía ffmpeg (frame 0).
 pub fn load_image(path: &Path) -> Result<LoadedImage, IoError> {
+    if is_video_file(path) {
+        return crate::video::load_video_frame(path, 0.0);
+    }
     let is_svg = path
         .extension()
         .and_then(|e| e.to_str())

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use canvas_core::{
     contain_transform, cover_transform, ImageContent, InsertLayer, Layer, LayerContent, LayerId,
-    RemoveLayer, Selection, Transform,
+    RemoveLayer, Selection, Transform, VideoContent,
 };
 use canvas_io::LoadedImage;
 use canvas_render::image_data_from_rgba;
@@ -91,15 +91,32 @@ impl EditorState {
             && empty
             && !(transform.width >= pw * 0.999 && transform.height >= ph * 0.999);
 
-        let content = ImageContent {
-            source_path: source,
-            natural_width: img.width,
-            natural_height: img.height,
-            crop: None,
+        let is_video = source.as_deref().is_some_and(canvas_io::is_video_file);
+        let content = if is_video {
+            let duration = source
+                .as_deref()
+                .and_then(|p| canvas_io::probe_video_size(p).ok())
+                .and_then(|(_, _, d)| d);
+            LayerContent::Video(VideoContent {
+                source_path: source.clone(),
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+                duration_secs: duration,
+                poster_time: 0.0,
+            })
+        } else {
+            LayerContent::Image(ImageContent {
+                source_path: source.clone(),
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+            })
         };
+        let bg_content = content.clone();
         let pixels = image_data_from_rgba(img.rgba, img.width, img.height);
         let id = self.doc.allocate_layer_id();
-        let layer = Layer::new(id, name, transform, LayerContent::Image(content.clone()));
+        let layer = Layer::new(id, name, transform, content);
 
         let mut commands: Vec<Box<dyn canvas_core::Command>> = Vec::new();
         let mut bg_id = None;
@@ -109,7 +126,7 @@ impl EditorState {
                 new_bg_id,
                 "Blurred background",
                 cover_transform(nw, nh, pw, ph),
-                LayerContent::Image(content),
+                bg_content,
             );
             bg.effects.blur_radius = 50.0;
             commands.push(Box::new(InsertLayer {
@@ -140,7 +157,7 @@ impl EditorState {
     fn replace_image_content(
         &mut self,
         target: LayerId,
-        content: ImageContent,
+        content: LayerContent,
         pixels: vello::peniko::ImageData,
     ) -> Result<(), String> {
         let (index, old_layer) = {
@@ -149,7 +166,10 @@ impl EditorState {
                 .index_of(target)
                 .ok_or_else(|| "Selected image was not found".to_owned())?;
             let layer = page.layers[index].clone();
-            if !matches!(layer.content, LayerContent::Image(_)) {
+            if !matches!(
+                layer.content,
+                LayerContent::Image(_) | LayerContent::Video(_)
+            ) {
                 return Err("Selected layer is not an image".to_owned());
             }
             (index, layer)
@@ -158,7 +178,7 @@ impl EditorState {
         let new_id = self.doc.allocate_layer_id();
         let mut new_layer = old_layer;
         new_layer.id = new_id;
-        new_layer.content = LayerContent::Image(content);
+        new_layer.content = content;
 
         self.apply_undo_step(Box::new(canvas_core::Composite::new(
             "Replace image",
@@ -187,11 +207,27 @@ impl EditorState {
         source: Option<PathBuf>,
         img: LoadedImage,
     ) -> Result<(), String> {
-        let content = ImageContent {
-            source_path: source,
-            natural_width: img.width,
-            natural_height: img.height,
-            crop: None,
+        let is_video = source.as_deref().is_some_and(canvas_io::is_video_file);
+        let content = if is_video {
+            let duration = source
+                .as_deref()
+                .and_then(|p| canvas_io::probe_video_size(p).ok())
+                .and_then(|(_, _, d)| d);
+            LayerContent::Video(VideoContent {
+                source_path: source,
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+                duration_secs: duration,
+                poster_time: 0.0,
+            })
+        } else {
+            LayerContent::Image(ImageContent {
+                source_path: source,
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+            })
         };
         let pixels = image_data_from_rgba(img.rgba, img.width, img.height);
         self.replace_image_content(target, content, pixels)
@@ -204,15 +240,17 @@ impl EditorState {
     ) -> Result<(), String> {
         let (content, pixels) = {
             let layer = self.doc.layer(source).map_err(|e| e.to_string())?;
-            let LayerContent::Image(content) = &layer.content else {
-                return Err("Source layer is not an image".to_owned());
+            let content = match &layer.content {
+                LayerContent::Image(c) => LayerContent::Image(c.clone()),
+                LayerContent::Video(c) => LayerContent::Video(c.clone()),
+                _ => return Err("Source layer is not an image".to_owned()),
             };
             let pixels = self
                 .images
                 .get(&source)
                 .cloned()
                 .ok_or_else(|| "Source image pixels are not loaded".to_owned())?;
-            (content.clone(), pixels)
+            (content, pixels)
         };
         self.replace_image_content(target, content, pixels)
     }

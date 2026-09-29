@@ -46,8 +46,10 @@ impl SetCrop {
         value: Option<crate::layer::CropRect>,
     ) -> Result<(), CoreError> {
         let layer = doc.layer_mut(self.layer)?;
-        if let crate::layer::LayerContent::Image(content) = &mut layer.content {
-            content.crop = value;
+        match &mut layer.content {
+            crate::layer::LayerContent::Image(content) => content.crop = value,
+            crate::layer::LayerContent::Video(content) => content.crop = value,
+            _ => {}
         }
         Ok(())
     }
