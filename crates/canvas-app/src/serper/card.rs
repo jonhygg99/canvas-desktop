@@ -33,7 +33,8 @@ pub(super) fn photo_card_ui(
     if item.claim_thumb() {
         loader::spawn_serper_thumb(
             photo.id.clone(),
-            photo.image_url.clone(),
+            photo.thumb_source(),
+            photo.source_url.clone(),
             tx.clone(),
             ui.ctx().clone(),
         );
@@ -46,6 +47,7 @@ pub(super) fn photo_card_ui(
             id: photo.id.clone(),
             label: format!("Web · {}", photo.source_host()),
             url: photo.image_url.clone(),
+            post_url: photo.source_url.clone(),
         },
         |ui| paint_card(item, inserting, &photo_title(&photo), w, h, ui, &visuals),
     )
@@ -66,7 +68,8 @@ pub(super) fn photo_card_ui(
             if item.claim_thumb() {
                 loader::spawn_serper_thumb(
                     photo.id.clone(),
-                    photo.image_url.clone(),
+                    photo.thumb_source(),
+                    photo.source_url.clone(),
                     tx.clone(),
                     ui.ctx().clone(),
                 );
@@ -78,6 +81,7 @@ pub(super) fn photo_card_ui(
                 photo.id,
                 label,
                 photo.image_url,
+                photo.source_url,
                 tx.clone(),
                 ui.ctx().clone(),
             );

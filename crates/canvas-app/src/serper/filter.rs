@@ -194,6 +194,137 @@ pub fn extension_allowed(url: &str) -> bool {
     matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp")
 }
 
+/// CDNs sociales cuyas URLs caducan y a veces dan 403, pero que en modo
+/// social son todo lo que hay: se perdonan solo ahí.
+pub const SOCIAL_CDN_HOSTS: [&str; 3] = ["tiktok.com", "lookaside.instagram.com", "fbsbx.com"];
+
+/// ¿El host de la URL es un CDN social (ver `SOCIAL_CDN_HOSTS`)?
+pub fn is_social_host(image_url: &str) -> bool {
+    let Some(host) = host_of(image_url) else {
+        return false;
+    };
+    SOCIAL_CDN_HOSTS.iter().any(|s| host.contains(s))
+}
+
+/// Persona del modo social a partir del texto del input: link de perfil,
+/// post o reel de Instagram/Facebook, o nombre plano. Devuelve `None` solo
+/// si no hay nada que buscar.
+pub fn parse_person_link(input: &str) -> Option<super::types::PersonQuery> {
+    use super::types::{PersonQuery, SocialNetwork};
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    // Quita esquema, `www.` y query/fragmento para buscar el host y el path.
+    let no_scheme = lower.split("://").last().unwrap_or(&lower);
+    let no_www = no_scheme.strip_prefix("www.").unwrap_or(no_scheme);
+    let host_end = no_www.find('/').unwrap_or(no_www.len());
+    let (host, path) = no_www.split_at(host_end);
+    let network = if host == "instagram.com" || host.ends_with(".instagram.com") {
+        Some(SocialNetwork::Instagram)
+    } else if host == "facebook.com"
+        || host == "fb.com"
+        || host.ends_with(".facebook.com")
+        || host == "fb.watch"
+    {
+        Some(SocialNetwork::Facebook)
+    } else {
+        None
+    };
+    let Some(network) = network else {
+        // Nombre plano: se busca tal cual (Serper mezcla ambas redes).
+        return Some(PersonQuery {
+            network: None,
+            handle: trimmed.to_owned(),
+        });
+    };
+    // Primer segmento con contenido: usuario, `p/<id>`, `reel/<id>`…
+    // (`profile.php?id=` trae el handle en la query). Se corta cualquier
+    // `?`/`#` del path para que `?igsh=` no contamine el handle.
+    let clean_path = path.split(['?', '#']).next().unwrap_or(path);
+    let mut segments = clean_path.split('/').filter(|s| !s.is_empty());
+    let first = segments.next().unwrap_or("");
+    if first == "profile.php" {
+        let id = trimmed
+            .rsplit(['?', '&'])
+            .find_map(|pair| pair.strip_prefix("id="))
+            .unwrap_or("");
+        let id = id.split('#').next().unwrap_or("").trim();
+        if id.is_empty() {
+            return None;
+        }
+        return Some(PersonQuery {
+            network: Some(network),
+            handle: id.to_owned(),
+        });
+    }
+    // Segmentos de navegación que no son un usuario.
+    const NOT_USERS: [&str; 9] = [
+        "p", "reel", "reels", "stories", "explore", "accounts", "direct", "tv", "watch",
+    ];
+    if first.is_empty() || NOT_USERS.contains(&first) {
+        return None;
+    }
+    Some(PersonQuery {
+        network: Some(network),
+        handle: first.to_owned(),
+    })
+}
+
+/// Las dos formas de la query de persona: `full` con operador `site:`
+/// (cuentas de pago) y `plain` sin operadores para el degradado gratuito
+/// (las gratuitas rechazan `site:` igual que `-site:`).
+pub struct PersonQueryStrings {
+    pub full: String,
+    pub plain: String,
+}
+
+/// Query base del modo social. Pasa luego por `build_query` para las
+/// exclusiones, igual que el modo web.
+pub fn build_person_query(person: &super::types::PersonQuery) -> PersonQueryStrings {
+    match person.network {
+        Some(network) => PersonQueryStrings {
+            full: format!("site:{} \"{}\"", network.site(), person.handle),
+            plain: person.handle.clone(),
+        },
+        None => {
+            let handle = person.handle.clone();
+            PersonQueryStrings {
+                full: handle.clone(),
+                plain: handle,
+            }
+        }
+    }
+}
+
+/// En modo social, conserva solo fotos cuyo post sea de Instagram/Facebook
+/// (o solo de la red detectada si el input era un link): la keyword pelada
+/// del degradado trae de todo (threads, X…) y el `site:` no siempre se
+/// puede usar. Devuelve (conservadas, descartadas por red).
+pub fn keep_network(
+    photos: Vec<SerperPhoto>,
+    network: Option<super::types::SocialNetwork>,
+) -> (Vec<SerperPhoto>, usize) {
+    use super::types::SocialNetwork;
+    let allowed: &[&str] = match network {
+        Some(SocialNetwork::Instagram) => &["instagram.com"],
+        Some(SocialNetwork::Facebook) => &["facebook.com"],
+        None => &["instagram.com", "facebook.com"],
+    };
+    let mut kept = Vec::with_capacity(photos.len());
+    let mut dropped = 0;
+    for photo in photos {
+        let ok = host_of(&photo.source_url).is_some_and(|h| allowed.iter().any(|a| h.contains(a)));
+        if ok {
+            kept.push(photo);
+        } else {
+            dropped += 1;
+        }
+    }
+    (kept, dropped)
+}
+
 /// ¿El host de `imageUrl` contiene algún dominio bloqueado?
 pub fn host_blocked(image_url: &str, blocked: &[String]) -> bool {
     let Some(host) = host_of(image_url) else {
@@ -242,12 +373,16 @@ pub enum DropReason {
 }
 
 /// Clasifica una foto: `None` = pasa el filtro. Orden barato primero
-/// (extensión) y caro al final (proporción).
-pub fn classify(photo: &SerperPhoto, blocked: &[String]) -> Option<DropReason> {
-    if !extension_allowed(&photo.image_url) {
+/// (extensión) y caro al final (proporción). Con `allow_social` (modo
+/// social) se perdona el bloqueo de host de los CDN sociales Y la falta de
+/// extensión (sus URLs a menudo no llevan `.jpg`): lo que no sea imagen de
+/// verdad lo descarta después el decode del thumb, sin romper nada.
+pub fn classify(photo: &SerperPhoto, blocked: &[String], allow_social: bool) -> Option<DropReason> {
+    let social = allow_social && is_social_host(&photo.image_url);
+    if !social && !extension_allowed(&photo.image_url) {
         return Some(DropReason::Extension);
     }
-    if host_blocked(&photo.image_url, blocked) {
+    if host_blocked(&photo.image_url, blocked) && !social {
         return Some(DropReason::Host);
     }
     if url_pattern_blocked(&photo.image_url) {
@@ -264,7 +399,7 @@ pub fn classify(photo: &SerperPhoto, blocked: &[String]) -> Option<DropReason> {
 }
 
 /// Cuántas fotos cayeron por cada motivo (pie del panel). Serde para la
-/// caché de disco.
+/// caché de disco (`network` lleva default para no romper cachés viejas).
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct FilterCounts {
     pub extension: usize,
@@ -272,11 +407,13 @@ pub struct FilterCounts {
     pub pattern: usize,
     pub title: usize,
     pub ratio: usize,
+    #[serde(default)]
+    pub network: usize,
 }
 
 impl FilterCounts {
     pub fn total(self) -> usize {
-        self.extension + self.host + self.pattern + self.title + self.ratio
+        self.extension + self.host + self.pattern + self.title + self.ratio + self.network
     }
 
     fn add(&mut self, reason: DropReason) {
@@ -296,6 +433,7 @@ impl FilterCounts {
         self.pattern += other.pattern;
         self.title += other.title;
         self.ratio += other.ratio;
+        self.network += other.network;
     }
 }
 
@@ -303,11 +441,12 @@ impl FilterCounts {
 pub fn apply_filter(
     photos: Vec<SerperPhoto>,
     blocked: &[String],
+    allow_social: bool,
 ) -> (Vec<SerperPhoto>, FilterCounts) {
     let mut kept = Vec::with_capacity(photos.len());
     let mut counts = FilterCounts::default();
     for photo in photos {
-        match classify(&photo, blocked) {
+        match classify(&photo, blocked, allow_social) {
             None => kept.push(photo),
             Some(reason) => counts.add(reason),
         }

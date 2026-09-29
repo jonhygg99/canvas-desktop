@@ -18,8 +18,48 @@ use std::thread;
 /// con ese socket a medio cerrar con `EINVAL` y panica («returning stream to
 /// pool: Os { code: 22 }»). Eso hacía flaky estos tests bajo carga (≈1 de 3
 /// suites completas). Drenando el request el cierre es FIN limpio y el pool
-/// de ureq no disputa. Devuelve la dirección (`host:puerto`) a la que
-/// apuntar el GET.
+/// de ureq no disputa.
+///
+/// Variante que además devuelve lo que el cliente envió (línea de request
+/// + cabeceras) por un canal, para asertar cabeceras en tests.
+pub(crate) fn serve_and_capture(
+    status: &str,
+    body: &[u8],
+) -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::sync::mpsc::channel;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let status = status.to_owned();
+    let body = body.to_vec();
+    let (tx, rx) = channel();
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut req = Vec::new();
+        let mut buf = [0u8; 1024];
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    req.extend_from_slice(&buf[..n]);
+                    if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = tx.send(String::from_utf8_lossy(&req).into_owned());
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.write_all(&body);
+        // Sin `shutdown(Both)`: el drop cierra solo.
+    });
+    (address.to_string(), rx)
+}
 pub(crate) fn serve_response(status: &str, body: &[u8]) -> String {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let address = listener.local_addr().unwrap();

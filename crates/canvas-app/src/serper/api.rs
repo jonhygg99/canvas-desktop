@@ -65,7 +65,8 @@ pub fn access_key() -> Option<String> {
 /// Busca imágenes en Serper (`page` 1-based, hasta `num` resultados). El
 /// filtro se aplica aquí, en el worker: la UI solo recibe supervivientes
 /// más las cuentas de descarte para el pie del panel. Solo se llama desde
-/// hilos worker.
+/// hilos worker. En modo social la keyword se interpreta como persona
+/// (link o nombre) y se perdona el bloqueo de CDNs sociales.
 ///
 /// Degradado automático: las cuentas gratuitas rechazan patrones como
 /// `-site:` (HTTP 400 «Query pattern not allowed»). Ante ese error se
@@ -76,6 +77,7 @@ pub fn search(
     page: u32,
     num: u32,
     blocked: &[String],
+    mode: super::types::SearchMode,
 ) -> Result<super::types::SearchPage, SerperError> {
     let keyword = keyword.trim();
     if keyword.is_empty() {
@@ -94,16 +96,42 @@ pub fn search(
     let Some(key) = access_key() else {
         return Err(SerperError::NotConfigured(API_KEY_ENV));
     };
-    let counts = build_query(keyword, blocked);
+    // En modo social el texto es una persona: link → `site:<red>
+    // "<handle>"` (con `plain` = handle pelado para el degradado, porque
+    // las gratuitas rechazan `site:` igual que `-site:`), nombre plano →
+    // tal cual. Si no se entiende nada, la keyword viaja intacta.
+    let (full_keyword, plain_keyword, person_network) = match mode {
+        super::types::SearchMode::Social => match super::filter::parse_person_link(keyword) {
+            Some(person) => {
+                let network = person.network;
+                let queries = super::filter::build_person_query(&person);
+                (queries.full, queries.plain, network)
+            }
+            None => (keyword.to_owned(), keyword.to_owned(), None),
+        },
+        super::types::SearchMode::Web => (keyword.to_owned(), keyword.to_owned(), None),
+    };
+    let counts = build_query(&full_keyword, blocked);
     let mut last_err = None;
     for stage in [
         QueryStage::Full,
         QueryStage::PlainKeyword,
         QueryStage::Minimal,
     ] {
-        let req = build_request(keyword, &counts, stage, page, num);
+        let req = build_request(&plain_keyword, &counts, stage, page, num);
         match post_images(&key, &req.body) {
-            Ok(text) => return parse_page(&text, &req, blocked, num),
+            Ok(text) => {
+                let mut page_result = parse_page(&text, &req, blocked, num, mode.allow_social())?;
+                // En modo social, quédate solo con posts de la red: la
+                // keyword pelada del degradado trae de todo (threads, X…).
+                if mode == super::types::SearchMode::Social {
+                    let (kept, dropped) =
+                        super::filter::keep_network(page_result.photos, person_network);
+                    page_result.photos = kept;
+                    page_result.filtered.network += dropped;
+                }
+                return Ok(page_result);
+            }
             Err(SerperError::Api(msg))
                 if is_pattern_error(&msg) && stage != QueryStage::Minimal =>
             {
@@ -207,6 +235,7 @@ fn parse_page(
     req: &BuiltRequest,
     blocked: &[String],
     num: u32,
+    allow_social: bool,
 ) -> Result<super::types::SearchPage, SerperError> {
     let parsed: ImagesResponse =
         serde_json::from_str(text).map_err(|e| SerperError::BadResponse(e.to_string()))?;
@@ -225,7 +254,7 @@ fn parse_page(
         .into_iter()
         .filter_map(|img| img.into_photo())
         .collect();
-    let (photos, filtered) = apply_filter(photos, blocked);
+    let (photos, filtered) = apply_filter(photos, blocked, allow_social);
     Ok(super::types::SearchPage {
         photos,
         reached_end: raw < num as usize,
@@ -264,6 +293,10 @@ pub(super) struct RawImage {
     pub(super) height: Option<u32>,
     #[serde(default)]
     pub(super) link: String,
+    /// Miniatura proxy de Google (suele ser descargable sin login aunque
+    /// la original no). Solo para previews, nunca para lienzos.
+    #[serde(rename = "thumbnailUrl", default)]
+    pub(super) thumbnail_url: Option<String>,
 }
 
 impl RawImage {
@@ -281,6 +314,7 @@ impl RawImage {
             width: self.width,
             height: self.height,
             source_url: self.link,
+            thumb_url: self.thumbnail_url.filter(|u| !u.trim().is_empty()),
         })
     }
 }
@@ -303,11 +337,175 @@ pub fn short_reason(msg: &str) -> &'static str {
     }
 }
 
+/// User-Agent de navegador para descargas: el edge de Meta bloquea con 403
+/// a clientes no-navegador (el `ureq/2.x` por defecto entre ellos). Para
+/// hosts de Meta se usa el crawler de la propia Meta (ver `request_ua`):
+/// sirve el HTML con `og:image` en vez del muro de login.
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/// Crawler oficial de Meta para embeds: las páginas le sirven HTML con
+/// `og:image` donde al navegador le ponen el muro de login.
+const META_CRAWLER_UA: &str = "facebookexternalhit/1.1";
+/// Accept de imagen: negociar el formato sin sorpresas.
+const IMAGE_ACCEPT: &str = "image/avif,image/webp,image/*,*/*";
+
+/// User-Agent según el host: crawler de Meta para su red (verificado en
+/// vivo: trae HTML con `og:image`; Chrome trae el muro de login),
+/// navegador normal para el resto.
+pub(super) fn request_ua(image_url: &str) -> &'static str {
+    let is_meta = super::filter::host_of(image_url).is_some_and(|host| {
+        host.contains("instagram")
+            || host.contains("fbcdn")
+            || host.contains("fbsbx")
+            || host.contains("facebook")
+    });
+    if is_meta {
+        META_CRAWLER_UA
+    } else {
+        BROWSER_UA
+    }
+}
+
+/// Referer según la familia del host (`None` = comportamiento actual, sin
+/// cabeceras extra). Las CDN de Meta exigen venir "desde" su red.
+pub(super) fn social_referer(image_url: &str) -> Option<&'static str> {
+    let host = super::filter::host_of(image_url)?;
+    if host.contains("instagram") || host.contains("fbcdn") || host.contains("fbsbx") {
+        Some("https://www.instagram.com/")
+    } else if host.contains("facebook") {
+        Some("https://www.facebook.com/")
+    } else if host.contains("tiktok") {
+        Some("https://www.tiktok.com/")
+    } else {
+        None
+    }
+}
+
+/// Extrae la URL de `<meta property="og:image" content="…">` de un HTML.
+/// Las CDN de Meta sirven a veces una página embed en vez de la imagen
+/// directa (p. ej. `lookaside…/crawler/?media_id=…`); el `og:image` apunta
+/// a la foto real (`scontent.*.cdninstagram.com`). Pura y testeable.
+pub fn og_image_url(html: &str) -> Option<String> {
+    let mut rest = html;
+    while let Some(i) = rest.find("<meta") {
+        let tag_start = i;
+        let tag_end = rest[tag_start..].find('>')? + tag_start;
+        let tag = &rest[tag_start..tag_end];
+        rest = &rest[tag_end + 1..];
+        if !tag.contains("og:image") {
+            continue;
+        }
+        if let Some(url) = attr_quoted(tag, "content") {
+            let url = unescape_min(&url);
+            if url.trim_start().starts_with("http") {
+                return Some(url);
+            }
+        }
+    }
+    None
+}
+
+/// Valor de un atributo `nombre="…"` o `nombre='…'` dentro de un tag.
+/// Exige nombre aislado (no sufijo de otro atributo).
+fn attr_quoted(tag: &str, name: &str) -> Option<String> {
+    let mut rest = tag;
+    while let Some(i) = rest.find(name) {
+        let isolated = i == 0 || {
+            let c = rest[..i].chars().next_back().unwrap();
+            !(c.is_alphanumeric() || c == '-' || c == '_' || c == ':')
+        };
+        let mut after = rest[i + name.len()..].trim_start();
+        if isolated && after.starts_with('=') {
+            after = after[1..].trim_start();
+            let quote = after.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                let end = after[1..].find(quote)?;
+                return Some(after[1..1 + end].to_owned());
+            }
+            return None;
+        }
+        rest = &rest[i + name.len()..];
+    }
+    None
+}
+
+/// Desescapa lo mínimo para URLs en atributos HTML (`&amp;` es crítico en
+/// las `scontent` con query).
+fn unescape_min(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+/// Descarga y decodifica una imagen completa (`LoadedImage` RGBA8).
+///
+/// Cadena de resolución para hosts sociales (verificado en vivo):
+/// 1. la URL directa (a veces ya es la foto),
+/// 2. `og:image` de esa misma página (las `lookaside…/crawler/` son HTML),
+/// 3. `og:image` de la página del post enlazado (`post_url`, el `link` de
+///    Serper: perfil o `/p/…`),
+/// 4. `thumb_url` (proxy de Google, baja resolución pero fiable).
+///
+/// Si la URL no es social, solo se intenta la descarga directa: nada de
+/// peticiones extra. Solo se llama desde hilos worker.
+pub fn fetch_image(
+    url: &str,
+    post_url: Option<&str>,
+) -> Result<canvas_io::LoadedImage, SerperError> {
+    let bytes = download(url)?;
+    match decode(&bytes) {
+        Ok(img) => Ok(img),
+        Err(first_err) => {
+            if social_referer(url).is_none() {
+                return Err(first_err);
+            }
+            let html = String::from_utf8_lossy(&bytes);
+            // Nivel 2: og:image de la propia página.
+            if let Some(og) = og_image_url(&html) {
+                if let Ok(og_bytes) = download(&og) {
+                    if let Ok(img) = decode(&og_bytes) {
+                        return Ok(img);
+                    }
+                }
+            }
+            // Nivel 3: og:image de la página del post enlazado.
+            if let Some(post) = post_url {
+                if let Ok(post_bytes) = download(post) {
+                    let post_html = String::from_utf8_lossy(&post_bytes);
+                    if let Some(og) = og_image_url(&post_html) {
+                        if let Ok(og_bytes) = download(&og) {
+                            if let Ok(img) = decode(&og_bytes) {
+                                return Ok(img);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(first_err)
+        }
+    }
+}
+
 /// Descarga el contenido de una URL (miniatura o imagen completa). Solo se
-/// llama desde hilos worker. Reutiliza el helper compartido y mapea su
-/// error al tipo de este dominio.
+/// llama desde hilos worker. A CDNs sociales se va con cabeceras de
+/// navegador o crawler según el host (si no, 403 o muro de login); al
+/// resto, como siempre. Reutiliza el helper compartido y mapea su error al
+/// tipo de este dominio.
 pub fn download(url: &str) -> Result<Vec<u8>, SerperError> {
-    crate::http::get_bytes_bounded(url).map_err(|e| match e {
+    let result = match social_referer(url) {
+        Some(referer) => crate::http::get_bytes_with_headers(
+            url,
+            crate::http::MAX_DOWNLOAD_BYTES,
+            &[
+                ("User-Agent", request_ua(url)),
+                ("Accept", IMAGE_ACCEPT),
+                ("Referer", referer),
+            ],
+        ),
+        None => crate::http::get_bytes_bounded(url),
+    };
+    result.map_err(|e| match e {
         crate::http::HttpError::Download(err) => SerperError::Download(err),
         crate::http::HttpError::TooLarge(n) => SerperError::TooLarge(n),
         crate::http::HttpError::Empty => SerperError::Empty,

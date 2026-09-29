@@ -139,8 +139,8 @@ fn bulk_grid_at_height(
 /// siguientes). Esta es la pieza que faltaba: antes solo el sidebar pedía
 /// thumbs, y el bulk mostraba placeholders al bajar.
 fn request_thumbs(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &egui::Context) {
-    for (id, url) in panel.claim_thumbs(12) {
-        loader::spawn_serper_thumb(id, url, tx.clone(), ctx.clone());
+    for (id, url, post) in panel.claim_thumbs(12) {
+        loader::spawn_serper_thumb(id, url, post, tx.clone(), ctx.clone());
     }
 }
 
@@ -274,11 +274,15 @@ fn retry_cell(
             if let Some(item) = panel.photos.iter_mut().find(|p| p.photo.id == id_owned) {
                 item.retry_thumb();
                 if item.claim_thumb() {
-                    spawn = Some((item.photo.id.clone(), item.photo.image_url.clone()));
+                    spawn = Some((
+                        item.photo.id.clone(),
+                        item.photo.thumb_source(),
+                        item.photo.source_url.clone(),
+                    ));
                 }
             }
-            if let Some((id, url)) = spawn {
-                loader::spawn_serper_thumb(id, url, tx.clone(), ui.ctx().clone());
+            if let Some((id, url, post)) = spawn {
+                loader::spawn_serper_thumb(id, url, post, tx.clone(), ui.ctx().clone());
             }
         }
     });

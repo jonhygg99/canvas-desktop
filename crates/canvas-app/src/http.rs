@@ -48,10 +48,22 @@ pub(crate) fn agent() -> ureq::Agent {
 ///    más de `max` bytes, la respuesta era demasiado grande (defensa para
 ///    servidores que no declaran `Content-Length` o mienten).
 fn get_bytes(url: &str, max: usize) -> Result<Vec<u8>, HttpError> {
-    let resp = agent()
-        .get(url)
-        .call()
-        .map_err(|e| HttpError::Download(e.to_string()))?;
+    get_bytes_with_headers(url, max, &[])
+}
+
+/// Como `get_bytes`, pero añadiendo cabeceras a la petición (p. ej.
+/// `User-Agent`/`Referer` de navegador para CDNs que bloquean clientes
+/// no-navegador, como los de Meta). Comparte topes y lectura limitada.
+pub fn get_bytes_with_headers(
+    url: &str,
+    max: usize,
+    headers: &[(&str, &str)],
+) -> Result<Vec<u8>, HttpError> {
+    let mut req = agent().get(url);
+    for (name, value) in headers {
+        req = req.set(name, value);
+    }
+    let resp = req.call().map_err(|e| HttpError::Download(e.to_string()))?;
 
     let content_length = resp
         .header("Content-Length")
@@ -89,7 +101,7 @@ pub fn get_bytes_bounded(url: &str) -> Result<Vec<u8>, HttpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_server::serve_response;
+    use crate::test_server::{serve_and_capture, serve_response};
 
     #[test]
     fn downloads_a_small_body() {
@@ -118,5 +130,33 @@ mod tests {
         let address = serve_response("200 OK", &[0u8; 11]);
         let error = get_bytes(&format!("http://{address}/large.png"), 10).unwrap_err();
         assert!(matches!(error, HttpError::TooLarge(n) if n == 10));
+    }
+
+    #[test]
+    fn extra_headers_reach_the_server() {
+        let (address, rx) = serve_and_capture("200 OK", b"bytes");
+        let bytes = get_bytes_with_headers(
+            &format!("http://{address}/img.png"),
+            MAX_DOWNLOAD_BYTES,
+            &[
+                ("User-Agent", "TestBrowser/1.0"),
+                ("Referer", "https://x.test/"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(bytes, b"bytes");
+        let req = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(req.contains("User-Agent: TestBrowser/1.0"), "{req}");
+        assert!(req.contains("Referer: https://x.test/"), "{req}");
+    }
+
+    #[test]
+    fn plain_download_sends_no_referer() {
+        // Sin cabeceras extra no debe aparecer Referer (comportamiento
+        // actual para hosts normales).
+        let (address, rx) = serve_and_capture("200 OK", b"bytes");
+        let _ = get_bytes_bounded(&format!("http://{address}/img.png")).unwrap();
+        let req = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!req.to_lowercase().contains("referer:"), "{req}");
     }
 }

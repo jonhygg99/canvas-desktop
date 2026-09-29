@@ -10,7 +10,7 @@ use crate::loader;
 
 use super::cache::{lru_insert, CachedPage, MEM_CAP};
 use super::filter::FilterCounts;
-use super::types::{SearchPage, SerperPhoto, TokenBudget};
+use super::types::{SearchMode, SearchPage, SerperPhoto, TokenBudget};
 
 /// Tarjetas que revela cada pulsación de «Show more» local (sin coste: ya
 /// están descargadas, solo se muestran).
@@ -39,6 +39,9 @@ pub fn stalled(
 #[derive(Default)]
 pub struct Panel {
     pub query: String,
+    /// Modo de búsqueda (Web Images o Instagram/Facebook). Solo sesión:
+    /// cambiarlo limpia resultados y gasto, como una búsqueda nueva.
+    pub mode: SearchMode,
     /// Presupuesto elegido (1–3 tokens); espejo de `AppSettings`.
     pub budget: TokenBudget,
     /// Llamadas gastadas en la keyword actual (1 token = 1 llamada).
@@ -135,18 +138,50 @@ impl PhotoItem {
 }
 
 /// Payload del arrastre de una foto web hacia el lienzo: lo que el canvas
-/// necesita para lanzar la descarga si la sueltan sobre él.
+/// necesita para lanzar la descarga si la sueltan sobre él (`post_url`
+/// rescata vía `og:image` si la directa es una página embed social).
 #[derive(Clone)]
 pub struct DragSerper {
     pub id: String,
     pub label: String,
     pub url: String,
+    pub post_url: String,
 }
 
 impl Panel {
     /// ¿Se puede gastar un token más en la keyword actual?
     pub fn can_spend_more(&self) -> bool {
         !self.searching && self.tokens_spent < self.budget.calls()
+    }
+
+    /// Cambia de modo de búsqueda: limpia resultados, gasto de keyword,
+    /// paginación y avisos, como una búsqueda nueva (pero conserva el texto
+    /// de la query para reutilizarlo).
+    pub fn switch_mode(&mut self, mode: SearchMode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.reset_flight();
+        self.tokens_spent = 0;
+        self.page = 0;
+        self.photos.clear();
+        self.error = None;
+        self.reached_end = false;
+        self.budget_exhausted = false;
+        self.pending_drop = None;
+        self.visible_count = SHOW_STEP;
+        self.last_query.clear();
+        self.exclusions_applied = 0;
+        self.exclusions_dropped = 0;
+        self.query_simplified = false;
+        self.credits_last = 0;
+        self.cached_badge = false;
+        self.filtered = FilterCounts::default();
+        self.filtered_post = 0;
+        self.bulk_selected.clear();
+        self.bulk_done_msg = None;
+        self.bulk_errors.clear();
     }
 
     /// Limpia todo vuelo pendiente (búsqueda y bulk): lo usa el botón Reset
@@ -196,15 +231,19 @@ impl Panel {
     }
 
     /// Reclama hasta `budget` thumbs pendientes (tope por frame del bulk):
-    /// marca y devuelve (id, url) para lanzar.
-    pub fn claim_thumbs(&mut self, budget: usize) -> Vec<(String, String)> {
+    /// marca y devuelve (id, url de thumb, post) para lanzar.
+    pub fn claim_thumbs(&mut self, budget: usize) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
         for item in self.photos.iter_mut() {
             if out.len() >= budget {
                 break;
             }
             if item.claim_thumb() {
-                out.push((item.photo.id.clone(), item.photo.image_url.clone()));
+                out.push((
+                    item.photo.id.clone(),
+                    item.photo.thumb_source(),
+                    item.photo.source_url.clone(),
+                ));
             }
         }
         out
@@ -270,7 +309,8 @@ impl Panel {
     }
 
     /// Fotos elegidas en el orden de la lista (para nombres estables en el
-    /// bulk). Lleva las dims de la API para dimensionar sin descargar.
+    /// bulk). Lleva las dims de la API para dimensionar sin descargar, y el
+    /// post enlazado para el rescate `og:image`.
     pub fn selected_bulk_items(&self) -> Vec<loader::BulkItem> {
         self.photos
             .iter()
@@ -280,6 +320,7 @@ impl Panel {
                 label: format!("Web · {}", p.photo.source_host()),
                 width: p.photo.width,
                 height: p.photo.height,
+                post_url: p.photo.source_url.clone(),
             })
             .collect()
     }
@@ -303,6 +344,7 @@ impl Panel {
             payload.id,
             payload.label,
             payload.url,
+            payload.post_url,
             tx.clone(),
             ctx.clone(),
         );

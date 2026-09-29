@@ -19,15 +19,17 @@
 //! las dimensiones de la API, y se rematan tras decodificar el thumb (con
 //! las dimensiones reales). Los bloqueados del usuario (Advanced,
 //! persistidos en ajustes) alimentan el filtro Y las exclusiones `-site:`
-//! de la query, capadas al tope de palabras.
+//! de la query, capadas al tope de palabras. En modo Instagram/Facebook
+//! se perdona el bloqueo de CDNs sociales (sus URLs caducan, pero son todo
+//! lo que hay) y no se escribe a disco.
 //!
-//! Reparto: `types` (presupuesto y resultados), `filter` (filtro puro y
-//! query), `api` (cliente HTTP), `state` (estado del panel en
-//! `EditorState`), `panel` (UI de la pestaña Web), `bulk` (overlay de
-//! selección masiva e inserción de cada elegida como capa), `bulk_layout`
-//! (matemáticas puras del masonry), `cache` (respuestas guardadas en
-//! memoria y disco para no gastar créditos en repeticiones) y `card`
-//! (tarjeta con clic suave y arrastre al lienzo).
+//! Reparto: `types` (presupuesto, modos y resultados), `filter` (filtro
+//! puro, query y parseo de persona), `api` (cliente HTTP), `state` (estado
+//! del panel en `EditorState`), `panel` (UI de la pestaña Web), `bulk`
+//! (overlay de selección masiva e inserción de cada elegida como capa),
+//! `bulk_layout` (matemáticas puras del masonry), `cache` (respuestas
+//! guardadas en memoria y disco para no gastar créditos en repeticiones)
+//! y `card` (tarjeta con clic suave y arrastre al lienzo).
 
 pub(crate) mod api;
 pub(crate) mod bake;
@@ -43,11 +45,12 @@ pub(crate) mod types;
 /// Variable de entorno con la API key de Serper.
 pub const API_KEY_ENV: &str = "SERPER_API_KEY";
 
-pub use api::{decode, download, search, SerperError};
+#[allow(unused_imports)]
+pub use api::{decode, fetch_image, search, SerperError};
 pub use filter::default_blocked_domains;
 pub use panel::panel_ui;
 pub use state::{DragSerper, Panel};
-pub use types::{SearchPage, TokenBudget};
+pub use types::{SearchMode, SearchPage, SearchRequest, TokenBudget};
 
 // Nombres que solo usan los tests (glob `use super::*` en `tests.rs`).
 #[cfg(test)]

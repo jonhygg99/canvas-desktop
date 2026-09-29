@@ -36,6 +36,7 @@ fn common_page_size_is_max_dims_or_fallback() {
         label: "Web".to_owned(),
         width: w,
         height: h,
+        post_url: "https://a.com/p".to_owned(),
     };
     // Máx. ancho × máx. alto aunque vengan de fotos distintas.
     assert_eq!(
@@ -63,6 +64,27 @@ fn default_bulk_dir_uses_env_override_and_slug() {
 }
 
 #[test]
+fn bulk_creates_missing_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("missing").join("deep");
+    assert!(!folder.exists());
+    // Tanda vacía: solo debe crear la carpeta y terminar con 0 creados.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let ctx = eframe::egui::Context::default();
+    spawn_serper_bulk_files(Vec::new(), folder.clone(), "x".to_owned(), (10.0, 10.0), tx, ctx);
+    let msg = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        msg,
+        crate::loader::AppMsg::SerperBulkDone { .. }
+    ));
+    if let crate::loader::AppMsg::SerperBulkDone { created, errors, .. } = msg {
+        assert!(created.is_empty());
+        assert!(errors.is_empty());
+    }
+    assert!(folder.exists(), "la carpeta debe crearse sola");
+}
+
+#[test]
 fn resolve_bulk_page_honors_the_setting() {
     use crate::settings::BulkCanvasSize;
     let item = |w, h| BulkItem {
@@ -70,6 +92,7 @@ fn resolve_bulk_page_honors_the_setting() {
         label: "Web".to_owned(),
         width: w,
         height: h,
+        post_url: "https://a.com/p".to_owned(),
     };
     let items = vec![item(Some(800), Some(600))];
     // Por defecto: Full HD aunque la tanda sea pequeña.

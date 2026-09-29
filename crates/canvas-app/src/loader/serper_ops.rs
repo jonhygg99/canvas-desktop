@@ -14,45 +14,58 @@ use eframe::egui;
 use super::AppMsg;
 
 /// Una imagen elegida en la ventana masiva para crear su lienzo. Las dims
-/// de la API sirven para dimensionar la página común sin descargar nada.
+/// de la API sirven para dimensionar la página común sin descargar nada;
+/// `post_url` es la página del post enlazado (rescate `og:image`).
 #[derive(Debug, Clone)]
 pub struct BulkItem {
     pub url: String,
     pub label: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub post_url: String,
 }
 
-/// Lanza la búsqueda de `keyword` (página `page`, 1-based, `num`
-/// resultados) con los bloqueados `blocked`. `seq` identifica la llamada
-/// para descartar respuestas caducas. Antes de tocar la red mira la caché
-/// de disco (si hay hit fresco, se sirve sin gastar); tras éxito guarda su
-/// copia. La respuesta trae las fotos SIN miniaturas: cada tarjeta pide la
-/// suya al pintarse (`spawn_serper_thumb`).
+/// Lanza la búsqueda de `request` (página 1-based). `seq` identifica la
+/// llamada para descartar respuestas caducas. Antes de tocar la red mira
+/// la caché de disco (si hay hit fresco, se sirve sin gastar); tras éxito
+/// guarda su copia — salvo en modo social, cuyas URLs caducan y no deben
+/// re-servirse mañana. La respuesta trae las fotos SIN miniaturas: cada
+/// tarjeta pide la suya al pintarse (`spawn_serper_thumb`).
 pub fn spawn_serper_search(
-    keyword: String,
-    page: u32,
-    num: u32,
-    blocked: Vec<String>,
-    seq: u64,
+    request: crate::serper::SearchRequest,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let cache_key = crate::serper::cache::cache_key(&keyword, &blocked, page, num);
-        if let Some(cached) = crate::serper::cache::load_disk(&cache_key) {
-            let _ = tx.send(AppMsg::SerperSearch {
-                seq,
-                page,
-                cache_key,
-                result: Ok(cached.into_page()),
-            });
-            ctx.request_repaint();
-            return;
+        let crate::serper::SearchRequest {
+            keyword,
+            page,
+            num,
+            blocked,
+            mode,
+            seq,
+        } = request;
+        let cache_key = crate::serper::cache::cache_key(&keyword, &blocked, page, num, mode);
+        // En modo social no se toca el disco en ningún sentido: las
+        // imageUrl de Meta caducan y re-servirlas sería 403 seguro. Solo
+        // vale la caché de memoria (la mira el panel antes de llamar).
+        if mode == crate::serper::SearchMode::Web {
+            if let Some(cached) = crate::serper::cache::load_disk(&cache_key) {
+                let _ = tx.send(AppMsg::SerperSearch {
+                    seq,
+                    page,
+                    cache_key,
+                    result: Ok(cached.into_page()),
+                });
+                ctx.request_repaint();
+                return;
+            }
         }
-        let result = crate::serper::search(&keyword, page, num, &blocked);
-        if let Ok(page_result) = &result {
-            crate::serper::cache::save_disk(&cache_key, page_result);
+        let result = crate::serper::search(&keyword, page, num, &blocked, mode);
+        if mode == crate::serper::SearchMode::Web {
+            if let Ok(page_result) = &result {
+                crate::serper::cache::save_disk(&cache_key, page_result);
+            }
         }
         let _ = tx.send(AppMsg::SerperSearch {
             seq,
@@ -65,13 +78,19 @@ pub fn spawn_serper_search(
 }
 
 /// Descarga y decodifica la miniatura de un resultado para mostrarla en la
-/// tarjeta del panel. Segundo filtro de proporción con las dimensiones
+/// tarjeta del panel. `post_url` rescata vía `og:image` si la URL es una
+/// página embed social. Segundo filtro de proporción con las dimensiones
 /// REALES: si la API no traía dims y resulta ser un banner, se informa
 /// como `FilteredBanner` y la tarjeta se retira en silencio.
-pub fn spawn_serper_thumb(id: String, url: String, tx: Sender<AppMsg>, ctx: egui::Context) {
+pub fn spawn_serper_thumb(
+    id: String,
+    url: String,
+    post_url: String,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
-        let result = crate::serper::download(&url).and_then(|bytes| crate::serper::decode(&bytes));
-        let result = result.and_then(|img| {
+        let result = crate::serper::fetch_image(&url, Some(&post_url)).and_then(|img| {
             if crate::serper::filter::ratio_blocked(img.width, img.height) {
                 Err(crate::serper::SerperError::FilteredBanner)
             } else {
@@ -84,16 +103,18 @@ pub fn spawn_serper_thumb(id: String, url: String, tx: Sender<AppMsg>, ctx: egui
 }
 
 /// Descarga y decodifica la imagen completa de un resultado para insertarla
-/// como capa nueva del documento abierto.
+/// como capa nueva del documento abierto. `post_url` rescata vía `og:image`
+/// si la URL directa es una página embed social.
 pub fn spawn_serper_image(
     id: String,
     label: String,
     url: String,
+    post_url: String,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = crate::serper::download(&url).and_then(|bytes| crate::serper::decode(&bytes));
+        let result = crate::serper::fetch_image(&url, Some(&post_url));
         let _ = tx.send(AppMsg::SerperImageReady { id, label, result });
         ctx.request_repaint();
     });
@@ -117,6 +138,24 @@ pub fn spawn_serper_bulk_files(
         let stem = slugify(&keyword);
         let mut created = Vec::new();
         let mut errors = Vec::new();
+        if let Err(e) = std::fs::create_dir_all(&folder) {
+            let msg = format!("cannot create folder {}: {e}", folder.display());
+            for item in &items {
+                errors.push(format!("{}: {msg}", item.label));
+            }
+            let _ = tx.send(AppMsg::SerperBulkProgress {
+                done: total,
+                total,
+            });
+            ctx.request_repaint();
+            let _ = tx.send(AppMsg::SerperBulkDone {
+                folder,
+                created,
+                errors,
+            });
+            ctx.request_repaint();
+            return;
+        }
         for (i, item) in items.into_iter().enumerate() {
             // Un pánico en una imagen (píxeles patológicos, OOM contenida)
             // no puede matar la tanda sin Done: el panel se quedaría en
@@ -212,8 +251,8 @@ fn save_bulk_one(
     item: &BulkItem,
     page: (f64, f64),
 ) -> Result<PathBuf, String> {
-    let bytes = crate::serper::download(&item.url).map_err(|e| e.to_string())?;
-    let img = crate::serper::decode(&bytes).map_err(|e| e.to_string())?;
+    let img =
+        crate::serper::fetch_image(&item.url, Some(&item.post_url)).map_err(|e| e.to_string())?;
     let path = free_bulk_path(folder, stem, index);
     let photo = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())
         .ok_or_else(|| "decoded image has no pixels".to_owned())?;

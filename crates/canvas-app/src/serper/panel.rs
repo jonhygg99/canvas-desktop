@@ -16,7 +16,7 @@ use super::api::access_key;
 use super::bulk::bulk_window_ui;
 use super::card::photo_card_ui;
 use super::state::{stalled, Panel, SEARCH_STALL_SECS, SHOW_STEP};
-use super::types::TokenBudget;
+use super::types::{SearchMode, TokenBudget};
 use super::API_KEY_ENV;
 
 /// Margen lateral a cada lado de las tarjetas (igual que Unsplash).
@@ -61,7 +61,7 @@ fn sync_settings_once(panel: &mut Panel, settings: &AppSettings) {
     panel.blocked_text = settings.serper_blocked.join("\n");
 }
 
-/// Barra de búsqueda + selector de tokens 1–3.
+/// Barra de búsqueda + selector de modo y de tokens 1–3.
 fn search_bar_ui(
     panel: &mut Panel,
     settings: &mut AppSettings,
@@ -69,11 +69,34 @@ fn search_bar_ui(
     tx: &Sender<loader::AppMsg>,
 ) {
     let mut do_search = false;
+    ui.horizontal_wrapped(|ui| {
+        for m in SearchMode::ALL {
+            if ui
+                .selectable_label(panel.mode == m, m.label())
+                .on_hover_text(match m {
+                    SearchMode::Web => "General web image search",
+                    SearchMode::Social => {
+                        "Photos of a person on Instagram/Facebook — paste a profile link or a name"
+                    }
+                })
+                .clicked()
+            {
+                panel.switch_mode(m);
+            }
+        }
+    });
+    if panel.mode == SearchMode::Social {
+        ui.weak("Instagram/Facebook · social filter off · links expire fast");
+    }
+    let hint = match panel.mode {
+        SearchMode::Web => "Search the web…",
+        SearchMode::Social => "Paste an Instagram/Facebook link or name…",
+    };
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 58.0).max(110.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut panel.query)
-                .hint_text("Search the web…")
+                .hint_text(hint)
                 .desired_width(width),
         );
         let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -125,7 +148,7 @@ fn start_search(
     }
     let keyword = panel.query.trim().to_owned();
     let num = panel.budget.num();
-    let key = super::cache::cache_key(&keyword, blocked, 1, num);
+    let key = super::cache::cache_key(&keyword, blocked, 1, num, panel.mode);
     if let Some(page) = panel.cache_lookup(&key) {
         panel.search_seq += 1;
         panel.searching = false;
@@ -151,11 +174,14 @@ fn start_search(
     panel.pending_drop = None;
     panel.visible_count = SHOW_STEP;
     loader::spawn_serper_search(
-        panel.query.trim().to_owned(),
-        1,
-        num,
-        blocked.to_owned(),
-        panel.search_seq,
+        crate::serper::SearchRequest {
+            keyword: panel.query.trim().to_owned(),
+            page: 1,
+            num,
+            blocked: blocked.to_owned(),
+            mode: panel.mode,
+            seq: panel.search_seq,
+        },
         tx.clone(),
         ctx.clone(),
     );
@@ -176,7 +202,7 @@ fn spend_token(
     let keyword = panel.query.trim().to_owned();
     let next = panel.page + 1;
     let num = panel.budget.num();
-    let key = super::cache::cache_key(&keyword, blocked, next, num);
+    let key = super::cache::cache_key(&keyword, blocked, next, num, panel.mode);
     if let Some(page) = panel.cache_lookup(&key) {
         panel.search_seq += 1;
         panel.searching = false;
@@ -193,11 +219,14 @@ fn spend_token(
     panel.page = next;
     panel.tokens_spent += 1;
     loader::spawn_serper_search(
-        panel.query.trim().to_owned(),
-        panel.page,
-        num,
-        blocked.to_owned(),
-        panel.search_seq,
+        crate::serper::SearchRequest {
+            keyword: panel.query.trim().to_owned(),
+            page: panel.page,
+            num,
+            blocked: blocked.to_owned(),
+            mode: panel.mode,
+            seq: panel.search_seq,
+        },
         tx.clone(),
         ctx.clone(),
     );
@@ -356,11 +385,14 @@ fn list_footer_ui(
             panel.searching = true;
             panel.search_started = Some(std::time::Instant::now());
             loader::spawn_serper_search(
-                panel.query.trim().to_owned(),
-                panel.page.max(1),
-                panel.budget.num(),
-                blocked.to_owned(),
-                panel.search_seq,
+                crate::serper::SearchRequest {
+                    keyword: panel.query.trim().to_owned(),
+                    page: panel.page.max(1),
+                    num: panel.budget.num(),
+                    blocked: blocked.to_owned(),
+                    mode: panel.mode,
+                    seq: panel.search_seq,
+                },
                 tx.clone(),
                 ui.ctx().clone(),
             );
@@ -423,12 +455,13 @@ fn cost_footer_ui(panel: &Panel, settings: &AppSettings, ui: &mut egui::Ui) {
     let dropped = panel.filtered.total() + panel.filtered_post;
     if dropped > 0 {
         ui.weak(format!(
-            "Filtered {dropped} (host {} · pattern {} · title {} · ratio {} · ext {})",
+            "Filtered {dropped} (host {} · pattern {} · title {} · ratio {} · ext {} · network {})",
             panel.filtered.host,
             panel.filtered.pattern,
             panel.filtered.title,
             panel.filtered.ratio + panel.filtered_post,
             panel.filtered.extension,
+            panel.filtered.network,
         ));
     }
     if !panel.last_query.is_empty() {

@@ -76,9 +76,16 @@ impl From<&SearchPage> for CachedPage {
 }
 
 /// Clave estable: keyword en minúsculas + bloqueados ordenados + página +
-/// tamaño pedido (un `num` distinto trae otra tanda). Ni el orden de los
-/// bloqueados ni las mayúsculas cambian la clave.
-pub fn cache_key(keyword: &str, blocked: &[String], page: u32, num: u32) -> String {
+/// tamaño pedido + modo (una misma keyword en web y en social trae tandas
+/// distintas). Ni el orden de los bloqueados ni las mayúsculas cambian la
+/// clave.
+pub fn cache_key(
+    keyword: &str,
+    blocked: &[String],
+    page: u32,
+    num: u32,
+    mode: super::types::SearchMode,
+) -> String {
     let mut blocked: Vec<String> = blocked
         .iter()
         .map(|b| b.trim().to_lowercase())
@@ -86,8 +93,12 @@ pub fn cache_key(keyword: &str, blocked: &[String], page: u32, num: u32) -> Stri
         .collect();
     blocked.sort();
     blocked.dedup();
+    let mode_tag = match mode {
+        super::types::SearchMode::Web => "web",
+        super::types::SearchMode::Social => "social",
+    };
     let raw = format!(
-        "{}|{}|{page}|{num}",
+        "{}|{}|{page}|{num}|{mode_tag}",
         keyword.trim().to_lowercase(),
         blocked.join(",")
     );

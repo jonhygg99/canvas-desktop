@@ -20,6 +20,7 @@ fn photo(url: &str, title: &str, w: Option<u32>, h: Option<u32>) -> SerperPhoto 
         width: w,
         height: h,
         source_url: "https://example.com/page".to_owned(),
+        thumb_url: None,
     }
 }
 
@@ -179,13 +180,19 @@ fn classify_applies_extension_host_pattern_title_ratio_in_order() {
         Some(800),
         Some(600),
     );
-    assert_eq!(filter::classify(&p, &blocked), Some(DropReason::Host));
+    assert_eq!(
+        filter::classify(&p, &blocked, false),
+        Some(DropReason::Host)
+    );
     // Banner con todo lo demás limpio.
     let p = photo("https://example.com/a.jpg", "A cat", Some(1500), Some(400));
-    assert_eq!(filter::classify(&p, &blocked), Some(DropReason::Ratio));
+    assert_eq!(
+        filter::classify(&p, &blocked, false),
+        Some(DropReason::Ratio)
+    );
     // Foto real pasa.
     let p = photo("https://example.com/a.jpg", "A cat", Some(800), Some(600));
-    assert_eq!(filter::classify(&p, &blocked), None);
+    assert_eq!(filter::classify(&p, &blocked, false), None);
     // Sin bloqueados del usuario, la base sigue bloqueando stock.
     let p = photo(
         "https://www.gettyimages.com/a.jpg",
@@ -193,7 +200,7 @@ fn classify_applies_extension_host_pattern_title_ratio_in_order() {
         Some(800),
         Some(600),
     );
-    assert_eq!(filter::classify(&p, &no_block()), None);
+    assert_eq!(filter::classify(&p, &no_block(), false), None);
 }
 
 #[test]
@@ -235,7 +242,7 @@ fn apply_filter_splits_and_counts() {
         ),
         photo("https://example.com/5.jpg", "Cat", Some(2000), Some(500)),
     ];
-    let (kept, counts) = apply_filter(photos, &blocked);
+    let (kept, counts) = apply_filter(photos, &blocked, false);
     assert_eq!(kept.len(), 1);
     assert_eq!(counts.host, 1);
     assert_eq!(counts.extension, 1);
@@ -244,12 +251,214 @@ fn apply_filter_splits_and_counts() {
     assert_eq!(counts.total(), 4);
 }
 
+#[test]
+fn social_forgives_only_social_cdns() {
+    use types::SocialNetwork;
+    let blocked = default_blocked_domains();
+    // CDN social: cae en web, pasa en social.
+    let p = photo(
+        "https://lookaside.instagram.com/seo/google_widget/c/ig.jpg",
+        "Shakira",
+        Some(800),
+        Some(600),
+    );
+    assert_eq!(
+        filter::classify(&p, &blocked, false),
+        Some(DropReason::Host)
+    );
+    assert_eq!(filter::classify(&p, &blocked, true), None);
+    let p = photo(
+        "https://scontent.fbsbx.com/v/photo.jpg",
+        "Shakira",
+        Some(800),
+        Some(600),
+    );
+    assert_eq!(filter::classify(&p, &blocked, true), None);
+    // Stock con marca sigue cayendo también en social.
+    let p = photo(
+        "https://image.shutterstock.com/a.jpg",
+        "Shakira",
+        Some(800),
+        Some(600),
+    );
+    assert_eq!(filter::classify(&p, &blocked, true), Some(DropReason::Host));
+    // Sin extensión en la URL: cae en web, pasa en social (lo decide el
+    // decode del thumb).
+    let p = photo(
+        "https://lookaside.instagram.com/seo/google_widget/c/abc123",
+        "Shakira",
+        Some(800),
+        Some(600),
+    );
+    assert_eq!(
+        filter::classify(&p, &blocked, false),
+        Some(DropReason::Extension)
+    );
+    assert_eq!(filter::classify(&p, &blocked, true), None);
+    // Títulos siguen filtrando en social.
+    let p = photo(
+        "https://lookaside.instagram.com/a.jpg",
+        "Shakira infographic",
+        Some(800),
+        Some(600),
+    );
+    assert_eq!(
+        filter::classify(&p, &blocked, true),
+        Some(DropReason::Title)
+    );
+    let _ = SocialNetwork::Instagram;
+}
+
+#[test]
+fn person_link_parses_profiles_posts_and_names() {
+    use types::{PersonQuery, SocialNetwork};
+    assert_eq!(
+        filter::parse_person_link("https://www.instagram.com/shakira/"),
+        Some(PersonQuery {
+            network: Some(SocialNetwork::Instagram),
+            handle: "shakira".to_owned(),
+        })
+    );
+    assert_eq!(
+        filter::parse_person_link("instagram.com/shakira?igsh=abc"),
+        Some(PersonQuery {
+            network: Some(SocialNetwork::Instagram),
+            handle: "shakira".to_owned(),
+        })
+    );
+    assert!(filter::parse_person_link("https://www.instagram.com/p/C123abc/").is_none());
+    assert!(filter::parse_person_link("https://www.instagram.com/").is_none());
+    assert_eq!(
+        filter::parse_person_link("https://www.facebook.com/shakira/photos"),
+        Some(PersonQuery {
+            network: Some(SocialNetwork::Facebook),
+            handle: "shakira".to_owned(),
+        })
+    );
+    assert_eq!(
+        filter::parse_person_link("https://www.facebook.com/profile.php?id=12345"),
+        Some(PersonQuery {
+            network: Some(SocialNetwork::Facebook),
+            handle: "12345".to_owned(),
+        })
+    );
+    assert_eq!(
+        filter::parse_person_link("Shakira"),
+        Some(PersonQuery {
+            network: None,
+            handle: "Shakira".to_owned(),
+        })
+    );
+    assert_eq!(filter::parse_person_link("   "), None);
+}
+
+#[test]
+fn person_query_prefers_site_operator() {
+    use types::{PersonQuery, SocialNetwork};
+    let queries = filter::build_person_query(&PersonQuery {
+        network: Some(SocialNetwork::Instagram),
+        handle: "shakira".to_owned(),
+    });
+    assert_eq!(queries.full, "site:instagram.com \"shakira\"");
+    // El degradado gratuito no lleva ningún operador.
+    assert_eq!(queries.plain, "shakira");
+    assert!(!queries.plain.contains("site:"));
+    let queries = filter::build_person_query(&PersonQuery {
+        network: None,
+        handle: "Shakira".to_owned(),
+    });
+    assert_eq!(queries.full, "Shakira");
+    assert_eq!(queries.plain, "Shakira");
+}
+
+#[test]
+fn degrade_chain_drops_site_operator() {
+    // El link genera Full con `site:`, pero las etapas degradadas usan el
+    // handle pelado: las gratuitas rechazan `site:` igual que `-site:`.
+    use types::{PersonQuery, SocialNetwork};
+    let queries = filter::build_person_query(&PersonQuery {
+        network: Some(SocialNetwork::Instagram),
+        handle: "anapatriciatv".to_owned(),
+    });
+    let counts = filter::build_query(&queries.full, &[]);
+    let plain = api::build_request(
+        &queries.plain,
+        &counts,
+        api::QueryStage::PlainKeyword,
+        1,
+        10,
+    );
+    let minimal = api::build_request(&queries.plain, &counts, api::QueryStage::Minimal, 1, 10);
+    for body in [&plain.body, &minimal.body] {
+        assert!(!body.contains("site:"), "{body}");
+    }
+    let full = api::build_request(&queries.plain, &counts, api::QueryStage::Full, 1, 100);
+    assert!(full.body.contains("site:instagram.com"), "{}", full.body);
+}
+
+#[test]
+fn keep_network_keeps_only_the_detected_network() {
+    use types::SocialNetwork;
+    fn ig(path: &str) -> SerperPhoto {
+        let mut p = photo(
+            "https://lookaside.instagram.com/x.jpg",
+            "Shakira",
+            Some(800),
+            Some(600),
+        );
+        p.source_url = format!("https://www.instagram.com/{path}");
+        p
+    }
+    fn other(url: &str, source: &str) -> SerperPhoto {
+        let mut p = photo(url, "Shakira", Some(800), Some(600));
+        p.source_url = source.to_owned();
+        p
+    }
+    let photos = vec![
+        ig("p/C123/"),
+        other("https://pbs.twimg.com/a.jpg", "https://x.com/u/status/1"),
+        other(
+            "https://example.com/a.jpg",
+            "https://www.threads.com/@u/post/1",
+        ),
+        other(
+            "https://scontent.fbsbx.com/b.jpg",
+            "https://www.facebook.com/photo/1",
+        ),
+    ];
+    // Link de Instagram: solo IG.
+    let (kept, dropped) = filter::keep_network(photos.clone(), Some(SocialNetwork::Instagram));
+    assert_eq!(kept.len(), 1);
+    assert_eq!(dropped, 3);
+    // Nombre plano: IG + FB, fuera threads/X.
+    let (kept, dropped) = filter::keep_network(photos, None);
+    assert_eq!(kept.len(), 2);
+    assert_eq!(dropped, 2);
+}
+
+#[test]
+fn switch_mode_clears_results_and_spend() {
+    let mut p = Panel::default();
+    p.switch_mode(types::SearchMode::Social);
+    assert_eq!(p.mode, types::SearchMode::Social);
+    // Cambiar al mismo modo no toca nada.
+    p.tokens_spent = 2;
+    p.switch_mode(types::SearchMode::Social);
+    assert_eq!(p.tokens_spent, 2);
+    // Volver a web limpia el gasto de la keyword.
+    p.switch_mode(types::SearchMode::Web);
+    assert_eq!(p.mode, types::SearchMode::Web);
+    assert_eq!(p.tokens_spent, 0);
+    assert!(p.photos.is_empty());
+    assert!(!p.searching);
+}
+
 // ---- API: parseo y clave ----
 
 #[test]
 fn images_response_parses_serper_fields_with_defaults() {
     let json = r#"{"images": [
-        {"title": "Cat", "imageUrl": "https://a.com/1.jpg", "imageWidth": 800, "imageHeight": 600, "link": "https://a.com/p"},
+        {"title": "Cat", "imageUrl": "https://a.com/1.jpg", "imageWidth": 800, "imageHeight": 600, "link": "https://a.com/p", "thumbnailUrl": "https://encrypted-tbn0.gstatic.com/tbn.jpg"},
         {"title": "Broken"}
     ]}"#;
     let parsed: ImagesResponse = serde_json::from_str(json).unwrap();
@@ -262,6 +471,33 @@ fn images_response_parses_serper_fields_with_defaults() {
     assert_eq!(photos.len(), 1);
     assert_eq!(photos[0].id, "https://a.com/1.jpg");
     assert_eq!(photos[0].width, Some(800));
+    assert_eq!(
+        photos[0].thumb_url,
+        Some("https://encrypted-tbn0.gstatic.com/tbn.jpg".to_owned())
+    );
+}
+
+#[test]
+fn thumb_source_prefers_google_proxy() {
+    let mut p = photo("https://a.com/1.jpg", "Cat", Some(800), Some(600));
+    assert_eq!(p.thumb_source(), "https://a.com/1.jpg");
+    p.thumb_url = Some("https://encrypted-tbn0.gstatic.com/tbn.jpg".to_owned());
+    assert_eq!(
+        p.thumb_source(),
+        "https://encrypted-tbn0.gstatic.com/tbn.jpg"
+    );
+    // Vacía o en blanco: fallback a la original.
+    p.thumb_url = Some("   ".to_owned());
+    assert_eq!(p.thumb_source(), "https://a.com/1.jpg");
+}
+
+#[test]
+fn old_cached_photos_without_thumb_url_still_parse() {
+    // Compat con cachés de disco anteriores al campo `thumb_url`.
+    let json = r#"{"id":"https://a.com/1.jpg","title":"Cat","image_url":"https://a.com/1.jpg","width":800,"height":600,"source_url":"https://a.com/p"}"#;
+    let photo: SerperPhoto = serde_json::from_str(json).unwrap();
+    assert_eq!(photo.thumb_url, None);
+    assert_eq!(photo.thumb_source(), "https://a.com/1.jpg");
 }
 
 #[test]
@@ -278,7 +514,7 @@ fn images_response_reads_real_credits_and_falls_back() {
 fn search_without_key_is_an_error() {
     let had = std::env::var(API_KEY_ENV).ok();
     std::env::remove_var(API_KEY_ENV);
-    let err = search("gato", 1, 100, &[]).unwrap_err();
+    let err = search("gato", 1, 100, &[], types::SearchMode::Web).unwrap_err();
     assert!(err.to_string().contains(API_KEY_ENV), "{err}");
     match had {
         Some(key) => std::env::set_var(API_KEY_ENV, key),
@@ -289,10 +525,122 @@ fn search_without_key_is_an_error() {
 #[test]
 fn search_with_blank_query_returns_empty_without_network() {
     // Sin llamar a la red: la query vacía cortocircuita antes de la clave.
-    let page = search("   ", 1, 100, &[]).unwrap();
+    let page = search("   ", 1, 100, &[], types::SearchMode::Web).unwrap();
     assert!(page.photos.is_empty());
     assert!(page.reached_end);
     assert_eq!(page.credits_charged, 0);
+}
+
+#[test]
+fn social_referer_matches_cdn_family() {
+    assert_eq!(
+        super::api::social_referer("https://lookaside.instagram.com/x.jpg"),
+        Some("https://www.instagram.com/")
+    );
+    assert_eq!(
+        super::api::social_referer("https://scontent-mad1-1.xx.fbcdn.net/y.jpg"),
+        Some("https://www.instagram.com/")
+    );
+    assert_eq!(
+        super::api::social_referer("https://scontent.fbsbx.com/z.jpg"),
+        Some("https://www.instagram.com/")
+    );
+    assert_eq!(
+        super::api::social_referer("https://www.facebook.com/photo.jpg"),
+        Some("https://www.facebook.com/")
+    );
+    assert_eq!(
+        super::api::social_referer("https://www.tiktok.com/@u/video/1"),
+        Some("https://www.tiktok.com/")
+    );
+    // Hosts normales: sin cabeceras extra (comportamiento actual).
+    assert_eq!(
+        super::api::social_referer("https://example.com/a.jpg"),
+        None
+    );
+    assert_eq!(super::api::social_referer("not a url"), None);
+}
+
+#[test]
+fn og_image_url_extracts_embed_photo() {
+    assert_eq!(
+        super::api::og_image_url(
+            r#"<html><head><meta property="og:image" content="https://scontent-mad1-1.xx.fbcdn.net/a.jpg?x=1" /></head>"#
+        ),
+        Some("https://scontent-mad1-1.xx.fbcdn.net/a.jpg?x=1".to_owned())
+    );
+    // Atributos al revés y comillas simples.
+    assert_eq!(
+        super::api::og_image_url(
+            r#"<meta content='https://scontent-mad1-1.xx.fbcdn.net/b.jpg' property='og:image'>"#
+        ),
+        Some("https://scontent-mad1-1.xx.fbcdn.net/b.jpg".to_owned())
+    );
+    // Entidades HTML en la query.
+    assert_eq!(
+        super::api::og_image_url(
+            r#"<meta property="og:image" content="https://scontent.xx.fbcdn.net/c.jpg?stp=dst-jpg&amp;x=1" />"#
+        ),
+        Some("https://scontent.xx.fbcdn.net/c.jpg?stp=dst-jpg&x=1".to_owned())
+    );
+    // Ignora otros metas y devuelve None si no hay og:image.
+    assert_eq!(
+        super::api::og_image_url(
+            r#"<meta name="description" content="https://x.test/a.jpg"><title>t</title>"#
+        ),
+        None
+    );
+    assert_eq!(super::api::og_image_url("not html at all"), None);
+    assert_eq!(
+        super::api::og_image_url(r#"<meta property="og:image" content="">"#),
+        None
+    );
+}
+
+#[test]
+#[ignore = "live: gasta ~1cr de la key real; borrar tras verificar"]
+fn live_social_thumb_downloads_with_browser_headers() {
+    use types::SearchMode;
+    let page = search(
+        "https://www.instagram.com/anapatriciatv/",
+        1,
+        10,
+        &[],
+        SearchMode::Social,
+    )
+    .expect("la búsqueda social debe funcionar");
+    let first = page.photos.first().expect("debe traer fotos");
+    eprintln!("LIVE url={}", first.image_url);
+    // Vía A (previews): thumbnail proxy de Google.
+    let thumb = first.thumb_source();
+    eprintln!("LIVE thumb={thumb}");
+    let tbytes = super::api::download(&thumb).expect("el thumb proxy debe descargar");
+    let timg = decode(&tbytes).expect("el thumb debe decodificar");
+    assert!(timg.width > 0 && timg.height > 0);
+    eprintln!("LIVE thumb OK: {}x{}", timg.width, timg.height);
+    // Exploro source_urls de la tanda.
+    for p in page.photos.iter().take(10) {
+        eprintln!("LIVE source={}", p.source_url);
+    }
+    // Vía B: página del perfil/post con UA de crawler de Meta.
+    let crawler_bytes = crate::http::get_bytes_with_headers(
+        &first.source_url,
+        crate::http::MAX_DOWNLOAD_BYTES,
+        &[("User-Agent", "facebookexternalhit/1.1")],
+    )
+    .expect("la página debe descargar como crawler");
+    let crawler_html = String::from_utf8_lossy(&crawler_bytes);
+    eprintln!(
+        "LIVE crawler_len={} has_og={}",
+        crawler_html.len(),
+        crawler_html.contains("og:image")
+    );
+    let og = super::api::og_image_url(&crawler_html).expect("el crawler debe ver og:image");
+    eprintln!("LIVE og={og}");
+    let img =
+        fetch_image(&first.image_url, Some(&first.source_url)).expect("el full debe resolver");
+    assert!(img.width > 0 && img.height > 0);
+    eprintln!("LIVE OK: {}x{}", img.width, img.height);
 }
 
 #[test]
@@ -429,26 +777,54 @@ fn masonry_aspect_prefers_thumb_over_api_over_fallback() {
 
 #[test]
 fn cache_key_ignores_case_order_and_whitespace() {
+    use types::SearchMode;
     let a = super::cache::cache_key(
         "  Shakira ",
         &["b.com".to_owned(), "a.com ".to_owned()],
         1,
         100,
+        SearchMode::Web,
     );
-    let b = super::cache::cache_key("shakira", &["A.COM".to_owned(), "b.com".to_owned()], 1, 100);
+    let b = super::cache::cache_key(
+        "shakira",
+        &["A.COM".to_owned(), "b.com".to_owned()],
+        1,
+        100,
+        SearchMode::Web,
+    );
     assert_eq!(a, b);
-    // Otra página, otro tamaño u otra keyword sí cambian la clave.
-    let c = super::cache::cache_key("shakira", &["a.com".to_owned(), "b.com".to_owned()], 2, 100);
+    // Otra página, otro tamaño, otro modo u otra keyword sí cambian la clave.
+    let c = super::cache::cache_key(
+        "shakira",
+        &["a.com".to_owned(), "b.com".to_owned()],
+        2,
+        100,
+        SearchMode::Web,
+    );
     assert_ne!(a, c);
-    let d = super::cache::cache_key("shakira", &["a.com".to_owned(), "b.com".to_owned()], 1, 10);
+    let d = super::cache::cache_key(
+        "shakira",
+        &["a.com".to_owned(), "b.com".to_owned()],
+        1,
+        10,
+        SearchMode::Web,
+    );
     assert_ne!(b, d);
+    let s = super::cache::cache_key(
+        "shakira",
+        &["b.com".to_owned(), "a.com ".to_owned()],
+        1,
+        100,
+        SearchMode::Social,
+    );
+    assert_ne!(a, s);
 }
 
 #[test]
 fn disk_cache_round_trips_and_expires() {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("SERPER_CACHE_DIR", dir.path());
-    let key = super::cache::cache_key("shakira", &[], 1, 100);
+    let key = super::cache::cache_key("shakira", &[], 1, 100, types::SearchMode::Web);
     assert!(super::cache::load_disk(&key).is_none());
     let page = super::types::SearchPage {
         photos: vec![photo("https://a.com/1.jpg", "One", Some(800), Some(600))],
