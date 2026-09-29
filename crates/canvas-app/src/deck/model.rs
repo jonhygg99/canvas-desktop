@@ -227,6 +227,8 @@ pub(super) fn idle_slot(
 pub(super) fn slot_kind(path: &Path) -> ItemKind {
     if canvas_io::is_canvas_file(path) {
         ItemKind::Design
+    } else if canvas_io::is_video_file(path) {
+        ItemKind::Video
     } else {
         ItemKind::Image
     }

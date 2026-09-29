@@ -55,7 +55,7 @@ impl AppInner {
         if let Some(path) = dropped.into_iter().next() {
             if matches!(ws.view, View::Editor(_))
                 && path.is_file()
-                && canvas_io::is_image_file(&path)
+                && canvas_io::is_media_file(&path)
             {
                 loader::spawn_load_image_as_layer(path, ws.tx.clone(), ctx.clone());
             } else {

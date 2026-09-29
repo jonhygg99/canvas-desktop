@@ -209,6 +209,30 @@ pub(in crate::gallery) fn gallery_cell(
                 ui.visuals().weak_text_color(),
             );
         }
+        if item.kind == ItemKind::Video {
+            painter.text(
+                thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
+                egui::Align2::RIGHT_TOP,
+                "Video",
+                egui::FontId::proportional(11.0),
+                ui.visuals().weak_text_color(),
+            );
+            // Triángulo de play sutil en el centro para distinguir video de imagen
+            let play_sz = 22.0;
+            let play_rect =
+                egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(play_sz, play_sz));
+            let center = play_rect.center();
+            let r = play_sz * 0.42;
+            let p1 = egui::pos2(center.x - r * 0.45, center.y - r);
+            let p2 = egui::pos2(center.x - r * 0.45, center.y + r);
+            let p3 = egui::pos2(center.x + r * 0.75, center.y);
+            painter.circle_filled(center, r + 9.0, egui::Color32::from_black_alpha(110));
+            painter.add(egui::Shape::convex_polygon(
+                vec![p1, p2, p3],
+                egui::Color32::WHITE,
+                egui::Stroke::NONE,
+            ));
+        }
 
         if !renaming {
             let mut name = item.name.clone();

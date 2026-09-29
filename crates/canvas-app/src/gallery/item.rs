@@ -9,6 +9,7 @@ use eframe::egui;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ItemKind {
     Image,
+    Video,
     Design,
 }
 

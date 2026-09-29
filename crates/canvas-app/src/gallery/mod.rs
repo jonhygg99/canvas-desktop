@@ -272,6 +272,8 @@ impl GalleryState {
                 let (tex, failed) = old.remove(&path).unwrap_or((None, false));
                 let kind = if canvas_io::is_canvas_file(&path) {
                     ItemKind::Design
+                } else if canvas_io::is_video_file(&path) {
+                    ItemKind::Video
                 } else {
                     ItemKind::Image
                 };

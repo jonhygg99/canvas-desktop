@@ -155,7 +155,7 @@ fn discover_gallery_files(
         .filter(|p| {
             p.file_name() != Some(std::ffi::OsStr::new(canvas_io::SIDECAR_DIR))
                 && p.is_file()
-                && (canvas_io::is_image_file(p) || canvas_io::is_standalone_design(p))
+                && (canvas_io::is_media_file(p) || canvas_io::is_standalone_design(p))
                 && !canvas_shell::is_hidden(p)
         })
         .map(|p| {

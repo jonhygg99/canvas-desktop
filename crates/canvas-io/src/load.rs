@@ -10,6 +10,11 @@ use crate::IoError;
 /// Extensiones de imagen que la app sabe abrir (minúsculas).
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"];
 
+/// Extensiones de video que la app sabe abrir (minúsculas).
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "webm", "m4v", "flv", "wmv", "mpg", "mpeg", "3gp", "ts",
+];
+
 /// Extensión de un archivo de diseño (sidecar de imagen o diseño autónomo).
 pub const CANVAS_EXTENSION: &str = "canvas";
 
@@ -17,6 +22,16 @@ pub fn is_image_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_video_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| VIDEO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+pub fn is_media_file(path: &Path) -> bool {
+    is_image_file(path) || is_video_file(path)
 }
 
 pub fn is_canvas_file(path: &Path) -> bool {
@@ -187,9 +202,12 @@ pub fn peek_numbered_path(folder: &Path, ext: &str, hint: u64) -> PathBuf {
 }
 
 /// ¿`Ctrl+S` puede sobrescribir este archivo? Un SVG es vectorial (un lienzo
-/// raster no puede reescribirlo) y un GIF puede ser animado (sobrescribirlo
-/// lo aplanaría a un fotograma): ambos se abren pero solo admiten «Save as…».
+/// raster no puede reescribirlo), un GIF puede ser animado y un video perdería
+/// su pista de audio/duración: todos se abren pero solo admiten «Save as…».
 pub fn can_overwrite(path: &Path) -> bool {
+    if is_video_file(path) {
+        return false;
+    }
     !path
         .extension()
         .and_then(|e| e.to_str())

@@ -41,14 +41,14 @@ impl AppInner {
             loader::spawn_load_design(path.clone(), ws.tx.clone(), ctx.clone());
             self.push_recent(&path);
             ws.view = View::Loading { path };
-        } else if canvas_io::is_image_file(&path) {
+        } else if canvas_io::is_media_file(&path) {
             loader::spawn_load_image(path.clone(), true, ws.tx.clone(), ctx.clone());
             self.push_recent(&path);
             ws.view = View::Loading { path };
         } else {
             ws.view = View::Welcome {
                 error: Some(format!(
-                    "\"{}\" is not a supported image format.",
+                    "\"{}\" is not a supported image or video format.",
                     path.display()
                 )),
             };
