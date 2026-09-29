@@ -61,6 +61,20 @@ fn enum_helpers_expose_labels_and_extensions() {
 }
 
 #[test]
+fn bulk_canvas_size_defaults_to_full_hd() {
+    assert_eq!(BulkCanvasSize::default(), BulkCanvasSize::FullHd1920);
+    assert_eq!(BulkCanvasSize::FullHd1920.label(), "1920 × 1080");
+    assert_eq!(BulkCanvasSize::FullHd1920.dims(), Some((1920.0, 1080.0)));
+    assert_eq!(BulkCanvasSize::Hd1280.dims(), Some((1280.0, 720.0)));
+    assert_eq!(BulkCanvasSize::Square1080.dims(), Some((1080.0, 1080.0)));
+    assert_eq!(BulkCanvasSize::BatchMax.dims(), None);
+    assert_eq!(
+        AppSettings::default().serper_bulk_size,
+        BulkCanvasSize::FullHd1920
+    );
+}
+
+#[test]
 fn app_settings_round_trip_through_json() {
     let s = AppSettings {
         theme: ThemeChoice::Dark,

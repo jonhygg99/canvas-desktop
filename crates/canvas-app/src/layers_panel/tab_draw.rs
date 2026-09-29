@@ -8,7 +8,9 @@
 
 use eframe::egui;
 
-use crate::app_icons::{draw_images_icon, draw_layers_icon, draw_page_icon, draw_sparkle_icon};
+use crate::app_icons::{
+    draw_globe_icon, draw_images_icon, draw_layers_icon, draw_page_icon, draw_sparkle_icon,
+};
 use crate::editor::state::LeftTab;
 
 use super::tab_strip::{TabDrag, TabSwapAnim, STRIP_WIDTH, TAB_GAP};
@@ -87,6 +89,7 @@ pub(super) fn tab_tip(tab: LeftTab) -> &'static str {
         LeftTab::Page => "Page settings",
         LeftTab::Layers => "Layers",
         LeftTab::Insert => "Insert",
+        LeftTab::Web => "Web images (Google)",
         LeftTab::Images => "Images (Unsplash)",
     }
 }
@@ -102,6 +105,7 @@ pub(super) fn tab_icon(tab: LeftTab) -> fn(&egui::Painter, egui::Rect, egui::Col
         LeftTab::Page => draw_page_icon,
         LeftTab::Layers => draw_layers_icon,
         LeftTab::Insert => draw_sparkle_icon,
+        LeftTab::Web => draw_globe_icon,
         LeftTab::Images => draw_images_icon,
     }
 }

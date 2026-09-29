@@ -5,8 +5,9 @@
 //! ranuras de la baraja, y los diálogos de abrir archivo/carpeta),
 //! `save_ops` (guardar), `export_ops` (exportar), `gallery_ops`
 //! (operaciones de archivos de la galería), `image_import` (añadir/
-//! reemplazar una capa de imagen, incluida la descarga por URL) y
-//! `unsplash_ops` (búsqueda de imágenes de Unsplash).
+//! reemplazar una capa de imagen, incluida la descarga por URL),
+//! `unsplash_ops` (búsqueda de imágenes de Unsplash) y `serper_ops`
+//! (búsqueda de imágenes web vía Serper).
 
 mod export_ops;
 mod file_ops;
@@ -14,6 +15,7 @@ mod gallery_ops;
 mod image_import;
 mod load_ops;
 mod save_ops;
+mod serper_ops;
 mod unsplash_ops;
 
 use std::path::PathBuf;
@@ -36,6 +38,10 @@ pub use load_ops::{
 pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_reserve_canvas_path, spawn_save,
     spawn_save_design, SaveInput,
+};
+pub use serper_ops::{
+    begin_bulk_files, default_bulk_dir, resolve_bulk_page, spawn_serper_image, spawn_serper_search,
+    spawn_serper_thumb, BulkItem,
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
 
@@ -118,6 +124,40 @@ pub enum AppMsg {
         id: String,
         label: String,
         result: Result<LoadedImage, crate::unsplash::UnsplashError>,
+    },
+    /// Resultado de UNA llamada web/Serper (1 token = 1 página de hasta
+    /// 100 fotos ya filtradas). `seq` descarta respuestas caducas y
+    /// `cache_key` alimenta la caché de memoria en el handler.
+    SerperSearch {
+        seq: u64,
+        page: u32,
+        cache_key: String,
+        result: Result<crate::serper::SearchPage, crate::serper::SerperError>,
+    },
+    /// Miniatura de un resultado web ya descargada y decodificada.
+    /// `FilteredBanner` significa que el thumb era un banner (se retira la
+    /// tarjeta en silencio, no es un error visible).
+    SerperThumb {
+        id: String,
+        result: Result<LoadedImage, crate::serper::SerperError>,
+    },
+    /// Imagen web completa descargada y decodificada, lista para insertarse
+    /// como capa nueva del documento abierto.
+    SerperImageReady {
+        id: String,
+        label: String,
+        result: Result<LoadedImage, crate::serper::SerperError>,
+    },
+    /// Progreso de la creación masiva web (hechas, total).
+    SerperBulkProgress {
+        done: usize,
+        total: usize,
+    },
+    /// La creación masiva terminó: lienzos creados y errores por imagen.
+    SerperBulkDone {
+        folder: PathBuf,
+        created: Vec<PathBuf>,
+        errors: Vec<String>,
     },
     SaveAsPicked(Option<PathBuf>),
     Saved {

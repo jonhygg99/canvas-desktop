@@ -12,7 +12,7 @@ use crate::deck::{DeckAxis, StripSide};
 mod choices;
 mod sort;
 
-pub use choices::{GallerySort, NewCanvasFormat, ThemeChoice};
+pub use choices::{BulkCanvasSize, GallerySort, NewCanvasFormat, ThemeChoice};
 pub use sort::natural_cmp;
 
 #[cfg(test)]
@@ -37,6 +37,11 @@ impl LayersTabOrder {
             LayersTabOrder::LayersFirst => LayersTabOrder::PageFirst,
         }
     }
+}
+
+/// Bloqueados iniciales del buscador web: los del filtro de Serper.
+fn default_serper_blocked() -> Vec<String> {
+    crate::serper::default_blocked_domains()
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +82,19 @@ pub struct AppSettings {
     pub layers_collapsed: bool,
     /// Orden de las pestañas del panel izquierdo (arrastrables con el ratón).
     pub layers_tab_order: LayersTabOrder,
+    /// Dominios bloqueados del buscador web (pestaña «Web»): filtro local y
+    /// exclusiones `-site:` de la query. Editable en el Advanced del panel.
+    #[serde(default = "default_serper_blocked")]
+    pub serper_blocked: Vec<String>,
+    /// Presupuesto de tokens por keyword del buscador web (1–3).
+    pub serper_budget: crate::serper::TokenBudget,
+    /// Créditos Serper gastados en total (histórico persistido; la sesión
+    /// lleva su propio contador en el panel).
+    pub serper_credits_total: u64,
+    /// Última carpeta destino del bulk web (para no preguntar dos veces).
+    pub serper_last_folder: Option<PathBuf>,
+    /// Tamaño de página de cada lienzo creado por el bulk web.
+    pub serper_bulk_size: BulkCanvasSize,
     /// Workspaces abiertos en la última sesión, para restaurarlos al
     /// arrancar. El orden es el de creación (la ventana 0 es la raíz). Se
     /// vuelve a escribir cada vez que un workspace se abre o se cierra, y al
@@ -119,6 +137,11 @@ impl Default for AppSettings {
             new_canvas_format: NewCanvasFormat::default(),
             layers_collapsed: false,
             layers_tab_order: LayersTabOrder::default(),
+            serper_blocked: default_serper_blocked(),
+            serper_budget: crate::serper::TokenBudget::default(),
+            serper_credits_total: 0,
+            serper_last_folder: None,
+            serper_bulk_size: BulkCanvasSize::default(),
             workspaces: Vec::new(),
         }
     }
@@ -221,6 +244,20 @@ pub fn settings_window(
             ui.weak(
                 "What \"New design\" and the \"+\" canvas create: a real image file \
                  (with its layers kept editable in a sidecar) or a standalone .canvas design.",
+            );
+            ui.add_space(10.0);
+
+            ui.label("Web bulk canvas size");
+            egui::ComboBox::from_id_salt("serper_bulk_size")
+                .selected_text(settings.serper_bulk_size.label())
+                .show_ui(ui, |ui| {
+                    for choice in BulkCanvasSize::ALL {
+                        ui.selectable_value(&mut settings.serper_bulk_size, choice, choice.label());
+                    }
+                });
+            ui.weak(
+                "Page size of every canvas created by \"Add\" in Select web images: \
+                 all canvases in the batch measure the same.",
             );
             ui.add_space(10.0);
 

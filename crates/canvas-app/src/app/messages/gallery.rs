@@ -37,6 +37,15 @@ impl AppInner {
         }
         if want_deck {
             self.spawn_deck_probe(ctx, ws);
+            // Salto pendiente de un bulk: el reescaneo ya incorporó los
+            // lienzos nuevos; si el primero sigue ahí, se salta a él con
+            // reencuadre para que se vea dónde cayeron.
+            if let Some(path) = ws.deck_ops.bulk_jump.take() {
+                if let Some(idx) = ws.deck.find_by_path(&path) {
+                    ws.deck.jump_to = Some(idx);
+                    ws.deck.jump_reframe = true;
+                }
+            }
         }
     }
 

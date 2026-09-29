@@ -220,6 +220,10 @@ pub(super) struct DeckOps {
     /// Rutas cuyo borrado en curso se pidió directamente por el usuario,
     /// con el sidecar que tenían (para apilar `GlobalStep::Delete`).
     pub(super) undoable_deletes: std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    /// Primer lienzo creado por un bulk web, pendiente de mostrar: en cuanto
+    /// el reescaneo lo incorpora a la baraja se salta a él (si no, el usuario
+    /// no vería dónde cayeron).
+    pub(super) bulk_jump: Option<PathBuf>,
 }
 
 /// Último estado comunicado a los menús nativos, para no reenviarlo cada

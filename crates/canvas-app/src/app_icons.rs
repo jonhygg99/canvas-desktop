@@ -645,6 +645,18 @@ pub fn draw_images_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     );
 }
 
+/// Globo terráqueo (pestaña «Web» del editor, búsqueda de imágenes de
+/// Google): círculo con meridiano y ecuador.
+pub fn draw_globe_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height());
+    let c = rect.center();
+    let r = s * 0.40;
+    let st = egui::Stroke::new(1.4, color);
+    painter.circle_stroke(c, r, st);
+    painter.line_segment([egui::pos2(c.x, c.y - r), egui::pos2(c.x, c.y + r)], st);
+    painter.line_segment([c - egui::vec2(r, 0.0), c + egui::vec2(r, 0.0)], st);
+}
+
 /// Destello (✨ de la bienvenida): cuatro rayos concéntricos de longitud
 /// alternada.
 pub fn draw_sparkle_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {

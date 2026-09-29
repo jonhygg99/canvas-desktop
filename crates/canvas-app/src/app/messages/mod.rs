@@ -23,6 +23,7 @@ mod export;
 mod gallery;
 mod load;
 mod save;
+mod serper;
 mod shell;
 mod unsplash;
 
@@ -132,6 +133,33 @@ impl AppInner {
             AppMsg::UnsplashImageReady { id, label, result } => {
                 self.on_unsplash_image_ready(ws, id, label, result)
             }
+            AppMsg::SerperSearch {
+                seq,
+                page,
+                cache_key,
+                result,
+            } => self.on_serper_search(
+                ws,
+                serper::SerperSearchMsg {
+                    seq,
+                    page,
+                    cache_key,
+                    result,
+                },
+                ctx,
+            ),
+            AppMsg::SerperThumb { id, result } => self.on_serper_thumb(ws, id, result, ctx),
+            AppMsg::SerperImageReady { id, label, result } => {
+                self.on_serper_image_ready(ws, id, label, result)
+            }
+            AppMsg::SerperBulkProgress { done, total } => {
+                self.on_serper_bulk_progress(ws, done, total, ctx)
+            }
+            AppMsg::SerperBulkDone {
+                folder,
+                created,
+                errors,
+            } => self.on_serper_bulk_done(ws, folder, created, errors, ctx, open_after),
             AppMsg::GalleryScanned { folder, files } => {
                 self.on_gallery_scanned(ws, folder, files, ctx)
             }

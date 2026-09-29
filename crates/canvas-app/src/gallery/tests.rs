@@ -1,7 +1,7 @@
 //! Tests del estado de la galería (navegación, merge de archivos,
 //! orden, tamaño de celda). Movidos del `mod.rs`.
 
-use super::ui::gallery_cell_size;
+use super::ui::{gallery_cell, gallery_cell_size};
 use super::{next_folder_panel_side, FolderNavigation, GalleryState};
 use crate::deck::StripSide;
 use crate::settings::GallerySort;
@@ -132,6 +132,58 @@ fn responsive_grid_fills_the_available_width() {
     let size = gallery_cell_size(900.0, 5);
     assert!((size.x - 173.6).abs() < f32::EPSILON);
     assert!(size.y < size.x);
+}
+
+/// Celdas adyacentes con aspectos extremos (retrato 1:300 y panorámica
+/// 300:1, como una carpeta de fotos web mezcladas) se pintan sin pánico:
+/// el cover va recortado a su celda y no invade a la vecina.
+#[test]
+fn extreme_aspect_cells_paint_clipped_side_by_side() {
+    use super::{GalleryItem, ItemKind};
+    use eframe::egui;
+
+    fn item(ctx: &egui::Context, name: &str, w: usize, h: usize) -> GalleryItem {
+        let tex = ctx.load_texture(
+            name,
+            egui::ColorImage::new([w, h], vec![egui::Color32::WHITE; w * h]),
+            egui::TextureOptions::LINEAR,
+        );
+        GalleryItem {
+            path: PathBuf::from(name),
+            name: name.to_owned(),
+            mtime: None,
+            kind: ItemKind::Image,
+            tex: Some(tex),
+            failed: false,
+        }
+    }
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let cell_size = gallery_cell_size(900.0, 5);
+    let out = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 400.0),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            let portrait = item(ui.ctx(), "tall.png", 4, 1200);
+            let pano = item(ui.ctx(), "wide.png", 1200, 4);
+            let mut selected = None;
+            let mut rename = None;
+            ui.horizontal(|ui| {
+                let _ = gallery_cell(ui, &portrait, cell_size, &mut selected, &mut rename);
+                let _ = gallery_cell(ui, &pano, cell_size, &mut selected, &mut rename);
+            });
+        },
+    );
+    assert!(
+        !out.shapes.is_empty(),
+        "las dos celdas extremas deben pintar algo"
+    );
 }
 #[test]
 fn folder_navigation_discards_forward_branch_after_new_visit() {

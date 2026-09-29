@@ -13,6 +13,7 @@ pub(crate) enum LeftTab {
     Page,
     Layers,
     Insert,
+    Web,
     Images,
 }
 
@@ -95,6 +96,10 @@ pub struct EditorState {
     pub active_left_tab: LeftTab,
     /// Estado del buscador de imágenes de Unsplash (pestaña «Images»).
     pub unsplash: crate::unsplash::Panel,
+    /// Estado del buscador de imágenes web vía Serper (pestaña «Web»).
+    /// El gasto en tokens es de sesión; bloqueados y presupuesto viven en
+    /// ajustes y el panel los espeja al pintarse.
+    pub serper: crate::serper::Panel,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,

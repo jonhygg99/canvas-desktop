@@ -69,6 +69,49 @@ impl NewCanvasFormat {
     }
 }
 
+/// Tamaño de página con el que nace cada lienzo del bulk web («Add» en
+/// Select web images): todos los lienzos de la tanda miden lo mismo.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum BulkCanvasSize {
+    /// 1920 × 1080 (por defecto): Full HD, sin dudas.
+    #[default]
+    FullHd1920,
+    /// 1280 × 720.
+    Hd1280,
+    /// 1080 × 1080.
+    Square1080,
+    /// El máximo de la tanda (la foto más grande manda).
+    BatchMax,
+}
+
+impl BulkCanvasSize {
+    pub const ALL: [Self; 4] = [
+        Self::FullHd1920,
+        Self::Hd1280,
+        Self::Square1080,
+        Self::BatchMax,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BulkCanvasSize::FullHd1920 => "1920 × 1080",
+            BulkCanvasSize::Hd1280 => "1280 × 720",
+            BulkCanvasSize::Square1080 => "1080 × 1080",
+            BulkCanvasSize::BatchMax => "Batch max (largest photo)",
+        }
+    }
+
+    /// Dimensiones fijas, o `None` si las decide la tanda.
+    pub fn dims(self) -> Option<(f64, f64)> {
+        match self {
+            BulkCanvasSize::FullHd1920 => Some((1920.0, 1080.0)),
+            BulkCanvasSize::Hd1280 => Some((1280.0, 720.0)),
+            BulkCanvasSize::Square1080 => Some((1080.0, 1080.0)),
+            BulkCanvasSize::BatchMax => None,
+        }
+    }
+}
+
 /// Criterio de orden de la galería de carpetas.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
 pub enum GallerySort {

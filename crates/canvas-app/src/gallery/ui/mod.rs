@@ -20,10 +20,10 @@ mod shortcuts;
 
 pub use folder_panel::next_folder_panel_side;
 
-// Nombre que solo usan los tests (`gallery/tests.rs`); el código de pintado
-// lo toma directo de `cell`.
+// Nombres que solo usan los tests (`gallery/tests.rs`); el código de
+// pintado los toma directo de `cell`.
 #[cfg(test)]
-pub(super) use cell::gallery_cell_size;
+pub(super) use cell::{gallery_cell, gallery_cell_size};
 
 use folder_panel::show_folder_panel;
 

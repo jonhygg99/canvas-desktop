@@ -109,7 +109,7 @@ fn begin_rename(
     });
 }
 
-pub(super) fn gallery_cell(
+pub(in crate::gallery) fn gallery_cell(
     ui: &mut egui::Ui,
     item: &GalleryItem,
     cell_size: egui::Vec2,
@@ -160,7 +160,11 @@ pub(super) fn gallery_cell(
                 let size = tex.size_vec2();
                 let scale = (thumbnail_width / size.x).max(thumbnail_height / size.y);
                 let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
-                painter.image(
+                // Recorte al área de la miniatura: sin esto, una foto
+                // vertical/panorámica (cover) sangra sobre las celdas y los
+                // títulos vecinos — se ve fatal con tamaños mezclados.
+                painter.rect_filled(thumb_rect, 2.0, ui.visuals().extreme_bg_color);
+                painter.with_clip_rect(thumb_rect).image(
                     tex.id(),
                     fitted,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),

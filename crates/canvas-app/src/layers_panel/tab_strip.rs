@@ -61,14 +61,20 @@ pub(super) struct TabSwapAnim {
     pub(super) release_pos: egui::Pos2,
 }
 
-/// Las cuatro pestañas: Page y Layers reordenables según los ajustes, e
-/// Insert e Images fijas detrás con un separador delante de Insert.
-pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 4] {
+/// Las cinco pestañas: Page y Layers reordenables según los ajustes, e
+/// Insert, Web e Images fijas detrás con un separador delante de Insert.
+pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 5] {
     let (first, second) = match order {
         LayersTabOrder::PageFirst => (LeftTab::Page, LeftTab::Layers),
         LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
     };
-    [first, second, LeftTab::Insert, LeftTab::Images]
+    [
+        first,
+        second,
+        LeftTab::Insert,
+        LeftTab::Web,
+        LeftTab::Images,
+    ]
 }
 
 /// Rects de las pestañas, en el orden de los ajustes (con el hueco extra

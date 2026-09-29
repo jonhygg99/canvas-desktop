@@ -53,6 +53,7 @@ impl EditorState {
             layers_panel_toggle: false,
             active_left_tab: LeftTab::Layers,
             unsplash: crate::unsplash::Panel::default(),
+            serper: crate::serper::Panel::default(),
             sidecar_enabled: true,
             is_design: false,
             source_metadata: None,

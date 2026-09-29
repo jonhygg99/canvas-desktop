@@ -26,6 +26,7 @@ mod loader;
 mod lock;
 mod menus;
 mod paste_hook;
+mod serper;
 mod settings;
 mod sidebar;
 mod surface;

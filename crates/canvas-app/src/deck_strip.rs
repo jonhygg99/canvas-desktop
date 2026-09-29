@@ -311,7 +311,10 @@ fn strip_cell(
             let size = tex.size_vec2();
             let scale = (m.thumb.x / size.x).max(m.thumb.y / size.y);
             let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
-            painter.image(
+            // Recorte igual que en la cuadrícula de la galería: el cover de
+            // un aspecto extremo no puede invadir la ranura vecina.
+            painter.rect_filled(thumb_rect, 2.0, ui.visuals().extreme_bg_color);
+            painter.with_clip_rect(thumb_rect).image(
                 tex.id(),
                 fitted,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),

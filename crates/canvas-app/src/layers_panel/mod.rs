@@ -7,6 +7,7 @@
 //! Reparto: `tab_strip` (la tira vertical de pestañas: clic, arrastre e
 //! intercambio animado), `tab_draw` (pintado de una pestaña), `insert`
 //! (pestaña Insert) y `row`/`ops` (lista de capas y sus operaciones).
+//! Las pestañas Web (Serper) e Images (Unsplash) delegan en sus módulos.
 
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
@@ -79,12 +80,15 @@ enum Drop {
 }
 
 /// Devuelve el nuevo orden si una pestaña se soltó sobre la otra; el
-/// llamador persiste el cambio en los ajustes.
+/// llamador persiste el cambio en los ajustes. `settings` concentra el
+/// colapsado, el orden y lo que la pestaña Web necesita (bloqueados,
+/// presupuesto, créditos y última carpeta del buscador Serper).
+/// `deck_folder` alimenta el destino del bulk junto al archivo abierto.
 pub fn left_panel_ui(
     state: &mut EditorState,
     ui: &mut egui::Ui,
-    layers_collapsed: &mut bool,
-    order: LayersTabOrder,
+    settings: &mut crate::settings::AppSettings,
+    deck_folder: Option<std::path::PathBuf>,
     tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
 ) -> Option<LayersTabOrder> {
     sidebar::compact(ui);
@@ -102,8 +106,8 @@ pub fn left_panel_ui(
             new_order = vertical_tab_strip_ui(
                 ui,
                 &mut state.active_left_tab,
-                layers_collapsed,
-                order,
+                &mut settings.layers_collapsed,
+                settings.layers_tab_order,
                 false,
             );
             ui.separator();
@@ -116,6 +120,7 @@ pub fn left_panel_ui(
                     LeftTab::Page => "Page",
                     LeftTab::Layers => "Layers",
                     LeftTab::Insert => "Insert",
+                    LeftTab::Web => "Web",
                     LeftTab::Images => "Images",
                 };
                 sidebar::title(ui, tab_name);
@@ -123,6 +128,15 @@ pub fn left_panel_ui(
                 match state.active_left_tab {
                     LeftTab::Page => {
                         page_ui(state, ui);
+                    }
+                    LeftTab::Web => {
+                        let dest = crate::serper::bulk::resolve_bulk_folder(
+                            deck_folder.clone(),
+                            state.doc.source_path.clone(),
+                            state.from_gallery.clone(),
+                            settings.serper_last_folder.clone(),
+                        );
+                        crate::serper::panel_ui(&mut state.serper, settings, dest, ui, tx);
                     }
                     LeftTab::Images => crate::unsplash::panel_ui(state, ui, tx),
                     LeftTab::Layers => {
