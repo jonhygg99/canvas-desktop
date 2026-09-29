@@ -75,14 +75,16 @@ pub(super) fn show_panels(
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
     let layers_collapsed_before = f.settings.layers_collapsed;
     const COLLAPSED_WIDTH: f32 = 36.0;
-    // Con la pestaña Images o Web activa el panel se ensancha para que las
-    // fotos se vean grandes; el resto de pestañas usan el ancho normal.
-    let expanded_width =
-        if state.active_left_tab == LeftTab::Images || state.active_left_tab == LeftTab::Web {
-            320.0
-        } else {
-            220.0
-        };
+    // Con la pestaña Images, Web o Download activa el panel se ensancha
+    // para que el contenido se vea grande; el resto usa el ancho normal.
+    let expanded_width = if matches!(
+        state.active_left_tab,
+        LeftTab::Images | LeftTab::Web | LeftTab::Download
+    ) {
+        320.0
+    } else {
+        220.0
+    };
     const PANEL_ANIM_SECS: f64 = 0.2;
 
     let anim_salt = egui::Id::new("layers_panel_anim");

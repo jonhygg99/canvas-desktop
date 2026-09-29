@@ -18,6 +18,7 @@ mod save_ops;
 mod serper_ops;
 mod unsplash_ops;
 mod video_ops;
+mod ytdlp_ops;
 
 use std::path::PathBuf;
 
@@ -46,6 +47,7 @@ pub use serper_ops::{
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
 pub use video_ops::spawn_video_frame;
+pub use ytdlp_ops::{spawn_ytdlp_download, YtdlpDownloadRequest};
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -274,6 +276,18 @@ pub enum AppMsg {
         layer: LayerId,
         time: f64,
         result: Result<LoadedImage, IoError>,
+    },
+    /// Progreso de una descarga yt-dlp (índice, total, texto).
+    YtdlpDownloadProgress {
+        index: usize,
+        total: usize,
+        text: String,
+    },
+    /// Tanda de descargas yt-dlp terminada.
+    YtdlpDownloadDone {
+        folder: PathBuf,
+        paths: Vec<PathBuf>,
+        errors: Vec<String>,
     },
 }
 

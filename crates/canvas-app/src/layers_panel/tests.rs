@@ -1183,7 +1183,8 @@ fn ordered_tabs_follows_the_setting() {
             LeftTab::Layers,
             LeftTab::Insert,
             LeftTab::Web,
-            LeftTab::Images
+            LeftTab::Images,
+            LeftTab::Download
         ]
     );
     assert_eq!(
@@ -1193,7 +1194,8 @@ fn ordered_tabs_follows_the_setting() {
             LeftTab::Page,
             LeftTab::Insert,
             LeftTab::Web,
-            LeftTab::Images
+            LeftTab::Images,
+            LeftTab::Download
         ]
     );
 }
@@ -1206,6 +1208,7 @@ fn each_tab_appears_exactly_once() {
     assert!(order.contains(&LeftTab::Insert));
     assert!(order.contains(&LeftTab::Web));
     assert!(order.contains(&LeftTab::Images));
+    assert!(order.contains(&LeftTab::Download));
 }
 
 // ---- Humo de pintado e interacción tras la partición tab_strip/tab_draw ----
@@ -1321,7 +1324,7 @@ fn the_tab_strip_paints_in_expanded_and_collapsed_states() {
     );
 }
 
-/// El panel COMPLETO (`left_panel_ui`) se renderiza headless en sus cinco
+/// El panel COMPLETO (`left_panel_ui`) se renderiza headless en sus seis
 /// pestañas sin pánico y pintando en cada una — humo de integración que
 /// ejercita la orquestación real (tira + cuerpo de la pestaña activa).
 #[test]
@@ -1338,6 +1341,7 @@ fn left_panel_renders_every_tab_without_panicking() {
         LeftTab::Insert,
         LeftTab::Web,
         LeftTab::Images,
+        LeftTab::Download,
     ] {
         state.active_left_tab = tab;
         let out = ctx.run_ui(

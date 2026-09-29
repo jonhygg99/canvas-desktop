@@ -27,6 +27,7 @@ mod serper;
 mod shell;
 mod unsplash;
 mod video;
+mod ytdlp;
 
 impl AppInner {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería de
@@ -217,6 +218,14 @@ impl AppInner {
                 time,
                 result,
             } => self.on_video_frame_ready(ws, layer, time, result, ctx),
+            AppMsg::YtdlpDownloadProgress { index, total, text } => {
+                self.on_ytdlp_progress(ws, index, total, text, ctx)
+            }
+            AppMsg::YtdlpDownloadDone {
+                folder,
+                paths,
+                errors,
+            } => self.on_ytdlp_done(ws, folder, paths, errors, ctx),
         }
     }
 

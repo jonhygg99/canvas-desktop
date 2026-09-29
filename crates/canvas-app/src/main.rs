@@ -38,6 +38,7 @@ mod test_server;
 mod unsplash;
 mod watcher;
 mod welcome;
+mod ytdlp;
 
 use anyhow::{anyhow, Context, Result};
 use app::App;

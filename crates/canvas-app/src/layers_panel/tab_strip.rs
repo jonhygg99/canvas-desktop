@@ -61,9 +61,10 @@ pub(super) struct TabSwapAnim {
     pub(super) release_pos: egui::Pos2,
 }
 
-/// Las cinco pestañas: Page y Layers reordenables según los ajustes, e
-/// Insert, Web e Images fijas detrás con un separador delante de Insert.
-pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 5] {
+/// Las seis pestañas: Page y Layers reordenables según los ajustes, e
+/// Insert, Web, Images y Download fijas detrás con un separador delante de
+/// Insert.
+pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 6] {
     let (first, second) = match order {
         LayersTabOrder::PageFirst => (LeftTab::Page, LeftTab::Layers),
         LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
@@ -74,13 +75,14 @@ pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 5] {
         LeftTab::Insert,
         LeftTab::Web,
         LeftTab::Images,
+        LeftTab::Download,
     ]
 }
 
 /// Rects de las pestañas, en el orden de los ajustes (con el hueco extra
 /// como separador delante de Insert).
 fn tab_layout(strip_rect: egui::Rect, order: LayersTabOrder) -> Vec<(LeftTab, egui::Rect)> {
-    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(4);
+    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(6);
     let mut y = strip_rect.top() + TOP_MARGIN;
     for tab in ordered_tabs(order).iter() {
         // Separador antes de Insert

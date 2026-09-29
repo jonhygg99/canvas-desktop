@@ -645,6 +645,55 @@ pub fn draw_images_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     );
 }
 
+/// Descarga (pestaña «Download», yt-dlp): flecha hacia abajo sobre una
+/// bandeja — mismo trazo que el resto de iconos de la tira.
+pub fn draw_download_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height());
+    let c = rect.center();
+    let st = egui::Stroke::new(1.4, color);
+    let top = c.y - s * 0.32;
+    let mid = c.y + s * 0.10;
+    painter.line_segment([egui::pos2(c.x, top), egui::pos2(c.x, mid)], st);
+    painter.line_segment(
+        [
+            egui::pos2(c.x, mid),
+            egui::pos2(c.x - s * 0.16, mid - s * 0.14),
+        ],
+        st,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x, mid),
+            egui::pos2(c.x + s * 0.16, mid - s * 0.14),
+        ],
+        st,
+    );
+    let tray_top = c.y + s * 0.22;
+    let tray_bot = c.y + s * 0.34;
+    let half = s * 0.32;
+    painter.line_segment(
+        [
+            egui::pos2(c.x - half, tray_top),
+            egui::pos2(c.x - half, tray_bot),
+        ],
+        st,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x - half, tray_bot),
+            egui::pos2(c.x + half, tray_bot),
+        ],
+        st,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(c.x + half, tray_bot),
+            egui::pos2(c.x + half, tray_top),
+        ],
+        st,
+    );
+}
+
 /// Globo terráqueo (pestaña «Web» del editor, búsqueda de imágenes de
 /// Google): círculo con meridiano y ecuador.
 pub fn draw_globe_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {

@@ -9,7 +9,8 @@
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_globe_icon, draw_images_icon, draw_layers_icon, draw_page_icon, draw_sparkle_icon,
+    draw_download_icon, draw_globe_icon, draw_images_icon, draw_layers_icon, draw_page_icon,
+    draw_sparkle_icon,
 };
 use crate::editor::state::LeftTab;
 
@@ -91,6 +92,7 @@ pub(super) fn tab_tip(tab: LeftTab) -> &'static str {
         LeftTab::Insert => "Insert",
         LeftTab::Web => "Web images (Google)",
         LeftTab::Images => "Images (Unsplash)",
+        LeftTab::Download => "Download video (yt-dlp)",
     }
 }
 
@@ -107,6 +109,7 @@ pub(super) fn tab_icon(tab: LeftTab) -> fn(&egui::Painter, egui::Rect, egui::Col
         LeftTab::Insert => draw_sparkle_icon,
         LeftTab::Web => draw_globe_icon,
         LeftTab::Images => draw_images_icon,
+        LeftTab::Download => draw_download_icon,
     }
 }
 

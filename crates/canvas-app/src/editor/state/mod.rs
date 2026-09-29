@@ -15,6 +15,7 @@ pub(crate) enum LeftTab {
     Insert,
     Web,
     Images,
+    Download,
 }
 
 use super::interaction::Gesture;
@@ -100,6 +101,7 @@ pub struct EditorState {
     /// El gasto en tokens es de sesión; bloqueados y presupuesto viven en
     /// ajustes y el panel los espeja al pintarse.
     pub serper: crate::serper::Panel,
+    pub ytdlp: crate::ytdlp::Panel,
     /// Reproducción de video: capa en reproducción y último tick.
     pub video_playing_layer: Option<LayerId>,
     pub video_last_tick: Option<std::time::Instant>,

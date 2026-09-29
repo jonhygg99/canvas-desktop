@@ -122,6 +122,7 @@ pub fn left_panel_ui(
                     LeftTab::Insert => "Insert",
                     LeftTab::Web => "Web",
                     LeftTab::Images => "Images",
+                    LeftTab::Download => "Download",
                 };
                 sidebar::title(ui, tab_name);
                 ui.add_space(6.0);
@@ -139,6 +140,19 @@ pub fn left_panel_ui(
                         crate::serper::panel_ui(&mut state.serper, settings, dest, ui, tx);
                     }
                     LeftTab::Images => crate::unsplash::panel_ui(state, ui, tx),
+                    LeftTab::Download => {
+                        let dest = deck_folder
+                            .clone()
+                            .or_else(|| {
+                                state
+                                    .doc
+                                    .source_path
+                                    .as_deref()
+                                    .and_then(|p| p.parent().map(|p| p.to_owned()))
+                            })
+                            .or_else(|| state.from_gallery.clone());
+                        crate::ytdlp::panel_ui(&mut state.ytdlp, dest, ui, tx);
+                    }
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);
                         ui.separator();

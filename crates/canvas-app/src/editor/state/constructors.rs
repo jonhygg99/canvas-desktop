@@ -54,6 +54,7 @@ impl EditorState {
             active_left_tab: LeftTab::Layers,
             unsplash: crate::unsplash::Panel::default(),
             serper: crate::serper::Panel::default(),
+            ytdlp: crate::ytdlp::Panel::default(),
             sidecar_enabled: true,
             is_design: false,
             source_metadata: None,
