@@ -80,6 +80,8 @@ impl EditorState {
             pending_global_redo: None,
             pending_restore: None,
             pending_delete_from_undo: false,
+            video_playing_layer: None,
+            video_last_tick: None,
         }
     }
 

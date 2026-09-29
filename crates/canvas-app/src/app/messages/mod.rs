@@ -26,6 +26,7 @@ mod save;
 mod serper;
 mod shell;
 mod unsplash;
+mod video;
 
 impl AppInner {
     /// Relanza el escaneo de la carpeta actualmente abierta en la galería de
@@ -211,6 +212,11 @@ impl AppInner {
                 result,
                 metadata,
             } => self.on_image_loaded(ws, path, result, metadata, ctx),
+            AppMsg::VideoFrameReady {
+                layer,
+                time,
+                result,
+            } => self.on_video_frame_ready(ws, layer, time, result, ctx),
         }
     }
 

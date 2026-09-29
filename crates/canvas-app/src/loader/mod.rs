@@ -17,6 +17,7 @@ mod load_ops;
 mod save_ops;
 mod serper_ops;
 mod unsplash_ops;
+mod video_ops;
 
 use std::path::PathBuf;
 
@@ -44,6 +45,7 @@ pub use serper_ops::{
     spawn_serper_thumb, BulkItem,
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
+pub use video_ops::spawn_video_frame;
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -267,6 +269,12 @@ pub enum AppMsg {
     /// bloquear el pase de un viewport diferido con `rfd::…::show()`
     /// congela todo el event loop multi-ventana.
     UnsavedDialogAnswer(DialogDecision),
+    /// Frame de video decodificado en hilo aparte.
+    VideoFrameReady {
+        layer: LayerId,
+        time: f64,
+        result: Result<LoadedImage, IoError>,
+    },
 }
 
 /// Qué decidió el usuario en un diálogo «¿guardar los cambios?».

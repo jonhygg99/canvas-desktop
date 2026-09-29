@@ -100,6 +100,9 @@ pub struct EditorState {
     /// El gasto en tokens es de sesión; bloqueados y presupuesto viven en
     /// ajustes y el panel los espeja al pintarse.
     pub serper: crate::serper::Panel,
+    /// Reproducción de video: capa en reproducción y último tick.
+    pub video_playing_layer: Option<LayerId>,
+    pub video_last_tick: Option<std::time::Instant>,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,

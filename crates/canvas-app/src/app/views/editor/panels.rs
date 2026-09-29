@@ -169,7 +169,11 @@ pub(super) fn show_panels(
     egui::Panel::right("properties")
         .default_size(260.0)
         .show(ui, |ui| {
-            ui.add_enabled_ui(!locked, |ui| editor::properties_ui(state, ui));
+            let ctx = ui.ctx().clone();
+            let tx = f.tx.clone();
+            ui.add_enabled_ui(!locked, |ui| {
+                editor::properties_ui_with(state, ui, &tx, &ctx)
+            });
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)

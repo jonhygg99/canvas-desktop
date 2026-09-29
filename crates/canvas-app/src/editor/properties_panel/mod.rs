@@ -12,6 +12,7 @@ mod content;
 mod content_shape;
 mod content_text;
 mod effects;
+mod video;
 
 mod layer_common;
 #[cfg(test)]
@@ -37,13 +38,29 @@ pub(in crate::editor) use page::size_popup_ui;
 use layer_common::layer_properties_ui;
 
 /// Panel derecho: propiedades de la capa seleccionada.
+#[allow(dead_code)]
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     sidebar::compact(ui);
     sidebar::title(ui, "Properties");
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            properties_ui_inner(state, ui);
+            properties_ui_inner(state, ui, None, None);
+        });
+}
+
+pub fn properties_ui_with(
+    state: &mut EditorState,
+    ui: &mut egui::Ui,
+    tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
+    ctx: &egui::Context,
+) {
+    sidebar::compact(ui);
+    sidebar::title(ui, "Properties");
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            properties_ui_inner(state, ui, Some(tx), Some(ctx));
         });
 }
 
@@ -137,7 +154,12 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
     }
 }
 
-fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
+fn properties_ui_inner(
+    state: &mut EditorState,
+    ui: &mut egui::Ui,
+    tx: Option<&std::sync::mpsc::Sender<crate::loader::AppMsg>>,
+    ctx: Option<&egui::Context>,
+) {
     commit_stale_panel_edits(state);
     ui.add_space(8.0);
 
@@ -191,6 +213,16 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     if let Some(sel) = state.selection.primary() {
         if state.doc.layer(sel).is_ok() {
             layer_properties_ui(state, ui, sel, page_dims);
+            // Controles de video si la capa es Video
+            if let (Some(tx), Some(ctx)) = (tx, ctx) {
+                if let Ok(l) = state.doc.layer(sel) {
+                    if matches!(l.content, canvas_core::LayerContent::Video(_)) {
+                        sidebar::section(ui, "Video", true, |ui| {
+                            video::video_controls_ui(state, ui, sel, tx, ctx);
+                        });
+                    }
+                }
+            }
         } else {
             ui.weak("No layer selected.");
             ui.weak("Click the image to select it.");

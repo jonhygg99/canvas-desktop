@@ -24,7 +24,8 @@ mod viewport;
 
 pub use canvas::{canvas_ui, CanvasAction};
 pub(crate) use layer_ops::{delete_selected, has_deletable_selection};
-pub use properties_panel::properties_ui;
+#[allow(unused_imports)]
+pub use properties_panel::{properties_ui, properties_ui_with};
 pub use viewport::Viewport;
 
 pub(crate) mod state;
