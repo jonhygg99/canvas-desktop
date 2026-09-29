@@ -71,13 +71,20 @@ fn bulk_creates_missing_folder() {
     // Tanda vacía: solo debe crear la carpeta y terminar con 0 creados.
     let (tx, rx) = std::sync::mpsc::channel();
     let ctx = eframe::egui::Context::default();
-    spawn_serper_bulk_files(Vec::new(), folder.clone(), "x".to_owned(), (10.0, 10.0), tx, ctx);
+    spawn_serper_bulk_files(
+        Vec::new(),
+        folder.clone(),
+        "x".to_owned(),
+        (10.0, 10.0),
+        tx,
+        ctx,
+    );
     let msg = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-    assert!(matches!(
-        msg,
-        crate::loader::AppMsg::SerperBulkDone { .. }
-    ));
-    if let crate::loader::AppMsg::SerperBulkDone { created, errors, .. } = msg {
+    assert!(matches!(msg, crate::loader::AppMsg::SerperBulkDone { .. }));
+    if let crate::loader::AppMsg::SerperBulkDone {
+        created, errors, ..
+    } = msg
+    {
         assert!(created.is_empty());
         assert!(errors.is_empty());
     }

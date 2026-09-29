@@ -234,17 +234,33 @@ fn spend_token(
 
 /// Sección Advanced: dominios bloqueados (uno por línea). Alimentan el
 /// filtro local Y las exclusiones `-site:` (capadas al tope de palabras).
+/// El `TextEdit` es multilínea con altura fija y scroll propio para las
+/// ~40 entradas por defecto; `clip_text` y ancho infinito evitan que tokens
+/// largos como `lookaside.instagram.com` sangren fuera del panel.
 fn advanced_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     egui::CollapsingHeader::new("Advanced")
         .default_open(false)
         .show(ui, |ui| {
             ui.weak("Blocked domains (one per line):\nhidden from results and excluded\nfrom the query when it fits.");
-            ui.add(
-                egui::TextEdit::multiline(&mut panel.blocked_text)
-                    .desired_rows(4)
-                    .desired_width(ui.available_width()),
-            );
+            // Scroll vertical dedicado: sin él la rueda iba al
+            // `ScrollArea` de los resultados de abajo y el `TextEdit`
+            // parecía no hacer scroll aunque tuviera 40 líneas. Con altura
+            // fija y `auto_shrink(false)` siempre queda barra y la rueda
+            // hace scroll aquí cuando el cursor está encima.
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(2, 2))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(84.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut panel.blocked_text)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                });
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
                     let blocked = parse_blocked(&panel.blocked_text);

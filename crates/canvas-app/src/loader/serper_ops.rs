@@ -143,10 +143,7 @@ pub fn spawn_serper_bulk_files(
             for item in &items {
                 errors.push(format!("{}: {msg}", item.label));
             }
-            let _ = tx.send(AppMsg::SerperBulkProgress {
-                done: total,
-                total,
-            });
+            let _ = tx.send(AppMsg::SerperBulkProgress { done: total, total });
             ctx.request_repaint();
             let _ = tx.send(AppMsg::SerperBulkDone {
                 folder,
