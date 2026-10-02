@@ -206,7 +206,7 @@ fn video_crop_and_blurred_background_follow_changing_frames() {
         red_at(&first, 40, 30) > 128,
         "the foreground must display the cropped half"
     );
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     let frame = image_data_from_rgba(rgba, w, h);
@@ -258,7 +258,7 @@ fn bake_blur_produces_non_transparent_pixels() {
     assert_eq!(rgba.len(), (w * h * 4) as usize);
 
     // Al menos un píxel debe tener alpha > 0 (la imagen llena toda la página).
-    let any_visible = rgba.chunks_exact(4).any(|px| px[3] > 0);
+    let any_visible = rgba.as_chunks::<4>().0.iter().any(|px| px[3] > 0);
     assert!(any_visible, "todos los píxeles son transparentes");
 }
 
@@ -347,7 +347,7 @@ fn bake_blur_on_solid_image_is_identity() {
     assert_eq!((ow, oh), (w, h));
     // Cada píxel de salida debe estar cerca del color de entrada (tolerancia
     // por redondeo del filtro gaussiano en los bordes).
-    for px in rgba_out.chunks_exact(4) {
+    for px in rgba_out.as_chunks::<4>().0 {
         assert!(
             (px[0] as i32 - color[0] as i32).abs() <= 5
                 && (px[1] as i32 - color[1] as i32).abs() <= 5
@@ -515,7 +515,7 @@ fn restored_sidecar_document_bakes_with_content() {
     // en blanco.
     let mut non_white = 0usize;
     let mut opaque = 0usize;
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         non_white += usize::from(px[..3] != [255, 255, 255]);
         opaque += usize::from(px[3] == 255);
     }
@@ -1373,7 +1373,12 @@ fn fx_budget_evicts_lru_scopes_keeping_active_and_rebake_restores() {
     assert_eq!((bw, bh), (64, 48));
     assert_eq!(skipped, 0, "el scope re-sincronizado no debe omitir capas");
     let n = rgba.len() / 4;
-    let opaque = rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let opaque = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     assert!(
         opaque * 100 / n.max(1) > 50,
         "el scope re-horneado debe volver a pintar contenido opaco ({opaque}/{n})"

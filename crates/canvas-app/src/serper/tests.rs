@@ -1187,7 +1187,11 @@ fn bake_cover_photo_is_just_the_photo() {
     let photo = solid_photo(200, 100, [255, 0, 0, 255]);
     let out = bake_contain_blur(&photo, &geom(200, 100, 0.0, 0.0, 200.0, 100.0, false));
     assert_eq!(out.len(), 200 * 100 * 4);
-    assert!(out.chunks_exact(4).all(|p| p == [255, 0, 0, 255]));
+    assert!(out
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p == [255, 0, 0, 255]));
 }
 
 #[test]
@@ -1220,7 +1224,11 @@ fn bake_empty_photo_yields_background() {
     let photo = image::RgbaImage::new(4, 4);
     let out = bake_contain_blur(&photo, &geom(8, 6, 0.0, 0.0, 8.0, 6.0, true));
     assert_eq!(out.len(), 8 * 6 * 4);
-    assert!(out.chunks_exact(4).all(|p| p == [255, 255, 255, 255]));
+    assert!(out
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p == [255, 255, 255, 255]));
 }
 
 #[test]

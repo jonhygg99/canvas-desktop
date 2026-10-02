@@ -530,7 +530,7 @@ fn bake_came_out_blank_or_incomplete(doc: &Document, rgba: &[u8], skipped: usize
         return false;
     }
     let mut first: Option<[u8; 4]> = None;
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let current = [px[0], px[1], px[2], px[3]];
         match first {
             None => first = Some(current),
