@@ -116,6 +116,10 @@ pub struct AppSettings {
     pub serper_last_folder: Option<PathBuf>,
     /// Tamaño de página de cada lienzo creado por el bulk web.
     pub serper_bulk_size: BulkCanvasSize,
+    /// Última carpeta destino del Download de vídeo.
+    pub ytdlp_last_folder: Option<PathBuf>,
+    /// Tamaño de lienzo recordado de Editar vídeo (defecto Full HD).
+    pub ytdlp_canvas_size: (f64, f64),
     pub media_filter: MediaFilter,
     /// Workspaces abiertos en la última sesión, para restaurarlos al
     /// arrancar. El orden es el de creación (la ventana 0 es la raíz). Se
@@ -164,6 +168,8 @@ impl Default for AppSettings {
             serper_credits_total: 0,
             serper_last_folder: None,
             serper_bulk_size: BulkCanvasSize::default(),
+            ytdlp_last_folder: None,
+            ytdlp_canvas_size: (1920.0, 1080.0),
             media_filter: MediaFilter::default(),
             workspaces: Vec::new(),
         }

@@ -2,15 +2,34 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Stdio};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::{ffmpeg_path, media_command, IoError, LoadedImage};
 
+#[cfg(all(test, windows))]
+#[path = "video_stream_tests.rs"]
+mod tests;
+
 pub struct VideoFrameStream {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdout: ChildStdout,
     path: PathBuf,
     size: (u32, u32),
     frame_bytes: usize,
+}
+
+/// Cancela el decoder desde otro hilo, incluso mientras stdout espera datos.
+#[derive(Clone)]
+pub struct VideoStreamCancellation {
+    child: Weak<Mutex<Child>>,
+}
+
+impl VideoStreamCancellation {
+    pub fn cancel(&self) {
+        if let Some(child) = self.child.upgrade() {
+            let _ = child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+        }
+    }
 }
 
 impl VideoFrameStream {
@@ -63,12 +82,18 @@ impl VideoFrameStream {
             })?;
         let stdout = child.stdout.take().expect("stdout piped");
         Ok(Self {
-            child,
+            child: Arc::new(Mutex::new(child)),
             stdout,
             path: path.to_owned(),
             size,
             frame_bytes,
         })
+    }
+
+    pub fn cancellation(&self) -> VideoStreamCancellation {
+        VideoStreamCancellation {
+            child: Arc::downgrade(&self.child),
+        }
     }
 
     pub fn next_frame(&mut self) -> Result<Option<LoadedImage>, IoError> {
@@ -82,10 +107,7 @@ impl VideoFrameStream {
                 source,
             })?;
         if n == 0 {
-            let status = self.child.wait().map_err(|source| IoError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+            let status = self.wait_for_exit()?;
             return if status.success() {
                 Ok(None)
             } else {
@@ -106,12 +128,32 @@ impl VideoFrameStream {
             height: self.size.1,
         }))
     }
+
+    fn wait_for_exit(&self) -> Result<std::process::ExitStatus, IoError> {
+        loop {
+            let status = self
+                .child
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .try_wait()
+                .map_err(|source| IoError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            if let Some(status) = status {
+                return Ok(status);
+            }
+            // No retiene el lock durante wait: cancel puede terminar el child.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
 }
 
 impl Drop for VideoFrameStream {
     fn drop(&mut self) {
         // Cancela también un decodificador que esté bloqueado escribiendo en pipe.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

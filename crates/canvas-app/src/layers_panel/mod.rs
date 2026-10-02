@@ -11,6 +11,7 @@
 
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
+use std::path::Path;
 
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
@@ -151,17 +152,46 @@ pub fn left_panel_ui(
                     }
                     LeftTab::Images => crate::unsplash::panel_ui(state, insert_dest, ui, tx),
                     LeftTab::Download => {
-                        let dest = deck_folder
-                            .clone()
-                            .or_else(|| {
-                                state
-                                    .doc
-                                    .source_path
-                                    .as_deref()
-                                    .and_then(|p| p.parent().map(|p| p.to_owned()))
-                            })
-                            .or_else(|| state.from_gallery.clone());
-                        crate::ytdlp::panel_ui(&mut state.ytdlp, dest, ui, tx);
+                        // Contexto vivo → última usada → Vídeos: así un
+                        // diseño nuevo también descarga.
+                        let dest = crate::ytdlp::api::resolve_download_dir(
+                            deck_folder.clone(),
+                            state
+                                .doc
+                                .source_path
+                                .clone()
+                                .and_then(|p| p.parent().map(Path::to_path_buf)),
+                            state.from_gallery.clone(),
+                            settings.ytdlp_last_folder.clone(),
+                        );
+                        crate::ytdlp::panel_ui(&mut state.ytdlp, settings, dest, ui, tx);
+                        // Insertar = Aceptar neutro (mismo lienzo 1920×1080
+                        // con fondo): el builder extrae el póster.
+                        if let Some(path) = state.ytdlp.pending_insert.take() {
+                            let title = path
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "Clip".to_owned());
+                            let accept = crate::ytdlp::edit::default_accept(
+                                path,
+                                title,
+                                settings.ytdlp_canvas_size,
+                            );
+                            let _ = tx.send(crate::loader::AppMsg::YtdlpEditAccepted(accept));
+                        }
+                        crate::ytdlp::open_pending_edit(
+                            &mut state.ytdlp,
+                            &state.doc,
+                            settings.ytdlp_canvas_size,
+                            tx,
+                            &ui.ctx().clone(),
+                        );
+                        crate::ytdlp::retry_pending_frames(&mut state.ytdlp, tx, &ui.ctx().clone());
+                        if let Some(accept) =
+                            crate::ytdlp::edit_window_ui(&mut state.ytdlp, settings, ui)
+                        {
+                            let _ = tx.send(crate::loader::AppMsg::YtdlpEditAccepted(accept));
+                        }
                     }
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);

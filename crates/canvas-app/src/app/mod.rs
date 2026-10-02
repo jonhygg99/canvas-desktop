@@ -73,6 +73,11 @@ pub(crate) enum Nav {
     NewDesignInFolder {
         seed: deck::DeckSeed,
     },
+    /// Abrir un vídeo del Download en un lienzo nuevo del tamaño elegido,
+    /// con trim/blur/zoom aplicados.
+    OpenVideo {
+        accept: crate::ytdlp::VideoAccept,
+    },
 }
 
 /// Qué hay pendiente de decidir detrás de un diálogo «¿guardar los

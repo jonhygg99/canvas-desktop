@@ -45,7 +45,10 @@ pub use serper_ops::{
     spawn_serper_thumb, BulkItem, SerperImageRequest,
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
-pub use ytdlp_ops::{spawn_ytdlp_download, YtdlpDownloadRequest};
+pub use ytdlp_ops::{
+    spawn_ytdlp_delete, spawn_ytdlp_download, spawn_ytdlp_frames, YtdlpDownloadRequest,
+    YtdlpFramesOutcome,
+};
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -329,6 +332,21 @@ pub enum AppMsg {
         paths: Vec<PathBuf>,
         errors: Vec<String>,
     },
+    /// Rutas mandadas a la papelera desde el Download (borrado unitario o
+    /// Clear): las que salieron y los fallos redactados.
+    YtdlpFilesDeleted {
+        removed: Vec<PathBuf>,
+        errors: Vec<String>,
+    },
+    /// Fotogramas de vista previa listos para el editor.
+    YtdlpFramesReady(YtdlpFramesOutcome),
+    /// La vista previa falló (guía visible en la ventana).
+    YtdlpFramesFailed {
+        clip_id: String,
+        error: String,
+    },
+    /// Aceptar de la ventana Editar: crear el lienzo nuevo con estos params.
+    YtdlpEditAccepted(crate::ytdlp::VideoAccept),
 }
 
 /// Qué decidió el usuario en un diálogo «¿guardar los cambios?».

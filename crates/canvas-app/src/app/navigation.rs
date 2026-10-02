@@ -258,7 +258,114 @@ impl AppInner {
             }
             Nav::NewDesign => self.new_design(ws, ctx),
             Nav::NewDesignInFolder { seed } => self.new_design_in_folder(ws, seed, ctx),
+            Nav::OpenVideo { accept } => self.open_video_canvas(ws, accept, ctx),
         }
+    }
+
+    /// Abre un vídeo del Download en un lienzo nuevo del tamaño aceptado:
+    /// vídeo en contain (sin expandir ni recortar) + fondo desenfocado
+    /// detrás si hay blur (receta imágenes), trim aplicado (lo pide el
+    /// Aceptar de Editar).
+    fn open_video_canvas(
+        &mut self,
+        ws: &mut Workspace,
+        accept: crate::ytdlp::VideoAccept,
+        ctx: &egui::Context,
+    ) {
+        let fail = |ws: &mut Workspace, msg: String| {
+            if let View::Editor(state) = &mut ws.view {
+                state.ytdlp.error = Some(msg);
+            }
+        };
+        // Póster del worker si existe; si no (vía Insertar), se extrae el
+        // frame del trim (un ffmpeg, solo esta vía).
+        let poster = if accept.poster.is_file() {
+            canvas_io::load_image(&accept.poster)
+        } else {
+            canvas_io::load_video_frame(&accept.path, accept.trim_start)
+        };
+        let Ok(poster) = poster else {
+            fail(
+                ws,
+                "Could not read the video. Open the editor again.".to_owned(),
+            );
+            return;
+        };
+        let (vw, vh) = accept
+            .video_size
+            .or_else(|| {
+                canvas_io::probe_video_size(&accept.path)
+                    .ok()
+                    .map(|(w, h, _)| (f64::from(w), f64::from(h)))
+            })
+            .unwrap_or((f64::from(poster.width), f64::from(poster.height)));
+        let duration = canvas_io::probe_video_size(&accept.path)
+            .ok()
+            .and_then(|(_, _, d)| d);
+        let (pw, ph) = accept.size;
+        let mut state = editor::EditorState::new_blank_image(pw, ph);
+        let name = accept
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| accept.title.clone());
+        let pixels = canvas_render::image_data_from_rgba(poster.rgba, poster.width, poster.height);
+        // Fondo cover desenfocado detrás (fijo, receta imágenes).
+        if accept.blur_radius > 0.0 {
+            let bg_content = canvas_core::LayerContent::Image(canvas_core::ImageContent {
+                source_path: None,
+                natural_width: poster.width,
+                natural_height: poster.height,
+                crop: None,
+            });
+            let bg_transform = canvas_core::cover_transform(vw, vh, pw, ph);
+            let Ok(bg_id) = state
+                .doc
+                .add_layer("Blurred background", bg_transform, bg_content)
+            else {
+                fail(ws, "Could not create the canvas.".to_owned());
+                return;
+            };
+            if let Ok(bg) = state.doc.layer_mut(bg_id) {
+                bg.effects.blur_radius = accept.blur_radius;
+            }
+            state.images.insert(bg_id, pixels.clone());
+            state.background_layer = Some(bg_id);
+        }
+        let content = canvas_core::VideoContent {
+            source_path: Some(accept.path.clone()),
+            natural_width: vw as u32,
+            natural_height: vh as u32,
+            crop: None,
+            duration_secs: duration,
+            poster_time: accept.trim_start,
+            trim_start: accept.trim_start,
+            trim_end: accept.trim_end,
+        };
+        let transform = crate::ytdlp::edit::zoom_transform(vw, vh, pw, ph, accept.zoom);
+        let id =
+            match state
+                .doc
+                .add_layer(name, transform, canvas_core::LayerContent::Video(content))
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    fail(ws, format!("Could not create the canvas: {e}"));
+                    return;
+                }
+            };
+        state.images.insert(id, pixels);
+        state.selection = canvas_core::Selection::single(id);
+        ws.deck = deck::Deck::single(accept.path.clone());
+        self.apply_deck_prefs(ws);
+        state.from_gallery = ws.deck.folder.clone();
+        state.sidecar_enabled = self.settings.sidecar_default;
+        self.remember_page_size(ws, &state.doc);
+        // El tamaño elegido también vale para la próxima.
+        self.settings.ytdlp_canvas_size = accept.size;
+        self.settings.save_in_background();
+        ws.view = View::Editor(Box::new(state));
+        self.sync_title(ctx, ws);
     }
 
     /// Navega un workspace, pero si hay algún lienzo con cambios sin guardar
@@ -291,6 +398,14 @@ impl AppInner {
             Nav::CloseProject => "the Welcome screen".to_owned(),
             Nav::NewDesign => "a new design".to_owned(),
             Nav::NewDesignInFolder { .. } => "a new design".to_owned(),
+            Nav::OpenVideo { accept } => format!(
+                "\"{}\"",
+                accept
+                    .path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| accept.path.display().to_string())
+            ),
         };
         let description = unsaved_dialog_description(&names, &format!("opening {target}"));
         let tx = ws.tx.clone();

@@ -237,6 +237,14 @@ impl AppInner {
                 paths,
                 errors,
             } => self.on_ytdlp_done(ws, folder, paths, errors, ctx),
+            AppMsg::YtdlpFilesDeleted { removed, errors } => {
+                self.on_ytdlp_files_deleted(ws, removed, errors)
+            }
+            AppMsg::YtdlpFramesReady(done) => self.on_ytdlp_frames_ready(ws, done),
+            AppMsg::YtdlpFramesFailed { clip_id, error } => {
+                self.on_ytdlp_frames_failed(ws, clip_id, error)
+            }
+            AppMsg::YtdlpEditAccepted(accept) => self.on_ytdlp_edit_accepted(ws, accept, ctx),
         }
     }
 

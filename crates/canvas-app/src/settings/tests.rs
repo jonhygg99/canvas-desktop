@@ -97,6 +97,13 @@ fn new_canvas_default_is_full_hd() {
     assert_eq!(AppSettings::default().last_page_size, (1920.0, 1080.0));
 }
 
+#[test]
+fn ytdlp_defaults_download_anywhere_and_full_hd() {
+    let s = AppSettings::default();
+    assert_eq!(s.ytdlp_last_folder, None);
+    assert_eq!(s.ytdlp_canvas_size, (1920.0, 1080.0));
+}
+
 // ——— Escritor serial (A10): un snapshot viejo nunca sobrescribe a uno nuevo ———
 
 use super::writer::{run_writer, write_snapshot};

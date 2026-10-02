@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Panel {
     /// URLs pegadas (una por línea o separadas por espacios).
     pub urls: String,
@@ -19,4 +19,11 @@ pub struct Panel {
     pub error: Option<String>,
     /// Rutas descargadas en la última tanda (para mostrarlas).
     pub done: Vec<PathBuf>,
+    /// Clip pendiente de insertar al canvas (lo pide el botón Insertar; lo
+    /// lanza `layers_panel` con el canal a mano).
+    pub pending_insert: Option<PathBuf>,
+    /// Clip pendiente de editar: abre la ventana de edición.
+    pub pending_edit: Option<PathBuf>,
+    /// Sesión de edición abierta (`None` = ventana cerrada).
+    pub edit: Option<super::edit::VideoEdit>,
 }
