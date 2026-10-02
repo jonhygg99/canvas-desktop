@@ -43,6 +43,7 @@ impl EditorState {
             content_edit: None,
             shadow_edit: None,
             saving: false,
+            saving_capture: None,
             exporting: false,
             save_error: None,
             from_gallery: None,

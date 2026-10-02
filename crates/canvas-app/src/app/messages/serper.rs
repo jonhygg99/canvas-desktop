@@ -8,6 +8,17 @@ use eframe::egui;
 
 use super::super::{AppInner, Nav, View, Workspace};
 
+/// Respuesta del bulk web ya extraída del `AppMsg`: agrupa los campos que
+/// viajarían sueltos (convención del repo, nada de
+/// `#[allow(too_many_arguments)]`; mismo patrón que `SerperSearchMsg`).
+pub(super) struct SerperBulkDoneMsg {
+    pub(super) folder: std::path::PathBuf,
+    pub(super) created: Vec<std::path::PathBuf>,
+    pub(super) errors: Vec<String>,
+    /// Cuántos lienzos usan píxeles de rescate en vez de la URL directa.
+    pub(super) substituted: usize,
+}
+
 /// Respuesta de UNA búsqueda web ya extraída del `AppMsg`: agrupa los cinco
 /// campos que viajarían sueltos (convención del repo, nada de
 /// `#[allow(too_many_arguments)]`).
@@ -74,6 +85,9 @@ impl AppInner {
             return;
         };
         let panel = &mut state.serper;
+        // La respuesta llegó (sea lo que sea): libera su plaza en el tope
+        // de descargas en vuelo, incluso si la foto ya no está (A11).
+        panel.note_thumb_arrived(&id);
         let pos = panel.photos.iter().position(|p| p.photo.id == id);
         let Some(pos) = pos else {
             return;
@@ -94,10 +108,20 @@ impl AppInner {
             }
             Err(crate::serper::SerperError::FilteredBanner) => {
                 // Banner cazado con las dimensiones reales: la tarjeta se
-                // retira en silencio y cuenta como filtrada.
-                panel.photos.remove(pos);
-                panel.bulk_selected.remove(&id);
-                panel.filtered_post += 1;
+                // retira en silencio y cuenta como filtrada. A mitad de un
+                // gesto (puntero pulsado) la retirada se APLAZA (A02): quitar
+                // una tarjeta recoloca el masonry y otra puede heredar la
+                // identidad del checkbox pulsado. Se marca como error y se
+                // retira cuando el gesto termine.
+                let interacting = ctx.input(|i| i.pointer.primary_down());
+                if interacting {
+                    panel.photos[pos].thumb_error =
+                        Some(crate::serper::SerperError::FilteredBanner.to_string());
+                } else {
+                    panel.photos.remove(pos);
+                    panel.bulk_selected.remove(&id);
+                    panel.filtered_post += 1;
+                }
             }
             Err(e) => {
                 tracing::warn!("miniatura web {id} falló: {e}");
@@ -111,14 +135,59 @@ impl AppInner {
         ws: &mut Workspace,
         id: String,
         label: String,
-        result: Result<canvas_io::LoadedImage, crate::serper::SerperError>,
+        result: Result<crate::serper::FetchedImage, crate::serper::SerperError>,
+        target: crate::loader::ImageInsertTarget,
     ) {
         let View::Editor(state) = &mut ws.view else {
             return;
         };
-        state.serper.inserting = None;
+        // A07: la respuesta solo vale para el destino que la pidió. Si el
+        // usuario saltó de lienzo, cambió de proyecto o cerró entre medias,
+        // se descarta en vez de insertarse en otro documento. Los flags se
+        // limpian SOLO si pertenecen a esta respuesta (nunca a una petición
+        // posterior), y el `pending_drop` muerto se retira con ella.
+        let slot_id = ws.deck.slots.get(ws.deck.active).map(|s| s.id);
+        let valid = crate::loader::insert_target_current(
+            state.serper.insert_target.as_ref(),
+            &target,
+            ws.deck.generation(),
+            slot_id,
+        );
+        if state
+            .serper
+            .insert_target
+            .as_ref()
+            .is_some_and(|t| t.seq == target.seq)
+        {
+            state.serper.inserting = None;
+            state.serper.insert_target = None;
+        }
+        if !valid {
+            tracing::info!("inserción web {id} descartada: el destino cambió durante la descarga");
+            if state
+                .serper
+                .pending_drop
+                .as_ref()
+                .is_some_and(|(pid, _)| *pid == target.photo_id)
+            {
+                state.serper.pending_drop = None;
+            }
+            return;
+        }
         match result {
-            Ok(img) => {
+            Ok(fetched) => {
+                // A08: si los píxeles vinieron de un rescate (`og:image` o
+                // thumb) en vez de la URL directa, puede ser OTRA foto: se
+                // inserta igual pero se avisa con la fuente real, nunca en
+                // silencio.
+                if fetched.substituted(&id) {
+                    state.save_error = Some(format!(
+                        "Web insert used a fallback source (the direct link failed): {} — \
+                         please check the new layer shows the image you chose.",
+                        fetched.resolved_url
+                    ));
+                }
+                let img = fetched.image;
                 // Si llegó tras un ARRASTRE, cae en la posición de la
                 // soltada; si no, centrada (clic).
                 if let Some((drop_id, pos)) = state.serper.pending_drop.take() {
@@ -152,12 +221,16 @@ impl AppInner {
     pub(super) fn on_serper_bulk_done(
         &mut self,
         ws: &mut Workspace,
-        folder: std::path::PathBuf,
-        created: Vec<std::path::PathBuf>,
-        errors: Vec<String>,
+        msg: SerperBulkDoneMsg,
         ctx: &egui::Context,
         open_after: &mut Option<Nav>,
     ) {
+        let SerperBulkDoneMsg {
+            folder,
+            created,
+            errors,
+            substituted,
+        } = msg;
         let View::Editor(state) = &mut ws.view else {
             return;
         };
@@ -178,7 +251,16 @@ impl AppInner {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| folder.display().to_string());
-            format!("Created {ok} canvases in {name}.")
+            // A08: las sustituciones por rescate nunca son silenciosas.
+            let fallback_note = if substituted == 0 {
+                String::new()
+            } else {
+                format!(
+                    " {substituted} of them used a fallback image source \
+                     (the direct link failed) — please review."
+                )
+            };
+            format!("Created {ok} canvases in {name}.{fallback_note}")
         });
         // Al terminar con éxito se cierra el Select para ver los lienzos.
         if ok == 0 {

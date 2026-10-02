@@ -109,6 +109,7 @@ pub fn canvas_ui(
         deck,
         page_dims,
         state.viewport.needs_fit,
+        state.viewport.zoom,
         &mut state.viewport.pan,
     );
 
@@ -250,17 +251,28 @@ pub fn canvas_ui(
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             let (px, py) = screen_to_page(&state.viewport, slot_rect, pos);
             let page_pos = (px.clamp(0.0, page_dims.0), py.clamp(0.0, page_dims.1));
+            // Destino sellado aquí (A07): si el usuario salta de lienzo
+            // antes de que termine la descarga, la imagen no debe caer en
+            // otro documento.
+            let dest = crate::loader::ImageInsertDest {
+                generation: deck.generation(),
+                slot_id: deck.slots.get(deck.active).map_or(u64::MAX, |s| s.id),
+            };
             state
                 .serper
-                .drop_on_canvas((*payload).clone(), page_pos, ctx.tx, ui.ctx());
+                .drop_on_canvas((*payload).clone(), page_pos, dest, ctx.tx, ui.ctx());
         }
     } else if let Some(payload) = response.dnd_release_payload::<crate::unsplash::DragUnsplash>() {
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             let (px, py) = screen_to_page(&state.viewport, slot_rect, pos);
             let page_pos = (px.clamp(0.0, page_dims.0), py.clamp(0.0, page_dims.1));
+            let dest = crate::loader::ImageInsertDest {
+                generation: deck.generation(),
+                slot_id: deck.slots.get(deck.active).map_or(u64::MAX, |s| s.id),
+            };
             state
                 .unsplash
-                .drop_on_canvas((*payload).clone(), page_pos, ctx.tx, ui.ctx());
+                .drop_on_canvas((*payload).clone(), page_pos, dest, ctx.tx, ui.ctx());
         }
     } else if response
         .dnd_hover_payload::<crate::unsplash::DragUnsplash>()

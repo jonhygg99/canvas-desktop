@@ -149,11 +149,18 @@ pub(super) fn show_panels(
                 }
             } else {
                 ui.add_enabled_ui(!locked, |ui| {
+                    // Destino de inserción web/Unsplash (A07): la ranura
+                    // activa de ESTA baraja en ESTA generación.
+                    let insert_dest = crate::loader::ImageInsertDest {
+                        generation: f.deck.generation(),
+                        slot_id: f.deck.slots.get(f.deck.active).map_or(u64::MAX, |s| s.id),
+                    };
                     let new_order = layers_panel::left_panel_ui(
                         state,
                         ui,
                         &mut *f.settings,
                         f.deck.folder.clone(),
+                        insert_dest,
                         f.tx,
                     );
                     if let Some(new_order) = new_order {

@@ -47,6 +47,7 @@ fn blank_slot_doc(w: f64, h: f64) -> SlotDoc {
         is_design: false,
         source_metadata: None,
         saving: false,
+        saving_capture: None,
         save_error: None,
         external_change: false,
         born_blank: false,

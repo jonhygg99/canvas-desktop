@@ -445,45 +445,97 @@ fn unescape_min(s: &str) -> String {
 /// 2. `og:image` de esa misma página (las `lookaside…/crawler/` son HTML),
 /// 3. `og:image` de la página del post enlazado (`post_url`, el `link` de
 ///    Serper: perfil o `/p/…`),
-/// 4. `thumb_url` (proxy de Google, baja resolución pero fiable).
+/// 4. `thumb_url` (proxy de Google, baja resolución pero fiable: es la
+///    miniatura que el usuario ya vio en la tarjeta).
 ///
 /// Si la URL no es social, solo se intenta la descarga directa: nada de
 /// peticiones extra. Solo se llama desde hilos worker.
+///
+/// El rescate corre tanto si la descarga directa FALLA (403/404/red) como
+/// si trae HTML que no decodifica: antes, un error de descarga salía por
+/// `?` sin intentar ningún nivel. Y el resultado dice QUÉ url produjo los
+/// píxeles (A08): un `og:image` de perfil puede ser OTRA foto, y aceptarlo
+/// en silencio inserta la imagen equivocada.
 pub fn fetch_image(
     url: &str,
     post_url: Option<&str>,
-) -> Result<canvas_io::LoadedImage, SerperError> {
-    let bytes = download(url)?;
-    match decode(&bytes) {
-        Ok(img) => Ok(img),
-        Err(first_err) => {
+    thumb_url: Option<&str>,
+) -> Result<FetchedImage, SerperError> {
+    let (own_html, mut last_err) = match download(url) {
+        Ok(bytes) => match decode(&bytes) {
+            Ok(image) => {
+                return Ok(FetchedImage {
+                    image,
+                    resolved_url: url.to_owned(),
+                })
+            }
+            Err(e) => (String::from_utf8_lossy(&bytes).into_owned(), e),
+        },
+        Err(e) => {
             if social_referer(url).is_none() {
-                return Err(first_err);
+                return Err(e);
             }
-            let html = String::from_utf8_lossy(&bytes);
-            // Nivel 2: og:image de la propia página.
-            if let Some(og) = og_image_url(&html) {
-                if let Ok(og_bytes) = download(&og) {
-                    if let Ok(img) = decode(&og_bytes) {
-                        return Ok(img);
-                    }
-                }
-            }
-            // Nivel 3: og:image de la página del post enlazado.
-            if let Some(post) = post_url {
-                if let Ok(post_bytes) = download(post) {
-                    let post_html = String::from_utf8_lossy(&post_bytes);
-                    if let Some(og) = og_image_url(&post_html) {
-                        if let Ok(og_bytes) = download(&og) {
-                            if let Ok(img) = decode(&og_bytes) {
-                                return Ok(img);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(first_err)
+            (String::new(), e)
         }
+    };
+    // Nivel 2: og:image de la propia página (solo si trajo HTML).
+    if !own_html.is_empty() {
+        if let Some(og) = og_image_url(&own_html) {
+            match download(&og).and_then(|bytes| decode(&bytes)) {
+                Ok(image) => {
+                    return Ok(FetchedImage {
+                        image,
+                        resolved_url: og,
+                    })
+                }
+                Err(e) => last_err = e,
+            }
+        }
+    }
+    // Nivel 3: og:image de la página del post enlazado.
+    if let Some(post) = post_url {
+        if let Ok(post_bytes) = download(post) {
+            let post_html = String::from_utf8_lossy(&post_bytes);
+            if let Some(og) = og_image_url(&post_html) {
+                match download(&og).and_then(|bytes| decode(&bytes)) {
+                    Ok(image) => {
+                        return Ok(FetchedImage {
+                            image,
+                            resolved_url: og,
+                        })
+                    }
+                    Err(e) => last_err = e,
+                }
+            }
+        }
+    }
+    // Nivel 4: la miniatura ya mostrada (WYSIWYG aunque sea baja resolución).
+    if let Some(thumb) = thumb_url.filter(|u| !u.trim().is_empty()) {
+        match download(thumb).and_then(|bytes| decode(&bytes)) {
+            Ok(image) => {
+                return Ok(FetchedImage {
+                    image,
+                    resolved_url: thumb.to_owned(),
+                })
+            }
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+/// Imagen descargada + la URL que produjo sus píxeles (A08). Si
+/// `resolved_url` difiere de la pedida, hubo sustitución (`og:image` o
+/// thumb) y el llamador debe hacerlo visible, nunca aceptarlo en silencio.
+pub struct FetchedImage {
+    pub image: canvas_io::LoadedImage,
+    pub resolved_url: String,
+}
+
+impl FetchedImage {
+    /// ¿Vienen los píxeles de otra URL distinta de la pedida?
+    pub fn substituted(&self, requested_url: &str) -> bool {
+        self.resolved_url != requested_url
     }
 }
 

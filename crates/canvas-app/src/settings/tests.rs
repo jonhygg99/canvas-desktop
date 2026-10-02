@@ -97,6 +97,66 @@ fn new_canvas_default_is_full_hd() {
     assert_eq!(AppSettings::default().last_page_size, (1920.0, 1080.0));
 }
 
+// ——— Escritor serial (A10): un snapshot viejo nunca sobrescribe a uno nuevo ———
+
+use super::writer::{run_writer, write_snapshot};
+
+fn settings_with_quality_jpeg(quality: u8) -> AppSettings {
+    AppSettings {
+        jpeg_quality: quality,
+        ..AppSettings::default()
+    }
+}
+
+#[test]
+fn write_snapshot_round_trips_through_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("sub").join("settings.json");
+    let before = settings_with_quality_jpeg(70);
+    write_snapshot(&path, &before);
+    let text = std::fs::read_to_string(&path).expect("escrito");
+    let back: AppSettings = serde_json::from_str(&text).expect("parseable");
+    assert!(back == before, "el disco debe guardar el snapshot tal cual");
+}
+
+#[test]
+fn serial_writer_keeps_only_the_newest_revision() {
+    // A10: dos snapshots encolados seguidos (el viejo aún sin escribir
+    // cuando llega el nuevo) dejan en disco el NUEVO, nunca el viejo.
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc,
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("settings.json");
+    let (tx, rx) = mpsc::channel();
+    let done = Arc::new(AtomicU64::new(0));
+    std::thread::spawn({
+        let done = Arc::clone(&done);
+        let path = Some(path.clone());
+        move || run_writer(rx, done, path)
+    });
+    tx.send((1, settings_with_quality_jpeg(11)))
+        .expect("enviar rev 1");
+    tx.send((2, settings_with_quality_jpeg(77)))
+        .expect("enviar rev 2");
+    drop(tx);
+    let start = std::time::Instant::now();
+    while done.load(Ordering::SeqCst) < 2 {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "el escritor no drenó la cola"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let text = std::fs::read_to_string(&path).expect("escrito");
+    let back: AppSettings = serde_json::from_str(&text).expect("parseable");
+    assert_eq!(
+        back.jpeg_quality, 77,
+        "en disco debe quedar la revisión nueva, no la vieja"
+    );
+}
+
 #[test]
 fn a_partial_settings_json_fills_the_missing_fields_with_defaults() {
     // `#[serde(default)]`: un JSON antiguo o incompleto no debe romper

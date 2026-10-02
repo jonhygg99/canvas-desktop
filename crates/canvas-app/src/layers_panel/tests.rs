@@ -1353,7 +1353,11 @@ fn left_panel_renders_every_tab_without_panicking() {
                 ..Default::default()
             },
             |ui| {
-                let _ = left_panel_ui(&mut state, ui, &mut settings, None, &tx);
+                let insert_dest = crate::loader::ImageInsertDest {
+                    generation: 0,
+                    slot_id: 0,
+                };
+                let _ = left_panel_ui(&mut state, ui, &mut settings, None, insert_dest, &tx);
             },
         );
         assert!(

@@ -43,7 +43,7 @@ pub use save_ops::{
 };
 pub use serper_ops::{
     begin_bulk_files, default_bulk_dir, resolve_bulk_page, spawn_serper_image, spawn_serper_search,
-    spawn_serper_thumb, BulkItem,
+    spawn_serper_thumb, BulkItem, SerperImageRequest,
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
 pub use video_ops::spawn_video_frame;
@@ -72,9 +72,9 @@ impl From<canvas_io::OpenOutcome> for LoadOutcome {
 }
 
 /// Resultado de una operación de archivos de la galería (crear, duplicar,
-/// pegar): lo que transporta `AppMsg::GalleryOpDone`. Agrupa en un valor con
-/// nombre los cuatro campos que antes viajaban como parámetros sueltos de
-/// `on_gallery_op_done`.
+// pegar): lo que transporta `AppMsg::GalleryOpDone`. Agrupa en un valor con
+// nombre los cuatro campos que antes viajaban como parámetros sueltos de
+// `on_gallery_op_done`.
 #[derive(Debug)]
 pub struct GalleryOpOutcome {
     /// Carpeta sobre la que se hizo la operación (para el rescan).
@@ -85,6 +85,44 @@ pub struct GalleryOpOutcome {
     pub result: Result<(), IoError>,
     /// Si venía de «✚ New design», abre el archivo recién creado.
     pub open: bool,
+}
+
+/// Destino de una inserción de imagen pedida desde un panel (clic o
+/// arrastre): generación de la baraja + id estable de la ranura activa en el
+/// momento del clic. Se captura donde hay baraja a mano (el lienzo o la tira
+/// de paneles) y viaja con la petición; el handler solo aplica la imagen si
+/// el destino sigue vigente (A07).
+#[derive(Debug, Clone, Copy)]
+pub struct ImageInsertDest {
+    pub generation: u64,
+    pub slot_id: u64,
+}
+
+/// Identidad completa de una inserción asíncrona de imagen (Unsplash/Serper):
+/// destino + nº de petición del panel + foto pedida. No se usa la URL como
+/// identidad: dos peticiones seguidas con la misma URL son indistinguibles
+/// por URL pero tienen distinto `seq` (A07).
+#[derive(Debug, Clone)]
+pub struct ImageInsertTarget {
+    pub dest: ImageInsertDest,
+    pub seq: u64,
+    pub photo_id: String,
+}
+
+/// ¿Sigue vigente el destino de una respuesta de inserción? Pura y
+/// testeable: la petición pendiente del panel debe ser esta misma (`seq` +
+/// foto) Y la baraja debe seguir en la misma generación con la misma ranura
+/// activa. Si el usuario saltó de lienzo, cambió de proyecto o cerró entre
+/// medias, la respuesta se descarta en vez de insertarse en otro documento.
+pub fn insert_target_current(
+    pending: Option<&ImageInsertTarget>,
+    msg: &ImageInsertTarget,
+    generation: u64,
+    slot_id: Option<u64>,
+) -> bool {
+    pending.is_some_and(|t| t.seq == msg.seq && t.photo_id == msg.photo_id)
+        && msg.dest.generation == generation
+        && Some(msg.dest.slot_id) == slot_id
 }
 
 pub enum AppMsg {
@@ -128,6 +166,8 @@ pub enum AppMsg {
         id: String,
         label: String,
         result: Result<LoadedImage, crate::unsplash::UnsplashError>,
+        /// Destino que la pidió (A07): solo se inserta si sigue vigente.
+        target: ImageInsertTarget,
     },
     /// Resultado de UNA llamada web/Serper (1 token = 1 página de hasta
     /// 100 fotos ya filtradas). `seq` descarta respuestas caducas y
@@ -150,7 +190,9 @@ pub enum AppMsg {
     SerperImageReady {
         id: String,
         label: String,
-        result: Result<LoadedImage, crate::serper::SerperError>,
+        result: Result<crate::serper::FetchedImage, crate::serper::SerperError>,
+        /// Destino que la pidió (A07): solo se inserta si sigue vigente.
+        target: ImageInsertTarget,
     },
     /// Progreso de la creación masiva web (hechas, total).
     SerperBulkProgress {
@@ -162,6 +204,9 @@ pub enum AppMsg {
         folder: PathBuf,
         created: Vec<PathBuf>,
         errors: Vec<String>,
+        /// Cuántos lienzos usan píxeles de rescate en vez de la URL directa
+        /// (A08): se avisa en el mensaje final.
+        substituted: usize,
     },
     SaveAsPicked(Option<PathBuf>),
     Saved {
@@ -217,7 +262,10 @@ pub enum AppMsg {
         folder: PathBuf,
         generation: u64,
         path: PathBuf,
-        result: Result<crate::deck::SlotDoc, IoError>,
+        // En caja a propósito: `SlotDoc` (documento + píxeles + historial)
+        // es la variante grande de `AppMsg` y viaja por valor por el canal —
+        // sin el `Box`, clippy `large_enum_variant` falla con `-D warnings`.
+        result: Result<Box<crate::deck::SlotDoc>, IoError>,
     },
     /// Nombre reservado en disco para una ranura PROVISIONAL de la baraja
     /// que el usuario acaba de empezar a editar. Solo reserva: el archivo se

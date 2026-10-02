@@ -52,13 +52,17 @@ pub(super) fn handle_save(
         if !state.is_dirty() {
             // Un guardado sin cambios no reescribe nada: en JPEG,
             // recomprimir sin motivo costaría calidad. Si veníamos de un
-            // diálogo de cerrar/volver, su flujo continúa.
+            // diálogo de cerrar/volver, su flujo continúa — salvo que la
+            // cola de «Save all» siga con fondo por guardar (A05): el
+            // diferido espera al drenaje en `on_saved`, no se adelanta aquí.
             tracing::info!("documento sin cambios: no se reescribe el archivo");
-            if f.save.close_after_save {
-                f.save.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else if let Some(nav) = f.save.after_save.take() {
-                *open_next = Some(nav);
+            if f.save.save_all_queue.is_empty() {
+                if f.save.close_after_save {
+                    f.save.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else if let Some(nav) = f.save.after_save.take() {
+                    *open_next = Some(nav);
+                }
             }
         } else if state.is_design {
             // Un diseño no se rasteriza: no hay nada destructivo que

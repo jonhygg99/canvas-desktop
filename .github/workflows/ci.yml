@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Disparador manual para el job `gpu-bake` (Actions › Run workflow):
+  # sin esto, su condición `workflow_dispatch` nunca podía cumplirse (A12).
+  workflow_dispatch:
+    inputs:
+      run_gpu:
+        description: 'Ejecutar las pruebas GPU en el runner [self-hosted, gpu]'
+        required: false
+        default: true
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -84,18 +93,42 @@ jobs:
       - run: cargo check -p canvas-shell --target x86_64-unknown-linux-gnu --locked
       - run: cargo check -p canvas-shell --target x86_64-apple-darwin --locked
 
+  # El `rust-version` declarado (1.92, el máximo del árbol resuelto) se
+  # comprueba con esa toolchain exacta y `--locked`: el job `test` corre en
+  # stable y no detectaría una incompatibilidad con el mínimo (A13).
+  msrv:
+    name: msrv (Rust 1.92)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
+            libfontconfig1-dev
+      # `--all-targets` incluye dev-dependencies y examples: el suelo cubre
+      # tests y utilidades GPU, no solo la librería.
+      - run: cargo check --workspace --all-targets --locked
+
   # Los 11 tests GPU de canvas-render (tests/gpu_bake.rs) van #[ignore] en
   # el job `test`: los runners hospedados no tienen adaptador GPU real y los
   # shaders solo se pueden verificar con uno. Este job los ejecuta a demanda
-  # (Actions › Run workflow) en un runner propio con GPU etiquetado
-  # [self-hosted, gpu]; como nunca se dispara en push/PR, sin ese runner
+  # (Actions › Run workflow, entrada `run_gpu`) en un runner propio con GPU
+  # etiquetado [self-hosted, gpu]; no se dispara en push/PR, y sin ese runner
   # conectado simplemente no llega a existir. Es la pieza que el job `test`
   # no puede cubrir y que hoy solo se verifica localmente.
   gpu-bake:
     name: gpu bake (runner con GPU, a demanda)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gpu
     runs-on: [self-hosted, gpu]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p canvas-render --test gpu_bake -- --ignored
+      # `-- --ignored` ejecuta los 11 tests GPU (omitidos en el job `test`);
+      # la salida lista ejecutados vs omitidos explícitamente.
+      - run: cargo test -p canvas-render --test gpu_bake --locked -- --ignored

@@ -10,7 +10,7 @@ use crate::loader;
 
 use super::cache::{lru_insert, CachedPage, MEM_CAP};
 use super::filter::FilterCounts;
-use super::types::{SearchMode, SearchPage, SerperPhoto, TokenBudget};
+use super::types::{SearchMode, SearchPage, SearchRequest, SerperPhoto, TokenBudget};
 
 /// Tarjetas que revela cada pulsación de «Show more» local (sin coste: ya
 /// están descargadas, solo se muestran).
@@ -19,6 +19,11 @@ pub const SHOW_STEP: usize = 24;
 /// (ver `stalled`): el Done/resultado se perdió al cambiar de vista o el
 /// hilo murió sin avisar.
 pub const SEARCH_STALL_SECS: u64 = 120;
+/// Tope de descargas de miniaturas simultáneas del bulk (A11): cada una es
+/// un hilo + HTTP + decodificado + textura. Sin tope, abrir el selector con
+/// 200 resultados lanzaba cientos en pocos frames (12 por frame sin límite
+/// conjunto).
+pub const MAX_THUMB_INFLIGHT: usize = 16;
 /// Sin progreso del bulk en este tiempo, el vuelo se da por perdido.
 pub const BULK_STALL_SECS: u64 = 300;
 
@@ -60,6 +65,20 @@ pub struct Panel {
     pub budget_exhausted: bool,
     /// Id de la foto cuya imagen completa se está descargando para insertar.
     pub inserting: Option<String>,
+    /// Miniaturas con descarga en vuelo (reclamadas pero sin respuesta).
+    /// El bulk reclama hasta 12 por frame SIN tope simultáneo: con 200
+    /// resultados se lanzaban cientos de hilos/descargas en pocos frames
+    /// (A11). `claim_thumbs` no reclama más allá de `MAX_THUMB_INFLIGHT`;
+    /// cada respuesta (`on_serper_thumb`, sea éxito, banner o error) libera
+    /// su plaza con `note_thumb_arrived`.
+    pub thumb_inflight: HashSet<String>,
+    /// Contador de peticiones de inserción: cada clic/arrastre obtiene un
+    /// `seq` nuevo para que dos peticiones con la misma URL sean
+    /// distinguibles (A07).
+    pub insert_seq: u64,
+    /// Destino sellado de la inserción en vuelo (A07): el handler solo
+    /// inserta si la baraja sigue en esa generación con esa ranura activa.
+    pub insert_target: Option<loader::ImageInsertTarget>,
     /// Foto arrastrada y soltada sobre el lienzo: su id y la posición de
     /// página donde debe caer. Se consume en `on_serper_image_ready`; si es
     /// `None`, el clic inserta centrada.
@@ -93,6 +112,13 @@ pub struct Panel {
     pub synced_settings: bool,
     /// Ventana de selección masiva abierta.
     pub bulk_open: bool,
+    /// Búsqueda que produjo los resultados en pantalla (A09): keyword,
+    /// modo, bloqueados y tamaño de página SELLADOS al pulsar Search. El
+    /// cuadro de texto sigue siendo un borrador editable; «Bring more» y
+    /// los reintentos paginan sobre ESTA spec, nunca sobre el borrador —
+    /// si no, escribir B tras buscar A mezclaría la página 2 de B con los
+    /// resultados de A.
+    pub active_search: Option<ActiveSearch>,
     /// Ids seleccionados en la ventana masiva.
     pub bulk_selected: HashSet<String>,
     /// Guardado masivo en vuelo (hilo worker).
@@ -105,6 +131,12 @@ pub struct Panel {
     pub bulk_errors: Vec<String>,
     /// Mensaje de éxito del último guardado masivo.
     pub bulk_done_msg: Option<String>,
+    /// Reparto del masonry congelado mientras hay un gesto en curso (A02):
+    /// (nº de columnas, ids por columna). Si el puntero está pulsado, el
+    /// grid reutiliza este reparto en vez de recalcularlo con las alturas
+    /// recién llegadas, para que ninguna tarjeta herede la identidad de otra
+    /// a mitad de un clic.
+    pub bulk_layout_cache: Option<(usize, Vec<Vec<String>>)>,
 }
 
 /// Un resultado con su miniatura (si ya llegó del worker). El thumb se pide
@@ -137,15 +169,49 @@ impl PhotoItem {
     }
 }
 
+/// Especificación inmutable de la búsqueda en pantalla (A09). Se sella al
+/// pulsar Search y solo se sustituye con otro Search: paginar o reintentar
+/// nunca la re-derivan del borrador editable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveSearch {
+    pub keyword: String,
+    pub mode: SearchMode,
+    pub blocked: Vec<String>,
+    pub num: u32,
+}
+
+impl ActiveSearch {
+    /// Petición de la página `page` sobre esta spec (para «Bring more» y
+    /// reintentos): misma keyword, modo, bloqueados y tamaño que la
+    /// búsqueda original.
+    pub fn page_request(&self, page: u32, seq: u64) -> SearchRequest {
+        SearchRequest {
+            keyword: self.keyword.clone(),
+            page,
+            num: self.num,
+            blocked: self.blocked.clone(),
+            mode: self.mode,
+            seq,
+        }
+    }
+
+    /// Clave de caché de una página de esta spec.
+    pub fn cache_key(&self, page: u32) -> String {
+        super::cache::cache_key(&self.keyword, &self.blocked, page, self.num, self.mode)
+    }
+}
+
 /// Payload del arrastre de una foto web hacia el lienzo: lo que el canvas
 /// necesita para lanzar la descarga si la sueltan sobre él (`post_url`
-/// rescata vía `og:image` si la directa es una página embed social).
+/// rescata vía `og:image` si la directa es una página embed social,
+/// `thumb_url` es el último nivel del rescate, A08).
 #[derive(Clone)]
 pub struct DragSerper {
     pub id: String,
     pub label: String,
     pub url: String,
     pub post_url: String,
+    pub thumb_url: Option<String>,
 }
 
 impl Panel {
@@ -165,6 +231,7 @@ impl Panel {
         self.reset_flight();
         self.tokens_spent = 0;
         self.page = 0;
+        self.active_search = None;
         self.photos.clear();
         self.error = None;
         self.reached_end = false;
@@ -219,6 +286,8 @@ impl Panel {
         self.bulk_done_msg = None;
         self.bulk_errors.clear();
         self.bulk_selected = self.photos.iter().map(|p| p.photo.id.clone()).collect();
+        // Reparto fresco en la próxima apertura (A02).
+        self.bulk_layout_cache = None;
     }
 
     /// Marca todo / desmarca todo en la ventana masiva.
@@ -231,14 +300,17 @@ impl Panel {
     }
 
     /// Reclama hasta `budget` thumbs pendientes (tope por frame del bulk):
-    /// marca y devuelve (id, url de thumb, post) para lanzar.
+    /// marca y devuelve (id, url de thumb, post) para lanzar. Además no
+    /// supera `MAX_THUMB_INFLIGHT` descargas simultáneas (A11): con la cola
+    /// llena no se reclama nada hasta que lleguen respuestas.
     pub fn claim_thumbs(&mut self, budget: usize) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
         for item in self.photos.iter_mut() {
-            if out.len() >= budget {
+            if out.len() >= budget || self.thumb_inflight.len() >= MAX_THUMB_INFLIGHT {
                 break;
             }
             if item.claim_thumb() {
+                self.thumb_inflight.insert(item.photo.id.clone());
                 out.push((
                     item.photo.id.clone(),
                     item.photo.thumb_source(),
@@ -247,6 +319,12 @@ impl Panel {
             }
         }
         out
+    }
+
+    /// Registra la llegada de una miniatura (éxito, banner filtrado o error):
+    /// libera su plaza en el tope de descargas en vuelo (A11).
+    pub fn note_thumb_arrived(&mut self, id: &str) {
+        self.thumb_inflight.remove(id);
     }
 
     /// Busca una página en la caché de memoria (sin gastar nada).
@@ -321,8 +399,32 @@ impl Panel {
                 width: p.photo.width,
                 height: p.photo.height,
                 post_url: p.photo.source_url.clone(),
+                thumb_url: p.photo.thumb_url.clone(),
             })
             .collect()
+    }
+
+    /// Sella una petición de inserción (A07): si no hay otra en vuelo,
+    /// reserva un nº de petición nuevo, guarda el destino y devuelve el
+    /// target que viajará con el spawn y su respuesta. `None` si hay una
+    /// descarga en vuelo (el llamante no hace nada, como antes).
+    pub fn begin_insert(
+        &mut self,
+        dest: loader::ImageInsertDest,
+        photo_id: &str,
+    ) -> Option<loader::ImageInsertTarget> {
+        if self.inserting.is_some() {
+            return None;
+        }
+        let target = loader::ImageInsertTarget {
+            dest,
+            seq: self.insert_seq,
+            photo_id: photo_id.to_owned(),
+        };
+        self.insert_seq = self.insert_seq.wrapping_add(1);
+        self.inserting = Some(photo_id.to_owned());
+        self.insert_target = Some(target.clone());
+        Some(target)
     }
 
     /// Una foto web se ha soltado sobre el lienzo en `page_pos`: recuerda
@@ -332,19 +434,23 @@ impl Panel {
         &mut self,
         payload: DragSerper,
         page_pos: (f64, f64),
+        dest: loader::ImageInsertDest,
         tx: &Sender<loader::AppMsg>,
         ctx: &egui::Context,
     ) {
-        if self.inserting.is_some() {
+        let Some(target) = self.begin_insert(dest, &payload.id) else {
             return;
-        }
-        self.inserting = Some(payload.id.clone());
+        };
         self.pending_drop = Some((payload.id.clone(), page_pos));
         loader::spawn_serper_image(
-            payload.id,
-            payload.label,
-            payload.url,
-            payload.post_url,
+            loader::SerperImageRequest {
+                id: payload.id,
+                label: payload.label,
+                url: payload.url,
+                post_url: payload.post_url,
+                thumb_url: payload.thumb_url,
+                target,
+            },
             tx.clone(),
             ctx.clone(),
         );

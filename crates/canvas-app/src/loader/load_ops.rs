@@ -87,7 +87,7 @@ pub fn spawn_load_slot(
             folder,
             generation,
             path,
-            result: prepared,
+            result: prepared.map(Box::new),
         });
         ctx.request_repaint();
     });

@@ -102,11 +102,43 @@ impl AppInner {
         id: String,
         label: String,
         result: Result<canvas_io::LoadedImage, crate::unsplash::UnsplashError>,
+        target: crate::loader::ImageInsertTarget,
     ) {
         let View::Editor(state) = &mut ws.view else {
             return;
         };
-        state.unsplash.inserting = None;
+        // A07: igual que la inserción web — la respuesta solo vale para el
+        // destino que la pidió; si no, se descarta sin tocar otro documento.
+        let slot_id = ws.deck.slots.get(ws.deck.active).map(|s| s.id);
+        let valid = crate::loader::insert_target_current(
+            state.unsplash.insert_target.as_ref(),
+            &target,
+            ws.deck.generation(),
+            slot_id,
+        );
+        if state
+            .unsplash
+            .insert_target
+            .as_ref()
+            .is_some_and(|t| t.seq == target.seq)
+        {
+            state.unsplash.inserting = None;
+            state.unsplash.insert_target = None;
+        }
+        if !valid {
+            tracing::info!(
+                "inserción Unsplash {id} descartada: el destino cambió durante la descarga"
+            );
+            if state
+                .unsplash
+                .pending_drop
+                .as_ref()
+                .is_some_and(|(pid, _)| *pid == target.photo_id)
+            {
+                state.unsplash.pending_drop = None;
+            }
+            return;
+        }
         match result {
             Ok(img) => {
                 // Si la foto llegó tras un ARRASTRE soltado sobre el lienzo,

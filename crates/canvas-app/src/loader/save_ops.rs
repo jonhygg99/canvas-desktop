@@ -118,20 +118,34 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
         let save_result =
             canvas_io::save_rgba(&path, rgba, width, height, jpeg_quality, metadata.as_ref());
         let result = match save_result {
-            Ok(bytes) => {
-                match sidecar {
-                    Some(mut payload) => {
-                        payload.preview = preview;
-                        if let Err(e) = canvas_io::write_sidecar(&path, &bytes, &payload) {
-                            tracing::warn!("no se pudo escribir el sidecar: {e}");
-                        }
+            Ok(bytes) => match sidecar {
+                Some(mut payload) => {
+                    payload.preview = preview;
+                    // A03: un fallo del sidecar NO es un guardado correcto.
+                    // Antes se registraba como warning y se devolvía
+                    // `Ok(())`, así que la UI marcaba el historial como
+                    // guardado y podía cerrar/navegar con las capas
+                    // editables perdidas. Ahora viaja como error explícito
+                    // de guardado parcial: la imagen quedó en disco pero
+                    // el documento sigue pendiente en memoria.
+                    if let Err(e) = canvas_io::write_sidecar(&path, &bytes, &payload) {
+                        Err(canvas_io::IoError::Message {
+                                message: format!(
+                                    "Image saved to \"{}\" but editable layers could not be written: {e}. The document is still marked as unsaved; fix the sidecar location and save again.",
+                                    path.display(),
+                                ),
+                            })
+                    } else {
+                        Ok(())
                     }
-                    // Sidecar desactivado: retira el que hubiera para no
-                    // dejar uno obsoleto que luego avise de hash cambiado.
-                    None => canvas_io::delete_sidecar(&path),
                 }
-                Ok(())
-            }
+                // Sidecar desactivado: retira el que hubiera para no
+                // dejar uno obsoleto que luego avise de hash cambiado.
+                None => {
+                    canvas_io::delete_sidecar(&path);
+                    Ok(())
+                }
+            },
             Err(e) => Err(e),
         };
         let _ = tx.send(AppMsg::Saved {

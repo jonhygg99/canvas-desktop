@@ -77,6 +77,11 @@ pub struct EditorState {
     pub(super) shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
     pub saving: bool,
+    /// Revisión del historial capturada al lanzar el guardado en curso:
+    /// `(profundidad_undo, revisión)` (A04). Al recibir `Saved` solo se marca
+    /// como guardado si el historial sigue ahí; si el usuario editó durante
+    /// la escritura, esos cambios siguen pendientes y no se cierra/navega.
+    pub saving_capture: Option<(usize, u64)>,
     /// Hay una exportación en curso en un hilo de trabajo.
     pub exporting: bool,
     /// Último error de guardado, visible hasta descartarlo.
@@ -275,6 +280,7 @@ impl EditorState {
             is_design: self.is_design,
             source_metadata: self.source_metadata.take(),
             saving: self.saving,
+            saving_capture: self.saving_capture.take(),
             save_error: self.save_error.take(),
             external_change: self.external_change,
             born_blank: self.born_blank,
@@ -294,6 +300,7 @@ impl EditorState {
         self.is_design = slot.is_design;
         self.source_metadata = slot.source_metadata;
         self.saving = slot.saving;
+        self.saving_capture = slot.saving_capture;
         self.save_error = slot.save_error;
         self.external_change = slot.external_change;
         self.born_blank = slot.born_blank;

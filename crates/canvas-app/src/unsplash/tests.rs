@@ -149,7 +149,11 @@ fn panel_ui_renders_without_panic_and_paints() {
             ..Default::default()
         },
         |ui| {
-            panel_ui(&mut state, ui, &tx);
+            let insert_dest = crate::loader::ImageInsertDest {
+                generation: 0,
+                slot_id: 0,
+            };
+            panel_ui(&mut state, insert_dest, ui, &tx);
         },
     );
     assert!(
@@ -163,7 +167,6 @@ fn panel_ui_renders_without_panic_and_paints() {
 /// del grid de resultados con `thumb: None`.
 #[test]
 fn photo_cards_render_without_a_thumbnail_and_without_panicking() {
-    let (tx, _rx) = std::sync::mpsc::channel();
     let mut items: Vec<PhotoItem> = (0..2)
         .map(|i| PhotoItem {
             photo: Photo {
@@ -193,7 +196,7 @@ fn photo_cards_render_without_a_thumbnail_and_without_panicking() {
         },
         |ui| {
             for item in &mut items {
-                card::photo_card_ui(item, &mut inserting, 300.0, 200.0, ui, &tx);
+                card::photo_card_ui(item, &mut inserting, 300.0, 200.0, ui);
                 ui.add_space(12.0);
             }
         },

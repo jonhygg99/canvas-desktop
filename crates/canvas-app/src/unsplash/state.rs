@@ -28,6 +28,10 @@ pub struct Panel {
     pub reached_end: bool,
     /// Id de la foto cuya imagen completa se está descargando para insertar.
     pub inserting: Option<String>,
+    /// Contador de peticiones de inserción (A07): ver `serper::Panel`.
+    pub insert_seq: u64,
+    /// Destino sellado de la inserción en vuelo (A07).
+    pub insert_target: Option<loader::ImageInsertTarget>,
     /// Foto de Unsplash arrastrada y soltada sobre el lienzo: su id y la
     /// posición de página donde debe caer. Se consume en
     /// `on_unsplash_image_ready`; si es `None`, el clic inserta centrada.
@@ -55,6 +59,26 @@ pub struct DragUnsplash {
 }
 
 impl Panel {
+    /// Sella una petición de inserción (A07): ver `serper::Panel::begin_insert`.
+    pub fn begin_insert(
+        &mut self,
+        dest: loader::ImageInsertDest,
+        photo_id: &str,
+    ) -> Option<loader::ImageInsertTarget> {
+        if self.inserting.is_some() {
+            return None;
+        }
+        let target = loader::ImageInsertTarget {
+            dest,
+            seq: self.insert_seq,
+            photo_id: photo_id.to_owned(),
+        };
+        self.insert_seq = self.insert_seq.wrapping_add(1);
+        self.inserting = Some(photo_id.to_owned());
+        self.insert_target = Some(target.clone());
+        Some(target)
+    }
+
     /// Una foto de Unsplash se ha soltado sobre el lienzo en `page_pos`:
     /// recuerda el destino (para que `on_unsplash_image_ready` la coloque
     /// ahí en vez de centrada) y lanza la descarga, igual que el clic.
@@ -63,18 +87,19 @@ impl Panel {
         &mut self,
         payload: DragUnsplash,
         page_pos: (f64, f64),
+        dest: loader::ImageInsertDest,
         tx: &Sender<loader::AppMsg>,
         ctx: &egui::Context,
     ) {
-        if self.inserting.is_some() {
+        let Some(target) = self.begin_insert(dest, &payload.id) else {
             return;
-        }
-        self.inserting = Some(payload.id.clone());
+        };
         self.pending_drop = Some((payload.id.clone(), page_pos));
         loader::spawn_unsplash_image(
             payload.id,
             payload.label,
             payload.url,
+            target,
             tx.clone(),
             ctx.clone(),
         );

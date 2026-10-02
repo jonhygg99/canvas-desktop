@@ -270,6 +270,10 @@ pub(super) fn start_save(
             }
             state.saving = true;
             state.save_error = None;
+            // A04: el worker escribe una CAPTURA del documento; se sella la
+            // revisión del historial para que `on_saved` solo marque como
+            // guardado si no hubo ediciones durante la escritura.
+            state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
             *sctx.ignore_fs_events_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
             let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
@@ -329,6 +333,10 @@ pub(super) fn start_save_design(
     }
     state.saving = true;
     state.save_error = None;
+    // A04: igual que `start_save` — el diseño se escribe en un worker a
+    // partir de una captura; se sella la revisión para no marcar como
+    // guardadas las ediciones que lleguen durante la escritura.
+    state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
     *sctx.ignore_fs_events_until =
         Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
     loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());

@@ -658,3 +658,74 @@ fn nested_groups_survive_undo_redo() {
     assert!(page.is_ancestor(outer, a));
     assert_eq!(page.depth(a), 3);
 }
+
+/// A04: `mark_saved_at` solo marca la revisión capturada al lanzar el worker.
+#[test]
+fn mark_saved_at_marks_only_the_captured_revision() {
+    let (mut doc, id) = doc_with_layer();
+    let mut history = History::default();
+    let before = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+        .unwrap();
+    // Captura al lanzar el guardado, sin ediciones durante la escritura.
+    let (depth, revision) = (history.undo_depth(), history.revision());
+    assert!(history.mark_saved_at(depth, revision));
+    assert!(!history.is_dirty());
+}
+
+#[test]
+fn mark_saved_at_keeps_dirty_when_edited_during_save() {
+    let (mut doc, id) = doc_with_layer();
+    let mut history = History::default();
+    let before = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+        .unwrap();
+    // Captura al lanzar el guardado; el usuario edita durante la escritura.
+    let (depth, revision) = (history.undo_depth(), history.revision());
+    let moved = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, moved, 400.0, 100.0))
+        .unwrap();
+    assert!(!history.mark_saved_at(depth, revision));
+    assert!(history.is_dirty(), "la edición nueva sigue pendiente");
+}
+
+#[test]
+fn mark_saved_at_rejects_same_depth_with_different_content() {
+    // Undo + rama nueva pueden dejar la MISMA profundidad con OTRO contenido:
+    // la revisión lo distingue (no basta comparar longitudes).
+    let (mut doc, id) = doc_with_layer();
+    let mut history = History::default();
+    let before = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+        .unwrap();
+    let (depth, revision) = (history.undo_depth(), history.revision());
+    history.undo(&mut doc).unwrap();
+    let back = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, back, 5.0, 6.0))
+        .unwrap();
+    assert_eq!(history.undo_depth(), depth, "misma profundidad, otra rama");
+    assert!(!history.mark_saved_at(depth, revision));
+    assert!(history.is_dirty());
+}
+
+#[test]
+fn undo_and_redo_advance_the_revision() {
+    let (mut doc, id) = doc_with_layer();
+    let mut history = History::default();
+    let rev0 = history.revision();
+    let before = doc.layer(id).unwrap().transform;
+    history
+        .apply(&mut doc, move_cmd(id, before, 200.0, 300.0))
+        .unwrap();
+    assert_ne!(history.revision(), rev0);
+    let rev1 = history.revision();
+    history.undo(&mut doc).unwrap();
+    assert_ne!(history.revision(), rev1);
+    history.redo(&mut doc).unwrap();
+    assert_ne!(history.revision(), rev0);
+}

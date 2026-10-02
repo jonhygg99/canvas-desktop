@@ -25,10 +25,12 @@ const CARD_INSET: f32 = 12.0;
 /// Contenido de la pestaña «Web» del panel lateral izquierdo. `dest` es la
 /// carpeta destino del bulk ya resuelta (baraja → archivo → galería →
 /// última usada; `None` = la ventana pedirá elegirla una vez).
+/// `insert_dest` es la ranura que recibirá un clic de inserción (A07).
 pub fn panel_ui(
     panel: &mut Panel,
     settings: &mut AppSettings,
     dest: Option<std::path::PathBuf>,
+    insert_dest: loader::ImageInsertDest,
     ui: &mut egui::Ui,
     tx: &Sender<loader::AppMsg>,
 ) {
@@ -44,8 +46,7 @@ pub fn panel_ui(
     ui.add_space(6.0);
     search_bar_ui(panel, settings, ui, tx);
     advanced_ui(panel, settings, ui);
-    let blocked = settings.serper_blocked.clone();
-    results_ui(panel, settings, &blocked, ui, tx);
+    results_ui(panel, settings, insert_dest, ui, tx);
     let ctx = ui.ctx().clone();
     bulk_window_ui(panel, dest, settings, &ctx, tx);
 }
@@ -137,7 +138,9 @@ fn budget_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
 /// Lanza una búsqueda nueva (página 1, gasta el primer token con el `num`
 /// del presupuesto). Si la memoria ya tiene esa keyword, se sirve sin red
 /// ni gasto. No hace nada si ya hay una en vuelo o la consulta está vacía.
-fn start_search(
+/// Sella la spec activa (A09): «Bring more» paginará sobre ella, no sobre
+/// lo que el usuario escriba después.
+pub(super) fn start_search(
     panel: &mut Panel,
     blocked: &[String],
     tx: &Sender<loader::AppMsg>,
@@ -146,9 +149,13 @@ fn start_search(
     if panel.searching || panel.query.trim().is_empty() {
         return;
     }
-    let keyword = panel.query.trim().to_owned();
-    let num = panel.budget.num();
-    let key = super::cache::cache_key(&keyword, blocked, 1, num, panel.mode);
+    let spec = super::state::ActiveSearch {
+        keyword: panel.query.trim().to_owned(),
+        mode: panel.mode,
+        blocked: blocked.to_owned(),
+        num: panel.budget.num(),
+    };
+    let key = spec.cache_key(1);
     if let Some(page) = panel.cache_lookup(&key) {
         panel.search_seq += 1;
         panel.searching = false;
@@ -157,6 +164,7 @@ fn start_search(
         panel.tokens_spent = 0;
         panel.pending_drop = None;
         panel.visible_count = SHOW_STEP;
+        panel.active_search = Some(spec);
         panel.apply_page(&page, 1);
         panel.credits_last = 0;
         ctx.request_repaint();
@@ -173,36 +181,28 @@ fn start_search(
     panel.budget_exhausted = false;
     panel.pending_drop = None;
     panel.visible_count = SHOW_STEP;
+    panel.active_search = Some(spec.clone());
     loader::spawn_serper_search(
-        crate::serper::SearchRequest {
-            keyword: panel.query.trim().to_owned(),
-            page: 1,
-            num,
-            blocked: blocked.to_owned(),
-            mode: panel.mode,
-            seq: panel.search_seq,
-        },
+        spec.page_request(1, panel.search_seq),
         tx.clone(),
         ctx.clone(),
     );
 }
 
-/// Gasta un token más en la misma keyword («Bring more»): la página
-/// siguiente (o la caché, sin gastar). El techo lo pone
-/// `Panel::can_spend_more`.
-fn spend_token(
-    panel: &mut Panel,
-    blocked: &[String],
-    tx: &Sender<loader::AppMsg>,
-    ctx: &egui::Context,
-) {
-    if !panel.can_spend_more() || panel.query.trim().is_empty() {
+/// Gasta un token más en la MISMA búsqueda («Bring more»): la página
+/// siguiente de la spec sellada (o la caché, sin gastar). El techo lo pone
+/// `Panel::can_spend_more`. Nunca usa el borrador del cuadro de texto: si
+/// el usuario escribió otra cosa sin pulsar Search, se pagina la búsqueda
+/// en pantalla, no se mezcla con la nueva (A09).
+pub(super) fn spend_token(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &egui::Context) {
+    if !panel.can_spend_more() {
         return;
     }
-    let keyword = panel.query.trim().to_owned();
+    let Some(spec) = panel.active_search.clone() else {
+        return;
+    };
     let next = panel.page + 1;
-    let num = panel.budget.num();
-    let key = super::cache::cache_key(&keyword, blocked, next, num, panel.mode);
+    let key = spec.cache_key(next);
     if let Some(page) = panel.cache_lookup(&key) {
         panel.search_seq += 1;
         panel.searching = false;
@@ -219,14 +219,7 @@ fn spend_token(
     panel.page = next;
     panel.tokens_spent += 1;
     loader::spawn_serper_search(
-        crate::serper::SearchRequest {
-            keyword: panel.query.trim().to_owned(),
-            page: panel.page,
-            num,
-            blocked: blocked.to_owned(),
-            mode: panel.mode,
-            seq: panel.search_seq,
-        },
+        spec.page_request(panel.page, panel.search_seq),
         tx.clone(),
         ctx.clone(),
     );
@@ -293,11 +286,12 @@ fn parse_blocked(text: &str) -> Vec<String> {
 }
 
 /// Lista de resultados + pie con «Bring more», «Show more» local y la
-/// transparencia del coste y del filtro.
+/// transparencia del coste y del filtro. `dest` es la ranura que recibirá un
+/// clic de inserción (A07): se sella en la petición que viaja al worker.
 fn results_ui(
     panel: &mut Panel,
     settings: &mut AppSettings,
-    blocked: &[String],
+    dest: loader::ImageInsertDest,
     ui: &mut egui::Ui,
     tx: &Sender<loader::AppMsg>,
 ) {
@@ -336,13 +330,51 @@ fn results_ui(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                let inserting = &mut panel.inserting;
-                for item in panel.photos.iter_mut().take(shown) {
-                    photo_card_ui(item, inserting, row_w, img_h, ui, tx);
-                    ui.add_space(12.0);
+                // El clic solo PIDE insertar (la tarjeta no conoce la
+                // baraja): el sellado + spawn ocurren aquí, con el destino
+                // ya resuelto, y fuera de los préstamos de la tarjeta (A07).
+                let mut clicked: Option<(String, String, String, String)> = None;
+                {
+                    let inserting = &mut panel.inserting;
+                    for item in panel.photos.iter_mut().take(shown) {
+                        if photo_card_ui(item, inserting, row_w, img_h, ui, tx) {
+                            let p = &item.photo;
+                            clicked = Some((
+                                p.id.clone(),
+                                format!("Web · {}", p.source_host()),
+                                p.image_url.clone(),
+                                p.source_url.clone(),
+                            ));
+                        }
+                        ui.add_space(12.0);
+                    }
+                }
+                if let Some((id, label, url, post_url)) = clicked {
+                    if let Some(target) = panel.begin_insert(dest, &id) {
+                        // La miniatura ya mostrada alimenta el último nivel
+                        // del rescate (A08): si la directa falla, se prefiere
+                        // lo que el usuario vio antes que un `og:image` ajeno.
+                        let thumb_url = panel
+                            .photos
+                            .iter()
+                            .find(|p| p.photo.id == id)
+                            .and_then(|p| p.photo.thumb_url.clone());
+                        loader::spawn_serper_image(
+                            loader::SerperImageRequest {
+                                id,
+                                label,
+                                url,
+                                post_url,
+                                thumb_url,
+                                target,
+                            },
+                            tx.clone(),
+                            ui.ctx().clone(),
+                        );
+                    }
                 }
                 ui.add_space(4.0);
-                list_footer_ui(panel, blocked, ui, shown, tx);
+                list_footer_ui(panel, ui, shown, tx);
                 ui.add_space(12.0);
             });
         });
@@ -373,13 +405,7 @@ fn select_row_ui(panel: &mut Panel, ui: &mut egui::Ui) {
 
 /// Pie de la lista: spinner, error con reintento, «Show more» local (sin
 /// coste), «Bring more» (1 token) o avisos de fin/presupuesto.
-fn list_footer_ui(
-    panel: &mut Panel,
-    blocked: &[String],
-    ui: &mut egui::Ui,
-    shown: usize,
-    tx: &Sender<loader::AppMsg>,
-) {
+fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sender<loader::AppMsg>) {
     if panel.searching {
         let stuck = stalled(
             panel.search_started,
@@ -395,23 +421,18 @@ fn list_footer_ui(
     if let Some(err) = panel.error.clone() {
         ui.colored_label(ui.visuals().error_fg_color, err);
         if ui.button("Try again").clicked() && panel.photos.is_empty() {
-            // Reintento de la página actual con los mismos bloqueados y
+            // Reintento de la página actual con la spec sellada (A09) y
             // sin tocar el gasto (esa llamada ya se pagó).
-            panel.search_seq += 1;
-            panel.searching = true;
-            panel.search_started = Some(std::time::Instant::now());
-            loader::spawn_serper_search(
-                crate::serper::SearchRequest {
-                    keyword: panel.query.trim().to_owned(),
-                    page: panel.page.max(1),
-                    num: panel.budget.num(),
-                    blocked: blocked.to_owned(),
-                    mode: panel.mode,
-                    seq: panel.search_seq,
-                },
-                tx.clone(),
-                ui.ctx().clone(),
-            );
+            if let Some(spec) = panel.active_search.clone() {
+                panel.search_seq += 1;
+                panel.searching = true;
+                panel.search_started = Some(std::time::Instant::now());
+                loader::spawn_serper_search(
+                    spec.page_request(panel.page.max(1), panel.search_seq),
+                    tx.clone(),
+                    ui.ctx().clone(),
+                );
+            }
         }
         return;
     }
@@ -434,12 +455,19 @@ fn list_footer_ui(
         ui.weak("No more results for this search.");
     } else if panel.can_spend_more() {
         let left = panel.budget.calls() - panel.tokens_spent;
+        // La etiqueta nombra la búsqueda que se pagina (A09): si el
+        // borrador dice otra cosa, queda claro que «Bring more» continúa
+        // los resultados en pantalla en vez de mezclar.
+        let more_label = match panel.active_search.as_ref() {
+            Some(spec) => format!("Bring more “{}” · 1 token ({left} left)", spec.keyword),
+            None => format!("Bring more · 1 token ({left} left)"),
+        };
         if ui
-            .button(format!("Bring more · 1 token ({left} left)"))
+            .button(more_label)
             .on_hover_text("Loads the next page (~100 images, ~2 credits)")
             .clicked()
         {
-            spend_token(panel, blocked, tx, ui.ctx());
+            spend_token(panel, tx, ui.ctx());
         }
     }
 }

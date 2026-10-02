@@ -11,9 +11,11 @@ use crate::deck::{DeckAxis, StripSide};
 
 mod choices;
 mod sort;
+mod writer;
 
 pub use choices::{BulkCanvasSize, GallerySort, NewCanvasFormat, ThemeChoice};
 pub use sort::natural_cmp;
+pub(crate) use writer::flush_settings;
 
 #[cfg(test)]
 mod tests;
@@ -169,9 +171,13 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    fn file_path() -> Option<PathBuf> {
+    pub(super) fn settings_path() -> Option<PathBuf> {
         let dirs = directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")?;
         Some(dirs.config_dir().join("settings.json"))
+    }
+
+    fn file_path() -> Option<PathBuf> {
+        Self::settings_path()
     }
 
     /// Carga los ajustes. Cualquier problema (primera ejecución, JSON roto)
@@ -189,28 +195,12 @@ impl AppSettings {
         }
     }
 
-    /// Escribe los ajustes en un hilo aparte: la UI nunca espera al disco.
+    /// Encola los ajustes para escribirlos en segundo plano (la UI nunca
+    /// espera al disco). Un único hilo escritor con revisiones monotónicas
+    /// garantiza el orden: un snapshot viejo nunca sobrescribe a uno nuevo
+    /// (A10, ver `writer`).
     pub fn save_in_background(&self) {
-        let snapshot = self.clone();
-        std::thread::spawn(move || {
-            let Some(path) = Self::file_path() else {
-                return;
-            };
-            if let Some(dir) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(dir) {
-                    tracing::warn!("no se pudo crear el directorio de ajustes: {e}");
-                    return;
-                }
-            }
-            match serde_json::to_vec_pretty(&snapshot) {
-                Ok(bytes) => {
-                    if let Err(e) = canvas_io::write_atomic(&path, &bytes) {
-                        tracing::warn!("no se pudieron guardar los ajustes: {e}");
-                    }
-                }
-                Err(e) => tracing::warn!("no se pudieron serializar los ajustes: {e}"),
-            }
-        });
+        writer::queue_settings(self.clone());
     }
 }
 

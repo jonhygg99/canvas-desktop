@@ -266,6 +266,11 @@ impl AppInner {
     /// un hilo aparte y responde por `AppMsg::UnsavedDialogAnswer`: un
     /// `rfd::…::show()` sincrónico dentro del pase de un viewport diferido
     /// congela todo el event loop multi-ventana.
+    ///
+    /// «Save» guarda TODOS los lienzos sucios (el activo de inmediato y el
+    /// resto con el flujo de «Save all», que salta y guarda uno a uno) y la
+    /// navegación/cierre diferidos solo se ejecutan cuando la cola se vacía
+    /// (A05): con varios sucios ya no se pierde el fondo en silencio.
     pub(crate) fn request_nav(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
         let names = ws.dirty_canvas_names();
         if names.is_empty() {
@@ -287,20 +292,7 @@ impl AppInner {
             Nav::NewDesign => "a new design".to_owned(),
             Nav::NewDesignInFolder { .. } => "a new design".to_owned(),
         };
-        let description = if names.len() == 1 {
-            format!(
-                "\"{}\" has unsaved changes.\nSave them before opening {target}? (\"No\" discards them.)",
-                names[0]
-            )
-        } else {
-            format!(
-                "{} canvases have unsaved changes:\n\u{2022} {}\n\nOpening {target} only saves \
-                 the active one — the rest will be lost. Cancel and switch to them first if you \
-                 want to keep their changes.",
-                names.len(),
-                names.join("\n\u{2022} ")
-            )
-        };
+        let description = unsaved_dialog_description(&names, &format!("opening {target}"));
         let tx = ws.tx.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -327,5 +319,51 @@ impl AppInner {
             let _ = tx.send(AppMsg::UnsavedDialogAnswer(decision));
             ctx.request_repaint();
         });
+    }
+}
+
+/// Texto del diálogo «cambios sin guardar», compartido por la navegación
+/// (`request_nav`) y el cierre de ventana (`confirm_window_close`): un solo
+/// sitio para que ambos avisen lo mismo (A05). Con un lienzo sucio nombra al
+/// culpable; con varios los lista y deja claro que «Save» los guarda TODOS
+/// (flujo «Save all») antes de continuar, y que «No» descarta todos.
+/// `target` describe el destino («opening "fotos"», «closing»…).
+pub(crate) fn unsaved_dialog_description(names: &[String], target: &str) -> String {
+    if names.len() == 1 {
+        format!(
+            "\"{}\" has unsaved changes.\nSave them before {}? (\"No\" discards them.)",
+            names[0], target
+        )
+    } else {
+        format!(
+            "{} canvases have unsaved changes:\n\u{2022} {}\n\n\"Save\" saves them all before {}. \
+             \"No\" discards every change.",
+            names.len(),
+            names.join("\n\u{2022} "),
+            target
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsaved_dialog_description;
+
+    #[test]
+    fn single_dirty_names_the_canvas() {
+        let text = unsaved_dialog_description(&["foto.png".to_owned()], "opening \"fotos\"");
+        assert!(text.contains("\"foto.png\""), "{text}");
+        assert!(text.contains("opening \"fotos\""), "{text}");
+    }
+
+    #[test]
+    fn several_dirty_list_every_canvas_and_promise_save_all() {
+        // A05: el fondo debe aparecer en el aviso y «Save» debe guardarlos
+        // todos, no solo el activo.
+        let names = ["a.png".to_owned(), "b.png".to_owned()];
+        let text = unsaved_dialog_description(&names, "going back to the gallery");
+        assert!(text.contains("2 canvases"), "{text}");
+        assert!(text.contains("a.png") && text.contains("b.png"), "{text}");
+        assert!(text.contains("saves them all"), "{text}");
     }
 }

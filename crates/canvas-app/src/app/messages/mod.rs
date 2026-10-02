@@ -132,9 +132,12 @@ impl AppInner {
                 result,
             } => self.on_unsplash_search(ws, query, seq, page, result, ctx),
             AppMsg::UnsplashThumb { id, result } => self.on_unsplash_thumb(ws, id, result, ctx),
-            AppMsg::UnsplashImageReady { id, label, result } => {
-                self.on_unsplash_image_ready(ws, id, label, result)
-            }
+            AppMsg::UnsplashImageReady {
+                id,
+                label,
+                result,
+                target,
+            } => self.on_unsplash_image_ready(ws, id, label, result, target),
             AppMsg::SerperSearch {
                 seq,
                 page,
@@ -151,9 +154,12 @@ impl AppInner {
                 ctx,
             ),
             AppMsg::SerperThumb { id, result } => self.on_serper_thumb(ws, id, result, ctx),
-            AppMsg::SerperImageReady { id, label, result } => {
-                self.on_serper_image_ready(ws, id, label, result)
-            }
+            AppMsg::SerperImageReady {
+                id,
+                label,
+                result,
+                target,
+            } => self.on_serper_image_ready(ws, id, label, result, target),
             AppMsg::SerperBulkProgress { done, total } => {
                 self.on_serper_bulk_progress(ws, done, total, ctx)
             }
@@ -161,7 +167,18 @@ impl AppInner {
                 folder,
                 created,
                 errors,
-            } => self.on_serper_bulk_done(ws, folder, created, errors, ctx, open_after),
+                substituted,
+            } => self.on_serper_bulk_done(
+                ws,
+                serper::SerperBulkDoneMsg {
+                    folder,
+                    created,
+                    errors,
+                    substituted,
+                },
+                ctx,
+                open_after,
+            ),
             AppMsg::GalleryScanned { folder, files } => {
                 self.on_gallery_scanned(ws, folder, files, ctx)
             }

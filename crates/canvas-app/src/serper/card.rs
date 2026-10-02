@@ -17,6 +17,10 @@ use super::state::{DragSerper, PhotoItem};
 /// insertar centrada en el lienzo, o arrastrar hasta el lienzo para
 /// soltarla en una posición concreta. El clic es «suave» (ver el helper de
 /// arrastre): una pulsación simple nunca se convierte en arrastre.
+///
+/// Devuelve si se pidió insertar con clic (A07): el llamador (el panel, que
+/// sí conoce el destino de baraja) sella la petición con `begin_insert` y
+/// lanza la descarga — la tarjeta no conoce generaciones ni ranuras.
 pub(super) fn photo_card_ui(
     item: &mut PhotoItem,
     inserting: &mut Option<String>,
@@ -24,7 +28,7 @@ pub(super) fn photo_card_ui(
     h: f32,
     ui: &mut egui::Ui,
     tx: &Sender<loader::AppMsg>,
-) {
+) -> bool {
     let visuals = ui.visuals().clone();
     let photo = item.photo.clone();
 
@@ -48,6 +52,7 @@ pub(super) fn photo_card_ui(
             label: format!("Web · {}", photo.source_host()),
             url: photo.image_url.clone(),
             post_url: photo.source_url.clone(),
+            thumb_url: photo.thumb_url.clone(),
         },
         |ui| paint_card(item, inserting, &photo_title(&photo), w, h, ui, &visuals),
     )
@@ -60,28 +65,16 @@ pub(super) fn photo_card_ui(
         egui::Id::new(("serper_card_click", photo.id.as_str())),
         egui::Sense::click(),
     );
-    if click.clicked() && inserting.is_none() {
-        if item.thumb_error.is_some() {
-            // Sin preview no hay nada que insertar: el clic reintenta la
-            // descarga en vez de abrir una capa vacía (el hover lo avisa).
-            item.retry_thumb();
-            if item.claim_thumb() {
-                loader::spawn_serper_thumb(
-                    photo.id.clone(),
-                    photo.thumb_source(),
-                    photo.source_url.clone(),
-                    tx.clone(),
-                    ui.ctx().clone(),
-                );
-            }
-        } else {
-            *inserting = Some(photo.id.clone());
-            let label = format!("Web · {}", photo.source_host());
-            loader::spawn_serper_image(
-                photo.id,
-                label,
-                photo.image_url,
-                photo.source_url,
+    let insert_clicked = click.clicked() && inserting.is_none() && item.thumb_error.is_none();
+    if click.clicked() && inserting.is_none() && item.thumb_error.is_some() {
+        // Sin preview no hay nada que insertar: el clic reintenta la
+        // descarga en vez de abrir una capa vacía (el hover lo avisa).
+        item.retry_thumb();
+        if item.claim_thumb() {
+            loader::spawn_serper_thumb(
+                photo.id.clone(),
+                photo.thumb_source(),
+                photo.source_url.clone(),
                 tx.clone(),
                 ui.ctx().clone(),
             );
@@ -93,6 +86,7 @@ pub(super) fn photo_card_ui(
         "Click to insert · drag to the canvas to place it"
     };
     let _ = resp.on_hover_text(hover);
+    insert_clicked
 }
 
 /// Título corto de la tarjeta: el título de Serper recortado (la URL no se

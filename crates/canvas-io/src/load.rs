@@ -186,6 +186,42 @@ pub fn reserve_numbered_path(folder: &Path, ext: &str) -> Result<PathBuf, IoErro
     })
 }
 
+/// Como `reserve_unique_path`, pero con el esquema de la importación masiva:
+/// `{stem}-{n:02}.{ext}` (`shakira-01.png`, `shakira-02.png`…). Crea el
+/// archivo con `create_new` para ganar la carrera contra otra ventana que
+/// importe la misma keyword a la misma carpeta (A06): dos tandas nunca
+/// obtienen el mismo nombre y ninguna sobrescribe la imagen de la otra.
+/// La búsqueda arranca en `start` (normalmente `índice + 1` dentro de la
+/// tanda) para conservar el orden de las elegidas.
+pub fn reserve_bulk_path(
+    folder: &Path,
+    stem: &str,
+    ext: &str,
+    start: usize,
+) -> Result<PathBuf, IoError> {
+    for n in start.max(1)..=start.max(1).saturating_add(10_000) {
+        let candidate = folder.join(format!("{stem}-{n:02}.{ext}"));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(_) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(IoError::Write {
+                    path: candidate,
+                    message: source.to_string(),
+                })
+            }
+        }
+    }
+    Err(IoError::Write {
+        path: folder.join(format!("{stem}-{start:02}.{ext}")),
+        message: "too many name collisions".to_owned(),
+    })
+}
+
 /// Como `peek_unique_path`, pero numerado (ver `reserve_numbered_path`). La
 /// búsqueda arranca en `hint` (normalmente el `next_id` de la baraja) en vez
 /// de en 1: así, si el usuario crea varias ranuras provisionales seguidas
@@ -412,6 +448,23 @@ mod tests {
         assert!(p1.is_file());
         assert!(p2.is_file());
         assert!(p3.is_file());
+    }
+
+    #[test]
+    fn bulk_path_reserves_dash_numbered_names_atomically() {
+        // A06: dos tandas importando la misma keyword nunca obtienen el mismo
+        // nombre: cada reserva crea su hueco con `create_new`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let p1 = reserve_bulk_path(dir.path(), "shakira", "png", 1).expect("primero");
+        assert_eq!(p1, dir.path().join("shakira-01.png"));
+        let p2 = reserve_bulk_path(dir.path(), "shakira", "png", 1).expect("segundo");
+        assert_eq!(p2, dir.path().join("shakira-02.png"));
+        assert_ne!(p1, p2);
+        assert!(p1.is_file() && p2.is_file());
+        // Un archivo previo (de otra tanda) se salta.
+        std::fs::write(dir.path().join("shakira-03.png"), b"").expect("crear archivo");
+        let p3 = reserve_bulk_path(dir.path(), "shakira", "png", 3).expect("tercero");
+        assert_eq!(p3, dir.path().join("shakira-04.png"));
     }
 
     #[test]
