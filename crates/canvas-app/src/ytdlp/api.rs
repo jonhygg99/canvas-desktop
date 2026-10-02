@@ -2,7 +2,6 @@
 //! `clip-[carpeta](x).mp4`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const HARDCODED_YTDLP_DIR: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp";
 const HARDCODED_YTDLP_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\yt-dlp.exe";
@@ -29,7 +28,7 @@ pub fn ytdlp_path() -> Option<PathBuf> {
     if Path::new(HARDCODED_YTDLP_EXE).is_file() {
         return Some(PathBuf::from(HARDCODED_YTDLP_EXE));
     }
-    if Command::new("yt-dlp")
+    if canvas_io::media_command("yt-dlp")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())

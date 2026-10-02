@@ -6,6 +6,18 @@ use std::process::Command;
 
 use crate::{IoError, LoadedImage};
 
+/// Los procesos auxiliares de vídeo nunca deben abrir una consola en Windows.
+pub fn media_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command.stdin(std::process::Stdio::null());
+    command
+}
+
 const HARDCODED_FFMPEG_DIR: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp";
 const HARDCODED_FFMPEG_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\ffmpeg.exe";
 const HARDCODED_FFPROBE_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\ffprobe.exe";
@@ -59,7 +71,7 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
         return Some(PathBuf::from(format!("{HARDCODED_FFMPEG_DIR}\\ffmpeg")));
     }
     // Fallback a PATH
-    let probe = Command::new("ffmpeg").arg("-version").output();
+    let probe = media_command("ffmpeg").arg("-version").output();
     if probe.is_ok_and(|o| o.status.success()) {
         return Some(PathBuf::from("ffmpeg"));
     }
@@ -89,7 +101,7 @@ pub fn ffprobe_path() -> Option<PathBuf> {
     if exe_exists(HARDCODED_FFPROBE_EXE) {
         return Some(PathBuf::from(HARDCODED_FFPROBE_EXE));
     }
-    let probe = Command::new("ffprobe").arg("-version").output();
+    let probe = media_command("ffprobe").arg("-version").output();
     if probe.is_ok_and(|o| o.status.success()) {
         return Some(PathBuf::from("ffprobe"));
     }
@@ -105,7 +117,7 @@ pub fn probe_video_size(path: &Path) -> Result<(u32, u32, Option<f64>), IoError>
             HARDCODED_FFPROBE_EXE
         ),
     })?;
-    let out = Command::new(&ffprobe)
+    let out = media_command(&ffprobe)
         .args([
             "-v",
             "error",
@@ -206,7 +218,7 @@ pub fn load_video_frame(path: &Path, time_secs: f64) -> Result<LoadedImage, IoEr
     })?;
     let t = time_secs.max(0.0);
     let time_str = format!("{t:.3}");
-    let out = Command::new(&ffmpeg)
+    let out = media_command(&ffmpeg)
         .args(["-v", "error", "-ss", &time_str, "-i"])
         .arg(path)
         .args([

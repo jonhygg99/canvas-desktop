@@ -1066,12 +1066,36 @@ fn save_error_banner_renders_the_message_and_dismiss_clears_it() {
 /// deshacible que un solo Ctrl+Z revierte.
 #[test]
 fn dragging_a_crop_corner_commits_an_undoable_composite() {
+    assert_crop_drag(false);
+}
+
+#[test]
+fn dragging_a_video_crop_corner_preserves_the_crop_and_undo() {
+    assert_crop_drag(true);
+}
+
+fn assert_crop_drag(video: bool) {
     use super::super::interaction::layer_interaction;
     use super::super::viewport::layer_corners_screen;
 
     let ctx = egui::Context::default();
     let mut state = EditorState::new_blank(400.0, 1200.0);
     let id = cropped_image(&mut state);
+    if video {
+        let LayerContent::Image(image) = state.doc.layer(id).unwrap().content.clone() else {
+            unreachable!();
+        };
+        state.doc.layer_mut(id).unwrap().content = LayerContent::Video(canvas_core::VideoContent {
+            source_path: image.source_path,
+            natural_width: image.natural_width,
+            natural_height: image.natural_height,
+            crop: image.crop,
+            duration_secs: Some(10.0),
+            poster_time: 0.0,
+            trim_start: 0.0,
+            trim_end: None,
+        });
+    }
     state.crop_mode = true;
     state.viewport.zoom = 1.0;
     state.viewport.pan = egui::Vec2::ZERO;
@@ -1082,6 +1106,7 @@ fn dragging_a_crop_corner_commits_an_undoable_composite() {
     let t0 = state.doc.layer(id).unwrap().transform;
     let crop0 = match &state.doc.layer(id).unwrap().content {
         LayerContent::Image(c) => c.crop,
+        LayerContent::Video(c) => c.crop,
         _ => None,
     };
 
@@ -1129,6 +1154,7 @@ fn dragging_a_crop_corner_commits_an_undoable_composite() {
     let edited = state.doc.layer(id).unwrap();
     let edited_crop = match &edited.content {
         LayerContent::Image(c) => c.crop,
+        LayerContent::Video(c) => c.crop,
         _ => None,
     };
     assert!(
@@ -1153,6 +1179,7 @@ fn dragging_a_crop_corner_commits_an_undoable_composite() {
     assert_eq!(
         match &undone.content {
             LayerContent::Image(c) => c.crop,
+            LayerContent::Video(c) => c.crop,
             _ => None,
         },
         crop0,

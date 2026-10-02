@@ -107,9 +107,9 @@ pub struct EditorState {
     /// ajustes y el panel los espeja al pintarse.
     pub serper: crate::serper::Panel,
     pub ytdlp: crate::ytdlp::Panel,
-    /// Reproducción de video: capa en reproducción y último tick.
+    /// Reproducción de vídeo: capa activa y decodificador de la sesión.
     pub video_playing_layer: Option<LayerId>,
-    pub video_last_tick: Option<std::time::Instant>,
+    pub(crate) video_playback: Option<super::video_playback::VideoPlayback>,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,
@@ -265,6 +265,7 @@ impl EditorState {
     /// la baraja, dejando `self` con un documento de relleno. Solo se llama
     /// con `is_idle() == true` (comprobado por el llamador, `deck::apply_jump`).
     pub(crate) fn take_slot(&mut self) -> crate::deck::SlotDoc {
+        self.pause_video();
         let bytes = self
             .images
             .values()
@@ -291,6 +292,7 @@ impl EditorState {
 
     /// Instala un `SlotDoc` como lienzo activo (lo contrario de `take_slot`).
     pub(crate) fn put_slot(&mut self, slot: crate::deck::SlotDoc) {
+        self.pause_video();
         self.doc = slot.doc;
         self.history = slot.history;
         self.images = slot.images;
@@ -311,5 +313,10 @@ impl EditorState {
         // el resto de campos "de sesión" (viewport, grid, crop_mode…) son
         // intencionalmente compartidos por toda la baraja, no por lienzo.
         self.forget_deleted_selection();
+        self.video_playing_layer = self.video_layer().filter(|id| {
+            self.doc.layer(*id).is_ok_and(
+                |l| matches!(&l.content, LayerContent::Video(v) if v.source_path.is_some()),
+            )
+        });
     }
 }

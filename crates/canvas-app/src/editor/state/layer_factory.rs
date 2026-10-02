@@ -104,6 +104,8 @@ impl EditorState {
                 crop: None,
                 duration_secs: duration,
                 poster_time: 0.0,
+                trim_start: 0.0,
+                trim_end: None,
             })
         } else {
             LayerContent::Image(ImageContent {
@@ -114,6 +116,9 @@ impl EditorState {
             })
         };
         let bg_content = content.clone();
+        if is_video {
+            self.pause_video();
+        }
         let pixels = image_data_from_rgba(img.rgba, img.width, img.height);
         let id = self.doc.allocate_layer_id();
         let layer = Layer::new(id, name, transform, content);
@@ -151,6 +156,9 @@ impl EditorState {
             self.background_layer = Some(bg_id);
         }
         self.images.insert(id, pixels);
+        if is_video {
+            self.video_playing_layer = Some(id);
+        }
         self.selection = Selection::single(id);
     }
 
@@ -220,6 +228,8 @@ impl EditorState {
                 crop: None,
                 duration_secs: duration,
                 poster_time: 0.0,
+                trim_start: 0.0,
+                trim_end: None,
             })
         } else {
             LayerContent::Image(ImageContent {

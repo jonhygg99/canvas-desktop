@@ -20,12 +20,12 @@ mod layer_ops_tests;
 mod overlay;
 pub(crate) mod properties_panel;
 mod slot_chrome;
+mod video_playback;
 mod viewport;
 
 pub use canvas::{canvas_ui, CanvasAction};
 pub(crate) use layer_ops::{delete_selected, has_deletable_selection};
-#[allow(unused_imports)]
-pub use properties_panel::{properties_ui, properties_ui_with};
+pub use properties_panel::properties_ui;
 pub use viewport::Viewport;
 
 pub(crate) mod state;

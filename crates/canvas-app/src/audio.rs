@@ -2,26 +2,26 @@
 #![allow(dead_code)]
 
 use std::fs::File;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use std::sync::{Mutex, OnceLock};
 
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStreamBuilder, Sink};
 
 pub struct AudioState {
-    handle: OutputStreamHandle,
+    mixer: rodio::mixer::Mixer,
     sink: Option<Sink>,
     current_path: Option<PathBuf>,
 }
 
 impl AudioState {
     pub fn new() -> Option<Self> {
-        let (stream, handle) = OutputStream::try_default().ok()?;
+        let stream = OutputStreamBuilder::open_default_stream().ok()?;
+        let mixer = stream.mixer().clone();
         std::mem::forget(stream);
         Some(Self {
-            handle,
+            mixer,
             sink: None,
             current_path: None,
         })
@@ -29,9 +29,7 @@ impl AudioState {
 
     fn ensure_sink(&mut self) -> &mut Sink {
         if self.sink.is_none() {
-            if let Ok(s) = Sink::try_new(&self.handle) {
-                self.sink = Some(s);
-            }
+            self.sink = Some(Sink::connect_new(&self.mixer));
         }
         self.sink.as_mut().expect("sink creado")
     }
@@ -46,11 +44,11 @@ impl AudioState {
 
         if need_new_sink {
             self.stop();
-            let sink = Sink::try_new(&self.handle).map_err(|e| e.to_string())?;
+            let sink = Sink::connect_new(&self.mixer);
             // Intentar abrir y decodificar: rodio + symphonia soporta mp4/aac/mp3/flac
             let file = File::open(path).map_err(|e| e.to_string())?;
-            let reader = BufReader::new(file);
-            let source = Decoder::new(reader).map_err(|e| e.to_string())?;
+            // File aporta longitud y seek reales; necesarios para MP4 y saltos.
+            let source = Decoder::try_from(file).map_err(|e| e.to_string())?;
             // Seek si es necesario
             if seek_secs > 0.1 {
                 // No hay seek directo en Decoder, usamos try_seek en Sink tras append
@@ -137,6 +135,15 @@ pub fn pause() {
     }
 }
 
+/// Al cerrar un lienzo solo se pausa el audio que pertenece a su vídeo.
+pub fn pause_for(path: &Path) {
+    if let Some(mut g) = global_state() {
+        if g.current_path.as_deref() == Some(path) {
+            g.pause();
+        }
+    }
+}
+
 pub fn stop() {
     if let Some(mut g) = global_state() {
         g.stop();
@@ -151,4 +158,46 @@ pub fn seek(secs: f64) {
 
 pub fn is_playing() -> bool {
     global_state().is_some_and(|g| g.is_playing())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_aac_audio_from_an_mp4_without_an_audio_device() {
+        let Some(ffmpeg) = canvas_io::ffmpeg_path() else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audio.mp4");
+        assert!(canvas_io::media_command(ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=64x48:rate=20",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100",
+                "-t",
+                "0.25",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac"
+            ])
+            .arg(&path)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        use rodio::Source;
+        let mut decoder = Decoder::try_from(File::open(path).unwrap()).unwrap();
+        decoder.try_seek(Duration::from_secs_f64(0.1)).unwrap();
+        assert!(decoder.take(4096).any(|sample| sample != 0.0));
+    }
 }

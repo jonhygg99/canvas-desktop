@@ -26,7 +26,6 @@ mod save;
 mod serper;
 mod shell;
 mod unsplash;
-mod video;
 mod ytdlp;
 
 impl AppInner {
@@ -230,11 +229,6 @@ impl AppInner {
                 result,
                 metadata,
             } => self.on_image_loaded(ws, path, result, metadata, ctx),
-            AppMsg::VideoFrameReady {
-                layer,
-                time,
-                result,
-            } => self.on_video_frame_ready(ws, layer, time, result, ctx),
             AppMsg::YtdlpDownloadProgress { index, total, text } => {
                 self.on_ytdlp_progress(ws, index, total, text, ctx)
             }

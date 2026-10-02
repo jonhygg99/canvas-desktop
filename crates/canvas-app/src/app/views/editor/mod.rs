@@ -52,6 +52,7 @@ pub(in crate::app) fn editor_view_ui(
     // de dos ventanas editando en paralelo sin clics. Puramente visual:
     // muta `state.doc` sin pasos de deshacer, así que no marca nada sucio.
     simulate_edits(state, f, ctx);
+    state.tick_video(ctx);
     state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
 
     // Recarga pedida desde el banner de «cambió en disco».

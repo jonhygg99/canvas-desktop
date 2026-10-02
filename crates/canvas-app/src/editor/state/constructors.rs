@@ -24,6 +24,11 @@ impl EditorState {
         selection: Selection,
         background_layer: Option<LayerId>,
     ) -> Self {
+        let video_playing_layer = selection.primary().filter(|id| {
+            doc.layer(*id).is_ok_and(
+                |l| matches!(&l.content, LayerContent::Video(v) if v.source_path.is_some()),
+            )
+        });
         Self {
             doc,
             history: History::default(),
@@ -82,8 +87,8 @@ impl EditorState {
             pending_global_redo: None,
             pending_restore: None,
             pending_delete_from_undo: false,
-            video_playing_layer: None,
-            video_last_tick: None,
+            video_playing_layer,
+            video_playback: None,
         }
     }
 
@@ -116,6 +121,8 @@ impl EditorState {
                 crop: None,
                 duration_secs: duration,
                 poster_time: 0.0,
+                trim_start: 0.0,
+                trim_end: None,
             })
         } else {
             LayerContent::Image(ImageContent {

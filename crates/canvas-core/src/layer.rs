@@ -216,6 +216,32 @@ pub struct VideoContent {
     /// Tiempo del poster / frame actual en segundos.
     #[serde(default)]
     pub poster_time: f64,
+    /// Intervalo de reproducción no destructivo (segundos del archivo fuente).
+    #[serde(default)]
+    pub trim_start: f64,
+    #[serde(default)]
+    pub trim_end: Option<f64>,
+}
+
+impl VideoContent {
+    /// Normaliza el intervalo, incluidos documentos antiguos o valores inválidos.
+    pub fn playback_range(&self) -> (f64, Option<f64>) {
+        let duration = self.duration_secs.filter(|d| d.is_finite() && *d > 0.0);
+        let mut start = if self.trim_start.is_finite() {
+            self.trim_start.max(0.0)
+        } else {
+            0.0
+        };
+        if let Some(duration) = duration {
+            start = start.min((duration - 0.05).max(0.0));
+        }
+        let end = self
+            .trim_end
+            .filter(|e| e.is_finite() && *e > start)
+            .map(|e| duration.map_or(e, |d| e.min(d)))
+            .or(duration);
+        (start, end)
+    }
 }
 
 /// Alineación del texto dentro de su caja.

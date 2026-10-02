@@ -92,7 +92,7 @@ muda = "0.17"
 raw-window-handle = "0.6"
 windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
 # Audio para video: rodio + symphonia (aac/mp3 en mp4)
-rodio = "0.20"
+rodio = { version = "0.21.1", features = ["symphonia-aac", "symphonia-isomp4"] }
 # Incrusta el icono en el .exe (build.rs); no-op fuera de Windows.
 winresource = "0.1"
 

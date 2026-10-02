@@ -2,7 +2,6 @@
 //! `clip-[carpeta](x).mp4`. Conserva el `.part` al fallar (reanuda).
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::mpsc::Sender;
 
 use eframe::egui;
@@ -87,7 +86,7 @@ fn download_one(
         .unwrap_or_else(|| stem.to_owned());
     let template = dest.join(format!("{file_stem}.%(ext)s"));
 
-    let mut cmd = Command::new(ytdlp);
+    let mut cmd = canvas_io::media_command(ytdlp);
     cmd.arg("--no-continue")
         .arg("--merge-output-format")
         .arg("mp4");
