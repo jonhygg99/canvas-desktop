@@ -106,17 +106,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # libfontconfig1-dev es obligatorio para COMPILAR: egui-winit enlaza
       # `yeslogic-fontconfig-sys`, cuyo build script falla con exit 101 sin las
-      # cabeceras de fontconfig. La lista es la misma que la del job `test` de
-      # ci.yml (que sí lo tenía) más fuse/libfuse2, que solo hace falta para
+      # cabeceras de fontconfig. libasound2-dev lo exige rodio (audio de vídeo)
+      # vía alsa-sys. La lista es la misma que la del job `test` de ci.yml
+      # (que sí lo tenía) más fuse/libfuse2, que solo hace falta para
       # generar el AppImage.
-      - name: Install Linux GUI + packaging dependencies
+      - name: Install Linux GUI + audio (ALSA) + packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
-            libfontconfig1-dev \
+            libfontconfig1-dev libasound2-dev \
             fuse libfuse2
       - run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked -p canvas-app
