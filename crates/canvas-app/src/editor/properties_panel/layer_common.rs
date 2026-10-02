@@ -52,15 +52,20 @@ pub(super) fn layer_properties_ui(
     let original = layer.transform;
     let natural = match &layer.content {
         LayerContent::Image(img) => (f64::from(img.natural_width), f64::from(img.natural_height)),
+        LayerContent::Video(vid) => (f64::from(vid.natural_width), f64::from(vid.natural_height)),
         LayerContent::Svg(svg) => (f64::from(svg.natural_width), f64::from(svg.natural_height)),
         LayerContent::Text(_) | LayerContent::Shape(_) => (0.0, 0.0),
         LayerContent::Group(_) => unreachable!("ya se devolvió arriba para los grupos"),
     };
     let current_crop = match &layer.content {
         LayerContent::Image(img) => img.crop,
+        LayerContent::Video(vid) => vid.crop,
         _ => None,
     };
-    let is_image = matches!(&layer.content, LayerContent::Image(_));
+    let is_image = matches!(
+        &layer.content,
+        LayerContent::Image(_) | LayerContent::Video(_)
+    );
     let mut t = original;
     let mut changed = false;
     let mut commit = false;
@@ -141,7 +146,11 @@ pub(super) fn layer_properties_ui(
         if natural.0 > 0.0 && natural.1 > 0.0 {
             let mut scale = t.width / natural.0 * 100.0;
             ui.horizontal(|ui| {
-                ui.label("Scale");
+                ui.label(if matches!(layer.content, LayerContent::Video(_)) {
+                    "Zoom"
+                } else {
+                    "Scale"
+                });
                 if track(
                     ui.add(
                         egui::DragValue::new(&mut scale)

@@ -52,6 +52,7 @@ pub(in crate::app) fn editor_view_ui(
     // de dos ventanas editando en paralelo sin clics. Puramente visual:
     // muta `state.doc` sin pasos de deshacer, así que no marca nada sucio.
     simulate_edits(state, f, ctx);
+    state.tick_video(ctx);
     state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
 
     // Recarga pedida desde el banner de «cambió en disco».
@@ -62,46 +63,16 @@ pub(in crate::app) fn editor_view_ui(
         }
     }
 
-    // Volver a la galería (preguntando si hay cambios sin guardar).
+    // Volver a la galería: se emite la navegación sin más. La política de
+    // cambios sin guardar (activo + lienzos de fondo, diálogo asíncrono)
+    // vive en UN solo sitio — `request_nav` — y la aplica el llamador
+    // (`ws_frame`) a TODA navegación saliente (A05). El diálogo síncrono
+    // que había aquí solo miraba el lienzo activo (perdía los sucios de
+    // fondo en silencio) y congelaba el event loop multi-ventana.
     if state.return_requested {
         state.return_requested = false;
         if let Some(folder) = state.from_gallery.clone() {
-            if !state.is_dirty() {
-                open_next = Some(Nav::Open(folder));
-            } else {
-                let choice = rfd::MessageDialog::new()
-                    .set_level(rfd::MessageLevel::Warning)
-                    .set_title("Unsaved changes")
-                    .set_description(format!(
-                        "\"{}\" has unsaved changes.\nSave them before going back to the gallery? (\"No\" discards them.)",
-                        state.file_name()
-                    ))
-                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                        "Save".to_owned(),
-                        "Discard".to_owned(),
-                        "Cancel".to_owned(),
-                    ))
-                    .show();
-                // Igual que en confirm_window_close: en Windows el resultado llega
-                // como Yes/No/Cancel, no Custom.
-                match choice {
-                    rfd::MessageDialogResult::Yes => {
-                        f.save.save_requested = true;
-                        f.save.after_save = Some(Nav::Open(folder));
-                    }
-                    rfd::MessageDialogResult::Custom(c) if c == "Save" => {
-                        f.save.save_requested = true;
-                        f.save.after_save = Some(Nav::Open(folder));
-                    }
-                    rfd::MessageDialogResult::No => {
-                        open_next = Some(Nav::Open(folder));
-                    }
-                    rfd::MessageDialogResult::Custom(c) if c == "Discard" => {
-                        open_next = Some(Nav::Open(folder));
-                    }
-                    _ => {}
-                }
-            }
+            open_next = Some(Nav::Open(folder));
         }
     }
 
@@ -166,11 +137,11 @@ fn simulate_edits(state: &mut editor::EditorState, f: &mut EditorFrame<'_>, ctx:
     let phase = f.deck.generation() % 97;
 
     // Navegación: avanza una ranura cada ~120 frames si hay más de una.
-    if frame % 120 == 0 && f.deck.slots.len() > 1 {
+    if frame.is_multiple_of(120) && f.deck.slots.len() > 1 {
         state.deck_nav = Some(editor::DeckNav::Next);
     }
 
-    if frame % 15 != 0 {
+    if !frame.is_multiple_of(15) {
         return;
     }
     // Onda triangular: 0 → 24 → 0 en 12 pasos (cada paso 15 frames).

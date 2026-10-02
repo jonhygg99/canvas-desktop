@@ -58,6 +58,11 @@ pub(in crate::app) fn gallery_view_ui(
             settings.gallery_sort = sort;
             settings.save_in_background();
         }
+        Some(gallery::GalleryAction::MediaFilterChanged(filter)) => {
+            g.media_filter = filter;
+            settings.media_filter = filter;
+            settings.save_in_background();
+        }
         Some(gallery::GalleryAction::NewDesign) => {
             let seed = deck::DeckSeed::from_gallery(g);
             open_next = Some(Nav::NewDesignInFolder { seed });

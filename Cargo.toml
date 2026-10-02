@@ -11,7 +11,12 @@ members = [
 [workspace.package]
 version = "0.2.1"
 edition = "2021"
-rust-version = "1.85"
+# Mínimo real del conjunto resuelto (A13): la familia egui 0.35 exige 1.92
+# (verificado barriendo `rust-version` de los 651 paquetes de Cargo.lock;
+# el máximo es 1.92 de egui/ecolor/epaint/emath/eframe/egui-winit/egui-wgpu).
+# No bajarlo sin revalidar el árbol, ni bajar deps de GPU/UI para cumplir un
+# número antiguo.
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
@@ -86,6 +91,8 @@ trash = "5"
 muda = "0.17"
 raw-window-handle = "0.6"
 windows = { version = "0.62", features = ["Win32_Storage_FileSystem"] }
+# Audio para video: rodio + symphonia (aac/mp3 en mp4)
+rodio = { version = "0.21.1", features = ["symphonia-aac", "symphonia-isomp4"] }
 # Incrusta el icono en el .exe (build.rs); no-op fuera de Windows.
 winresource = "0.1"
 

@@ -20,6 +20,7 @@ mod layer_ops_tests;
 mod overlay;
 pub(crate) mod properties_panel;
 mod slot_chrome;
+mod video_playback;
 mod viewport;
 
 pub use canvas::{canvas_ui, CanvasAction};

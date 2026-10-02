@@ -11,12 +11,33 @@ use crate::deck::{DeckAxis, StripSide};
 
 mod choices;
 mod sort;
+mod writer;
 
 pub use choices::{BulkCanvasSize, GallerySort, NewCanvasFormat, ThemeChoice};
 pub use sort::natural_cmp;
+pub(crate) use writer::flush_settings;
 
 #[cfg(test)]
 mod tests;
+/// Filtro de la galería / baraja: qué tipos de archivo mostrar.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum MediaFilter {
+    #[default]
+    All,
+    ImagesOnly,
+    VideosOnly,
+}
+
+impl MediaFilter {
+    pub fn label(self) -> &'static str {
+        match self {
+            MediaFilter::All => "All",
+            MediaFilter::ImagesOnly => "Images",
+            MediaFilter::VideosOnly => "Videos",
+        }
+    }
+}
+
 /// Orden de las pestañas del panel izquierdo del editor (Page/Layers): el
 /// usuario las arrastra para reordenarlas y el orden queda guardado aquí.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
@@ -95,6 +116,7 @@ pub struct AppSettings {
     pub serper_last_folder: Option<PathBuf>,
     /// Tamaño de página de cada lienzo creado por el bulk web.
     pub serper_bulk_size: BulkCanvasSize,
+    pub media_filter: MediaFilter,
     /// Workspaces abiertos en la última sesión, para restaurarlos al
     /// arrancar. El orden es el de creación (la ventana 0 es la raíz). Se
     /// vuelve a escribir cada vez que un workspace se abre o se cierra, y al
@@ -142,15 +164,20 @@ impl Default for AppSettings {
             serper_credits_total: 0,
             serper_last_folder: None,
             serper_bulk_size: BulkCanvasSize::default(),
+            media_filter: MediaFilter::default(),
             workspaces: Vec::new(),
         }
     }
 }
 
 impl AppSettings {
-    fn file_path() -> Option<PathBuf> {
+    pub(super) fn settings_path() -> Option<PathBuf> {
         let dirs = directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")?;
         Some(dirs.config_dir().join("settings.json"))
+    }
+
+    fn file_path() -> Option<PathBuf> {
+        Self::settings_path()
     }
 
     /// Carga los ajustes. Cualquier problema (primera ejecución, JSON roto)
@@ -168,28 +195,12 @@ impl AppSettings {
         }
     }
 
-    /// Escribe los ajustes en un hilo aparte: la UI nunca espera al disco.
+    /// Encola los ajustes para escribirlos en segundo plano (la UI nunca
+    /// espera al disco). Un único hilo escritor con revisiones monotónicas
+    /// garantiza el orden: un snapshot viejo nunca sobrescribe a uno nuevo
+    /// (A10, ver `writer`).
     pub fn save_in_background(&self) {
-        let snapshot = self.clone();
-        std::thread::spawn(move || {
-            let Some(path) = Self::file_path() else {
-                return;
-            };
-            if let Some(dir) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(dir) {
-                    tracing::warn!("no se pudo crear el directorio de ajustes: {e}");
-                    return;
-                }
-            }
-            match serde_json::to_vec_pretty(&snapshot) {
-                Ok(bytes) => {
-                    if let Err(e) = canvas_io::write_atomic(&path, &bytes) {
-                        tracing::warn!("no se pudieron guardar los ajustes: {e}");
-                    }
-                }
-                Err(e) => tracing::warn!("no se pudieron serializar los ajustes: {e}"),
-            }
-        });
+        writer::queue_settings(self.clone());
     }
 }
 

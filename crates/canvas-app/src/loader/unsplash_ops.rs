@@ -45,18 +45,25 @@ pub fn spawn_unsplash_thumb(id: String, url: String, tx: Sender<AppMsg>, ctx: eg
 }
 
 /// Descarga y decodifica la imagen completa de una foto para insertarla como
-/// capa nueva del documento abierto.
+/// capa nueva del documento abierto. `target` identifica el destino que la
+/// pidió y viaja con la respuesta para validarla (A07).
 pub fn spawn_unsplash_image(
     id: String,
     label: String,
     url: String,
+    target: super::ImageInsertTarget,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
         let result =
             crate::unsplash::download(&url).and_then(|bytes| crate::unsplash::decode(&bytes));
-        let _ = tx.send(AppMsg::UnsplashImageReady { id, label, result });
+        let _ = tx.send(AppMsg::UnsplashImageReady {
+            id,
+            label,
+            result,
+            target,
+        });
         ctx.request_repaint();
     });
 }

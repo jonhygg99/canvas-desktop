@@ -7,7 +7,7 @@ use eframe::egui;
 
 use crate::{deck, loader};
 
-use super::super::{AppInner, Nav, View, Workspace};
+use super::super::{persistence::start_save_all_flow, AppInner, Nav, View, Workspace};
 
 impl AppInner {
     /// Respuesta del diálogo «¿guardar los cambios?» lanzado en un hilo
@@ -28,16 +28,27 @@ impl AppInner {
         };
         match decision {
             DialogDecision::Cancel => {}
-            DialogDecision::Save => match dialog {
-                UnsavedDialog::WindowClose => {
-                    ws.save.save_requested = true;
-                    ws.save.close_after_save = true;
+            DialogDecision::Save => {
+                // A05: «Save» guarda TODOS los lienzos sucios, no solo el
+                // activo: se arma la cola de «Save all» (el activo se guarda
+                // de inmediato con `save_requested`; el fondo lo salta y
+                // guarda uno a uno el conductor de `deck_nav`). La
+                // navegación/cierre diferidos esperan al drenaje en
+                // `on_saved` en vez de ejecutarse tras el primer guardado.
+                if let View::Editor(state) = &mut ws.view {
+                    start_save_all_flow(state, &mut ws.deck, &mut ws.save);
                 }
-                UnsavedDialog::Navigate(nav) => {
-                    ws.save.save_requested = true;
-                    ws.save.after_save = Some(nav);
+                match dialog {
+                    UnsavedDialog::WindowClose => {
+                        ws.save.save_requested = true;
+                        ws.save.close_after_save = true;
+                    }
+                    UnsavedDialog::Navigate(nav) => {
+                        ws.save.save_requested = true;
+                        ws.save.after_save = Some(nav);
+                    }
                 }
-            },
+            }
             DialogDecision::Discard => match dialog {
                 UnsavedDialog::WindowClose => {
                     ws.save.allow_close = true;
@@ -72,7 +83,7 @@ impl AppInner {
             match result {
                 Ok(()) => {
                     tracing::info!("guardado OK: {}", path.display());
-                    state.history.mark_saved();
+                    let captured = state.saving_capture.take();
                     // A partir de este guardado ya hay píxeles
                     // del usuario en disco: el próximo `Ctrl+S`
                     // vuelve a pedir confirmación si sobrescribe.
@@ -98,6 +109,33 @@ impl AppInner {
                     if new_source {
                         state.doc.source_path = Some(path);
                     }
+                    // A04: el worker escribió la captura tomada al lanzar el
+                    // guardado. Solo se marca como guardado si el historial
+                    // sigue en esa revisión: las ediciones hechas DURANTE la
+                    // escritura no están en disco y deben seguir pendientes.
+                    // Sin captura (no debería pasar: `start_save` siempre la
+                    // sella), se conserva el comportamiento anterior.
+                    let marked = match captured {
+                        Some((depth, revision)) => state.history.mark_saved_at(depth, revision),
+                        None => {
+                            state.history.mark_saved();
+                            true
+                        }
+                    };
+                    if !marked {
+                        // El archivo contiene la captura anterior; los cambios
+                        // nuevos siguen sin guardar y NO se ejecuta ningún
+                        // cierre o navegación diferidos: cerrarlos perdería
+                        // esos cambios sin avisar.
+                        ws.save.close_after_save = false;
+                        ws.save.after_save = None;
+                        state.save_error = Some(
+                            "Saved, but edits made during the save are still unsaved — \
+                             save again to include them."
+                                .into(),
+                        );
+                        return;
+                    }
                     // «Save all»: si lo que se acaba de guardar
                     // era el frente de la cola, avanza. Se
                     // comprueba por id de ranura, no por ruta.
@@ -107,18 +145,31 @@ impl AppInner {
                         ws.save.save_all_queue.remove(0);
                         ws.save.save_all_attempted = false;
                     }
+                    // A05: la navegación/cierre diferidos esperan a que la
+                    // cola de «Save all» se vacíe: con varios sucios, el
+                    // primer `Saved` es solo el activo y el conductor de
+                    // `deck_nav` sigue saltando y guardando el fondo. Sin
+                    // esta espera, salir con «Save» perdería el fondo tras
+                    // guardar solo el activo.
                     if ws.save.close_after_save {
-                        ws.save.allow_close = true;
-                        // Cierra LA VENTANA de este workspace, no la app.
-                        // Al viewport propio (no al del pase actual): este
-                        // mensaje puede drenarse desde el pase de la raíz y
-                        // un Close pelado cerraría la app entera.
-                        ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::Close);
-                    } else if let Some(nav) = ws.save.after_save.take() {
-                        *open_after = Some(nav);
+                        if ws.save.save_all_queue.is_empty() {
+                            ws.save.allow_close = true;
+                            // Cierra LA VENTANA de este workspace, no la app.
+                            // Al viewport propio (no al del pase actual): este
+                            // mensaje puede drenarse desde el pase de la raíz y
+                            // un Close pelado cerraría la app entera.
+                            ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::Close);
+                        }
+                        // Cola sin vaciar: el conductor sigue guardando el
+                        // fondo; el cierre espera al drenaje.
+                    } else if ws.save.save_all_queue.is_empty() {
+                        if let Some(nav) = ws.save.after_save.take() {
+                            *open_after = Some(nav);
+                        }
                     }
                 }
                 Err(e) => {
+                    state.saving_capture = None;
                     ws.save.close_after_save = false;
                     ws.save.after_save = None;
                     if ws.save.save_all_queue.first().is_some_and(|&id| {

@@ -15,6 +15,7 @@ pub(crate) enum LeftTab {
     Insert,
     Web,
     Images,
+    Download,
 }
 
 use super::interaction::Gesture;
@@ -76,6 +77,11 @@ pub struct EditorState {
     pub(super) shadow_edit: Option<(LayerId, Option<canvas_core::Shadow>)>,
     /// Hay un guardado en curso en un hilo de trabajo.
     pub saving: bool,
+    /// Revisión del historial capturada al lanzar el guardado en curso:
+    /// `(profundidad_undo, revisión)` (A04). Al recibir `Saved` solo se marca
+    /// como guardado si el historial sigue ahí; si el usuario editó durante
+    /// la escritura, esos cambios siguen pendientes y no se cierra/navega.
+    pub saving_capture: Option<(usize, u64)>,
     /// Hay una exportación en curso en un hilo de trabajo.
     pub exporting: bool,
     /// Último error de guardado, visible hasta descartarlo.
@@ -100,6 +106,10 @@ pub struct EditorState {
     /// El gasto en tokens es de sesión; bloqueados y presupuesto viven en
     /// ajustes y el panel los espeja al pintarse.
     pub serper: crate::serper::Panel,
+    pub ytdlp: crate::ytdlp::Panel,
+    /// Reproducción de vídeo: capa activa y decodificador de la sesión.
+    pub video_playing_layer: Option<LayerId>,
+    pub(crate) video_playback: Option<super::video_playback::VideoPlayback>,
     /// Escribir el sidecar `.canvas` al guardar (preserva la editabilidad).
     /// Sin efecto si `is_design`: un diseño siempre guarda sus capas.
     pub sidecar_enabled: bool,
@@ -255,6 +265,7 @@ impl EditorState {
     /// la baraja, dejando `self` con un documento de relleno. Solo se llama
     /// con `is_idle() == true` (comprobado por el llamador, `deck::apply_jump`).
     pub(crate) fn take_slot(&mut self) -> crate::deck::SlotDoc {
+        self.pause_video();
         let bytes = self
             .images
             .values()
@@ -270,6 +281,7 @@ impl EditorState {
             is_design: self.is_design,
             source_metadata: self.source_metadata.take(),
             saving: self.saving,
+            saving_capture: self.saving_capture.take(),
             save_error: self.save_error.take(),
             external_change: self.external_change,
             born_blank: self.born_blank,
@@ -280,6 +292,7 @@ impl EditorState {
 
     /// Instala un `SlotDoc` como lienzo activo (lo contrario de `take_slot`).
     pub(crate) fn put_slot(&mut self, slot: crate::deck::SlotDoc) {
+        self.pause_video();
         self.doc = slot.doc;
         self.history = slot.history;
         self.images = slot.images;
@@ -289,6 +302,7 @@ impl EditorState {
         self.is_design = slot.is_design;
         self.source_metadata = slot.source_metadata;
         self.saving = slot.saving;
+        self.saving_capture = slot.saving_capture;
         self.save_error = slot.save_error;
         self.external_change = slot.external_change;
         self.born_blank = slot.born_blank;
@@ -299,5 +313,10 @@ impl EditorState {
         // el resto de campos "de sesión" (viewport, grid, crop_mode…) son
         // intencionalmente compartidos por toda la baraja, no por lienzo.
         self.forget_deleted_selection();
+        self.video_playing_layer = self.video_layer().filter(|id| {
+            self.doc.layer(*id).is_ok_and(
+                |l| matches!(&l.content, LayerContent::Video(v) if v.source_path.is_some()),
+            )
+        });
     }
 }

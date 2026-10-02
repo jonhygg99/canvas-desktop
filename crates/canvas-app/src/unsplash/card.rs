@@ -2,11 +2,7 @@
 //! superpuesta, clic para insertar y arrastre real hasta el lienzo para
 //! soltarla en una posición concreta.
 
-use std::sync::mpsc::Sender;
-
 use eframe::egui;
-
-use crate::loader;
 
 use super::state::{DragUnsplash, PhotoItem};
 
@@ -21,14 +17,16 @@ use super::state::{DragUnsplash, PhotoItem};
 /// en juego cuando el ratón se mueve de verdad (más allá del umbral de
 /// clic), así que un clic nunca se convierte en un arrastre accidental ni
 /// simula un arrastre.
+///
+/// Devuelve si se pidió insertar con clic (A07): el panel sella la petición
+/// con `begin_insert` y lanza la descarga.
 pub(super) fn photo_card_ui(
     item: &mut PhotoItem,
     inserting: &mut Option<String>,
     w: f32,
     h: f32,
     ui: &mut egui::Ui,
-    tx: &Sender<loader::AppMsg>,
-) {
+) -> bool {
     let visuals = ui.visuals().clone();
     let photo = item.photo.clone();
 
@@ -140,17 +138,9 @@ pub(super) fn photo_card_ui(
         egui::Id::new(("unsplash_card_click", photo.id.as_str())),
         egui::Sense::click(),
     );
-    if click.clicked() && inserting.is_none() {
-        *inserting = Some(photo.id.clone());
-        loader::spawn_unsplash_image(
-            photo.id,
-            format!("Unsplash · {}", photo.user.name),
-            photo.urls.regular,
-            tx.clone(),
-            ui.ctx().clone(),
-        );
-    }
+    let insert_clicked = click.clicked() && inserting.is_none();
     let _ = resp.on_hover_text("Click to insert · drag to the canvas to place it");
+    insert_clicked
 }
 
 /// Origen de arrastre de una tarjeta de foto, igual que

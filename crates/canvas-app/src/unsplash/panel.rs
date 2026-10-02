@@ -21,7 +21,13 @@ use super::ACCESS_KEY_ENV;
 const CARD_INSET: f32 = 12.0;
 
 /// Contenido de la pestaña «Images» del panel lateral izquierdo.
-pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
+/// `insert_dest` es la ranura que recibirá un clic de inserción (A07).
+pub fn panel_ui(
+    state: &mut EditorState,
+    insert_dest: loader::ImageInsertDest,
+    ui: &mut egui::Ui,
+    tx: &Sender<loader::AppMsg>,
+) {
     if access_key().is_none() {
         ui.add_space(8.0);
         ui.label(format!("{ACCESS_KEY_ENV} is not set"));
@@ -83,10 +89,33 @@ pub fn panel_ui(state: &mut EditorState, ui: &mut egui::Ui, tx: &Sender<loader::
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
-                let inserting = &mut panel.inserting;
-                for item in panel.photos.iter_mut() {
-                    photo_card_ui(item, inserting, row_w, img_h, ui, tx);
-                    ui.add_space(12.0);
+                // Como en el panel Web (A07): la tarjeta solo pide insertar;
+                // el sellado + spawn ocurren aquí con el destino resuelto.
+                let mut clicked: Option<(String, String, String)> = None;
+                {
+                    let inserting = &mut panel.inserting;
+                    for item in panel.photos.iter_mut() {
+                        if photo_card_ui(item, inserting, row_w, img_h, ui) {
+                            clicked = Some((
+                                item.photo.id.clone(),
+                                format!("Unsplash · {}", item.photo.user.name),
+                                item.photo.urls.regular.clone(),
+                            ));
+                        }
+                        ui.add_space(12.0);
+                    }
+                }
+                if let Some((id, label, url)) = clicked {
+                    if let Some(target) = panel.begin_insert(insert_dest, &id) {
+                        loader::spawn_unsplash_image(
+                            id,
+                            label,
+                            url,
+                            target,
+                            tx.clone(),
+                            ui.ctx().clone(),
+                        );
+                    }
                 }
                 ui.add_space(4.0);
                 // Pie de la lista: mientras «Load more» está en vuelo solo

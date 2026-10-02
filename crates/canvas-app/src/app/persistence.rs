@@ -270,6 +270,10 @@ pub(super) fn start_save(
             }
             state.saving = true;
             state.save_error = None;
+            // A04: el worker escribe una CAPTURA del documento; se sella la
+            // revisión del historial para que `on_saved` solo marque como
+            // guardado si no hubo ediciones durante la escritura.
+            state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
             *sctx.ignore_fs_events_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
             let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
@@ -329,6 +333,10 @@ pub(super) fn start_save_design(
     }
     state.saving = true;
     state.save_error = None;
+    // A04: igual que `start_save` — el diseño se escribe en un worker a
+    // partir de una captura; se sella la revisión para no marcar como
+    // guardadas las ediciones que lleguen durante la escritura.
+    state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
     *sctx.ignore_fs_events_until =
         Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
     loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());
@@ -477,7 +485,7 @@ pub(super) fn start_export(
 }
 
 /// ¿El documento tiene al menos una capa que hornea píxeles reales
-/// (imagen o SVG) VISIBLE? Mismo criterio que `bake_came_out_blank_or_incomplete`:
+/// (imagen/video o SVG) VISIBLE? Mismo criterio que `bake_came_out_blank_or_incomplete`:
 /// si NO hay ninguna, guardar el documento como raster aplanado solo escribe
 /// texto/formas — y al sobrescribir un archivo de imagen en disco se descarta
 /// la copia editable de la foto original que abrió el usuario. Se comprueba
@@ -485,7 +493,11 @@ pub(super) fn start_export(
 pub(super) fn has_raster_layers(doc: &Document) -> bool {
     doc.page().is_ok_and(|page| {
         page.layers.iter().any(|layer| {
-            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+            layer.visible
+                && matches!(
+                    layer.content,
+                    LayerContent::Image(_) | LayerContent::Video(_) | LayerContent::Svg(_)
+                )
         })
     })
 }
@@ -507,14 +519,18 @@ fn bake_came_out_blank_or_incomplete(doc: &Document, rgba: &[u8], skipped: usize
     }
     let has_visible_images = doc.page().is_ok_and(|page| {
         page.layers.iter().any(|layer| {
-            layer.visible && matches!(layer.content, LayerContent::Image(_) | LayerContent::Svg(_))
+            layer.visible
+                && matches!(
+                    layer.content,
+                    LayerContent::Image(_) | LayerContent::Video(_) | LayerContent::Svg(_)
+                )
         })
     });
     if !has_visible_images {
         return false;
     }
     let mut first: Option<[u8; 4]> = None;
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let current = [px[0], px[1], px[2], px[3]];
         match first {
             None => first = Some(current),

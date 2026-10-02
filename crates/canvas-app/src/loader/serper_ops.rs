@@ -15,7 +15,8 @@ use super::AppMsg;
 
 /// Una imagen elegida en la ventana masiva para crear su lienzo. Las dims
 /// de la API sirven para dimensionar la página común sin descargar nada;
-/// `post_url` es la página del post enlazado (rescate `og:image`).
+/// `post_url` es la página del post enlazado (rescate `og:image`) y
+/// `thumb_url`, la miniatura ya mostrada (último nivel del rescate, A08).
 #[derive(Debug, Clone)]
 pub struct BulkItem {
     pub url: String,
@@ -23,6 +24,7 @@ pub struct BulkItem {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub post_url: String,
+    pub thumb_url: Option<String>,
 }
 
 /// Lanza la búsqueda de `request` (página 1-based). `seq` identifica la
@@ -77,6 +79,27 @@ pub fn spawn_serper_search(
     });
 }
 
+/// Lado mayor máximo de una miniatura del panel/bulk (A11): las tarjetas se
+/// pintan a ~300 px; subir la foto completa (a veces varios MP) como textura
+/// por cada resultado multiplica la RAM de GPU sin aportar nada visible.
+/// El aspecto se conserva, así que el masonry y el filtro de banners no
+/// cambian.
+pub const THUMB_MAX_LONG: u32 = 512;
+
+/// Dimensiones de una miniatura encajada en `THUMB_MAX_LONG` conservando el
+/// aspecto. Pura y testeable (sin materializar nada).
+pub(crate) fn fit_thumb_dims(width: u32, height: u32) -> (u32, u32) {
+    let long = width.max(height);
+    if long <= THUMB_MAX_LONG || long == 0 {
+        return (width.max(1), height.max(1));
+    }
+    let scale = f64::from(THUMB_MAX_LONG) / f64::from(long);
+    (
+        (f64::from(width) * scale).round().max(1.0) as u32,
+        (f64::from(height) * scale).round().max(1.0) as u32,
+    )
+}
+
 /// Descarga y decodifica la miniatura de un resultado para mostrarla en la
 /// tarjeta del panel. `post_url` rescata vía `og:image` si la URL es una
 /// página embed social. Segundo filtro de proporción con las dimensiones
@@ -90,32 +113,72 @@ pub fn spawn_serper_thumb(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = crate::serper::fetch_image(&url, Some(&post_url)).and_then(|img| {
-            if crate::serper::filter::ratio_blocked(img.width, img.height) {
-                Err(crate::serper::SerperError::FilteredBanner)
-            } else {
-                Ok(img)
-            }
-        });
+        let result = crate::serper::fetch_image(&url, Some(&post_url), None)
+            .map(|fetched| downscale_thumb(fetched.image))
+            .and_then(|img| {
+                if crate::serper::filter::ratio_blocked(img.width, img.height) {
+                    Err(crate::serper::SerperError::FilteredBanner)
+                } else {
+                    Ok(img)
+                }
+            });
         let _ = tx.send(AppMsg::SerperThumb { id, result });
         ctx.request_repaint();
     });
 }
 
+/// Reduce una imagen descargada a tamaño de miniatura (`fit_thumb_dims`)
+/// antes de subirla a GPU como textura (A11). Si los píxeles no cuadran con
+/// sus dimensiones (imposible tras `decode`), se devuelve tal cual en vez
+/// de fallar.
+fn downscale_thumb(img: canvas_io::LoadedImage) -> canvas_io::LoadedImage {
+    let (nw, nh) = fit_thumb_dims(img.width, img.height);
+    if (nw, nh) == (img.width, img.height) {
+        return img;
+    }
+    let Some(rgba) = image::RgbaImage::from_raw(img.width, img.height, img.rgba) else {
+        // Imposible tras `decode` (los píxeles cuadran por construcción):
+        // píxel negro 1×1 antes que una textura vacía.
+        return canvas_io::LoadedImage {
+            rgba: vec![0, 0, 0, 255],
+            width: 1,
+            height: 1,
+        };
+    };
+    let small = image::imageops::resize(&rgba, nw, nh, image::imageops::FilterType::Triangle);
+    canvas_io::LoadedImage {
+        width: small.width(),
+        height: small.height(),
+        rgba: small.into_raw(),
+    }
+}
+
 /// Descarga y decodifica la imagen completa de un resultado para insertarla
 /// como capa nueva del documento abierto. `post_url` rescata vía `og:image`
-/// si la URL directa es una página embed social.
-pub fn spawn_serper_image(
-    id: String,
-    label: String,
-    url: String,
-    post_url: String,
-    tx: Sender<AppMsg>,
-    ctx: egui::Context,
-) {
+/// si la URL directa es una página embed social. `target` identifica el
+/// destino que la pidió y viaja con la respuesta para validarla (A07).
+/// `thumb_url` alimenta el último nivel del rescate (la miniatura ya
+/// mostrada); la inserción avisa si los píxeles vinieron de otra URL (A08).
+pub struct SerperImageRequest {
+    pub id: String,
+    pub label: String,
+    pub url: String,
+    pub post_url: String,
+    pub thumb_url: Option<String>,
+    pub target: super::ImageInsertTarget,
+}
+
+/// Descarga y decodifica la imagen completa pedida en `req`.
+pub fn spawn_serper_image(req: SerperImageRequest, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = crate::serper::fetch_image(&url, Some(&post_url));
-        let _ = tx.send(AppMsg::SerperImageReady { id, label, result });
+        let result =
+            crate::serper::fetch_image(&req.url, Some(&req.post_url), req.thumb_url.as_deref());
+        let _ = tx.send(AppMsg::SerperImageReady {
+            id: req.id,
+            label: req.label,
+            result,
+            target: req.target,
+        });
         ctx.request_repaint();
     });
 }
@@ -138,6 +201,10 @@ pub fn spawn_serper_bulk_files(
         let stem = slugify(&keyword);
         let mut created = Vec::new();
         let mut errors = Vec::new();
+        // Lienzos cuyos píxeles vinieron de un rescate (`og:image`/thumb)
+        // en vez de la URL directa (A08): se informa en el mensaje final,
+        // nunca se aceptan en silencio.
+        let mut substituted = 0usize;
         if let Err(e) = std::fs::create_dir_all(&folder) {
             let msg = format!("cannot create folder {}: {e}", folder.display());
             for item in &items {
@@ -149,6 +216,7 @@ pub fn spawn_serper_bulk_files(
                 folder,
                 created,
                 errors,
+                substituted,
             });
             ctx.request_repaint();
             return;
@@ -161,7 +229,10 @@ pub fn spawn_serper_bulk_files(
                 save_bulk_one(&folder, &stem, i, &item, page)
             }));
             match outcome {
-                Ok(Ok(path)) => created.push(path),
+                Ok(Ok((path, was_substituted))) => {
+                    substituted += usize::from(was_substituted);
+                    created.push(path);
+                }
                 Ok(Err(e)) => errors.push(format!("{}: {e}", item.label)),
                 Err(_) => errors.push(format!("{}: internal worker error", item.label)),
             }
@@ -172,6 +243,7 @@ pub fn spawn_serper_bulk_files(
             folder,
             created,
             errors,
+            substituted,
         });
         ctx.request_repaint();
     });
@@ -213,9 +285,36 @@ pub fn default_bulk_dir(keyword: &str) -> Option<PathBuf> {
 }
 
 /// Tamaño de página de la tanda según el ajuste: fijo, o el máximo de la
-/// tanda cuando el ajuste es `BatchMax`. Pura y testeable.
+/// tanda cuando el ajuste es `BatchMax`. Pura y testeable. El resultado pasa
+/// por `clamp_bulk_page` (A11): sin techo, unas dims mentirosas de la API
+/// (p. ej. 20000×20000) asignarían ~1,5 GiB de RGBA en el horneado.
 pub fn resolve_bulk_page(size: crate::settings::BulkCanvasSize, items: &[BulkItem]) -> (f64, f64) {
-    size.dims().unwrap_or_else(|| common_page_size(items))
+    let (w, h) = size.dims().unwrap_or_else(|| common_page_size(items));
+    let (w, h) = clamp_bulk_page(w.round().max(1.0) as u32, h.round().max(1.0) as u32);
+    (f64::from(w), f64::from(h))
+}
+
+/// Lado mayor máximo y techo de píxeles de un lienzo bulk (A11).
+pub const MAX_BULK_PAGE_LONG: u32 = 4096;
+pub const MAX_BULK_PAGE_PIXELS: u64 = 16_777_216; // 4096²
+
+/// Recorta unas dimensiones al presupuesto del bulk conservando el aspecto
+/// (A11). Aritmética comprobada en `u64` (un `u32 × u32` siempre cabe) y sin
+/// materializar nada: rechazar 20000×20000 no asigna sus 1,5 GiB.
+pub(crate) fn clamp_bulk_page(width: u32, height: u32) -> (u32, u32) {
+    let (w, h) = (width.max(1), height.max(1));
+    let pixels = u64::from(w) * u64::from(h);
+    let long = w.max(h);
+    if long <= MAX_BULK_PAGE_LONG && pixels <= MAX_BULK_PAGE_PIXELS {
+        return (w, h);
+    }
+    let by_long = f64::from(MAX_BULK_PAGE_LONG) / f64::from(long);
+    let by_pixels = (MAX_BULK_PAGE_PIXELS as f64 / pixels as f64).sqrt();
+    let scale = by_long.min(by_pixels);
+    (
+        (f64::from(w) * scale).floor().max(1.0) as u32,
+        (f64::from(h) * scale).floor().max(1.0) as u32,
+    )
 }
 
 /// Tamaño de página COMÚN de la tanda: máx. ancho × máx. alto conocidos por
@@ -240,17 +339,27 @@ fn common_page_size(items: &[BulkItem]) -> (f64, f64) {
 }
 
 /// Descarga una imagen y la guarda como `stem-NN.png` + sidecar editable en
-/// la página común `page` (misma para toda la tanda).
+/// la página común `page` (misma para toda la tanda). Devuelve la ruta y si
+/// los píxeles vinieron de una URL de rescate en vez de la directa (A08).
 fn save_bulk_one(
     folder: &Path,
     stem: &str,
     index: usize,
     item: &BulkItem,
     page: (f64, f64),
-) -> Result<PathBuf, String> {
-    let img =
-        crate::serper::fetch_image(&item.url, Some(&item.post_url)).map_err(|e| e.to_string())?;
-    let path = free_bulk_path(folder, stem, index);
+) -> Result<(PathBuf, bool), String> {
+    let fetched =
+        crate::serper::fetch_image(&item.url, Some(&item.post_url), item.thumb_url.as_deref())
+            .map_err(|e| e.to_string())?;
+    let substituted = fetched.substituted(&item.url);
+    let img = fetched.image;
+    // A06: el nombre se RESERVA atómicamente (`create_new`) antes de
+    // escribir: dos ventanas importando la misma keyword a la misma carpeta
+    // nunca obtienen el mismo nombre. La reserva vive hasta que la imagen
+    // queda escrita; si algo falla antes, se retira el hueco vacío propio
+    // (nunca un archivo ajeno: la reserva la creó este worker).
+    let path =
+        canvas_io::reserve_bulk_path(folder, stem, "png", index + 1).map_err(|e| e.to_string())?;
     let photo = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())
         .ok_or_else(|| "decoded image has no pixels".to_owned())?;
     let (pw, ph) = (page.0.round().max(1.0), page.1.round().max(1.0));
@@ -260,13 +369,22 @@ fn save_bulk_one(
     state.add_image_layer(item.label.clone(), Some(path.clone()), img);
     state.doc.source_path = Some(path.clone());
     let mut payload = state.sidecar_payload();
-    let baked = payload_bake(&state, &photo)?;
+    // Todo lo que falla a partir de aquí deja la reserva a medio escribir:
+    // si la imagen aún no quedó en disco, se retira el hueco propio; si la
+    // imagen SÍ quedó pero falló el sidecar, se conserva (es un producto
+    // visible y la tanda lo informa como error del item).
+    let baked = payload_bake(&state, &photo).inspect_err(|_| {
+        let _ = std::fs::remove_file(&path);
+    })?;
     let (pw_px, ph_px) = (pw as u32, ph as u32);
-    let written = canvas_io::save_rgba(&path, baked.clone(), pw_px, ph_px, 92, None)
-        .map_err(|e| e.to_string())?;
+    let written =
+        canvas_io::save_rgba(&path, baked.clone(), pw_px, ph_px, 92, None).map_err(|e| {
+            let _ = std::fs::remove_file(&path);
+            e.to_string()
+        })?;
     payload.preview = canvas_io::make_preview(&baked, pw_px, ph_px);
     canvas_io::write_sidecar(&path, &written, &payload).map_err(|e| e.to_string())?;
-    Ok(path)
+    Ok((path, substituted))
 }
 
 /// Hornea el PNG con la geometría ya calculada por `add_image_layer` (foto
@@ -301,19 +419,6 @@ fn payload_bake(
             has_bg,
         },
     ))
-}
-
-/// Nombre libre `{stem}-{n:02}.png` en `folder`, sin colisionar con lo que
-/// ya haya (ni con tandas anteriores).
-fn free_bulk_path(folder: &Path, stem: &str, index: usize) -> PathBuf {
-    let mut n = index + 1;
-    loop {
-        let path = folder.join(format!("{stem}-{n:02}.png"));
-        if !path.exists() {
-            return path;
-        }
-        n += 1;
-    }
 }
 
 /// Trocea la keyword a un tallo de archivo seguro (minúsculas, guiones).

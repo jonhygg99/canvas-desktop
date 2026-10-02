@@ -27,6 +27,18 @@ se han verificado en hardware real.
 
 El canvas mínimo funcionando de punta a punta:
 
+- **Vídeos en el lienzo**: reproducción automática al abrir o insertar un
+  vídeo, con Play/Pause, Restart y línea de tiempo al principio del panel
+  de propiedades. FFmpeg decodifica continuamente en segundo plano sin
+  abrir consolas en Windows. Requiere FFmpeg/FFprobe en `PATH` o en
+  `CANVAS_FFMPEG_DIR`.
+- **Edición de vídeo no destructiva**: `Crop` recorta el encuadre arrastrando
+  las esquinas; `Trim clip` ajusta inicio y final; `Size → Zoom` amplía el
+  vídeo alrededor de su centro. `Blurred background` sigue los fotogramas
+  del vídeo con desenfoque ajustable. Los cambios se conservan en `.canvas`.
+  La exportación actual produce imágenes del fotograma visible; todavía no
+  exporta un vídeo editado a MP4.
+
 - **Abrir** una imagen (`png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`) por
   argumentos de línea de comandos, diálogo nativo o arrastrar y soltar.
   Respeta la orientación EXIF. La página toma las dimensiones reales.

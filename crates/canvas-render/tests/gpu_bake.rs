@@ -145,6 +145,92 @@ fn doc_with_blur_image(w: u32, h: u32, blur_radius: f32) -> (Document, ImageMap)
     (doc, images)
 }
 
+#[test]
+#[ignore = "requiere GPU"]
+fn video_crop_and_blurred_background_follow_changing_frames() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let mut doc = Document::new(128.0, 80.0);
+    let video = canvas_core::VideoContent {
+        source_path: None,
+        natural_width: 64,
+        natural_height: 48,
+        crop: None,
+        duration_secs: Some(2.0),
+        poster_time: 0.0,
+        trim_start: 0.0,
+        trim_end: None,
+    };
+    let bg = doc
+        .add_layer(
+            "Background",
+            Transform::new(0.0, 0.0, 128.0, 80.0),
+            LayerContent::Video(video.clone()),
+        )
+        .unwrap();
+    doc.layer_mut(bg).unwrap().effects.blur_radius = 8.0;
+    let mut cropped = video;
+    cropped.crop = Some(canvas_core::CropRect {
+        x: 0.5,
+        y: 0.0,
+        width: 0.5,
+        height: 1.0,
+    });
+    let fg = doc
+        .add_layer(
+            "Video",
+            Transform::new(32.0, 16.0, 64.0, 48.0),
+            LayerContent::Video(cropped),
+        )
+        .unwrap();
+    let (mut rgba, w, h) = gradient_image(64, 48);
+    let mut images = ImageMap::new();
+    let frame = image_data_from_rgba(rgba.clone(), w, h);
+    images.insert(bg, frame.clone());
+    images.insert(fg, frame);
+    let (first, width, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    let red_at = |pixels: &[u8], x, y| pixels[((y * width + x) * 4) as usize];
+    assert!(
+        red_at(&first, 8, 30) < 64,
+        "background must display the first frame"
+    );
+    assert!(
+        red_at(&first, 40, 30) > 128,
+        "the foreground must display the cropped half"
+    );
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    let frame = image_data_from_rgba(rgba, w, h);
+    images.insert(bg, frame.clone());
+    images.insert(fg, frame);
+    let (second, _, _) = bake(
+        &mut renderer,
+        &device,
+        &queue,
+        FxScope::default(),
+        &doc,
+        &images,
+        1.0,
+    );
+    assert!(
+        red_at(&second, 8, 30) > 192,
+        "blur must be recomputed for the next video frame"
+    );
+    assert!(
+        red_at(&second, 40, 30) < 128,
+        "the cropped foreground must advance too"
+    );
+}
+
 // ─── bake_blur: horneado básico con blur ───────────────────────────────
 
 /// Replica `bake_blur.rs`: documento con una imagen de degradado + blur,
@@ -172,7 +258,7 @@ fn bake_blur_produces_non_transparent_pixels() {
     assert_eq!(rgba.len(), (w * h * 4) as usize);
 
     // Al menos un píxel debe tener alpha > 0 (la imagen llena toda la página).
-    let any_visible = rgba.chunks_exact(4).any(|px| px[3] > 0);
+    let any_visible = rgba.as_chunks::<4>().0.iter().any(|px| px[3] > 0);
     assert!(any_visible, "todos los píxeles son transparentes");
 }
 
@@ -261,7 +347,7 @@ fn bake_blur_on_solid_image_is_identity() {
     assert_eq!((ow, oh), (w, h));
     // Cada píxel de salida debe estar cerca del color de entrada (tolerancia
     // por redondeo del filtro gaussiano en los bordes).
-    for px in rgba_out.chunks_exact(4) {
+    for px in rgba_out.as_chunks::<4>().0 {
         assert!(
             (px[0] as i32 - color[0] as i32).abs() <= 5
                 && (px[1] as i32 - color[1] as i32).abs() <= 5
@@ -429,7 +515,7 @@ fn restored_sidecar_document_bakes_with_content() {
     // en blanco.
     let mut non_white = 0usize;
     let mut opaque = 0usize;
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         non_white += usize::from(px[..3] != [255, 255, 255]);
         opaque += usize::from(px[3] == 255);
     }
@@ -1287,7 +1373,12 @@ fn fx_budget_evicts_lru_scopes_keeping_active_and_rebake_restores() {
     assert_eq!((bw, bh), (64, 48));
     assert_eq!(skipped, 0, "el scope re-sincronizado no debe omitir capas");
     let n = rgba.len() / 4;
-    let opaque = rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+    let opaque = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|px| px[3] > 0)
+        .count();
     assert!(
         opaque * 100 / n.max(1) > 50,
         "el scope re-horneado debe volver a pintar contenido opaco ({opaque}/{n})"

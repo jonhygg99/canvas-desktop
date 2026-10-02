@@ -46,7 +46,7 @@ pub(crate) mod types;
 pub const API_KEY_ENV: &str = "SERPER_API_KEY";
 
 #[allow(unused_imports)]
-pub use api::{decode, fetch_image, search, SerperError};
+pub use api::{decode, fetch_image, search, FetchedImage, SerperError};
 pub use filter::default_blocked_domains;
 pub use panel::panel_ui;
 pub use state::{DragSerper, Panel};

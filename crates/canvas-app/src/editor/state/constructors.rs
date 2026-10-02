@@ -24,6 +24,11 @@ impl EditorState {
         selection: Selection,
         background_layer: Option<LayerId>,
     ) -> Self {
+        let video_playing_layer = selection.primary().filter(|id| {
+            doc.layer(*id).is_ok_and(
+                |l| matches!(&l.content, LayerContent::Video(v) if v.source_path.is_some()),
+            )
+        });
         Self {
             doc,
             history: History::default(),
@@ -43,6 +48,7 @@ impl EditorState {
             content_edit: None,
             shadow_edit: None,
             saving: false,
+            saving_capture: None,
             exporting: false,
             save_error: None,
             from_gallery: None,
@@ -54,6 +60,7 @@ impl EditorState {
             active_left_tab: LeftTab::Layers,
             unsplash: crate::unsplash::Panel::default(),
             serper: crate::serper::Panel::default(),
+            ytdlp: crate::ytdlp::Panel::default(),
             sidecar_enabled: true,
             is_design: false,
             source_metadata: None,
@@ -80,29 +87,52 @@ impl EditorState {
             pending_global_redo: None,
             pending_restore: None,
             pending_delete_from_undo: false,
+            video_playing_layer,
+            video_playback: None,
         }
     }
 
     /// Documento nuevo a partir de una imagen: página a sus dimensiones
     /// reales y la imagen como capa a tamaño completo.
     pub fn from_image(path: PathBuf, img: LoadedImage) -> Result<Self, CoreError> {
+        let is_video = canvas_io::is_video_file(&path);
         let (w, h) = (f64::from(img.width), f64::from(img.height));
         let mut doc = Document::new(w, h);
         doc.source_path = Some(path.clone());
         let name = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Image".to_owned());
-        let id = doc.add_layer(
-            name,
-            Transform::new(0.0, 0.0, w, h),
-            LayerContent::Image(ImageContent {
-                source_path: Some(path),
+            .unwrap_or_else(|| {
+                if is_video {
+                    "Video".to_owned()
+                } else {
+                    "Image".to_owned()
+                }
+            });
+        let content = if is_video {
+            // Intentar obtener duración vía ffprobe (mejor esfuerzo)
+            let duration = canvas_io::probe_video_size(&path)
+                .ok()
+                .and_then(|(_, _, d)| d);
+            LayerContent::Video(canvas_core::VideoContent {
+                source_path: Some(path.clone()),
                 natural_width: img.width,
                 natural_height: img.height,
                 crop: None,
-            }),
-        )?;
+                duration_secs: duration,
+                poster_time: 0.0,
+                trim_start: 0.0,
+                trim_end: None,
+            })
+        } else {
+            LayerContent::Image(ImageContent {
+                source_path: Some(path.clone()),
+                natural_width: img.width,
+                natural_height: img.height,
+                crop: None,
+            })
+        };
+        let id = doc.add_layer(name, Transform::new(0.0, 0.0, w, h), content)?;
         let mut images = ImageMap::new();
         images.insert(id, image_data_from_rgba(img.rgba, img.width, img.height));
         Ok(Self::base(doc, images, Selection::single(id), None))

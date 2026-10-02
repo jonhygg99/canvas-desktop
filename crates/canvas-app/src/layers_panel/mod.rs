@@ -84,11 +84,14 @@ enum Drop {
 /// colapsado, el orden y lo que la pestaña Web necesita (bloqueados,
 /// presupuesto, créditos y última carpeta del buscador Serper).
 /// `deck_folder` alimenta el destino del bulk junto al archivo abierto.
+/// `insert_dest` es la ranura que recibirá un clic de inserción web/Unsplash
+/// (A07): generación de la baraja + id estable de la ranura activa.
 pub fn left_panel_ui(
     state: &mut EditorState,
     ui: &mut egui::Ui,
     settings: &mut crate::settings::AppSettings,
     deck_folder: Option<std::path::PathBuf>,
+    insert_dest: crate::loader::ImageInsertDest,
     tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
 ) -> Option<LayersTabOrder> {
     sidebar::compact(ui);
@@ -122,6 +125,7 @@ pub fn left_panel_ui(
                     LeftTab::Insert => "Insert",
                     LeftTab::Web => "Web",
                     LeftTab::Images => "Images",
+                    LeftTab::Download => "Download",
                 };
                 sidebar::title(ui, tab_name);
                 ui.add_space(6.0);
@@ -136,9 +140,29 @@ pub fn left_panel_ui(
                             state.from_gallery.clone(),
                             settings.serper_last_folder.clone(),
                         );
-                        crate::serper::panel_ui(&mut state.serper, settings, dest, ui, tx);
+                        crate::serper::panel_ui(
+                            &mut state.serper,
+                            settings,
+                            dest,
+                            insert_dest,
+                            ui,
+                            tx,
+                        );
                     }
-                    LeftTab::Images => crate::unsplash::panel_ui(state, ui, tx),
+                    LeftTab::Images => crate::unsplash::panel_ui(state, insert_dest, ui, tx),
+                    LeftTab::Download => {
+                        let dest = deck_folder
+                            .clone()
+                            .or_else(|| {
+                                state
+                                    .doc
+                                    .source_path
+                                    .as_deref()
+                                    .and_then(|p| p.parent().map(|p| p.to_owned()))
+                            })
+                            .or_else(|| state.from_gallery.clone());
+                        crate::ytdlp::panel_ui(&mut state.ytdlp, dest, ui, tx);
+                    }
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);
                         ui.separator();

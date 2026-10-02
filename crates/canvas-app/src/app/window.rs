@@ -55,7 +55,7 @@ impl AppInner {
         if let Some(path) = dropped.into_iter().next() {
             if matches!(ws.view, View::Editor(_))
                 && path.is_file()
-                && canvas_io::is_image_file(&path)
+                && canvas_io::is_media_file(&path)
             {
                 loader::spawn_load_image_as_layer(path, ws.tx.clone(), ctx.clone());
             } else {
@@ -141,20 +141,9 @@ impl AppInner {
             return; // ya hay uno en vuelo para esta ventana
         }
         ws.unsaved_dialog = Some(super::UnsavedDialog::WindowClose);
-        let description = if names.len() == 1 {
-            format!(
-                "\"{}\" has unsaved changes.\nSave them before closing? (\"No\" discards them.)",
-                names[0]
-            )
-        } else {
-            format!(
-                "{} canvases have unsaved changes:\n\u{2022} {}\n\n\"Save\" only saves the \
-                 active one — the rest will be lost when you close. Cancel and switch to them \
-                 first if you want to keep their changes.",
-                names.len(),
-                names.join("\n\u{2022} ")
-            )
-        };
+        // Mismo texto que la navegación (A05): un solo sitio que describe la
+        // política — «Save» guarda todos los lienzos sucios, no solo el activo.
+        let description = super::navigation::unsaved_dialog_description(&names, "closing");
         let tx = ws.tx.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {

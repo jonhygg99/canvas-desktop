@@ -182,7 +182,10 @@ impl AppInner {
             );
         }
         if let Some(nav) = open_next {
-            self.navigate(ws, nav, ctx);
+            // A05: TODA salida pasa por la política del workspace (mira el
+            // activo + los lienzos de fondo y pregunta de forma asíncrona).
+            // Con la vista limpia, `request_nav` navega directamente.
+            self.request_nav(ws, nav, ctx);
         }
 
         // Mantén el watcher `notify` apuntando al archivo abierto (si lo hay).

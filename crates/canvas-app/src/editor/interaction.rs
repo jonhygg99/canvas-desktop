@@ -121,6 +121,7 @@ pub(super) fn layer_interaction(
                         state.gesture = if state.crop_mode {
                             let start_crop = match &layer.content {
                                 LayerContent::Image(c) => c.crop,
+                                LayerContent::Video(c) => c.crop,
                                 _ => None,
                             };
                             Gesture::Crop {
@@ -295,8 +296,10 @@ pub(super) fn layer_interaction(
                     );
                     if let Ok(l) = state.doc.layer_mut(layer) {
                         l.transform = t;
-                        if let LayerContent::Image(content) = &mut l.content {
-                            content.crop = Some(crop);
+                        match &mut l.content {
+                            LayerContent::Image(content) => content.crop = Some(crop),
+                            LayerContent::Video(content) => content.crop = Some(crop),
+                            _ => {}
                         }
                     }
                     show_drag_tag(ui, pos, format_dims(&t));
@@ -334,6 +337,7 @@ pub(super) fn layer_interaction(
                     let after_t = l.transform;
                     let after_crop = match &l.content {
                         LayerContent::Image(content) => content.crop,
+                        LayerContent::Video(content) => content.crop,
                         _ => None,
                     };
                     if after_t != start_t || after_crop != start_crop {

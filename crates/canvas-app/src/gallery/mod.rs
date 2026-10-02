@@ -14,7 +14,10 @@ use std::time::SystemTime;
 use eframe::egui;
 
 use crate::lock::LockExt;
-use crate::{deck::StripSide, settings::GallerySort};
+use crate::{
+    deck::StripSide,
+    settings::{GallerySort, MediaFilter},
+};
 
 pub use ui::{next_folder_panel_side, show};
 
@@ -84,6 +87,7 @@ pub struct GalleryState {
     /// Error de lectura de la carpeta, si el escaneo no pudo abrirla.
     pub scan_error: Option<String>,
     pub sort: GallerySort,
+    pub media_filter: MediaFilter,
     /// Número de diseños que se muestran por línea (no cambia los archivos).
     pub gallery_columns: usize,
     /// Última celda marcada con clic derecho: lo que copia Ctrl+C.
@@ -148,6 +152,15 @@ impl FolderNavigation {
 }
 impl GalleryState {
     pub fn new(folder: PathBuf, sort: GallerySort, folder_panel_side: StripSide) -> Self {
+        Self::new_with_filter(folder, sort, folder_panel_side, MediaFilter::default())
+    }
+
+    pub fn new_with_filter(
+        folder: PathBuf,
+        sort: GallerySort,
+        folder_panel_side: StripSide,
+        media_filter: MediaFilter,
+    ) -> Self {
         let folder = normalize_folder(folder);
         Self {
             folder_panel_side,
@@ -158,6 +171,7 @@ impl GalleryState {
             scanned: false,
             scan_error: None,
             sort,
+            media_filter,
             gallery_columns: 5,
             selected: None,
             rename_edit: None,
@@ -177,6 +191,22 @@ impl GalleryState {
         navigation: FolderNavigation,
         folder_panel_side: StripSide,
     ) -> Self {
+        Self::with_navigation_and_filter(
+            folder,
+            sort,
+            navigation,
+            folder_panel_side,
+            MediaFilter::default(),
+        )
+    }
+
+    pub fn with_navigation_and_filter(
+        folder: PathBuf,
+        sort: GallerySort,
+        navigation: FolderNavigation,
+        folder_panel_side: StripSide,
+        media_filter: MediaFilter,
+    ) -> Self {
         let folder = normalize_folder(folder);
         Self {
             folder: folder.clone(),
@@ -187,6 +217,7 @@ impl GalleryState {
             scanned: false,
             scan_error: None,
             sort,
+            media_filter,
             gallery_columns: 5,
             selected: None,
             rename_edit: None,
@@ -272,6 +303,8 @@ impl GalleryState {
                 let (tex, failed) = old.remove(&path).unwrap_or((None, false));
                 let kind = if canvas_io::is_canvas_file(&path) {
                     ItemKind::Design
+                } else if canvas_io::is_video_file(&path) {
+                    ItemKind::Video
                 } else {
                     ItemKind::Image
                 };
@@ -361,6 +394,7 @@ pub enum GalleryAction {
     /// Reabrir la carpeta actual tras conceder permisos en Ajustes (macOS).
     RetryScan,
     SortChanged(GallerySort),
+    MediaFilterChanged(MediaFilter),
     /// Botón «✚ New design» de la cabecera.
     NewDesign,
     /// Duplicar este archivo (y su sidecar, si es una imagen que tiene uno)

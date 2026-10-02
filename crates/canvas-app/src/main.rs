@@ -13,6 +13,7 @@
 
 mod app;
 mod app_icons;
+mod audio;
 mod clipboard;
 mod crash_log;
 mod deck;
@@ -37,6 +38,7 @@ mod test_server;
 mod unsplash;
 mod watcher;
 mod welcome;
+mod ytdlp;
 
 use anyhow::{anyhow, Context, Result};
 use app::App;

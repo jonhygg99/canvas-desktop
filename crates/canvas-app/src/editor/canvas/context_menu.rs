@@ -200,7 +200,7 @@ pub(super) fn canvas_context_menu(
         .selection
         .primary()
         .and_then(|id| state.doc.layer(id).ok())
-        .is_some_and(|l| matches!(l.content, LayerContent::Image(_)));
+        .is_some_and(|l| matches!(l.content, LayerContent::Image(_) | LayerContent::Video(_)));
     let mut crop_on = state.crop_mode;
     if ui
         .add_enabled(crop_eligible, egui::Checkbox::new(&mut crop_on, "Crop"))

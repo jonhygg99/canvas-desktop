@@ -188,6 +188,7 @@ fn slot_doc(dirty: bool) -> SlotDoc {
         is_design: false,
         source_metadata: None,
         saving: false,
+        saving_capture: None,
         save_error: None,
         external_change: false,
         born_blank: false,

@@ -12,6 +12,7 @@ mod content;
 mod content_shape;
 mod content_text;
 mod effects;
+mod video;
 
 mod layer_common;
 #[cfg(test)]
@@ -163,6 +164,10 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     // vacío… Se descarta con el botón; la siguiente operación con éxito
     // también lo limpia (`save_error = None` en `start_save`/`start_export`).
     let _ = save_error_banner(state, ui);
+
+    if let Some(video) = state.video_layer() {
+        video::video_controls_ui(state, ui, video);
+    }
 
     if state.from_gallery.is_some()
         && icon_text_button_ui(

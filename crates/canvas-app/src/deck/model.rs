@@ -45,6 +45,10 @@ pub struct SlotDoc {
     pub is_design: bool,
     pub source_metadata: Option<canvas_io::ImageMetadata>,
     pub saving: bool,
+    /// Revisión capturada al lanzar el guardado (ver
+    /// `EditorState::saving_capture`): viaja con el slot para que un
+    /// intercambio de lienzo no la pierda.
+    pub saving_capture: Option<(usize, u64)>,
     pub save_error: Option<String>,
     /// El archivo cambió en disco desde el último guardado con capas. Para
     /// una carga de fondo esto NUNCA abre un diálogo (sería un modal
@@ -227,6 +231,8 @@ pub(super) fn idle_slot(
 pub(super) fn slot_kind(path: &Path) -> ItemKind {
     if canvas_io::is_canvas_file(path) {
         ItemKind::Design
+    } else if canvas_io::is_video_file(path) {
+        ItemKind::Video
     } else {
         ItemKind::Image
     }

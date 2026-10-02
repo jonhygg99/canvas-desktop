@@ -1,5 +1,5 @@
-//! Tests del worker masivo web: tallo de archivo y nombre libre sin
-//! colisiones. Sin red ni GPU: puro sistema de archivos temporal.
+//! Tests del worker masivo web: tallo de archivo y reserva atómica de
+//! nombres sin colisiones. Sin red ni GPU: puro sistema de archivos temporal.
 
 use super::*;
 use std::fs::File;
@@ -14,19 +14,21 @@ fn slugify_is_a_safe_filename_stem() {
 }
 
 #[test]
-fn free_bulk_path_skips_existing_files() {
+fn bulk_reservation_skips_existing_files_and_holds_the_name() {
+    // A06: la reserva es atómica (`create_new`), no un `exists()` suelto.
     let dir = tempfile::tempdir().unwrap();
-    // `shakira-01.png` ya existe: la primera libre es la 02.
+    // `shakira-01.png` ya existe: la primera libre es la 02, y reservarla la
+    // crea en disco para que otra tanda no la obtenga.
     File::create(dir.path().join("shakira-01.png")).unwrap();
-    assert_eq!(
-        free_bulk_path(dir.path(), "shakira", 0),
-        dir.path().join("shakira-02.png")
-    );
+    let p = canvas_io::reserve_bulk_path(dir.path(), "shakira", "png", 1).unwrap();
+    assert_eq!(p, dir.path().join("shakira-02.png"));
+    assert!(p.is_file(), "la reserva crea el hueco en disco");
+    // La siguiente reserva ya no puede obtener la 02: gana la 03.
+    let q = canvas_io::reserve_bulk_path(dir.path(), "shakira", "png", 1).unwrap();
+    assert_eq!(q, dir.path().join("shakira-03.png"));
     // El índice cuenta desde ahí: con índice 5 pide la 06.
-    assert_eq!(
-        free_bulk_path(dir.path(), "shakira", 5),
-        dir.path().join("shakira-06.png")
-    );
+    let r = canvas_io::reserve_bulk_path(dir.path(), "shakira", "png", 6).unwrap();
+    assert_eq!(r, dir.path().join("shakira-06.png"));
 }
 
 #[test]
@@ -37,6 +39,7 @@ fn common_page_size_is_max_dims_or_fallback() {
         width: w,
         height: h,
         post_url: "https://a.com/p".to_owned(),
+        thumb_url: None,
     };
     // Máx. ancho × máx. alto aunque vengan de fotos distintas.
     assert_eq!(
@@ -100,6 +103,7 @@ fn resolve_bulk_page_honors_the_setting() {
         width: w,
         height: h,
         post_url: "https://a.com/p".to_owned(),
+        thumb_url: None,
     };
     let items = vec![item(Some(800), Some(600))];
     // Por defecto: Full HD aunque la tanda sea pequeña.
@@ -116,4 +120,36 @@ fn resolve_bulk_page_honors_the_setting() {
         resolve_bulk_page(BulkCanvasSize::BatchMax, &items),
         (800.0, 600.0)
     );
+}
+
+#[test]
+fn fit_thumb_dims_keeps_aspect_within_the_cap() {
+    // A11: miniaturas para GPU, nunca la foto completa.
+    assert_eq!(fit_thumb_dims(800, 600), (512, 384));
+    assert_eq!(fit_thumb_dims(600, 800), (384, 512));
+    assert_eq!(fit_thumb_dims(512, 512), (512, 512));
+    assert_eq!(fit_thumb_dims(100, 80), (100, 80), "pequeña: intacta");
+    assert_eq!(fit_thumb_dims(0, 0), (1, 1), "degenerada: sin ceros");
+}
+
+#[test]
+fn clamp_bulk_page_rejects_huge_api_dims_without_allocating() {
+    // A11: 20000×20000 (≈1,5 GiB de RGBA) no llega al horneado; el rechazo
+    // es aritmética pura, sin materializar la imagen.
+    let (w, h) = clamp_bulk_page(20_000, 20_000);
+    assert!(
+        w <= MAX_BULK_PAGE_LONG && h <= MAX_BULK_PAGE_LONG,
+        "{w}x{h}"
+    );
+    assert!(
+        u64::from(w) * u64::from(h) <= MAX_BULK_PAGE_PIXELS,
+        "{w}x{h}"
+    );
+    assert_eq!((w, h), (4096, 4096));
+    // Apaisada extrema: manda el lado mayor, con aspecto.
+    assert_eq!(clamp_bulk_page(20_000, 100), (4096, 20));
+    // Sanas: intactas. Límite exacto: intacto.
+    assert_eq!(clamp_bulk_page(1920, 1080), (1920, 1080));
+    assert_eq!(clamp_bulk_page(4096, 4096), (4096, 4096));
+    assert_eq!(clamp_bulk_page(0, 0), (1, 1));
 }

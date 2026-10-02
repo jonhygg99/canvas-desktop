@@ -136,7 +136,7 @@ impl AppInner {
         folder: PathBuf,
         generation: u64,
         path: PathBuf,
-        result: Result<deck::SlotDoc, canvas_io::IoError>,
+        result: Result<Box<deck::SlotDoc>, canvas_io::IoError>,
     ) {
         if ws.deck.accepts_response(&folder, generation) {
             ws.deck.loading_finished();
@@ -151,7 +151,7 @@ impl AppInner {
                     // UI: se aplana el error tipado aquí.
                     let content = result.map_or_else(
                         |e| deck::SlotContent::Failed(e.to_string()),
-                        |doc| deck::SlotContent::Ready(Box::new(doc)),
+                        deck::SlotContent::Ready,
                     );
                     if let Some(slot) = ws.deck.slots.get_mut(idx) {
                         slot.content = content;

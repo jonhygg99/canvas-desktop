@@ -104,16 +104,59 @@ fn bulk_grid_at_height(
         ui.weak("No images to choose from yet — run a search first.");
         return;
     }
+    // Barrido de retiradas aplazadas (A02): los banners cazados a mitad de
+    // un gesto quedaron como `thumb_error` para no recolocar; al terminar el
+    // gesto se retiran de verdad.
+    if !ui.ctx().input(|i| i.pointer.primary_down()) {
+        let banner_msg = crate::serper::SerperError::FilteredBanner.to_string();
+        let mut removed = false;
+        panel.photos.retain(|p| {
+            let defer = p.thumb_error.as_deref() == Some(banner_msg.as_str());
+            if defer {
+                removed = true;
+            }
+            !defer
+        });
+        if removed {
+            panel
+                .bulk_selected
+                .retain(|id| panel.photos.iter().any(|p| p.photo.id == *id));
+            panel.filtered_post += 1;
+            panel.bulk_layout_cache = None;
+        }
+    }
     let ctx = ui.ctx().clone();
     request_thumbs(panel, tx, &ctx);
-    let cols = column_count(ui.available_width());
-    let col_w = masonry_col_width(ui.available_width(), cols);
+    let fresh_cols = column_count(ui.available_width());
+    let col_w = masonry_col_width(ui.available_width(), fresh_cols);
     let heights: Vec<f32> = panel
         .photos
         .iter()
         .map(|item| estimate_h(item, col_w))
         .collect();
-    let columns = assign_columns(&heights, cols);
+    let ids: Vec<String> = panel.photos.iter().map(|p| p.photo.id.clone()).collect();
+    let interacting = ui.ctx().input(|i| i.pointer.primary_down());
+    // Con el puntero pulsado se reutiliza el reparto congelado (por ids):
+    // ni un thumb recién llegado ni una retirada recolocan las tarjetas a
+    // mitad de un clic (A02). Sin gesto, se recalcula y se congela de nuevo.
+    let columns: Vec<Vec<usize>> = if interacting {
+        match panel.bulk_layout_cache.clone() {
+            Some((cached_cols, cached))
+                if cached_cols == fresh_cols && bulk_ids_match(&cached, &ids) =>
+            {
+                bulk_ids_to_indices(&cached, &ids)
+            }
+            _ => {
+                let fresh = assign_columns(&heights, fresh_cols);
+                panel.bulk_layout_cache = Some((fresh_cols, bulk_indices_to_ids(&fresh, &ids)));
+                fresh
+            }
+        }
+    } else {
+        let fresh = assign_columns(&heights, fresh_cols);
+        panel.bulk_layout_cache = Some((fresh_cols, bulk_indices_to_ids(&fresh, &ids)));
+        fresh
+    };
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .max_height(max_h)
@@ -169,42 +212,50 @@ fn bulk_masonry_cell(
     let h = masonry_h(&tex, est_h, col_w);
     let busy = panel.bulk_busy;
     let mut selected = panel.bulk_selected.contains(&id);
-    ui.horizontal(|ui| {
-        ui.add_enabled_ui(!busy, |ui| {
-            if ui.checkbox(&mut selected, "").changed() {
-                toggle_bulk(panel, &id, selected);
-            }
+    // Identidad estable por foto (A02): sin este `push_id`, el checkbox
+    // recibe un id automático según su posición en el árbol y, si un thumb
+    // recoloca las tarjetas entre pulsar y soltar, otra tarjeta hereda esa
+    // identidad y el clic alterna la foto equivocada. El clic de imagen ya
+    // usaba `("bulk_img", id)`; el checkbox y el Retry quedan cubiertos al
+    // envolver la celda entera.
+    ui.push_id(("bulk_cell", id.clone()), |ui| {
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!busy, |ui| {
+                if ui.checkbox(&mut selected, "").changed() {
+                    toggle_bulk(panel, &id, selected);
+                }
+            });
+            ui.weak(host);
         });
-        ui.weak(host);
-    });
-    if let Some(tex) = tex {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(col_w, h), egui::Sense::click());
-        paint_masonry_image(ui, &tex, rect, panel.bulk_selected.contains(&id));
-        let click = ui.interact(
-            rect,
-            egui::Id::new(("bulk_img", id.as_str())),
-            egui::Sense::click(),
-        );
-        if click.clicked() && !busy {
-            let cur = panel.bulk_selected.contains(&id);
-            toggle_bulk(panel, &id, !cur);
+        if let Some(tex) = tex {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(col_w, h), egui::Sense::click());
+            paint_masonry_image(ui, &tex, rect, panel.bulk_selected.contains(&id));
+            let click = ui.interact(
+                rect,
+                egui::Id::new(("bulk_img", id.as_str())),
+                egui::Sense::click(),
+            );
+            if click.clicked() && !busy {
+                let cur = panel.bulk_selected.contains(&id);
+                toggle_bulk(panel, &id, !cur);
+            }
+            let _ = click.on_hover_text("Click to select / deselect");
+        } else if let Some(err) = error {
+            retry_cell(
+                panel,
+                &RetryPaint {
+                    id: id.clone(),
+                    err,
+                    col_w,
+                    est_h,
+                },
+                ui,
+                tx,
+            );
+        } else {
+            placeholder_cell(panel, &id, col_w, est_h, busy, ui);
         }
-        let _ = click.on_hover_text("Click to select / deselect");
-    } else if let Some(err) = error {
-        retry_cell(
-            panel,
-            &RetryPaint {
-                id: id.clone(),
-                err,
-                col_w,
-                est_h,
-            },
-            ui,
-            tx,
-        );
-    } else {
-        placeholder_cell(panel, &id, col_w, est_h, busy, ui);
-    }
+    });
 }
 
 /// Celda aún sin thumb (descargando): placeholder con el dominio; el clic
@@ -310,6 +361,49 @@ pub(crate) fn resolve_bulk_folder(
         .or_else(|| source_path.and_then(|p| p.parent().map(PathBuf::from)))
         .or(from_gallery)
         .or(last)
+}
+
+/// ¿Sigue el reparto congelado representando las fotos actuales (A02)?
+/// Compara el conjunto de ids por columna con el orden actual: si se añadió
+/// o retiró alguna foto, el reparto ya no vale y hay que recalcular.
+pub(crate) fn bulk_ids_match(cached: &[Vec<String>], ids: &[String]) -> bool {
+    let mut cached_flat: Vec<&String> = cached.iter().flatten().collect();
+    cached_flat.sort();
+    let mut current: Vec<&String> = ids.iter().collect();
+    current.sort();
+    cached_flat == current
+}
+
+/// Convierte un reparto de índices a ids (para congelarlo entre frames).
+pub(crate) fn bulk_indices_to_ids(columns: &[Vec<usize>], ids: &[String]) -> Vec<Vec<String>> {
+    columns
+        .iter()
+        .map(|col| col.iter().filter_map(|&i| ids.get(i).cloned()).collect())
+        .collect()
+}
+
+/// Convierte un reparto congelado (ids) a índices actuales. Los ids que ya
+/// no existen se omiten; los nuevos (si los hubiera) van al final de la
+/// primera columna para no recolocar lo congelado.
+pub(crate) fn bulk_ids_to_indices(cached: &[Vec<String>], ids: &[String]) -> Vec<Vec<usize>> {
+    let mut out: Vec<Vec<usize>> = cached
+        .iter()
+        .map(|col| {
+            col.iter()
+                .filter_map(|id| ids.iter().position(|cur| cur == id))
+                .collect()
+        })
+        .collect();
+    if out.is_empty() {
+        return out;
+    }
+    for (i, id) in ids.iter().enumerate() {
+        if !out.iter().any(|col| col.contains(&i)) {
+            out[0].push(i);
+            let _ = id;
+        }
+    }
+    out
 }
 
 /// Pie compacto en UNA fila de botones a la derecha (Add a la derecha del

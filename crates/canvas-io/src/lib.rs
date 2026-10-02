@@ -12,15 +12,18 @@ mod save;
 mod sidecar;
 mod svg;
 mod thumbs;
+mod video;
+mod video_stream;
 
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
 };
 pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
 pub use load::{
-    can_overwrite, is_canvas_file, is_image_file, is_standalone_design, load_image, open_document,
-    peek_numbered_path, peek_unique_path, reserve_numbered_path, reserve_unique_path, LoadedImage,
-    OpenOutcome, CANVAS_EXTENSION, IMAGE_EXTENSIONS,
+    can_overwrite, is_canvas_file, is_image_file, is_media_file, is_standalone_design,
+    is_video_file, load_image, open_document, peek_numbered_path, peek_unique_path,
+    reserve_bulk_path, reserve_numbered_path, reserve_unique_path, LoadedImage, OpenOutcome,
+    CANVAS_EXTENSION, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
 };
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
@@ -38,6 +41,8 @@ pub use sidecar::{
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;
+pub use video::{ffmpeg_path, ffprobe_path, load_video_frame, media_command, probe_video_size};
+pub use video_stream::VideoFrameStream;
 
 use std::path::PathBuf;
 

@@ -207,7 +207,11 @@ pub(super) fn resolve(
             let waiting_on_modal =
                 f.save.overwrite_prompt.is_some() || f.save.readonly_prompt.is_some();
             if !state.is_dirty() {
-                // Ya se guardó (`AppMsg::Saved` la sacó de la cola).
+                // Ya está limpio sin pasar por `Saved` (p. ej. se deshizo
+                // hasta el punto guardado a mano): no hay nada que guardar,
+                // se saca de la cola para no atascar el drenaje (A05).
+                f.save.save_all_queue.remove(0);
+                f.save.save_all_attempted = false;
             } else if state.saving || waiting_on_modal {
                 // En curso, o esperando la respuesta del usuario.
             } else if f.save.save_all_attempted {
@@ -216,6 +220,11 @@ pub(super) fn resolve(
                 );
                 f.save.save_all_queue.clear();
                 f.save.save_all_attempted = false;
+                // Sin drenaje no hay salida diferida: un guardado manual
+                // posterior no debe navegar/cerrar por un diálogo ya
+                // cancelado (A05).
+                f.save.after_save = None;
+                f.save.close_after_save = false;
             } else {
                 f.save.save_all_attempted = true;
                 state.save_clicked = true;

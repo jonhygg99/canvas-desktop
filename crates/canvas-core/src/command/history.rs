@@ -53,6 +53,14 @@ pub struct History {
     /// Longitud de la pila de undo en el último guardado. `None` si el estado
     /// guardado ya no es alcanzable deshaciendo/rehaciendo.
     saved_depth: Option<usize>,
+    /// Revisión monotónica del historial (A04): se incrementa con cada cambio
+    /// de la pila (apilar, deshacer, rehacer). El guardado captura
+    /// `(profundidad, revisión)` al lanzar el worker y al recibir `Saved`
+    /// solo marca como guardado si ambas coinciden con las actuales — así las
+    /// ediciones hechas DURANTE el guardado no quedan falsamente «guardadas».
+    /// No basta comparar profundidades: un undo seguido de una rama nueva
+    /// puede dejar la misma longitud con otro contenido.
+    revision: u64,
     limit: usize,
 }
 
@@ -68,6 +76,7 @@ impl History {
             undo: Vec::new(),
             redo: Vec::new(),
             saved_depth: Some(0),
+            revision: 0,
             limit: limit.max(1),
         }
     }
@@ -93,6 +102,7 @@ impl History {
         }
         self.redo.clear();
         self.undo.push(cmd);
+        self.revision = self.revision.wrapping_add(1);
         if self.undo.len() > self.limit {
             self.undo.remove(0);
             self.saved_depth = match self.saved_depth {
@@ -115,6 +125,10 @@ impl History {
         let Some(mut cmd) = self.undo.pop() else {
             return Ok(false);
         };
+        // La pila cambió aunque `revert` falle (el comando se descarta igual,
+        // ver doc): la revisión avanza para que un guardado en vuelo no marque
+        // como guardado un estado que ya no es el capturado (A04).
+        self.revision = self.revision.wrapping_add(1);
         let result = cmd.revert(doc);
         if result.is_ok() {
             self.redo.push(cmd);
@@ -127,6 +141,7 @@ impl History {
         let Some(mut cmd) = self.redo.pop() else {
             return Ok(false);
         };
+        self.revision = self.revision.wrapping_add(1);
         let result = cmd.apply(doc);
         if result.is_ok() {
             self.undo.push(cmd);
@@ -145,6 +160,30 @@ impl History {
     /// Marca el estado actual como guardado en disco.
     pub fn mark_saved(&mut self) {
         self.saved_depth = Some(self.undo.len());
+    }
+
+    /// Revisión actual del historial (ver campo `revision`).
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Profundidad actual de la pila de undo (para capturar junto a
+    /// `revision()` al lanzar un guardado).
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Marca como guardado SOLO si el historial sigue en la revisión
+    /// capturada al lanzar el worker (A04). Devuelve si marcó: si hubo
+    /// ediciones (o deshacer/rehacer) durante el guardado, conserva dirty y
+    /// el llamante no debe cerrar ni navegar automáticamente.
+    pub fn mark_saved_at(&mut self, depth: usize, revision: u64) -> bool {
+        if depth == self.undo.len() && revision == self.revision {
+            self.saved_depth = Some(depth);
+            true
+        } else {
+            false
+        }
     }
 
     /// ¿Hay cambios sin guardar respecto al último `mark_saved`?

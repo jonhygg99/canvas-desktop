@@ -598,6 +598,36 @@ fn og_image_url_extracts_embed_photo() {
 }
 
 #[test]
+fn fetched_image_reports_when_its_pixels_came_from_another_url() {
+    // A08: si la directa falla y el rescate trae otra URL (p. ej. el
+    // `og:image` B de una página social cuando se pidió A), el resultado lo
+    // declara en vez de pasar por la foto elegida.
+    fn fetched(resolved: &str) -> FetchedImage {
+        FetchedImage {
+            image: canvas_io::LoadedImage {
+                rgba: vec![255, 0, 0, 255],
+                width: 1,
+                height: 1,
+            },
+            resolved_url: resolved.to_owned(),
+        }
+    }
+    let direct = "https://scontent.xx.fbcdn.net/a.jpg";
+    assert!(
+        !fetched(direct).substituted(direct),
+        "la directa no sustituye"
+    );
+    let rescued = "https://scontent.xx.fbcdn.net/b.jpg";
+    assert!(
+        fetched(rescued).substituted(direct),
+        "el og:image B debe marcarse como sustitución de A"
+    );
+    // La miniatura ya mostrada también cuenta como sustitución si difiere.
+    let thumb = "https://encrypted-tbn0.gstatic.com/tbn.jpg";
+    assert!(fetched(thumb).substituted(direct));
+}
+
+#[test]
 #[ignore = "live: gasta ~1cr de la key real; borrar tras verificar"]
 fn live_social_thumb_downloads_with_browser_headers() {
     use types::SearchMode;
@@ -637,8 +667,14 @@ fn live_social_thumb_downloads_with_browser_headers() {
     );
     let og = super::api::og_image_url(&crawler_html).expect("el crawler debe ver og:image");
     eprintln!("LIVE og={og}");
-    let img =
-        fetch_image(&first.image_url, Some(&first.source_url)).expect("el full debe resolver");
+    let fetched = fetch_image(
+        &first.image_url,
+        Some(&first.source_url),
+        first.thumb_url.as_deref(),
+    )
+    .expect("el full debe resolver");
+    eprintln!("LIVE resolved={}", fetched.resolved_url);
+    let img = fetched.image;
     assert!(img.width > 0 && img.height > 0);
     eprintln!("LIVE OK: {}x{}", img.width, img.height);
 }
@@ -756,6 +792,155 @@ fn masonry_assigns_each_photo_to_the_shortest_column() {
     // Cero columnas no tiene sentido: cae a una.
     let cols = bulk_layout::assign_columns(&[1.0, 2.0], 0);
     assert_eq!(cols.len(), 1);
+}
+
+#[test]
+fn frozen_bulk_layout_survives_new_thumb_heights() {
+    // A02: con alturas iniciales iguales el reparto es [[A,C],[B,D]]; si
+    // llega un thumb alto para A, el reparto fresco sería [[A],[B,C,D]]
+    // (C ocuparía el sitio de D). El reparto congelado por ids debe
+    // seguir mapeando cada id a su columna original.
+    use super::bulk::{bulk_ids_match, bulk_ids_to_indices, bulk_indices_to_ids};
+    use super::bulk_layout::assign_columns;
+    let ids = vec!["A", "B", "C", "D"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let fresh = assign_columns(&[100.0, 100.0, 100.0, 100.0], 2);
+    assert_eq!(fresh, vec![vec![0, 2], vec![1, 3]]);
+    let frozen = bulk_indices_to_ids(&fresh, &ids);
+    // Mismo conjunto de fotos: el reparto congelado sigue valiendo aunque
+    // las alturas hayan cambiado.
+    assert!(bulk_ids_match(&frozen, &ids));
+    let reused = bulk_ids_to_indices(&frozen, &ids);
+    assert_eq!(reused, fresh, "a mitad de un gesto no se recoloca");
+    // El reparto fresco con la altura nueva SÍ recolocaría (lo que se evita).
+    let moved = assign_columns(&[400.0, 100.0, 100.0, 100.0], 2);
+    assert_ne!(
+        moved, fresh,
+        "el caso de la auditoría debe recolocar en fresco"
+    );
+    // Si se retira una foto, el reparto congelado deja de valer.
+    let ids3 = vec!["A".to_owned(), "B".to_owned(), "D".to_owned()];
+    assert!(!bulk_ids_match(&frozen, &ids3));
+}
+
+#[test]
+fn insert_target_only_matches_its_own_destination() {
+    // A07: la respuesta solo vale si la petición pendiente es esta misma Y
+    // la baraja sigue en la misma generación con la misma ranura activa.
+    use crate::loader::{insert_target_current, ImageInsertDest, ImageInsertTarget};
+    let dest = ImageInsertDest {
+        generation: 7,
+        slot_id: 3,
+    };
+    let target = ImageInsertTarget {
+        dest,
+        seq: 0,
+        photo_id: "A".to_owned(),
+    };
+    let pending = Some(target.clone());
+    assert!(insert_target_current(pending.as_ref(), &target, 7, Some(3)));
+    // Salto de lienzo: otra ranura.
+    assert!(!insert_target_current(
+        pending.as_ref(),
+        &target,
+        7,
+        Some(5)
+    ));
+    // Proyecto nuevo: otra generación.
+    assert!(!insert_target_current(
+        pending.as_ref(),
+        &target,
+        8,
+        Some(3)
+    ));
+    // Sin ranura activa: no hay destino vigente.
+    assert!(!insert_target_current(pending.as_ref(), &target, 7, None));
+    // Sin petición pendiente (panel nuevo tras reabrir): caducada.
+    assert!(!insert_target_current(None, &target, 7, Some(3)));
+    // Otra foto con el mismo `seq` es otra petición.
+    let other = ImageInsertTarget {
+        photo_id: "B".to_owned(),
+        ..target.clone()
+    };
+    assert!(!insert_target_current(pending.as_ref(), &other, 7, Some(3)));
+}
+
+#[test]
+fn begin_insert_seals_one_request_at_a_time() {
+    // A07: el sellado reserva un `seq` nuevo por petición y bloquea una
+    // segunda mientras la primera sigue en vuelo.
+    let mut panel = Panel::default();
+    let dest = crate::loader::ImageInsertDest {
+        generation: 7,
+        slot_id: 3,
+    };
+    let first = panel.begin_insert(dest, "A").expect("primera petición");
+    assert_eq!(first.seq, 0);
+    assert_eq!(panel.inserting.as_deref(), Some("A"));
+    assert!(panel.begin_insert(dest, "B").is_none(), "en vuelo: no pisa");
+    assert_eq!(panel.inserting.as_deref(), Some("A"), "sigue la primera");
+}
+
+#[test]
+fn bring_more_paginates_the_sealed_spec_not_the_draft() {
+    // A09: buscar A, escribir B sin pulsar Search y pedir más pagina A
+    // (página 2) — nunca mezcla la página 2 de B con los resultados de A.
+    use super::panel::{spend_token, start_search};
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let ctx = egui::Context::default();
+    let mut panel = Panel {
+        query: "gatos".to_owned(),
+        ..Panel::default()
+    };
+    let num = panel.budget.num();
+    let mode = types::SearchMode::Web;
+    fn page_with(url: &str) -> super::types::SearchPage {
+        super::types::SearchPage {
+            photos: vec![photo(url, "T", Some(800), Some(600))],
+            reached_end: false,
+            credits_charged: 2,
+            from_cache: false,
+            effective_query: url.to_owned(),
+            exclusions_applied: 0,
+            exclusions_dropped: 0,
+            simplified: false,
+            filtered: super::filter::FilterCounts::default(),
+        }
+    }
+    // Página 1 de "gatos" en caché: el Search se sirve sin red y sella.
+    panel.cache_insert(
+        super::cache::cache_key("gatos", &[], 1, num, mode),
+        &page_with("https://a.com/gato1.jpg"),
+    );
+    start_search(&mut panel, &[], &tx, &ctx);
+    assert_eq!(
+        panel.active_search.as_ref().map(|s| s.keyword.as_str()),
+        Some("gatos"),
+        "el Search sella la spec"
+    );
+    assert_eq!(panel.page, 1);
+    // El usuario escribe "perros" SIN pulsar Search...
+    panel.query = "perros".to_owned();
+    // ...y pide más: página 2 de "gatos" (en caché), sin gastar ni mezclar.
+    panel.cache_insert(
+        super::cache::cache_key("gatos", &[], 2, num, mode),
+        &page_with("https://a.com/gato2.jpg"),
+    );
+    spend_token(&mut panel, &tx, &ctx);
+    assert_eq!(panel.page, 2);
+    assert_eq!(panel.query, "perros", "el borrador no se toca");
+    let ids: Vec<&str> = panel.photos.iter().map(|p| p.photo.id.as_str()).collect();
+    assert!(
+        ids.contains(&"https://a.com/gato1.jpg") && ids.contains(&"https://a.com/gato2.jpg"),
+        "páginas 1+2 de gatos: {ids:?}"
+    );
+    assert!(
+        !ids.iter().any(|id| id.contains("perros")),
+        "nada de perros mezclado: {ids:?}"
+    );
+    assert_eq!(panel.tokens_spent, 0, "de caché: sin gasto");
 }
 
 #[test]
@@ -893,10 +1078,52 @@ fn thumb_claims_are_capped_per_frame() {
         photos,
         ..Panel::default()
     };
+    // Con llegadas entre frames (producción: cada respuesta libera su plaza
+    // con `note_thumb_arrived`), el tope por frame manda: 12/12/6/vacío.
+    for expected in [12, 12, 6, 0] {
+        let claimed = p.claim_thumbs(12);
+        assert_eq!(claimed.len(), expected);
+        for (id, _, _) in claimed {
+            p.note_thumb_arrived(&id);
+        }
+    }
+}
+
+#[test]
+fn thumb_inflight_cap_bounds_simultaneous_downloads() {
+    // A11: SIN llegadas, el segundo frame no reclama más allá del tope
+    // simultáneo aunque queden fotos y presupuesto por frame.
+    use super::state::MAX_THUMB_INFLIGHT;
+    let photos = (0..30)
+        .map(|i| super::state::PhotoItem {
+            photo: photo(
+                &format!("https://example.com/{i}.jpg"),
+                "P",
+                Some(800),
+                Some(600),
+            ),
+            thumb: None,
+            thumb_error: None,
+            thumb_requested: false,
+        })
+        .collect();
+    let mut p = Panel {
+        photos,
+        ..Panel::default()
+    };
     assert_eq!(p.claim_thumbs(12).len(), 12);
-    assert_eq!(p.claim_thumbs(12).len(), 12);
+    assert_eq!(
+        p.claim_thumbs(12).len(),
+        MAX_THUMB_INFLIGHT - 12,
+        "el tope simultáneo frena aunque haya presupuesto por frame"
+    );
+    assert!(p.claim_thumbs(12).is_empty(), "cola llena: nada más");
+    // Al llegar la mitad, se liberan plazas.
+    let arrived: Vec<String> = p.thumb_inflight.iter().take(6).cloned().collect();
+    for id in arrived {
+        p.note_thumb_arrived(&id);
+    }
     assert_eq!(p.claim_thumbs(12).len(), 6);
-    assert!(p.claim_thumbs(12).is_empty());
 }
 
 #[test]
@@ -960,7 +1187,11 @@ fn bake_cover_photo_is_just_the_photo() {
     let photo = solid_photo(200, 100, [255, 0, 0, 255]);
     let out = bake_contain_blur(&photo, &geom(200, 100, 0.0, 0.0, 200.0, 100.0, false));
     assert_eq!(out.len(), 200 * 100 * 4);
-    assert!(out.chunks_exact(4).all(|p| p == [255, 0, 0, 255]));
+    assert!(out
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p == [255, 0, 0, 255]));
 }
 
 #[test]
@@ -993,7 +1224,11 @@ fn bake_empty_photo_yields_background() {
     let photo = image::RgbaImage::new(4, 4);
     let out = bake_contain_blur(&photo, &geom(8, 6, 0.0, 0.0, 8.0, 6.0, true));
     assert_eq!(out.len(), 8 * 6 * 4);
-    assert!(out.chunks_exact(4).all(|p| p == [255, 255, 255, 255]));
+    assert!(out
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| *p == [255, 255, 255, 255]));
 }
 
 #[test]
@@ -1067,7 +1302,11 @@ fn panel_ui_renders_without_panic_and_paints() {
             ..Default::default()
         },
         |ui| {
-            panel_ui(&mut state.serper, &mut settings, None, ui, &tx);
+            let insert_dest = crate::loader::ImageInsertDest {
+                generation: 0,
+                slot_id: 0,
+            };
+            panel_ui(&mut state.serper, &mut settings, None, insert_dest, ui, &tx);
         },
     );
     assert!(

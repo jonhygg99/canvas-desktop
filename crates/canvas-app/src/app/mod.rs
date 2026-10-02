@@ -325,6 +325,10 @@ impl eframe::App for App {
         // lock con un pánico, la persistencia de geometría sigue siendo
         // segura (y sí se quiere al salir).
         self.inner.lock_ok().persist_workspaces_now();
+        // La persistencia es en segundo plano: esperar la última revisión
+        // para no perderla al morir el proceso (A10). Con tope, para no
+        // colgar la salida si el disco está atascado.
+        crate::settings::flush_settings(std::time::Duration::from_secs(5));
     }
 }
 
@@ -386,7 +390,7 @@ impl AppInner {
         self.atlas_regs = stats.registrations;
         self.atlas_reups = stats.reuploads;
         self.atlas_log_frames += 1;
-        if reg > 0 || reup > 0 || self.atlas_log_frames % 60 == 0 {
+        if reg > 0 || reup > 0 || self.atlas_log_frames.is_multiple_of(60) {
             tracing::info!(
                 "atlas de vello: frame={} registros_nuevos={} re_subidas={} | acumulado: {} registros, {} re-subidas",
                 self.atlas_log_frames,

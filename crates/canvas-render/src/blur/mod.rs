@@ -208,7 +208,7 @@ mod tests {
         let avg = |d: &[u8]| -> [u32; 3] {
             let mut acc = [0u32; 3];
             let mut n = 0u32;
-            for px in d.chunks_exact(4) {
+            for px in d.as_chunks::<4>().0 {
                 for i in 0..3 {
                     acc[i] += u32::from(px[i]);
                 }
