@@ -176,11 +176,25 @@ impl Deck {
                 locked: false,
             });
         }
-        deck.active = deck
-            .slots
-            .iter()
-            .position(|s| s.path == active_path)
-            .unwrap_or(0);
+        match deck.slots.iter().position(|s| s.path == active_path) {
+            Some(idx) => {
+                tracing::debug!(
+                    activo = %active_path.display(),
+                    indice = idx,
+                    total = deck.slots.len(),
+                    "from_seed: activa solicitada"
+                );
+                deck.active = idx;
+            }
+            None => {
+                tracing::warn!(
+                    activo = %active_path.display(),
+                    total = deck.slots.len(),
+                    "from_seed: la ruta no está en la semilla, se activa el primero"
+                );
+                deck.active = 0;
+            }
+        }
         if let Some(slot) = deck.slots.get_mut(deck.active) {
             slot.content = SlotContent::Active;
         }

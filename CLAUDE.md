@@ -495,3 +495,7 @@ choice — e.g. why groups use `parent_id` instead of nested layers
 geometry instead of egui drag-and-drop (`layers_panel/tab_strip.rs`), or
 why crop is "trim at the edges" rather than destructive
 (`canvas-core/src/geometry/crop.rs`).
+
+## File search (fff)
+
+For any file search or grep in this repo, use the fff MCP tools (`fffind`, `ffgrep`) instead of the default search tools.

@@ -202,9 +202,11 @@ fn paste_internal(state: &mut EditorState, json: &str) -> bool {
     let Ok(clip) = canvas_io::read_clipboard(json) else {
         return false;
     };
+    let n = clip.layers.len();
     let Some(ids) = paste_doc(state, clip) else {
         return false;
     };
+    tracing::debug!(capas = n, "paste pega capas internas");
     select_ids(state, &ids);
     true
 }
@@ -213,6 +215,11 @@ fn paste_system(state: &mut EditorState) -> bool {
     let Some(img) = system_image() else {
         return false;
     };
+    tracing::debug!(
+        ancho = img.width,
+        alto = img.height,
+        "paste pega imagen del sistema"
+    );
     state.add_image_layer("Pasted Image", None, img);
     true
 }

@@ -310,12 +310,17 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
                         &mut state.selected,
                         &mut state.rename_edit,
                     ) {
-                        *action = Some(cell_action);
+                        // First-wins: con ids estables solo una celda puede
+                        // disparar por frame; si dos lo hicieran, gana la
+                        // primera en orden de pintado, no la última fila.
+                        if action.is_none() {
+                            *action = Some(cell_action);
+                        }
                     }
                 }
                 if is_last_row && row.len() < columns {
                     add_cell_rendered = true;
-                    if gallery_add_cell(ui, cell_size) {
+                    if gallery_add_cell(ui, cell_size) && action.is_none() {
                         *action = Some(GalleryAction::NewDesign);
                     }
                 }
@@ -326,7 +331,7 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
         if !add_cell_rendered {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_GAP;
-                if gallery_add_cell(ui, cell_size) {
+                if gallery_add_cell(ui, cell_size) && action.is_none() {
                     *action = Some(GalleryAction::NewDesign);
                 }
             });

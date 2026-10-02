@@ -323,6 +323,11 @@ impl GalleryState {
             .collect();
         self.scanned = true;
         self.apply_sort();
+        tracing::debug!(
+            criterio = ?self.sort,
+            orden = %self.items.iter().map(|i| i.name.clone()).collect::<Vec<_>>().join(", "),
+            "gallery merge_files: orden resultante"
+        );
     }
 
     /// Reordena en memoria (sin reescanear el disco).

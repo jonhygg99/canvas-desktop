@@ -114,8 +114,15 @@ impl EditorState {
         // `Event::Paste`. Cuando `Event::Paste` sí llega (p. ej. pegado de
         // texto), también se acepta como señal válida.
         let want_paste = paste_requested || event_paste;
-        if want_paste && !crate::clipboard::paste(self) {
-            self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
+        if want_paste {
+            tracing::debug!(
+                por_hook = paste_requested,
+                por_evento = event_paste,
+                "paste disparado por atajo"
+            );
+            if !crate::clipboard::paste(self) {
+                self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
+            }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
         {

@@ -25,6 +25,9 @@ const KEEP_REPORTS: usize = 20;
 
 static RECENT_LOGS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 static SINCE_INSTALL: OnceLock<Instant> = OnceLock::new();
+/// Archivo de log de la sesión (modo `windows_subsystem = "windows"`: sin
+/// consola, el stdout no va a ningún sitio y redirigir con `>` sale vacío).
+static DEBUG_LOG_FILE: OnceLock<Mutex<fs::File>> = OnceLock::new();
 
 fn recent_logs() -> &'static Mutex<VecDeque<String>> {
     RECENT_LOGS.get_or_init(|| Mutex::new(VecDeque::with_capacity(RING_CAPACITY)))
@@ -98,8 +101,49 @@ impl TeeSink {
         let mut lock = stdout.lock();
         let _ = lock.write_all(&bytes);
         let _ = lock.flush();
+        if let Some(file) = DEBUG_LOG_FILE.get() {
+            if let Ok(mut guard) = file.lock() {
+                let _ = guard.write_all(&bytes);
+                let _ = guard.flush();
+            }
+        }
         push_recent_lines(&bytes);
     }
+}
+
+/// Abre (modo append) el archivo de log de la sesión y lo conecta al tee de
+/// `tracing`. Devuelve la ruta para anunciarla en el propio log. Sin consola
+/// este archivo es la única forma de leer los logs; si no se puede abrir se
+/// devuelve `None` y todo sigue como antes (solo stdout + buffer).
+pub(crate) fn init_debug_log() -> Option<PathBuf> {
+    // Primero el directorio de trabajo (lanzamientos con `cargo run`: el log
+    // cae en la raíz del repo, fácil de encontrar). Si no se puede escribir
+    // ahí (acceso directo con cwd del sistema), el data_dir de la app; en
+    // último caso el temporal. Solo un archivo: el primero que abra.
+    let candidates = [
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join("canvas-debug.log")),
+        directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")
+            .map(|dirs| dirs.data_dir().join("canvas-debug.log"))
+            .and_then(|path| {
+                path.parent()
+                    .and_then(|dir| fs::create_dir_all(dir).ok())
+                    .map(|()| path)
+            }),
+        Some(std::env::temp_dir().join("canvas-debug.log")),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if let Ok(file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&candidate)
+        {
+            let _ = DEBUG_LOG_FILE.set(Mutex::new(file));
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 impl std::io::Write for TeeSink {

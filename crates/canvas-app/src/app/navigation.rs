@@ -20,7 +20,9 @@ impl AppInner {
     /// argv, diálogo, arrastrar y soltar, un clic en la galería o una
     /// segunda instancia.
     pub(crate) fn open_path(&mut self, ws: &mut Workspace, path: PathBuf, ctx: &egui::Context) {
+        tracing::debug!(solicitado = %path.display(), "open_path: ruta recibida");
         let path = resolve_canvas_sidecar(path);
+        tracing::debug!(resuelto = %path.display(), "open_path: ruta tras sidecar");
         if path.is_dir() {
             let path = gallery::normalize_folder(path);
             let mut gallery_state = seed_gallery_from_deck(

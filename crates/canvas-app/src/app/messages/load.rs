@@ -22,7 +22,23 @@ impl AppInner {
         // Ignora cargas que ya no corresponden a la vista actual de ESTA ventana.
         let expected = matches!(&ws.view, View::Loading { path: p } if *p == path);
         if !expected {
+            tracing::debug!(cargado = %path.display(), "carga descartada: ya no es la vista Loading");
             return;
+        }
+        match &result {
+            Ok(loader::LoadOutcome::Flat(img)) => tracing::debug!(
+                ruta = %path.display(),
+                ancho = img.width,
+                alto = img.height,
+                "editor: abre imagen plana"
+            ),
+            Ok(loader::LoadOutcome::Restored(_)) => {
+                tracing::debug!(ruta = %path.display(), "editor: abre restaurada de sidecar");
+            }
+            Ok(loader::LoadOutcome::Design(_)) => {
+                tracing::debug!(ruta = %path.display(), "editor: abre diseño");
+            }
+            Err(e) => tracing::debug!(ruta = %path.display(), error = %e, "editor: carga fallida"),
         }
         let metadata = (!metadata.is_empty()).then_some(metadata);
         match result {

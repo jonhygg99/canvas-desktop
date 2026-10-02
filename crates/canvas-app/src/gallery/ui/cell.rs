@@ -29,9 +29,15 @@ const CARD_BOTTOM_PADDING: f32 = 6.0;
 /// end of the gallery grid. Its title and thumbnail area match regular
 /// gallery pages.
 pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool {
-    let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+    // Id estable: sin él, la celda «+» comparte la secuencia de auto-ids con
+    // la cuadrícula y un banner/renombrado intercalado desplaza el reparto.
+    let (rect, response) = ui
+        .push_id(egui::Id::new("gallery_add_cell"), |ui| {
+            ui.allocate_exact_size(cell_size, egui::Sense::click())
+        })
+        .inner;
     if !ui.is_rect_visible(rect) {
-        return response.clicked();
+        return false;
     }
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -116,7 +122,29 @@ pub(in crate::gallery) fn gallery_cell(
     selected: &mut Option<PathBuf>,
     rename_edit: &mut Option<(PathBuf, String)>,
 ) -> Option<GalleryAction> {
+    // Id estable por ruta: con auto-ids, cualquier widget condicional pintado
+    // antes (banner de error, renombrado in-place, toolbar) desplaza la
+    // secuencia entre el frame del press y el del release y egui atribuye el
+    // `clicked()` a otra celda (salto de varias filas, intermitente).
+    ui.push_id(egui::Id::new(("gallery_cell", &item.path)), |ui| {
+        gallery_cell_inner(ui, item, cell_size, selected, rename_edit)
+    })
+    .inner
+}
+
+fn gallery_cell_inner(
+    ui: &mut egui::Ui,
+    item: &GalleryItem,
+    cell_size: egui::Vec2,
+    selected: &mut Option<PathBuf>,
+    rename_edit: &mut Option<(PathBuf, String)>,
+) -> Option<GalleryAction> {
     let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+    // Fuera del viewport no hay click posible: solo se reservó espacio para
+    // el scroll. Sin este corte, una celda invisible podía emitir `Open`.
+    if !ui.is_rect_visible(rect) {
+        return None;
+    }
     let is_selected = selected.as_deref() == Some(item.path.as_path());
     let renaming = rename_edit
         .as_ref()
@@ -135,118 +163,116 @@ pub(in crate::gallery) fn gallery_cell(
             .map(|pos| name_rect.contains(pos))
             .unwrap_or(false);
 
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        if response.hovered() {
-            painter.rect_filled(rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
-        }
-        if is_selected {
-            painter.rect_stroke(
-                rect,
-                6.0,
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 122, 255)),
-                egui::StrokeKind::Inside,
-            );
-        }
-
-        let thumbnail_width = rect.width() - THUMB_INSET * 2.0;
-        let thumbnail_height = thumbnail_width / THUMB_ASPECT_RATIO;
-        let thumb_rect = egui::Rect::from_min_size(
-            rect.left_top() + egui::vec2(THUMB_INSET, TITLE_HEIGHT + TITLE_TO_THUMB_GAP),
-            egui::vec2(thumbnail_width, thumbnail_height),
+    // Aquí la celda es visible seguro (corte al inicio): se pinta siempre.
+    let painter = ui.painter();
+    if response.hovered() {
+        painter.rect_filled(rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    if is_selected {
+        painter.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 122, 255)),
+            egui::StrokeKind::Inside,
         );
-        match (&item.tex, item.failed) {
-            (Some(tex), _) => {
-                let size = tex.size_vec2();
-                let scale = (thumbnail_width / size.x).max(thumbnail_height / size.y);
-                let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
-                // Recorte al área de la miniatura: sin esto, una foto
-                // vertical/panorámica (cover) sangra sobre las celdas y los
-                // títulos vecinos — se ve fatal con tamaños mezclados.
-                painter.rect_filled(thumb_rect, 2.0, ui.visuals().extreme_bg_color);
-                painter.with_clip_rect(thumb_rect).image(
-                    tex.id(),
-                    fitted,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            }
-            (None, _) if item.kind == ItemKind::Design => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Document",
-                    egui::FontId::proportional(14.0),
-                    ui.visuals().weak_text_color(),
-                );
-            }
-            (None, true) => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Failed to load",
-                    egui::FontId::proportional(14.0),
-                    ui.visuals().error_fg_color,
-                );
-            }
-            (None, false) => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Loading",
-                    egui::FontId::proportional(14.0),
-                    ui.visuals().weak_text_color(),
-                );
-            }
-        }
+    }
 
-        if item.kind == ItemKind::Design {
-            painter.text(
-                thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
-                egui::Align2::RIGHT_TOP,
-                "Design",
-                egui::FontId::proportional(11.0),
-                ui.visuals().weak_text_color(),
-            );
-        }
-        if item.kind == ItemKind::Video {
-            painter.text(
-                thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
-                egui::Align2::RIGHT_TOP,
-                "Video",
-                egui::FontId::proportional(11.0),
-                ui.visuals().weak_text_color(),
-            );
-            // Triángulo de play sutil en el centro para distinguir video de imagen
-            let play_sz = 22.0;
-            let play_rect =
-                egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(play_sz, play_sz));
-            let center = play_rect.center();
-            let r = play_sz * 0.42;
-            let p1 = egui::pos2(center.x - r * 0.45, center.y - r);
-            let p2 = egui::pos2(center.x - r * 0.45, center.y + r);
-            let p3 = egui::pos2(center.x + r * 0.75, center.y);
-            painter.circle_filled(center, r + 9.0, egui::Color32::from_black_alpha(110));
-            painter.add(egui::Shape::convex_polygon(
-                vec![p1, p2, p3],
+    let thumbnail_width = rect.width() - THUMB_INSET * 2.0;
+    let thumbnail_height = thumbnail_width / THUMB_ASPECT_RATIO;
+    let thumb_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(THUMB_INSET, TITLE_HEIGHT + TITLE_TO_THUMB_GAP),
+        egui::vec2(thumbnail_width, thumbnail_height),
+    );
+    match (&item.tex, item.failed) {
+        (Some(tex), _) => {
+            let size = tex.size_vec2();
+            let scale = (thumbnail_width / size.x).max(thumbnail_height / size.y);
+            let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
+            // Clip the cover thumbnail to the thumb rect: without
+            // this, tall/panoramic photos bleed over neighbour cells.
+            painter.rect_filled(thumb_rect, 2.0, ui.visuals().extreme_bg_color);
+            painter.with_clip_rect(thumb_rect).image(
+                tex.id(),
+                fitted,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
-                egui::Stroke::NONE,
-            ));
-        }
-
-        if !renaming {
-            let mut name = item.name.clone();
-            if name.chars().count() > 30 {
-                name = format!("{}...", name.chars().take(27).collect::<String>());
-            }
-            painter.text(
-                name_rect.left_center(),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(12.5),
-                ui.visuals().text_color(),
             );
         }
+        (None, _) if item.kind == ItemKind::Design => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Document",
+                egui::FontId::proportional(14.0),
+                ui.visuals().weak_text_color(),
+            );
+        }
+        (None, true) => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Failed to load",
+                egui::FontId::proportional(14.0),
+                ui.visuals().error_fg_color,
+            );
+        }
+        (None, false) => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Loading",
+                egui::FontId::proportional(14.0),
+                ui.visuals().weak_text_color(),
+            );
+        }
+    }
+
+    if item.kind == ItemKind::Design {
+        painter.text(
+            thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
+            egui::Align2::RIGHT_TOP,
+            "Design",
+            egui::FontId::proportional(11.0),
+            ui.visuals().weak_text_color(),
+        );
+    }
+    if item.kind == ItemKind::Video {
+        painter.text(
+            thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
+            egui::Align2::RIGHT_TOP,
+            "Video",
+            egui::FontId::proportional(11.0),
+            ui.visuals().weak_text_color(),
+        );
+        // Triángulo de play sutil en el centro para distinguir video de imagen
+        let play_sz = 22.0;
+        let play_rect =
+            egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(play_sz, play_sz));
+        let center = play_rect.center();
+        let r = play_sz * 0.42;
+        let p1 = egui::pos2(center.x - r * 0.45, center.y - r);
+        let p2 = egui::pos2(center.x - r * 0.45, center.y + r);
+        let p3 = egui::pos2(center.x + r * 0.75, center.y);
+        painter.circle_filled(center, r + 9.0, egui::Color32::from_black_alpha(110));
+        painter.add(egui::Shape::convex_polygon(
+            vec![p1, p2, p3],
+            egui::Color32::WHITE,
+            egui::Stroke::NONE,
+        ));
+    }
+
+    if !renaming {
+        let mut name = item.name.clone();
+        if name.chars().count() > 30 {
+            name = format!("{}...", name.chars().take(27).collect::<String>());
+        }
+        painter.text(
+            name_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(12.5),
+            ui.visuals().text_color(),
+        );
     }
 
     let mut action = None;
@@ -290,7 +316,10 @@ pub(in crate::gallery) fn gallery_cell(
             }
         }
     } else {
-        if !name_clicked && response.clicked() {
+        // `!dragged()`: un press que termina en scroll/drag no es un click,
+        // aunque el release caiga sobre otra celda varias filas más abajo.
+        if !name_clicked && response.clicked() && !response.dragged() {
+            tracing::debug!(path = %item.path.display(), "gallery open click");
             action = Some(GalleryAction::Open(item.path.clone()));
         }
         if response.secondary_clicked() {

@@ -57,6 +57,11 @@ fn main() -> Result<()> {
     // backtrace y las últimas líneas de log.
     crash_log::install();
 
+    // Archivo de log de la sesión (ver `crash_log::init_debug_log`): en
+    // Windows el binario no tiene consola y el stdout se pierde, así que sin
+    // este archivo los `RUST_LOG=... > log` salen vacíos.
+    let debug_log_path = crash_log::init_debug_log();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -64,6 +69,10 @@ fn main() -> Result<()> {
         )
         .with_writer(crash_log::tee_writer())
         .init();
+
+    if let Some(path) = debug_log_path {
+        tracing::info!(ruta = %path.display(), "log de sesión abierto");
+    }
 
     // Flags headless para el instalador: registran/quitan la integración con
     // el Explorador sin abrir ventana, sin tocar la instancia única. Deben

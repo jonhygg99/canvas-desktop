@@ -243,7 +243,18 @@ pub(super) fn start_save(
         );
         return;
     }
-    tracing::info!("guardando en {}", path.display());
+    let capas = state
+        .doc
+        .page()
+        .map(|p| {
+            p.layers
+                .iter()
+                .map(|l| l.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    tracing::info!(ruta = %path.display(), capas = %capas, "start_save disparado");
     let scope = canvas_render::FxScope(sctx.scope);
     sctx.renderer.forget_scope(scope);
     match sctx.renderer.bake_page_counting(
