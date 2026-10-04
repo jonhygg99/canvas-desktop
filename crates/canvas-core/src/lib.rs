@@ -6,6 +6,7 @@
 mod command;
 mod document;
 mod error;
+pub mod framing;
 mod geometry;
 mod layer;
 mod rounded_path;
