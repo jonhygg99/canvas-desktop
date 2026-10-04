@@ -499,3 +499,11 @@ why crop is "trim at the edges" rather than destructive
 ## File search (fff)
 
 For any file search or grep in this repo, use the fff MCP tools (`fffind`, `ffgrep`) instead of the default search tools.
+
+### Framing 9:16
+
+The **Framing 9:16** button in the editor Properties sidebar captures the whole current page through `bake_page_counting`. Its temporary portrait view adjusts position and scale without changing page dimensions, layers or the document viewport. Return to **Normal view** to edit layers; entering again captures the updated composition. Framing has a separate undo/redo history and Ctrl+S saves its sidecar.
+
+**Save framing** writes `.framing/<full-asset-filename>.json` (v1, 1080?1920). **Export for Flashcut-Auto** writes a new flat PNG at page resolution plus its portable sidecar; it refuses existing output names and cleans reserved files on failure. Video layers contribute their current static frame. Gallery provides Normal/Framings views, saved/missing filters and individual Create/Edit framing through the contextual menu. Gallery uses thumbnails/embedded design previews; editor export uses the full page capture.
+
+Modules: `canvas-core::framing` (geometry), `canvas-io::framing` (atomic sidecars), `canvas-app::framing` (session, preview, controls and jobs), `gallery::framing` (bounded preview cache). The reduced background blur approximates FFmpeg; geometry matches within two pixels, but MP4 color conversion and blur are not pixel-identical. Reproducible GPU and Flashcut-Auto checks are documented in `tasks/plan.md`; `canvas-render/examples/framing_probe.rs` builds the fixture without using user media.

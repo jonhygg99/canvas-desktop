@@ -1,182 +1,166 @@
-# Plan: en Windows la segunda ventana se redimensiona sola
+# Plan: encuadrar una composición completa para Shorts
 
-Plan anterior archivado en `tasks/archive/` (bug de RAM falsa en macOS).
-Estado del trabajo nuevo en `tasks/todo.md`.
+## Objetivo
 
-## Overview
+Desde la edición de un diseño de Canvas Desktop en **1920 × 1080**, poder crear un framing **9:16** de toda la página para usar ese diseño como clip en Flashcut-Auto.
 
-Al abrir una segunda ventana (Ctrl+N / Ctrl+T / menú «New Window») en
-Windows, la ventana nueva **se va agrandando sola** (~40 px por frame, el
-alto de la barra de título + bordes) hasta llenar el área de trabajo, y
-sigue «luchando» por redimensionarse si se toca el monitor o se arrastra.
-No es un bug del SO: es un **bucle de realimentación** dentro de la app.
+El documento editable sigue teniendo sus mismas capas, dimensiones y un único archivo `.canvas`. La herramienta muestra una vista vertical de la composición completa, permite moverla y escalarla dentro del marco, y produce dos archivos de salida:
 
-### Causa raíz (verificada contra las fuentes de eframe 0.35 del registro)
+1. Una imagen PNG aplanada de la página original en 1920 × 1080.
+2. Un sidecar `.framing` v1 para ese PNG, con el encuadre 9:16. Flashcut-Auto puede leer el PNG como clip e inyectar el sidecar al plan al generarlo.
 
-1. **Captura por frame** (`app/ws_frame.rs`, final del frame de cada
-   ventana): `ws.geometry` se reescribe cada frame desde el rect vivo de la
-   ventana — `outer_rect.or(inner_rect)`.
-2. **Reaplicación por frame** (`app/workspace_lifecycle.rs`,
-   `spawn_child_viewports`): el frame raíz reconstruye CADA frame el
-   `ViewportBuilder` del viewport diferido de cada hija con
-   `with_position(…)` y **`with_inner_size(tamaño_capturado)`** — y lo hace
-   en los dos puntos de registro de las hijas (`App::logic`, pases ocultos,
-   y `root_frame`).
-3. **El amplificador** (eframe 0.35, `native/wgpu_integration.rs:1282`):
-   eframe llama `viewport.builder.patch(builder)` **cada frame** con el
-   builder que se le pasa a `show_viewport_deferred`; `patch` (egui
-   `viewport.rs:770`) compara con el del frame anterior y emite
-   `ViewportCommand::InnerSize` cada vez que `inner_size` **cambió**.
+El PNG es el clip derivado que se entrega a Flashcut-Auto. No se crea, copia ni modifica otro documento `.canvas`. El sidecar no transforma el proyecto de Canvas ni los medios fuente.
 
-La trampa: el tamaño capturado es el rect **EXTERIOR** (cliente + barra de
-título + bordes), pero se reaplica como tamaño **interior**. Cada frame el
-interior pasa a medir lo que antes medía el exterior → la ventana crece el
-alto de la decoración → el exterior nuevo es más grande → se captura y se
-reaplica → **crece ~40 px por frame** hasta que Windows la recorta al área
-de trabajo. En Windows la decoración es gruesa y cada `Resized` repinta, así
-que el bucle rueda continuo y es muy visible; en Ctrl+N/Ctrl+T la hija
-**nace ya inflada** porque hereda el `geometry` (exterior) del padre. El
-fallback `outer_rect.or(inner_rect)` además puede alternar entre ambos rect
-en cambios de DPI/monitor, lo que añade oscilación de posición.
+Esta solución preserva íntegra la composición de origen para que el usuario decida el encuadre vertical: el preview usa la composición aplanada completa en primer plano y el mismo PNG ampliado y desenfocado como fondo. El resultado visual coincide con la operación de framing de Flashcut-Auto. No es reflujo automático de texto y capas para una composición editorial nueva.
 
-## Architecture Decisions
+## Flujo del usuario
 
-- **La geometría solo se aplica al NACIMIENTO de la ventana hija.** Un flag
-  por workspace (`geometry_seeded`): la primera vez que `spawn_child_viewports`
-  registra un viewport incluye `with_position`/`with_inner_size` con la
-  geometría heredada; a partir de ahí el builder solo lleva el título. Como
-  `patch` solo emite comandos cuando cambia un valor, tras el nacimiento
-  **nunca** viaja un `InnerSize`/`OuterPosition` — el redimensionado manual
-  del usuario queda intacto y no hay bucle posible. No depende de los
-  detalles internos del diff de `patch` (aunque estén verificados): el
-  builder literalmente deja de ofrecer tamaño/posición.
-- **Captura consistente = tamaño interior.** `ws.geometry` pasa a guardar
-  SIEMPRE el tamaño del `inner_rect` (lo que `with_inner_size`/
-  `StoredWorkspace.size` significan: «tamaño interior») y la posición del
-  `outer_rect.min` (con fallback al `inner_rect.min` y a conservar el valor
-  anterior si no hay ninguno). Se extrae como función pura
-  `capture_geometry(outer, inner) -> Option<(Pos2, Vec2)>` con tests de
-  tabla (convención del repo: `ws_frame_tests.rs` con `#[path]` o `tests.rs`
-  según lo que ya use la crate).
-- **La herencia de Ctrl+N/T no cambia**: la hija sigue naciendo con la
-  geometría del padre (ahora ya coherente: interior = interior).
-- **La persistencia en `settings.json` no cambia de semántica**: se siguen
-  escribiendo pos/tamaño (historial; `bootstrap` ya los descarta al arrancar
-  — la app siempre abre en la home con su tamaño por defecto). Solo se
-  corrige que «size» sea lo que su doc dice que es (interior).
-- **La raíz no se toca**: nace de `main.rs` (`NativeOptions`) y su
-  `geometry` solo se captura para persistir, nunca se reaplica.
+1. Abrir y editar el diseño habitual de 1920 × 1080.
+2. En la sección **Page** o en las acciones de exportación, elegir **Frame for Shorts (9:16)**.
+3. Canvas genera una vista de la página compuesta, sin crear ni alterar archivos. Sobre ella muestra una ventana 9:16 con la composición entera centrada y fondo desenfocado, como en Flashcut-Auto.
+4. Arrastrar para desplazar la composición; acercar o alejar con un deslizador, con pasos de deshacer por gesto. Preview del resultado vertical a medida que se ajusta.
+5. Pulsar **Export for Flashcut-Auto**. Elegir carpeta y nombre; se sugiere la carpeta del proyecto y un nombre terminado en `-short.png`.
+6. Canvas aplana la página actual en un PNG y escribe junto a ese PNG `.framing/<nombre-completo>.json`. Confirma ambos archivos y la ruta que Flashcut-Auto deberá usar como media.
+7. El usuario agrega ese PNG a Flashcut-Auto. Al generar el plan, Flashcut-Auto carga el sidecar y aplica el encuadre.
 
-## Task List
+## Gallery: vista normal y vista de framings
 
-### Task 1: Aplicar la geometría solo al nacer la ventana hija (S)
+Gallery ofrecerá dos vistas seleccionables: **Normal** para ver los medios originales y **Framings** para ver sus encuadres 9:16 guardados. El usuario podrá alternar entre ambas sin duplicar ni reemplazar los medios originales. En la vista de Framings se podrá abrir un encuadre para previsualizarlo y editarlo; también habrá una acción para crear uno cuando falte. El menú contextual de cada medio, abierto con clic derecho, incluirá **Editar framing 9:16** o **Crear framing 9:16**, según su estado, para editar directamente ese elemento individual.
 
-**Description:** Añadir `geometry_seeded: bool` a `Workspace` (por defecto
-`false`). En `spawn_child_viewports`, incluir `with_position` +
-`with_inner_size` en el builder únicamente la primera vez que se registra el
-viewport de una hija; a partir de entonces builder = título solo. El flag se
-marca la primera vez, también cuando la geometría era `None` (p. ej.
-`CANVAS_DEBUG_WINDOWS`). La llamada a `show_viewport_deferred` sigue
-haciéndose todos los frames con el mismo `ViewportId` (requisito de egui:
-si no se llama, la ventana se cierra).
+Un indicador discreto junto al nombre —icono de rectángulo vertical más etiqueta **9:16**— señalará que ya existe framing guardado. La misma acción de crear/editar se podrá abrir desde Gallery y desde el modo de framing del editor del canvas. Gallery encuadra un medio individual; el editor del canvas encuadra la página compuesta completa. Ambos reutilizan el contrato `.framing` de Flashcut-Auto, sin confundir el objetivo de cada encuadre.
 
-**Acceptance criteria:**
-- [ ] La hija nace con la geometría heredada (Ctrl+N/T idéntico a hoy).
-- [ ] Tras el nacimiento el builder no lleva tamaño/posición: `patch` no
-      emite `InnerSize`/`OuterPosition` nunca más (verificable con el
-      logging de comandos o leyendo `raw.viewports[id].builder`… mejor con
-      la verificación de comportamiento: la ventana no crece frame a frame).
-- [ ] Arrastre/redimensionado manual de la hija: el SO manda, la app no
-      revierte ni reafirma nada.
+Se podrá volver al diseño 1920 × 1080 en cualquier momento; los cambios visuales de framing y exportación no alteran el zoom ni los transforms del documento.
 
-**Verification:**
-- [ ] `cargo test -p canvas-app` verde; `cargo clippy -p canvas-app --all-targets -- -D warnings` limpio; `cargo fmt --check` OK.
-- [ ] Manual en Windows: Ctrl+N ×5 seguidas → las ventanas conservan el
-      tamaño del padre y ninguna crece; arrastrar un borde → se queda.
-- [ ] Sin regresión: Ctrl+Tab/conmutador y foco entre ventanas intactos.
+## Límite entre los dos programas
 
-**Dependencies:** None
+`.framing` está ligado a un **archivo de media** y ajusta ese archivo cuando Flashcut-Auto lo compone en un clip de salida 9:16. Por eso Canvas debe generar primero un PNG plano de la composición: aplicar el framing al archivo original de una de sus capas ignoraría las demás y los textos del diseño.
 
-**Files likely touched:**
-- `crates/canvas-app/src/app/workspace.rs` (campo nuevo)
-- `crates/canvas-app/src/app/workspace_lifecycle.rs` (builder)
+El PNG generado ya tiene todo el diseño aplanado; su sidecar contiene la posición/escala con que ese PNG de 1920 × 1080 se debe mostrar en el Short. No se toca el `.canvas` guardado ni el raster fuente que pueda acompañarlo. Los planes y renders existentes de Flashcut-Auto no cambian: el sidecar entra a un plan durante la generación; un plan explícito conserva su `clip.framing`.
 
-**Estimated scope:** Small (2 files)
+**Consecuencia importante:** el framing no puede representar una adaptación vertical donde cada texto y capa se redistribuye por separado. Esta entrega coloca, mueve y escala la composición ya terminada como un todo. Un flujo de rediseño responsivo sería otra función y tendría que guardar otra disposición editable, sin duplicar el proyecto como archivo autónomo.
 
-### Task 2: Captura de geometría consistente (interior) con tests (S)
+## Contrato de salida
 
-**Description:** Reemplazar la captura `outer_rect.or(inner_rect)` del final
-de `ws_frame` por la función pura `capture_geometry`: posición =
-`outer_rect.min` (fallback `inner_rect.min`), tamaño = `inner_rect.size()`;
-ambos `None` → conservar la geometría anterior. Tests de tabla fijando el
-contrato (rect exterior e interior presentes → posición del exterior, tamaño
-del interior; solo interior → ambos de él; ninguno → `None` para que el
-llamador conserve el previo).
+PNG aplanado en 1920 × 1080; el sidecar registra el formato de salida vertical usado por Flashcut-Auto:
 
-**Acceptance criteria:**
-- [ ] `StoredWorkspace.size` persistido es SIEMPRE el tamaño interior
-      (coherente con su documentación y con `with_inner_size`).
-- [ ] Sin alternancia exterior/interior en cambios de DPI o `outer_rect`
-      momentáneamente ausente.
-- [ ] Tabla de tests nueva cubre los tres casos + el de conservar previo.
+```
+Shorts/mi-diseno.png
+Shorts/.framing/mi-diseno.png.json
+```
 
-**Verification:**
-- [ ] `cargo test -p canvas-app` verde (tests de la tabla incluidos).
-- [ ] Manual en Windows: conectar/desconectar un segundo monitor no hace
-      que las ventanas brinquen ni se redimensionen.
+```json
+{
+  "schemaVersion": 1,
+  "width": 1080,
+  "height": 1920,
+  "framing": {
+    "xPct": 0.0,
+    "yPct": 0.0,
+    "scalePct": 100
+  }
+}
+```
 
-**Dependencies:** Task 1
+- Ruta y forma del JSON compatibles con `crates/app/src/framing.rs` de Flashcut-Auto; no crear un contrato nuevo.
+- X/Y finitos en `-100..=100`; escala entre `50..=200`.
+- La escala se mide desde cover y la vista conserva el fondo cover desenfocado, según `crates/renderer/src/ffmpeg/framing.rs`.
+- Un PNG fuente no debe escribirse en la carpeta `.framing`; el sidecar es JSON y la carpeta va junto al PNG.
+- Si el nombre de salida ya existe, solicitar otro nombre o una confirmación de sobrescritura; no alterar `.canvas` para resolver colisiones.
+- Fallos al generar PNG/sidecar deben dejar resultado identificable y recuperable. La UI debe indicar si quedó incompleta la pareja para que no se importe por error.
 
-**Files likely touched:**
-- `crates/canvas-app/src/app/ws_frame.rs` (helper + captura)
-- `crates/canvas-app/src/app/ws_frame_tests.rs` (nuevo, con `#[path]` según
-  convención del crate) o `tests.rs` del módulo
+## Diseño técnico
 
-**Estimated scope:** Small (2 files)
+- **canvas-core:** geometría pura para encuadrar el PNG 1920 × 1080 en la salida 1080 × 1920; límites y validación compatibles con Flashcut-Auto.
+- **canvas-render:** crear el preview GPU del conjunto de capas, con salida final igual al framing FFmpeg. Reutilizar el render de página donde resulte seguro, sin clonar el documento a otro `.canvas` ni convertir capas en un documento alternativo.
+- **canvas-io:** generar los PNG de salida con el mismo camino atómico y protección de tamaño que los exports existentes; lectura/escritura validada del sidecar .framing v1.
+- **canvas-app:** modo de preview temporal, controles y flujo de exportación; guardado asíncrono, ruta elegida explícitamente y estado claro de éxito/error.
+- Vista/gestos de framing separados del viewport de edición. No tocar tamaño de página, posición de capas, crop, historial del diseño ni preview que vean otros documentos/ventanas.
+- Usar la versión actual del documento activo para aplanar. Si tiene cambios sin guardar, el PNG debe incluirlos porque sale del estado en memoria; no se debe guardar automáticamente el documento fuente como parte de **Export for Flashcut-Auto**.
+- Capa de vídeo dentro del diseño: incluir su poster/frame actualmente mostrado en el PNG. La exportación de esta fase es una imagen estática; render de movimiento, audio, transiciones o timeline queda fuera del alcance.
+- El editor no vuelve a indexar toda la biblioteca. El único nuevo media es el PNG pedido por el usuario.
 
-### Task 3: Verificación UI real en Windows (XS)
+## Alcance
 
-**Description:** Ejercitar el flujo completo en la máquina del usuario
-(Windows): segunda ventana vía menú, Ctrl+N, Ctrl+T; redimensionado manual;
-monitor secundario conectado/desconectado; maximizar; rearranque.
+Primera versión: diseños 1920 × 1080, salida vertical 1080 × 1920, PNG aplanado + sidecar compatible. El preview y la exportación representan una sola página completa, todos sus elementos compuestos juntos.
 
-**Acceptance criteria:**
-- [ ] Segunda ventana abre con el tamaño del padre y NO se redimensiona sola
-      (observar 10+ segundos sin tocarla).
-- [ ] Redimensionar/arrastrar a mano queda como el usuario la dejó.
-- [ ] Sin monitor secundario tras desconectarlo: la app sigue usable y las
-      ventanas no pelean por posición/tamaño.
+Fuera de la primera versión: layout responsivo por capas, salida animada o .mp4, exportación de texto/capas separadas, importación o escritura de planes de producción, tocar sidecars de las imágenes fuente y batch de toda la biblioteca.
 
-**Verification:**
-- [ ] Manual en Windows, con la app real (`cargo run -p canvas-app`).
-- [ ] Repaso rápido del conmutador Ctrl+Tab y del cierre de ventanas.
+## Criterios de aceptación
 
-**Dependencies:** Tasks 1-2
+- Abrir el modo conserva el diseño 1920 × 1080 y previsualiza **todas las capas visibles** como una composición vertical con primer plano y fondo desenfocado.
+- Arrastrar y escalar cambia el framing del resultado compuesto, no el documento, las capas individuales ni los medios fuente.
+- La pareja exportada es un PNG 1920 × 1080 y JSON .framing válido; el PNG contiene todas las ediciones actuales del lienzo.
+- Flashcut-Auto acepta el sidecar y coloca esos valores en un plan nuevo. La salida renderizada del clip coincide con el preview del editor.
+- PNG/JSON van a la ruta elegida. `.canvas` mantiene hash, tamaño y contenido; los medios fuente también conservan su hash.
+- Cambiar de modo, cancelar el diálogo o fallar el render no deja cambios no deseados ni archivos parciales presentados como exportación correcta.
+- Undo de gestos regresa el preview a los valores anteriores; Undo normal de capas continúa modificando solo el diseño.
+- Errores de permisos, colisión de nombre, framing inválido o PNG demasiado grande son claros y no bloquean el editor.
 
-**Files likely touched:** ninguno (verificación)
+## Verificación de implementación
 
-**Estimated scope:** XS
+Validación de geometría con fixtures independientes y la composición FFmpeg de Flashcut-Auto, incluyendo imágenes landscape 16:9, desplazamientos cerca de los límites y escala 50/100/200.
 
-### Checkpoint: Final
-- [ ] `cargo test --workspace` verde, clippy `-D warnings`, fmt OK.
-- [ ] Verificación manual en Windows: ninguna ventana se redimensiona sola,
-      tamaño heredado al nacer, redimensionado manual respetado.
-- [ ] Documentar en CLAUDE.md el porqué (captura interior + geometría solo
-      al nacimiento) si el comentario del módulo no basta.
+Verificar en una carpeta temporal que Canvas produce una pareja nueva, que Flashcut-Auto carga el JSON y que renderiza el PNG como 9:16. Comparar primer plano y composición final; tolerancia de 2 píxeles después de contabilizar redondeo de dimensiones pares y documentar diferencias de blur si las hay. Revisar por hash que el .canvas abierto y sus medios fuente no cambiaron.
 
-## Risks and Mitigations
+Durante implementación, probar en la app real una página con varios tipos de capa, transparencia, fondo y una capa de vídeo pausada. Comprobar cerrar/cancelar, exportar de nuevo con nombre distinto y abrir el archivo resultante en Flashcut-Auto.
 
-| Risk | Impact | Mitigación |
-|------|--------|------------|
-| Regresión: la hija nace con tamaño equivocado | Med | El camino del primer frame es idéntico al actual (misma geometría heredada); el flag solo corta la reaplicación posterior |
-| Bug de la ventana que «se cierra si no se registra» cada frame | Alto | La llamada a `show_viewport_deferred` con el mismo `ViewportId` se mantiene TODOS los frames; solo desaparecen tamaño/posición del builder |
-| `patch` cambia de semántica al subir eframe | Bajo | El fix no depende del diff: tras el nacimiento el builder no ofrece tamaño/posición, no hay nada que difiere |
-| Oscilación de posición por DPI/monitor | Bajo | Posición solo al nacimiento + captura con fallback estable (Task 2) |
-| La raíz arrastra el bucle | Ninguno | La raíz nunca se registra vía builder (nace de `main.rs`); su geometría solo se persiste |
+Gates finales del repositorio:
 
-## Open Questions
+```powershell
+cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo run -p canvas-app -- "<carpeta-de-prueba-copiada>"
+```
 
-- ¿Conviene además **recortar** la geometría heredada al área de trabajo del
-  monitor (monitores desconectados entre sesiones)? Hoy `bootstrap` descarta
-  lo persistido y la herencia es en vivo (padre visible), así que no hace
-  falta — se deja como mejora opcional si se reactiva la restauración.
+Validar Flashcut-Auto con sus crates de núcleo/CLI y el límite actual de toolchain consignado en su `AGENTS.md`; no cambiar planes de producción.
+
+## Tareas
+
+Lista y criterios de implementación en `todo.md`.
+
+## Riesgos y mitigaciones
+
+| Riesgo | Efecto | Mitigación |
+|---|---|---|
+| Tratar la página de 1920 × 1080 como si fuera un media individual | Se pierde composición, texto y capas | Aplanar la página completa en el mismo renderer y adjuntar el sidecar al PNG plano |
+| Hornear al raster original al exportar | Puede sobrescribir la fotografía base y las capas editables | Export PNG a un destino nuevo, separado del archivo fuente |
+| Duplicar el documento .canvas | Dificulta saber cuál es la versión de trabajo | Mantener un solo .canvas; la única derivación es el PNG de media solicitado |
+| El preview no coincide con FFmpeg | El Short cambia tras importar | Compartir geometría, comparar salida compuesta y probar redondeo, blur y color |
+| Render o sidecar fallido parcialmente | Se importa una pareja incompleta | Estado por etapas, errores visibles y archivos temporales hasta finalizar la operación |
+| Diseñar cada capa como vertical sin modelo de layout | Expectativas falsas y edición compleja | Dejar claro que esta versión encuadra la composición aplanada; layout vertical por capa es otro objetivo |
+
+## Referencias locales revisadas
+
+- Canvas Desktop: `CLAUDE.md`; editor de página `crates/canvas-app/src/editor/properties_panel/page.rs`; CanvasRenderer y composición de escena descritos en CLAUDE; guardado/export `crates/canvas-app/src/app/views/editor/save_flow.rs` y `crates/canvas-io/src/export/`; formato `.canvas` en `crates/canvas-io/src/sidecar/`.
+- Flashcut-Auto: `crates/app/src/framing.rs` (formato/lectura del sidecar); `crates/domain/src/validate/framing.rs` (rangos); `crates/renderer/src/ffmpeg/framing.rs` (render vertical y blur).
+
+## Estado de la entrega (4 de octubre de 2026)
+
+Implementaci?n repartida en incrementos de geometr?a, persistencia, editor, Gallery y verificaci?n. **Save framing** conserva la configuraci?n del dise?o en `.framing/<nombre-completo-del-canvas>.json`; **Export for Flashcut-Auto** entrega el PNG plano con su propio sidecar. El icono de rect?ngulo vertical aparece antes del nombre en Gallery, propiedades y cabecera del lienzo cuando existe un framing v?lido.
+
+La composici?n se captura del estado en memoria al entrar en Framing 9:16 usando el mismo renderer de p?gina que la exportaci?n. Durante este modo se ajusta el encuadre y su historial; para modificar capas se vuelve a Normal view y se entra de nuevo, capturando la composici?n actualizada. El documento editable conserva dimensiones, capas y viewport. El PNG es est?tico, incluidos los frames de v?deo visibles.
+
+Gallery reutiliza la miniatura/poster del medio y el preview incrustado del `.canvas`; la exportaci?n desde el editor usa la composici?n a resoluci?n completa. Lecturas, blur y escritura se ejecutan fuera del hilo de UI; la captura GPU completa se realiza al entrar. Cada sesi?n tiene su canal de resultados y Gallery descarta previews obsoletos mediante generaciones, limita trabajos concurrentes a cuatro y conserva hasta 64 previews con texturas.
+
+Validaci?n realizada:
+
+- Tests de geometr?a 50/100/200 %, validaci?n JSON, conservaci?n de originales, fallos y colisiones de exportaci?n, undo por gesto, sesiones aisladas, resultados obsoletos, filtros, clic real de egui en Save framing y bot?n del sidebar.
+- Suite completa del workspace, Clippy con `-D warnings` y formato.
+- Fixture GPU real de 1920 ? 1080 con imagen, texto y forma agrupados, recorte, grayscale, blur, transparencia, capa oculta y poster de v?deo: PNG y sidecars sin alterar el `.canvas`. Los 17 tests GPU tambi?n pasan, incluidos scopes de documentos distintos y frames de v?deo cambiantes.
+- App nativa de Windows: vistas Normal/Framings, indicador, men? contextual, apertura, arrastre y guardado de un framing individual; PNG original conservado por hash.
+- CLI de Flashcut-Auto: `framing list` reconoce el sidecar, `framing apply` lo incorpora y `render` genera un MP4 real de 1080 ? 1920 de la composici?n multicapas. Un framing expl?cito en el plan se conserva aunque el sidecar tenga otro valor. Los hashes del `.canvas` y del PNG no cambian.
+
+La matriz de 27 combinaciones (escalas 50/100/200 % y X/Y ?100/0/100) pasa contra FFmpeg: l?mites de la composici?n dentro de dos p?xeles y coordenadas muestreadas de la fuente correctas. El rect?ngulo de referencia del preview y el MP4 real de Auto tambi?n coinciden dentro de dos p?xeles. La comparaci?n raster presenta una diferencia media absoluta RGB de (15,92; 7,81; 10,21) sobre 255: hay diferencias de blur reducido, interpolaci?n y conversi?n de color de MP4. Se conserva el color del PNG exportado; no se promete identidad de p?xeles con el MP4.
+
+El aislamiento se comprueba tanto en el renderer (scopes distintos con los mismos IDs de capa) como en la UI (canales por sesi?n; respuestas tard?as tras cerrar un documento no alcanzan otro). La comprobaci?n nativa de Windows se realiz? en una instancia de prueba separada, sin cerrar la instancia del usuario ni tocar su material.
+
+Validaci?n reproducible (Python con Pillow y FFmpeg en PATH):
+
+```powershell
+cargo run -p canvas-render --example framing_probe -- target/framing-probe
+cargo test -p canvas-render --test gpu_bake -- --ignored --test-threads=1
+python crates/canvas-render/examples/framing_probe/verify_ffmpeg.py target/framing-probe C:/Users/jonhy/Documents/code-projects/Flashcut-Auto/target/debug/cli.exe
+```
+
+El script crea una subcarpeta nueva para cada validaci?n y conserva PNG de referencia, frame de Auto, MP4, planes y manifiesto. No se modificaron planes de producci?n.
