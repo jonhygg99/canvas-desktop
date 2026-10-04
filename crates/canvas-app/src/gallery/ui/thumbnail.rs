@@ -43,51 +43,69 @@ pub(super) fn paint(
             );
         }
     } else {
-        match (&item.tex, item.failed) {
-            (Some(tex), _) => {
-                let size = tex.size_vec2();
-                let scale = (thumb_rect.width() / size.x).max(thumb_rect.height() / size.y);
-                let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
-                // Clip the cover thumbnail to the thumb rect: without
-                // this, tall/panoramic photos bleed over neighbour cells.
-                painter.rect_filled(thumb_rect, 2.0, visuals.extreme_bg_color);
-                painter.with_clip_rect(thumb_rect).image(
-                    tex.id(),
-                    fitted,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
-            }
-            (None, _) if item.kind == ItemKind::Design => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Document",
-                    egui::FontId::proportional(14.0),
-                    visuals.weak_text_color(),
-                );
-            }
-            (None, true) => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Failed to load",
-                    egui::FontId::proportional(14.0),
-                    visuals.error_fg_color,
-                );
-            }
-            (None, false) => {
-                painter.text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Loading",
-                    egui::FontId::proportional(14.0),
-                    visuals.weak_text_color(),
-                );
-            }
-        }
+        normal(painter, item, thumb_rect, visuals);
     }
 
+    badges(painter, item, thumb_rect, visuals);
+}
+
+fn normal(
+    painter: &egui::Painter,
+    item: &GalleryItem,
+    thumb_rect: egui::Rect,
+    visuals: &egui::Visuals,
+) {
+    match (&item.tex, item.failed) {
+        (Some(tex), _) => {
+            let size = tex.size_vec2();
+            let scale = (thumb_rect.width() / size.x).max(thumb_rect.height() / size.y);
+            let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
+            // Clip the cover thumbnail to the thumb rect: without
+            // this, tall/panoramic photos bleed over neighbour cells.
+            painter.rect_filled(thumb_rect, 2.0, visuals.extreme_bg_color);
+            painter.with_clip_rect(thumb_rect).image(
+                tex.id(),
+                fitted,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        (None, _) if item.kind == ItemKind::Design => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Document",
+                egui::FontId::proportional(14.0),
+                visuals.weak_text_color(),
+            );
+        }
+        (None, true) => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Failed to load",
+                egui::FontId::proportional(14.0),
+                visuals.error_fg_color,
+            );
+        }
+        (None, false) => {
+            painter.text(
+                thumb_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "Loading",
+                egui::FontId::proportional(14.0),
+                visuals.weak_text_color(),
+            );
+        }
+    }
+}
+
+fn badges(
+    painter: &egui::Painter,
+    item: &GalleryItem,
+    thumb_rect: egui::Rect,
+    visuals: &egui::Visuals,
+) {
     if item.kind == ItemKind::Design {
         painter.text(
             thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
