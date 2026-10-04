@@ -37,7 +37,7 @@ Plan de diseño en `plan.md`. Las tareas se implementan por orden y dejan intact
 **Descripción:** Tomar como entrada todas las capas y el fondo de la página editada y formar una textura de composición para aplicar un framing 9:16 en preview.
 **Aceptación:**
 - [x] Imagen, texto, formas, grupos, recortes, efectos, transparencia y poster del vídeo visible aparecen en su orden de composición.
-- [x] Preview captura los cambios no guardados en RAM al entrar; volver a Normal y entrar de nuevo actualiza la composici?n, sin guardar ni rasterizar los archivos originales.
+- [x] Preview captura los cambios no guardados en RAM al entrar; volver a Normal y entrar de nuevo actualiza la composición, sin guardar ni rasterizar los archivos originales.
 - [x] No clona `Document` para crear un segundo documento; reutiliza o extiende el pipeline de escena/surface.
 **Verificación:** App real con fixture de varias capas, comparar render de composición habitual con el asset del preview.
 **Dependencias:** 1.
@@ -148,6 +148,16 @@ Plan de diseño en `plan.md`. Las tareas se implementan por orden y dejan intact
 
 ## Evidencia de cierre
 
-Las diez tareas est?n entregadas y verificadas. Ver `plan.md`, secci?n ?Estado de la entrega?, para el comportamiento final, fixture multicapas, 27 casos FFmpeg, aislamiento entre documentos y render real de Flashcut-Auto. Las casillas de render multicapas y comparaci?n visual se cerraron tras ampliar y ejecutar el fixture GPU y comparar con el MP4 real.
+Las diez tareas están entregadas y verificadas. Ver `plan.md`, sección «Estado de la entrega», para el comportamiento final, fixture multicapas, 27 casos FFmpeg, aislamiento entre documentos y render real de Flashcut-Auto. Las casillas de render multicapas y comparación visual se cerraron tras ampliar y ejecutar el fixture GPU y comparar con el MP4 real.
 
-El blur del preview se calcula a resoluci?n reducida; la geometr?a y el contrato portable est?n verificados, pero no se promete identidad de p?xeles del desenfoque de FFmpeg. El test GPU est? en `crates/canvas-render/examples/framing_probe.rs` y sus salidas de prueba en `target/framing-probe`, fuera del contenido del usuario.
+El blur del preview se calcula a resolución reducida; la geometría y el contrato portable están verificados, pero no se promete identidad de píxeles del desenfoque de FFmpeg. El test GPU está en `crates/canvas-render/examples/framing_probe.rs` y sus salidas de prueba en `target/framing-probe`, fuera del contenido del usuario.
+
+## Ampliación: framing de vídeos en Gallery
+
+- [x] Play/Pause, Restart y barra de tiempo para el vídeo individual.
+- [x] Primer plano y fondo desenfocado actualizados con el mismo fotograma; decoder acotado y cancelable.
+- [x] Trim del vídeo original: In/Out, intervalo de reproducción y guardado atómico como campo opcional `trim` del sidecar compatible.
+- [x] Audio silenciado por defecto, control para activarlo y sink propio de la sesión.
+- [x] Validar carga de sesión de Gallery, botones reales de egui Play/Pause, guardado/reapertura, parada en Out, conservación del vídeo y checks finales.
+
+El usuario concretó que el trim corresponde al vídeo original seleccionado, por lo que no se añadió exportación de un clip nuevo. Los ajustes temporales se aplican en Canvas; Flashcut-Auto sigue consumiendo únicamente posición y escala del sidecar.

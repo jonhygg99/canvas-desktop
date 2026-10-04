@@ -137,25 +137,25 @@ Lista y criterios de implementación en `todo.md`.
 
 ## Estado de la entrega (4 de octubre de 2026)
 
-Implementaci?n repartida en incrementos de geometr?a, persistencia, editor, Gallery y verificaci?n. **Save framing** conserva la configuraci?n del dise?o en `.framing/<nombre-completo-del-canvas>.json`; **Export for Flashcut-Auto** entrega el PNG plano con su propio sidecar. El icono de rect?ngulo vertical aparece antes del nombre en Gallery, propiedades y cabecera del lienzo cuando existe un framing v?lido.
+Implementaci?n repartida en incrementos de geometría, persistencia, editor, Gallery y verificación. **Save framing** conserva la configuración del diseño en `.framing/<nombre-completo-del-canvas>.json`; **Export for Flashcut-Auto** entrega el PNG plano con su propio sidecar. El icono de rect?ngulo vertical aparece antes del nombre en Gallery, propiedades y cabecera del lienzo cuando existe un framing válido.
 
-La composici?n se captura del estado en memoria al entrar en Framing 9:16 usando el mismo renderer de p?gina que la exportaci?n. Durante este modo se ajusta el encuadre y su historial; para modificar capas se vuelve a Normal view y se entra de nuevo, capturando la composici?n actualizada. El documento editable conserva dimensiones, capas y viewport. El PNG es est?tico, incluidos los frames de v?deo visibles.
+La composición se captura del estado en memoria al entrar en Framing 9:16 usando el mismo renderer de página que la exportación. Durante este modo se ajusta el encuadre y su historial; para modificar capas se vuelve a Normal view y se entra de nuevo, capturando la composición actualizada. El documento editable conserva dimensiones, capas y viewport. El PNG es estático, incluidos los frames de vídeo visibles.
 
-Gallery reutiliza la miniatura/poster del medio y el preview incrustado del `.canvas`; la exportaci?n desde el editor usa la composici?n a resoluci?n completa. Lecturas, blur y escritura se ejecutan fuera del hilo de UI; la captura GPU completa se realiza al entrar. Cada sesi?n tiene su canal de resultados y Gallery descarta previews obsoletos mediante generaciones, limita trabajos concurrentes a cuatro y conserva hasta 64 previews con texturas.
+Gallery reutiliza la miniatura/poster del medio y el preview incrustado del `.canvas`; la exportación desde el editor usa la composición a resolución completa. Lecturas, blur y escritura se ejecutan fuera del hilo de UI; la captura GPU completa se realiza al entrar. Cada sesión tiene su canal de resultados y Gallery descarta previews obsoletos mediante generaciones, limita trabajos concurrentes a cuatro y conserva hasta 64 previews con texturas.
 
-Validaci?n realizada:
+Validación realizada:
 
-- Tests de geometr?a 50/100/200 %, validaci?n JSON, conservaci?n de originales, fallos y colisiones de exportaci?n, undo por gesto, sesiones aisladas, resultados obsoletos, filtros, clic real de egui en Save framing y bot?n del sidebar.
+- Tests de geometría 50/100/200 %, validación JSON, conservación de originales, fallos y colisiones de exportación, undo por gesto, sesiones aisladas, resultados obsoletos, filtros, clic real de egui en Save framing y bot?n del sidebar.
 - Suite completa del workspace, Clippy con `-D warnings` y formato.
-- Fixture GPU real de 1920 ? 1080 con imagen, texto y forma agrupados, recorte, grayscale, blur, transparencia, capa oculta y poster de v?deo: PNG y sidecars sin alterar el `.canvas`. Los 17 tests GPU tambi?n pasan, incluidos scopes de documentos distintos y frames de v?deo cambiantes.
+- Fixture GPU real de 1920 × 1080 con imagen, texto y forma agrupados, recorte, grayscale, blur, transparencia, capa oculta y poster de vídeo: PNG y sidecars sin alterar el `.canvas`. Los 17 tests GPU también pasan, incluidos scopes de documentos distintos y frames de vídeo cambiantes.
 - App nativa de Windows: vistas Normal/Framings, indicador, men? contextual, apertura, arrastre y guardado de un framing individual; PNG original conservado por hash.
-- CLI de Flashcut-Auto: `framing list` reconoce el sidecar, `framing apply` lo incorpora y `render` genera un MP4 real de 1080 ? 1920 de la composici?n multicapas. Un framing expl?cito en el plan se conserva aunque el sidecar tenga otro valor. Los hashes del `.canvas` y del PNG no cambian.
+- CLI de Flashcut-Auto: `framing list` reconoce el sidecar, `framing apply` lo incorpora y `render` genera un MP4 real de 1080 × 1920 de la composición multicapas. Un framing expl?cito en el plan se conserva aunque el sidecar tenga otro valor. Los hashes del `.canvas` y del PNG no cambian.
 
-La matriz de 27 combinaciones (escalas 50/100/200 % y X/Y ?100/0/100) pasa contra FFmpeg: l?mites de la composici?n dentro de dos p?xeles y coordenadas muestreadas de la fuente correctas. El rect?ngulo de referencia del preview y el MP4 real de Auto tambi?n coinciden dentro de dos p?xeles. La comparaci?n raster presenta una diferencia media absoluta RGB de (15,92; 7,81; 10,21) sobre 255: hay diferencias de blur reducido, interpolaci?n y conversi?n de color de MP4. Se conserva el color del PNG exportado; no se promete identidad de p?xeles con el MP4.
+La matriz de 27 combinaciones (escalas 50/100/200 % y X/Y -100/0/100) pasa contra FFmpeg: límites de la composición dentro de dos píxeles y coordenadas muestreadas de la fuente correctas. El rect?ngulo de referencia del preview y el MP4 real de Auto también coinciden dentro de dos píxeles. La comparación raster presenta una diferencia media absoluta RGB de (15,92; 7,81; 10,21) sobre 255: hay diferencias de blur reducido, interpolaci?n y conversión de color de MP4. Se conserva el color del PNG exportado; no se promete identidad de píxeles con el MP4.
 
-El aislamiento se comprueba tanto en el renderer (scopes distintos con los mismos IDs de capa) como en la UI (canales por sesi?n; respuestas tard?as tras cerrar un documento no alcanzan otro). La comprobaci?n nativa de Windows se realiz? en una instancia de prueba separada, sin cerrar la instancia del usuario ni tocar su material.
+El aislamiento se comprueba tanto en el renderer (scopes distintos con los mismos IDs de capa) como en la UI (canales por sesión; respuestas tard?as tras cerrar un documento no alcanzan otro). La comprobación nativa de Windows se realiz? en una instancia de prueba separada, sin cerrar la instancia del usuario ni tocar su material.
 
-Validaci?n reproducible (Python con Pillow y FFmpeg en PATH):
+Validación reproducible (Python con Pillow y FFmpeg en PATH):
 
 ```powershell
 cargo run -p canvas-render --example framing_probe -- target/framing-probe
@@ -163,4 +163,20 @@ cargo test -p canvas-render --test gpu_bake -- --ignored --test-threads=1
 python crates/canvas-render/examples/framing_probe/verify_ffmpeg.py target/framing-probe C:/Users/jonhy/Documents/code-projects/Flashcut-Auto/target/debug/cli.exe
 ```
 
-El script crea una subcarpeta nueva para cada validaci?n y conserva PNG de referencia, frame de Auto, MP4, planes y manifiesto. No se modificaron planes de producci?n.
+El script crea una subcarpeta nueva para cada validación y conserva PNG de referencia, frame de Auto, MP4, planes y manifiesto. No se modificaron planes de producci?n.
+
+## Vídeos individuales desde Gallery
+
+Al abrir Create/Edit framing sobre un vídeo, el diálogo muestra Play/Pause, Restart, barra de tiempo y tiempo actual/duración original. **Trim original video** permite ajustar In y Out y restablecer el intervalo completo. El vídeo seleccionado conserva sus bytes: el trim selecciona un intervalo de su reproducción, no reescribe el archivo fuente ni crea otro vídeo. **Save framing** guarda posición, escala e intervalo juntos con escritura atómica; al reabrir se recupera el intervalo y el playhead comienza en In. Play se detiene en Out y vuelve a In al reiniciarse después de terminar.
+
+El vídeo y el fondo desenfocado usan el mismo fotograma, publicado junto con su blur por un worker con mailbox de un frame. El decoder reutiliza `canvas_io::VideoFrameStream`, limita el preview a un máximo de 960 píxeles y se cancela al pausar, buscar o cerrar. Las texturas se actualizan en su sitio. El audio de preview empieza silenciado y tiene un sink/dispositivo propio de la sesión; los fallos de audio se muestran sin bloquear el vídeo. Los controles se desplazan verticalmente si no caben.
+
+La extensión opcional del sidecar v1 es `"trim": { "startS": 1.0, "endS": 4.0 }`. Los sidecars anteriores siguen siendo válidos. Actualizar solo el framing conserva un trim existente. Flashcut-Auto acepta el sidecar extendido e importa el encuadre; **su consumidor actual no aplica el trim de Canvas**. No se añadió exportación de un clip nuevo, según la aclaración del usuario.
+
+El framing de la composición completa del editor continúa siendo una captura estática; reproducir el vídeo individual de Gallery no sustituye las demás capas del diseño. Hay una prueba específica para esta separación.
+
+Validación: tests del workspace, tests de vídeo con FFmpeg real (Play/Pause mediante eventos de egui en el diálogo de Gallery, seek, fondo, trim, guardado/reapertura, EOF y bytes originales), Clippy y formato. Se inició la app nativa en una carpeta de prueba con vídeo y audio sintéticos. Los tests que necesitan FFmpeg se ejecutan explícitamente para no exigir ese binario en CI:
+
+```powershell
+cargo test -p canvas-app framing::video -- --include-ignored
+```
