@@ -91,16 +91,25 @@ impl Session {
                     }
                     self.value = framing.unwrap_or_default();
                     self.error = error;
-                    self.video = video;
+                    self.video = video.map(|video| *video);
+                    if let Some(video) = &mut self.video {
+                        if video.trim.start_s > 0.0 {
+                            video.seek(video.trim.start_s, false, ctx);
+                        }
+                    }
                     self.apply_frame(source, background, ctx);
                 }
                 Ok(jobs::Outcome::Saved {
                     value,
                     path,
                     sidecar_only,
+                    trim,
                 }) => {
                     if sidecar_only {
                         self.saved = Some(value);
+                        if let (Some(video), Some(trim)) = (&mut self.video, trim) {
+                            video.saved_trim = trim;
+                        }
                         if let Some(path) = &self.path {
                             record_saved(ctx, path, true);
                         }
@@ -153,7 +162,12 @@ impl Session {
         if self.ready() && !self.busy() {
             if let Some(path) = &self.path {
                 tracing::info!(path = %path.display(), framing = ?self.value, "saving framing");
-                self.receiver = Some(jobs::save(path.clone(), self.value, ctx.clone()));
+                self.receiver = Some(jobs::save(
+                    path.clone(),
+                    self.value,
+                    self.video.as_ref().map(|v| v.trim),
+                    ctx.clone(),
+                ));
             }
         }
     }

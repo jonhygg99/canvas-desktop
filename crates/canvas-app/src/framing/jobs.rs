@@ -12,12 +12,13 @@ pub(super) enum Outcome {
         background: egui::ColorImage,
         framing: Option<Framing>,
         error: Option<String>,
-        video: Option<super::video::Video>,
+        video: Option<Box<super::video::Video>>,
     },
     Saved {
         value: Framing,
         path: PathBuf,
         sidecar_only: bool,
+        trim: Option<canvas_io::VideoTrim>,
     },
     Cancelled,
 }
@@ -35,8 +36,15 @@ fn spawn(
     rx
 }
 
-fn prepared(path: Option<PathBuf>, source: canvas_io::LoadedImage) -> Result<Outcome, String> {
-    let video = if let Some(path) = path.as_ref().filter(|p| canvas_io::is_video_file(p)) {
+fn prepared(
+    path: Option<PathBuf>,
+    source: canvas_io::LoadedImage,
+    individual: bool,
+) -> Result<Outcome, String> {
+    let mut video = if let Some(path) = path
+        .as_ref()
+        .filter(|p| individual && canvas_io::is_video_file(p))
+    {
         let (w, h, duration) = canvas_io::probe_video_size(path).map_err(|e| e.to_string())?;
         let duration = duration
             .filter(|d| d.is_finite() && *d > 0.0)
@@ -45,25 +53,31 @@ fn prepared(path: Option<PathBuf>, source: canvas_io::LoadedImage) -> Result<Out
     } else {
         None
     };
-    let (framing, error) = match path.as_deref().map(canvas_io::read_framing) {
-        Some(Ok(framing)) => (framing, None),
-        Some(Err(e)) => (None, Some(e.to_string())),
-        None => (None, None),
+    let (framing, trim, mut error) = match path.as_deref().map(canvas_io::read_framing_with_trim) {
+        Some(Ok(Some((framing, trim)))) => (Some(framing), trim, None),
+        Some(Err(e)) => (None, None, Some(e.to_string())),
+        _ => (None, None, None),
     };
+    if let (Some(video), Some(trim)) = (&mut video, trim) {
+        match video.apply_trim(trim) {
+            Ok(()) => video.saved_trim = trim,
+            Err(e) => error = Some(e),
+        }
+    }
     let background = super::preview::background(&source)?;
     Ok(Outcome::Loaded {
         source,
         background,
         framing,
         error,
-        video,
+        video: video.map(Box::new),
     })
 }
 
 pub(super) fn load(path: PathBuf, ctx: egui::Context) -> Receiver<Result<Outcome, String>> {
     spawn(ctx, move || {
         let source = canvas_io::thumbnail(&path, 1280, None).map_err(|e| e.to_string())?;
-        prepared(Some(path), source)
+        prepared(Some(path), source, true)
     })
 }
 
@@ -72,20 +86,26 @@ pub(super) fn prepare(
     source: canvas_io::LoadedImage,
     ctx: egui::Context,
 ) -> Receiver<Result<Outcome, String>> {
-    spawn(ctx, move || prepared(path, source))
+    spawn(ctx, move || prepared(path, source, false))
 }
 
 pub(super) fn save(
     path: PathBuf,
     value: Framing,
+    trim: Option<canvas_io::VideoTrim>,
     ctx: egui::Context,
 ) -> Receiver<Result<Outcome, String>> {
     spawn(ctx, move || {
-        let path = canvas_io::write_framing(&path, value).map_err(|e| e.to_string())?;
+        let path = match trim {
+            Some(trim) => canvas_io::write_framing_with_trim(&path, value, Some(trim)),
+            None => canvas_io::write_framing(&path, value),
+        }
+        .map_err(|e| e.to_string())?;
         Ok(Outcome::Saved {
             value,
             path,
             sidecar_only: true,
+            trim,
         })
     })
 }
@@ -117,6 +137,7 @@ pub(super) fn export(
             value,
             path,
             sidecar_only: false,
+            trim: None,
         })
     })
 }

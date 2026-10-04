@@ -18,6 +18,7 @@ fn late_results_from_a_closed_session_cannot_reach_another_document() {
             },
             path: PathBuf::from(".framing/second.canvas.json"),
             sidecar_only: true,
+            trim: None,
         })
     };
     assert!(old_tx.send(result(50)).is_err());

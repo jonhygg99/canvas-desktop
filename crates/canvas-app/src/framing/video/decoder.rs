@@ -1,4 +1,4 @@
-//! Un decoder por reproducci?n; mailbox de un frame y cancelaci?n inmediata.
+//! Un decoder por reproducción; mailbox de un frame y cancelación inmediata.
 use eframe::egui;
 use std::{
     path::PathBuf,

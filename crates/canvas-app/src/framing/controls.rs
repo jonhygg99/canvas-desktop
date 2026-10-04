@@ -41,11 +41,18 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
                 ));
             }
         }
-        ui.weak(if session.saved == Some(session.value) {
-            "Framing saved"
-        } else {
-            "Framing not saved"
-        });
+        ui.weak(
+            if session.saved == Some(session.value)
+                && session
+                    .video
+                    .as_ref()
+                    .is_none_or(|v| v.trim == v.saved_trim)
+            {
+                "Framing saved"
+            } else {
+                "Framing not saved"
+            },
+        );
     });
     if session.busy() {
         ui.spinner();

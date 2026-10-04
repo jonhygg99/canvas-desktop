@@ -181,7 +181,11 @@ impl GalleryFramings {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(230.0);
-                        session.controls(ui);
+                        ui.set_min_height(580.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("framing-controls")
+                            .max_height(ui.available_height().max(580.0))
+                            .show(ui, |ui| session.controls(ui));
                     });
                     ui.separator();
                     ui.vertical(|ui| {
