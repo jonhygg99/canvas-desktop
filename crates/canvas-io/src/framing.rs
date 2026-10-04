@@ -4,6 +4,23 @@ use canvas_core::framing::{Framing, HEIGHT, WIDTH};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Intervalo no destructivo del vídeo fuente, en segundos.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoTrim {
+    pub start_s: f64,
+    pub end_s: f64,
+}
+
+impl VideoTrim {
+    pub fn is_valid(self) -> bool {
+        self.start_s.is_finite()
+            && self.end_s.is_finite()
+            && self.start_s >= 0.0
+            && self.end_s > self.start_s
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Sidecar {
@@ -11,6 +28,8 @@ struct Sidecar {
     width: u32,
     height: u32,
     framing: Framing,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trim: Option<VideoTrim>,
 }
 
 pub fn framing_path(asset: &Path) -> Result<PathBuf, IoError> {
@@ -27,6 +46,12 @@ pub fn framing_path(asset: &Path) -> Result<PathBuf, IoError> {
 }
 
 pub fn read_framing(asset: &Path) -> Result<Option<Framing>, IoError> {
+    Ok(read_framing_with_trim(asset)?.map(|(framing, _)| framing))
+}
+
+pub fn read_framing_with_trim(
+    asset: &Path,
+) -> Result<Option<(Framing, Option<VideoTrim>)>, IoError> {
     let path = framing_path(asset)?;
     let file = match std::fs::File::open(&path) {
         Ok(file) => file,
@@ -48,19 +73,35 @@ pub fn read_framing(asset: &Path) -> Result<Option<Framing>, IoError> {
         return Err(error("file is too large".into()));
     }
     let sc: Sidecar = serde_json::from_slice(&bytes).map_err(|e| error(e.to_string()))?;
-    if sc.schema_version != 1 || sc.width != WIDTH || sc.height != HEIGHT || !sc.framing.is_valid()
+    if sc.schema_version != 1
+        || sc.width != WIDTH
+        || sc.height != HEIGHT
+        || !sc.framing.is_valid()
+        || sc.trim.is_some_and(|trim| !trim.is_valid())
     {
         return Err(error(
-            "expected v1, 1080 × 1920 and valid position/scale".into(),
+            "expected v1, 1080 × 1920, valid position/scale and video interval".into(),
         ));
     }
-    Ok(Some(sc.framing))
+    Ok(Some((sc.framing, sc.trim)))
 }
 
 pub fn write_framing(asset: &Path, framing: Framing) -> Result<PathBuf, IoError> {
-    if !framing.is_valid() {
+    let trim = read_framing_with_trim(asset)
+        .ok()
+        .flatten()
+        .and_then(|(_, trim)| trim);
+    write_framing_with_trim(asset, framing, trim)
+}
+
+pub fn write_framing_with_trim(
+    asset: &Path,
+    framing: Framing,
+    trim: Option<VideoTrim>,
+) -> Result<PathBuf, IoError> {
+    if !framing.is_valid() || trim.is_some_and(|trim| !trim.is_valid()) {
         return Err(IoError::Message {
-            message: "Invalid framing position or scale".into(),
+            message: "Invalid framing position, scale or video interval".into(),
         });
     }
     let path = framing_path(asset)?;
@@ -69,6 +110,7 @@ pub fn write_framing(asset: &Path, framing: Framing) -> Result<PathBuf, IoError>
         width: WIDTH,
         height: HEIGHT,
         framing,
+        trim,
     })
     .map_err(|e| IoError::Message {
         message: e.to_string(),

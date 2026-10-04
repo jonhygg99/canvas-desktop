@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn video_trim_roundtrips_atomically_in_the_original_assets_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let asset = dir.path().join("clip.mp4");
+    std::fs::write(&asset, b"original-video").unwrap();
+    let trim = VideoTrim {
+        start_s: 2.0,
+        end_s: 8.0,
+    };
+    let path = write_framing_with_trim(&asset, Framing::default(), Some(trim)).unwrap();
+    assert_eq!(
+        read_framing_with_trim(&asset).unwrap(),
+        Some((Framing::default(), Some(trim)))
+    );
+    assert_eq!(read_framing(&asset).unwrap(), Some(Framing::default()));
+    let before = std::fs::read(&path).unwrap();
+    for trim in [
+        VideoTrim {
+            start_s: 8.0,
+            end_s: 2.0,
+        },
+        VideoTrim {
+            start_s: f64::NAN,
+            end_s: 8.0,
+        },
+    ] {
+        assert!(write_framing_with_trim(&asset, Framing::default(), Some(trim)).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+    write_framing(
+        &asset,
+        Framing {
+            x_pct: 24.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_framing_with_trim(&asset).unwrap().unwrap().1,
+        Some(trim)
+    );
+    assert_eq!(std::fs::read(&asset).unwrap(), b"original-video");
+}
+
+#[test]
 fn portable_sidecar_preserves_source_and_distinguishes_bad_data() {
     let dir = tempfile::tempdir().unwrap();
     let asset = dir.path().join("diseño.png");
