@@ -1,6 +1,7 @@
 //! Galería de carpeta: estado (lista de archivos, navegación entre
 //! carpetas, ranura de copiar/pegar). El renderizado egui vive en `ui`.
 
+pub(crate) mod framing;
 mod item;
 mod ui;
 
@@ -78,6 +79,7 @@ struct FolderLists {
     read_error: Option<String>,
 }
 pub struct GalleryState {
+    pub(crate) framings: framing::GalleryFramings,
     pub folder: PathBuf,
     pub folder_panel_side: StripSide,
     navigation: FolderNavigation,
@@ -163,6 +165,7 @@ impl GalleryState {
     ) -> Self {
         let folder = normalize_folder(folder);
         Self {
+            framings: framing::GalleryFramings::default(),
             folder_panel_side,
             navigation: FolderNavigation::new(folder.clone()),
             folders: Box::new(child_folders(&folder)),
@@ -209,6 +212,7 @@ impl GalleryState {
     ) -> Self {
         let folder = normalize_folder(folder);
         Self {
+            framings: framing::GalleryFramings::default(),
             folder: folder.clone(),
             folder_panel_side,
             navigation,
@@ -391,6 +395,7 @@ impl GalleryState {
 }
 
 pub enum GalleryAction {
+    EditFraming(PathBuf),
     Open(PathBuf),
     CycleFolderPanelSide,
     OpenFolder(PathBuf),

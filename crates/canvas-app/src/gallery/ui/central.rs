@@ -7,7 +7,9 @@
 use eframe::egui;
 
 use super::super::{GalleryAction, GalleryState};
-use super::cell::{gallery_add_cell, gallery_cell, gallery_cell_size, CELL_GAP, ROW_GAP};
+use super::cell::{
+    gallery_add_cell, gallery_cell_size, gallery_cell_with_framing, CELL_GAP, ROW_GAP,
+};
 use crate::app_icons::{
     draw_close_icon, draw_minus_icon, draw_plus_icon, icon_button_ui, icon_text_button_ui,
 };
@@ -31,6 +33,43 @@ pub(super) fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<Galler
 /// Cabecera de la carpeta: título con renombrado in-place, contador de
 /// elementos y toolbar de orden/densidad/nuevo diseño — todo en una fila.
 fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut state.framings.vertical, false, "Normal");
+        ui.selectable_value(&mut state.framings.vertical, true, "Framings 9:16");
+        use crate::gallery::framing::StatusFilter;
+        egui::ComboBox::from_id_salt("framing-status")
+            .selected_text(match state.framings.filter {
+                StatusFilter::All => "All framing states",
+                StatusFilter::Saved => "Saved framings",
+                StatusFilter::Missing => "Without framing",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut state.framings.filter,
+                    StatusFilter::All,
+                    "All framing states",
+                );
+                ui.selectable_value(
+                    &mut state.framings.filter,
+                    StatusFilter::Saved,
+                    "Saved framings",
+                );
+                ui.selectable_value(
+                    &mut state.framings.filter,
+                    StatusFilter::Missing,
+                    "Without framing",
+                );
+            });
+        if ui
+            .add_enabled(state.selected.is_some(), egui::Button::new("Framing 9:16"))
+            .on_hover_text("Select an item with right-click, then create or edit its framing")
+            .clicked()
+        {
+            if let Some(path) = &state.selected {
+                *action = Some(GalleryAction::EditFraming(path.clone()));
+            }
+        }
+    });
     ui.horizontal(|ui| {
         // false = rama defensiva del renombrado (estado imposible en la
         // práctica): salta la toolbar, igual que el `return` del original.
@@ -262,13 +301,22 @@ fn scan_error_ui(
 /// «+» al final de la última fila incompleta (o en fila propia si la última
 /// fila estaba llena). Respeta `media_filter` (Todos/Imágenes/Videos).
 fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
+    if state.framings.filter != crate::gallery::framing::StatusFilter::All {
+        for item in &state.items {
+            state.framings.card(&item.path, ui.ctx(), false);
+        }
+    }
     egui::ScrollArea::vertical().show(ui, |ui| {
         let columns = state.gallery_columns.clamp(1, 12);
-        let cell_size = gallery_cell_size(ui.available_width(), columns);
+        let mut cell_size = gallery_cell_size(ui.available_width(), columns);
+        if state.framings.vertical {
+            cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
+        }
         ui.spacing_mut().item_spacing.y = ROW_GAP;
         let visible: Vec<_> = state
             .items
             .iter()
+            .filter(|item| state.framings.matches(&item.path))
             .filter(|i| match state.media_filter {
                 crate::settings::MediaFilter::All => true,
                 crate::settings::MediaFilter::ImagesOnly => {
@@ -303,12 +351,13 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_GAP;
                 for item in row {
-                    if let Some(cell_action) = gallery_cell(
+                    if let Some(cell_action) = gallery_cell_with_framing(
                         ui,
                         item,
                         cell_size,
                         &mut state.selected,
                         &mut state.rename_edit,
+                        &mut state.framings,
                     ) {
                         // First-wins: con ids estables solo una celda puede
                         // disparar por frame; si dos lo hicieran, gana la
@@ -318,7 +367,7 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
                         }
                     }
                 }
-                if is_last_row && row.len() < columns {
+                if is_last_row && row.len() < columns && !state.framings.vertical {
                     add_cell_rendered = true;
                     if gallery_add_cell(ui, cell_size) && action.is_none() {
                         *action = Some(GalleryAction::NewDesign);
@@ -328,7 +377,7 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             ui.add_space(CELL_GAP);
         }
 
-        if !add_cell_rendered {
+        if !add_cell_rendered && !state.framings.vertical {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_GAP;
                 if gallery_add_cell(ui, cell_size) && action.is_none() {
