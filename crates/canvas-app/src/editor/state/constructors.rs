@@ -30,6 +30,12 @@ impl EditorState {
             )
         });
         Self {
+            saved_framing: doc
+                .source_path
+                .as_deref()
+                .and_then(|path| canvas_io::read_framing(path).ok().flatten()),
+            framing: None,
+            framing_requested: false,
             doc,
             history: History::default(),
             images,

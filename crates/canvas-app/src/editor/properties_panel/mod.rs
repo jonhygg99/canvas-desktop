@@ -183,6 +183,17 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         state.return_requested = true;
     }
     file_name_ui(state, ui);
+    if let Some(session) = &mut state.framing {
+        session.controls(ui);
+        return;
+    }
+    if ui
+        .button("Framing 9:16")
+        .on_hover_text("Frame the whole composition for Shorts")
+        .clicked()
+    {
+        state.framing_requested = true;
+    }
     let page_dims = match state.doc.page() {
         Ok(p) => (p.width, p.height),
         Err(_) => (0.0, 0.0),
@@ -275,6 +286,16 @@ fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         }
     } else {
         ui.horizontal(|ui| {
+            if state.saved_framing.is_some() {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 20.0), egui::Sense::hover());
+                crate::framing::portrait_icon(
+                    ui.painter(),
+                    rect,
+                    ui.visuals().selection.stroke.color,
+                );
+                ui.small("9:16");
+            }
             ui.heading(state.file_name());
             if state.doc.source_path.is_some()
                 && icon_button_ui(ui, 16.0, true, draw_pencil_icon).clicked()
