@@ -3,6 +3,7 @@
 
 mod clipboard;
 mod export;
+mod framing;
 mod load;
 mod metadata;
 mod mounts;
@@ -19,6 +20,7 @@ pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
 };
 pub use export::{document_to_svg, svg_to_pdf, ExportFormat, ExportImages, TextLineBreaker};
+pub use framing::{framing_path, read_framing, write_framing};
 pub use load::{
     can_overwrite, is_canvas_file, is_image_file, is_media_file, is_standalone_design,
     is_video_file, load_image, open_document, peek_numbered_path, peek_unique_path,
