@@ -21,3 +21,22 @@ fn portable_sidecar_preserves_source_and_distinguishes_bad_data() {
     assert!(read_framing(&asset).is_err());
     assert_eq!(std::fs::read(&asset).unwrap(), b"original");
 }
+
+#[test]
+fn sidecar_rejects_wrong_dimensions_corrupt_or_oversized_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let asset = dir.path().join("clip.png");
+    let path = write_framing(&asset, Framing::default()).unwrap();
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    json["futureField"] = serde_json::json!(true);
+    std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+    assert_eq!(read_framing(&asset).unwrap(), Some(Framing::default()));
+    json["width"] = serde_json::json!(1920);
+    std::fs::write(&path, serde_json::to_vec(&json).unwrap()).unwrap();
+    assert!(read_framing(&asset).is_err());
+    std::fs::write(&path, b"{").unwrap();
+    assert!(read_framing(&asset).is_err());
+    std::fs::write(&path, vec![b' '; 65537]).unwrap();
+    assert!(read_framing(&asset).is_err());
+}

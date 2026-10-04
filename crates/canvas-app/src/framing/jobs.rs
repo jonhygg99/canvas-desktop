@@ -127,11 +127,28 @@ pub(crate) fn export_pair(
         .open(path)
         .map_err(|e| format!("Choose a new output name: {e}"))?;
     drop(reservation);
+    let reserved_sidecar = (|| {
+        std::fs::create_dir_all(sidecar.parent().ok_or("Invalid framing output directory")?)
+            .map_err(|e| e.to_string())?;
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sidecar)
+            .map_err(|e| format!("Choose a new framing output name: {e}"))
+    })();
+    match reserved_sidecar {
+        Ok(reservation) => drop(reservation),
+        Err(error) => {
+            let _ = std::fs::remove_file(path);
+            return Err(error);
+        }
+    }
     let result = canvas_io::save_rgba(path, source.rgba, source.width, source.height, 92, None)
         .and_then(|_| canvas_io::write_framing(path, value))
         .map_err(|e| e.to_string());
     if result.is_err() {
         let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(sidecar);
     }
     result.map(|_| ())
 }

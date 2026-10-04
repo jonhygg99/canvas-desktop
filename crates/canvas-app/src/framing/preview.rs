@@ -76,8 +76,9 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
         session.gesture = Some(session.value);
     }
     if response.dragged() {
-        let delta = response.drag_delta();
-        if let (Some(_), Some(p)) = (
+        // Absoluto desde el press: idempotente si egui repite el pase de layout.
+        let delta = response.total_drag_delta().unwrap_or_default();
+        if let (Some(before), Some(p)) = (
             session.gesture,
             session
                 .value
@@ -93,10 +94,10 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
             } else {
                 1.0
             };
-            session.value.x_pct = (session.value.x_pct + sign_x * delta.x / rect.width() * 100.0)
-                .clamp(-100.0, 100.0);
-            session.value.y_pct = (session.value.y_pct + sign_y * delta.y / rect.height() * 100.0)
-                .clamp(-100.0, 100.0);
+            session.value.x_pct =
+                (before.x_pct + sign_x * delta.x / rect.width() * 100.0).clamp(-100.0, 100.0);
+            session.value.y_pct =
+                (before.y_pct + sign_y * delta.y / rect.height() * 100.0).clamp(-100.0, 100.0);
         }
     }
     if response.drag_stopped() {

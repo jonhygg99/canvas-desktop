@@ -2,6 +2,8 @@
 mod controls;
 mod jobs;
 pub(crate) mod preview;
+mod status;
+pub(crate) use status::{has_saved, record_saved};
 #[cfg(test)]
 mod tests;
 
@@ -80,6 +82,9 @@ impl Session {
                     error,
                 }) => {
                     self.saved = framing;
+                    if let Some(path) = &self.path {
+                        record_saved(ctx, path, framing.is_some());
+                    }
                     self.value = framing.unwrap_or_default();
                     self.error = error;
                     let (w, h) = (source.width as usize, source.height as usize);
@@ -102,6 +107,9 @@ impl Session {
                 }) => {
                     if sidecar_only {
                         self.saved = Some(value);
+                        if let Some(path) = &self.path {
+                            record_saved(ctx, path, true);
+                        }
                     }
                     self.status = Some(format!("Saved: {}", path.display()));
                     self.error = None;
@@ -117,6 +125,14 @@ impl Session {
     }
     pub fn ready(&self) -> bool {
         self.texture.is_some()
+    }
+    pub fn save(&mut self, ctx: &egui::Context) {
+        if self.ready() && !self.busy() {
+            if let Some(path) = &self.path {
+                tracing::info!(path = %path.display(), framing = ?self.value, "saving framing");
+                self.receiver = Some(jobs::save(path.clone(), self.value, ctx.clone()));
+            }
+        }
     }
 
     fn commit(&mut self, before: Framing) {

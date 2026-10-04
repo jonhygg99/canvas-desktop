@@ -53,8 +53,17 @@ pub(super) fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_r
         .as_ref()
         .is_some_and(|(id, _)| *id == slot.id);
     if !renaming {
+        let framed = crate::framing::has_saved(ui.ctx(), &slot.path);
+        let offset = if framed { 18.0 } else { 4.0 };
+        if framed {
+            let rect = egui::Rect::from_center_size(
+                header.name.left_center() + egui::vec2(8.0, 0.0),
+                egui::vec2(10.0, 16.0),
+            );
+            crate::framing::portrait_icon(painter, rect, ui.visuals().selection.stroke.color);
+        }
         let mut name = slot.name.clone();
-        let max_chars = ((header.name.width() / 6.5) as usize).max(4);
+        let max_chars = (((header.name.width() - offset).max(0.0) / 6.5) as usize).max(4);
         if name.chars().count() > max_chars {
             name = format!(
                 "{}…",
@@ -64,7 +73,7 @@ pub(super) fn draw_slot_header(deck: &Deck, slot: &Slot, ui: &egui::Ui, screen_r
             );
         }
         painter.text(
-            header.name.left_center() + egui::vec2(4.0, 0.0),
+            header.name.left_center() + egui::vec2(offset, 0.0),
             egui::Align2::LEFT_CENTER,
             name,
             egui::FontId::proportional(11.0),

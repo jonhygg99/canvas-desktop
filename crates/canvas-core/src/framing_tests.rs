@@ -46,3 +46,32 @@ fn hostile_values_and_empty_sources_are_rejected() {
         .placement(f64::INFINITY, 1080.0)
         .is_none());
 }
+
+#[test]
+fn double_scale_and_negative_offsets_follow_ffmpeg_clamps() {
+    let p = Framing {
+        x_pct: -100.0,
+        y_pct: -100.0,
+        scale_pct: 200,
+    }
+    .placement(1920.0, 1080.0)
+    .unwrap();
+    assert_eq!(
+        p,
+        Placement {
+            x: -1793.0,
+            y: 0.0,
+            width: 6826.0,
+            height: 3840.0
+        }
+    );
+    let p = Framing {
+        x_pct: -100.0,
+        y_pct: -100.0,
+        scale_pct: 50,
+    }
+    .placement(1920.0, 1080.0)
+    .unwrap();
+    assert_eq!(p.x, 0.0);
+    assert_eq!(p.y, 0.0);
+}

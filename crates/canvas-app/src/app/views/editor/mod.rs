@@ -81,7 +81,9 @@ pub(in crate::app) fn editor_view_ui(
 
     file_ops::handle_file_ops(state, ctx, f);
     framing_flow::update(state, ctx, rs, f);
-    save_flow::handle_save(state, ctx, rs, f, &mut open_next);
+    if state.framing.is_none() {
+        save_flow::handle_save(state, ctx, rs, f, &mut open_next);
+    }
     modals::show_modals(state, ctx, rs, f);
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
     deck_nav::resolve(
