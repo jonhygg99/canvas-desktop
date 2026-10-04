@@ -12,6 +12,7 @@ pub(super) enum Outcome {
         background: egui::ColorImage,
         framing: Option<Framing>,
         error: Option<String>,
+        video: Option<super::video::Video>,
     },
     Saved {
         value: Framing,
@@ -35,6 +36,15 @@ fn spawn(
 }
 
 fn prepared(path: Option<PathBuf>, source: canvas_io::LoadedImage) -> Result<Outcome, String> {
+    let video = if let Some(path) = path.as_ref().filter(|p| canvas_io::is_video_file(p)) {
+        let (w, h, duration) = canvas_io::probe_video_size(path).map_err(|e| e.to_string())?;
+        let duration = duration
+            .filter(|d| d.is_finite() && *d > 0.0)
+            .ok_or("Could not read the video duration")?;
+        Some(super::video::Video::new(path.clone(), (w, h), duration))
+    } else {
+        None
+    };
     let (framing, error) = match path.as_deref().map(canvas_io::read_framing) {
         Some(Ok(framing)) => (framing, None),
         Some(Err(e)) => (None, Some(e.to_string())),
@@ -46,6 +56,7 @@ fn prepared(path: Option<PathBuf>, source: canvas_io::LoadedImage) -> Result<Out
         background,
         framing,
         error,
+        video,
     })
 }
 

@@ -3,6 +3,7 @@ mod controls;
 mod jobs;
 pub(crate) mod preview;
 mod status;
+mod video;
 pub(crate) use status::{has_saved, record_saved};
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,7 @@ pub(crate) struct Session {
     pub status: Option<String>,
     pub closed: bool,
     pub exportable: bool,
+    video: Option<video::Video>,
     source: Option<canvas_io::LoadedImage>,
     texture: Option<egui::TextureHandle>,
     background: Option<egui::TextureHandle>,
@@ -38,6 +40,7 @@ impl Session {
             status: None,
             closed: false,
             exportable,
+            video: None,
             source: None,
             texture: None,
             background: None,
@@ -80,6 +83,7 @@ impl Session {
                     background,
                     framing,
                     error,
+                    video,
                 }) => {
                     self.saved = framing;
                     if let Some(path) = &self.path {
@@ -87,18 +91,8 @@ impl Session {
                     }
                     self.value = framing.unwrap_or_default();
                     self.error = error;
-                    let (w, h) = (source.width as usize, source.height as usize);
-                    self.texture = Some(ctx.load_texture(
-                        "framing-source",
-                        egui::ColorImage::from_rgba_unmultiplied([w, h], &source.rgba),
-                        egui::TextureOptions::LINEAR,
-                    ));
-                    self.background = Some(ctx.load_texture(
-                        "framing-background",
-                        background,
-                        egui::TextureOptions::LINEAR,
-                    ));
-                    self.source = Some(source);
+                    self.video = video;
+                    self.apply_frame(source, background, ctx);
                 }
                 Ok(jobs::Outcome::Saved {
                     value,
@@ -118,6 +112,35 @@ impl Session {
                 Err(error) => self.error = Some(error),
             }
         }
+        if let Some(frame) = self.video.as_mut().and_then(video::Video::poll) {
+            match frame {
+                Ok(frame) => self.apply_frame(frame.image, frame.background, ctx),
+                Err(error) => self.error = Some(error),
+            }
+        }
+    }
+
+    fn apply_frame(
+        &mut self,
+        source: canvas_io::LoadedImage,
+        background: egui::ColorImage,
+        ctx: &egui::Context,
+    ) {
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [source.width as usize, source.height as usize],
+            &source.rgba,
+        );
+        for (texture, image, name) in [
+            (&mut self.texture, image, "framing-source"),
+            (&mut self.background, background, "framing-background"),
+        ] {
+            if let Some(texture) = texture {
+                texture.set(image, egui::TextureOptions::LINEAR);
+            } else {
+                *texture = Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR));
+            }
+        }
+        self.source = Some(source);
     }
 
     pub fn busy(&self) -> bool {

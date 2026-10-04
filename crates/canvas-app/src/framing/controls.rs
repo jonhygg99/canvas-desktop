@@ -14,6 +14,9 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
     }
     let enabled = session.ready() && !session.busy();
     ui.add_enabled_ui(enabled, |ui| {
+        if let Some(video) = &mut session.video {
+            video.controls(ui);
+        }
         adjustments(session, ui);
         if ui
             .push_id("framing-save", |ui| {
