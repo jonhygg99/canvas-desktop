@@ -93,9 +93,7 @@ impl Session {
                     self.error = error;
                     self.video = video.map(|video| *video);
                     if let Some(video) = &mut self.video {
-                        if video.trim.start_s > 0.0 {
-                            video.seek(video.trim.start_s, false, ctx);
-                        }
+                        video.seek(video.trim.start_s, true, ctx);
                     }
                     self.apply_frame(source, background, ctx);
                 }
@@ -121,7 +119,7 @@ impl Session {
                 Err(error) => self.error = Some(error),
             }
         }
-        if let Some(frame) = self.video.as_mut().and_then(video::Video::poll) {
+        if let Some(frame) = self.video.as_mut().and_then(|video| video.poll(ctx)) {
             match frame {
                 Ok(frame) => self.apply_frame(frame.image, frame.background, ctx),
                 Err(error) => self.error = Some(error),

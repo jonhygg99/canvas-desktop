@@ -158,6 +158,7 @@ El blur del preview se calcula a resolución reducida; la geometría y el contra
 - [x] Primer plano y fondo desenfocado actualizados con el mismo fotograma; decoder acotado y cancelable.
 - [x] Trim del vídeo original: In/Out, intervalo de reproducción y guardado atómico como campo opcional `trim` del sidecar compatible.
 - [x] Audio silenciado por defecto, control para activarlo y sink propio de la sesión.
-- [x] Validar carga de sesión de Gallery, botones reales de egui Play/Pause, guardado/reapertura, parada en Out, conservación del vídeo y checks finales.
+- [x] Validar carga de sesión de Gallery, botones reales de egui Play/Pause, guardado/reapertura, conservación del vídeo y checks finales.
+- [x] Reproducción automática al abrir Create/Edit framing y bucle desde In al llegar a Out o al final del vídeo; validar con FFmpeg real y mantener Pause efectivo.
 
 El usuario concretó que el trim corresponde al vídeo original seleccionado, por lo que no se añadió exportación de un clip nuevo. Los ajustes temporales se aplican en Canvas; Flashcut-Auto sigue consumiendo únicamente posición y escala del sidecar.

@@ -49,9 +49,9 @@ fn clip() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
-fn wait_frame(video: &mut Video) -> decoder::Frame {
+fn wait_frame(video: &mut Video, ctx: &egui::Context) -> decoder::Frame {
     for _ in 0..1000 {
-        if let Some(frame) = video.poll() {
+        if let Some(frame) = video.poll(ctx) {
             return frame.unwrap();
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -66,8 +66,8 @@ fn playback_seek_pause_and_background_use_real_video_frames() {
     let ctx = egui::Context::default();
     let mut video = Video::new(path, (64, 36), 1.0);
     video.seek(0.0, true, &ctx);
-    let first = wait_frame(&mut video);
-    let later = wait_frame(&mut video);
+    let first = wait_frame(&mut video, &ctx);
+    let later = wait_frame(&mut video, &ctx);
     assert!(later.time > first.time);
     assert_eq!(
         later.background.pixels,
@@ -78,14 +78,26 @@ fn playback_seek_pause_and_background_use_real_video_frames() {
     video.pause();
     let paused = video.position;
     std::thread::sleep(std::time::Duration::from_millis(100));
-    assert!(video.poll().is_none());
+    assert!(video.poll(&ctx).is_none());
     assert_eq!(video.position, paused);
     video.seek(0.6, false, &ctx);
-    let sought = wait_frame(&mut video);
+    let sought = wait_frame(&mut video, &ctx);
     assert_eq!(sought.time, 0.6);
     assert_ne!(first.image.rgba, sought.image.rgba);
     video.seek(5.0, false, &ctx);
     assert!(video.position < 1.0);
+    video.seek(0.9, true, &ctx);
+    let last = wait_frame(&mut video, &ctx);
+    assert!(last.time >= 0.9);
+    let mut restarted = false;
+    for _ in 0..10 {
+        if wait_frame(&mut video, &ctx).time == 0.0 {
+            restarted = true;
+            break;
+        }
+    }
+    assert!(restarted, "the full video should loop at EOF");
+    assert!(video.playing);
 }
 
 #[test]
@@ -113,9 +125,10 @@ fn gallery_video_framing_exposes_transport_controls() {
             _ => None,
         })
         .collect();
-    assert!(labels.contains(&"Play"));
+    assert!(session.video.as_ref().unwrap().playing);
+    assert!(labels.contains(&"Pause"));
     assert!(labels.contains(&"Restart"));
-    assert!(labels.iter().any(|s| s.contains("00:00.0 / 00:01.0")));
+    assert!(labels.iter().any(|s| s.contains(" / 00:01.0")));
 }
 
 #[test]
@@ -170,18 +183,37 @@ fn original_video_trim_saves_reopens_and_limits_playback() {
     let video = reopened.video.as_mut().unwrap();
     assert_eq!(video.trim, trim);
     assert_eq!(video.position, trim.start_s);
-    video.seek(trim.start_s, true, &ctx);
-    let first = wait_frame(video);
+    assert!(video.playing, "reopened video should autoplay");
+    let first = wait_frame(video, &ctx);
     assert!(first.time >= trim.start_s && first.time < trim.end_s);
+    let mut previous = first.time;
+    let mut loops = 0;
     for _ in 0..1000 {
-        let _ = video.poll();
-        if !video.playing {
-            break;
+        if let Some(frame) = video.poll(&ctx) {
+            let frame = frame.unwrap();
+            assert!(frame.time >= trim.start_s && frame.time < trim.end_s);
+            if frame.time < previous {
+                loops += 1;
+                assert_eq!(frame.time, trim.start_s);
+            }
+            previous = frame.time;
+            if loops == 2 {
+                break;
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    assert_eq!(
+        loops, 2,
+        "video should loop repeatedly inside the saved trim"
+    );
+    assert!(video.playing);
+    video.pause();
+    let paused = video.position;
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(video.poll(&ctx).is_none());
     assert!(!video.playing);
-    assert!(video.position < trim.end_s);
+    assert_eq!(video.position, paused);
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
@@ -262,9 +294,9 @@ fn real_gallery_play_and_pause_buttons_work_with_a_video_session() {
             );
         }
     };
-    click("Play", &mut gallery);
+    click("Pause", &mut gallery);
     assert!(
-        gallery
+        !gallery
             .session
             .as_ref()
             .unwrap()
@@ -273,9 +305,9 @@ fn real_gallery_play_and_pause_buttons_work_with_a_video_session() {
             .unwrap()
             .playing
     );
-    click("Pause", &mut gallery);
+    click("Play", &mut gallery);
     assert!(
-        !gallery
+        gallery
             .session
             .as_ref()
             .unwrap()

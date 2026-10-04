@@ -78,7 +78,7 @@ impl Video {
         self.worker = None;
         self.audio = None;
     }
-    pub fn poll(&mut self) -> Option<Result<decoder::Frame, String>> {
+    pub fn poll(&mut self, ctx: &egui::Context) -> Option<Result<decoder::Frame, String>> {
         let frame = self.worker.as_ref()?.take()?;
         match frame {
             Ok(Some(frame)) => {
@@ -96,8 +96,12 @@ impl Video {
                 Some(Ok(frame))
             }
             Ok(None) => {
-                self.pause();
-                self.finished = true;
+                if self.playing {
+                    self.seek(self.trim.start_s, true, ctx);
+                } else {
+                    self.pause();
+                    self.finished = true;
+                }
                 None
             }
             Err(error) => {
