@@ -323,6 +323,13 @@ las diferencias respecto a la plantilla original de cargo-packager).
 - **Precisión:** las flechas desplazan 1 píxel del documento; Shift+flechas, 10. Shift durante el movimiento restringe el eje; Shift al rotar ajusta a pasos de 15°. Alt desactiva las guías magnéticas. Las distancias a los vecinos aparecen durante las transformaciones.
 - **Superposición:** Alt+clic recorre las capas visibles de ese punto; «Select layer» en el menú contextual permite elegir por nombre.
 - **Composición:** la barra contextual y el inspector permiten alinear con la caja de la selección, o con la página si hay una sola raíz seleccionada. La distribución iguala las separaciones entre bordes con al menos tres raíces, conservando los extremos.
+- **Tipografía y apariencia:** el editor de texto utiliza la familia, peso, cursiva, alineación, interletrado e interlineado de la capa. Los motores de composición de egui y del render son distintos, por lo que puede haber pequeñas diferencias; el campo de edición de texto rotado sigue siendo horizontal. La barra contextual admite tamaño de texto libre, cursiva y selector de color; las formas ofrecen relleno, borde y grosor.
+- **Navegación:** los controles inferiores muestran el porcentaje de zoom, permiten elegir niveles y ajustar la página o la selección visible. «Guides» permite mostrar las reglas existentes.
+- **Capas:** búsqueda por nombre, filtro por tipo y miniaturas. La selección del lienzo revela su fila y expande sus grupos antecesores.
+- **Duplicación:** Ctrl/Cmd+Alt+arrastrar copia la selección sin mover los originales; Shift restringe el eje y Esc cancela la copia. Ctrl/Cmd+D crea una copia desplazada 24 px; Ctrl/Cmd+Shift+D repite la última separación. Cada duplicación ocupa un paso de deshacer.
+- **Guías:** «Guides → Edit guides…» permite añadir guías horizontales o verticales, editar X/Y, bloquearlas y eliminarlas. «Apply» confirma el conjunto en un solo paso; «Cancel» descarta los cambios. Las guías se conservan en el diseño editable y no aparecen en la imagen exportada.
+- **Historial:** «History» muestra las acciones de la sesión del diseño activo y permite regresar a un estado o rehacerlo. Cuando hay ediciones intercaladas en otros lienzos, los saltos se limitan al tramo consecutivo del lienzo activo; los atajos globales mantienen su comportamiento.
+- **Comandos y ayuda:** Ctrl/Cmd+Shift+P o «Commands» abre la búsqueda de acciones, también con nombres traducidos. ↑/↓ elige, Intro ejecuta y Esc cierra. «Help» muestra los atajos relevantes para insertar, seleccionar o editar texto.
 
 ## Verificación
 
