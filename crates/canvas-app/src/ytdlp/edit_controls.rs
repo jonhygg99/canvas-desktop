@@ -44,43 +44,33 @@ pub(super) fn transport_ui(
     ui: &mut egui::Ui,
     settings: &mut AppSettings,
 ) -> [egui::Response; 2] {
-    let row_width = ui.available_width().min(403.0);
+    let width = ui.available_width();
+    let group_width = 150.0 + 4.0 * ui.spacing().item_spacing.x;
+    let inline_size = width >= group_width + 2.0 * (175.0 + ui.spacing().item_spacing.x);
+    let height = if inline_size { 30.0 } else { 68.0 };
+    let (row, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let controls = egui::Rect::from_min_size(
+        egui::pos2(row.center().x - group_width / 2.0, row.top()),
+        egui::vec2(group_width, 30.0),
+    );
     let buttons = ui
-        .vertical_centered(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(row_width, 0.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        let ready = !edit.frames.is_empty()
-                            && edit.frames_error.is_none()
-                            && !edit.loading_frames;
-                        let buttons = playback_buttons(edit, ui, ready);
-                        ui.add_enabled_ui(ready, |ui| {
-                            if super::transport_icons::frame_button(ui, false).clicked() {
-                                edit.seek(edit.playhead - 1.0 / edit.source_fps);
-                            }
-                            if super::transport_icons::frame_button(ui, true).clicked() {
-                                edit.seek(edit.playhead + 1.0 / edit.source_fps);
-                            }
-                        });
-                        if super::transport_icons::mute_button(ui, edit.mute, ready).clicked() {
-                            edit.mute = !edit.mute;
-                            if edit.mute {
-                                crate::audio::pause_for(&edit.path);
-                            } else if edit.playing {
-                                let _ = crate::audio::play(&edit.path, edit.playhead);
-                            }
-                        }
-                        canvas_size_ui(edit, settings, ui);
-                        buttons
-                    })
-                    .inner
-                },
-            )
-            .inner
-        })
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(controls)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| transport_buttons(edit, ui),
+        )
         .inner;
+    let size_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            row.right() - 175.0,
+            row.top() + if inline_size { 0.0 } else { 38.0 },
+        ),
+        egui::vec2(175.0, 30.0),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(size_rect), |ui| {
+        canvas_size_ui(edit, settings, ui);
+    });
     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.weak(format!(
             "{} / {}",
@@ -90,6 +80,28 @@ pub(super) fn transport_ui(
                 .unwrap_or_else(|| "--:--".to_owned())
         ))
     });
+    buttons
+}
+
+fn transport_buttons(edit: &mut VideoEdit, ui: &mut egui::Ui) -> [egui::Response; 2] {
+    let ready = !edit.frames.is_empty() && edit.frames_error.is_none() && !edit.loading_frames;
+    let buttons = playback_buttons(edit, ui, ready);
+    ui.add_enabled_ui(ready, |ui| {
+        if super::transport_icons::frame_button(ui, false).clicked() {
+            edit.seek(edit.playhead - 1.0 / edit.source_fps);
+        }
+        if super::transport_icons::frame_button(ui, true).clicked() {
+            edit.seek(edit.playhead + 1.0 / edit.source_fps);
+        }
+    });
+    if super::transport_icons::mute_button(ui, edit.mute, ready).clicked() {
+        edit.mute = !edit.mute;
+        if edit.mute {
+            crate::audio::pause_for(&edit.path);
+        } else if edit.playing {
+            let _ = crate::audio::play(&edit.path, edit.playhead);
+        }
+    }
     buttons
 }
 

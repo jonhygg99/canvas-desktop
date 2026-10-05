@@ -56,6 +56,9 @@ use trim::{timecode, TrimEdge, TrimHistory};
 #[path = "timeline_tests.rs"]
 #[cfg(test)]
 mod timeline_tests;
+#[path = "transport_layout_tests.rs"]
+#[cfg(test)]
+mod transport_layout_tests;
 #[path = "trim_tests.rs"]
 #[cfg(test)]
 mod trim_tests;
