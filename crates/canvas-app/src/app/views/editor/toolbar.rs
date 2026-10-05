@@ -11,13 +11,15 @@ pub(super) fn show(
     let mut action = None;
     egui::Panel::top("document_toolbar").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            if state.from_gallery.is_some() && ui.button("Back to gallery").clicked() {
+            if state.from_gallery.is_some()
+                && ui.button(crate::i18n::tr("Back to gallery")).clicked()
+            {
                 state.return_requested = true;
             }
             crate::editor::properties_panel::file_name_ui(state, ui);
             ui.separator();
-            ui.label(save_status(state));
-            if ui.button("Settings").clicked() {
+            ui.label(crate::i18n::tr(save_status(state)));
+            if ui.button(crate::i18n::tr("Settings")).clicked() {
                 state.settings_clicked = true;
             }
         });
@@ -27,8 +29,10 @@ pub(super) fn show(
             let busy = state.saving || state.exporting || state.framing.is_some();
             ui.add_enabled_ui(!busy, |ui| {
                 if ui
-                    .button("Save editable design…")
-                    .on_hover_text("Preserves layers in a standalone .canvas file")
+                    .button(crate::i18n::tr("Save editable design…"))
+                    .on_hover_text(crate::i18n::tr(
+                        "Preserves layers in a standalone .canvas file",
+                    ))
                     .clicked()
                 {
                     if state.is_design {
@@ -43,22 +47,22 @@ pub(super) fn show(
                 }
                 if !state.is_design
                     && ui
-                        .button("Overwrite original")
-                        .on_hover_text(
+                        .button(crate::i18n::tr("Overwrite original"))
+                        .on_hover_text(crate::i18n::tr(
                             "Replaces the source image; the existing confirmation still applies",
-                        )
+                        ))
                         .clicked()
                 {
                     state.save_clicked = true;
                 }
-                if ui.button("Save as…").clicked() {
+                if ui.button(crate::i18n::tr("Save as…")).clicked() {
                     state.save_as_clicked = true;
                 }
-                if ui.button("Export image…").clicked() {
+                if ui.button(crate::i18n::tr("Export image…")).clicked() {
                     action = Some(menus::MenuAction::Export);
                 }
             });
-            if ui.button("Help").clicked() {
+            if ui.button(crate::i18n::tr("Help")).clicked() {
                 ui.data_mut(|d| {
                     let id = egui::Id::new("editor-help");
                     let open = d.get_temp::<bool>(id).unwrap_or(false);
@@ -69,8 +73,20 @@ pub(super) fn show(
         // Ayuda progresiva: no ocupa permanentemente el inspector.
         let help = egui::Id::new("editor-help");
         if ui.data(|d| d.get_temp::<bool>(help).unwrap_or(false)) {
-            ui.weak("Wheel: pan · Ctrl/Cmd+wheel: zoom · Space: pan · Ctrl/Cmd+0: fit");
-            ui.weak("Ctrl/Cmd+S: save · Ctrl/Cmd+Z: undo · Ctrl/Cmd+C/V: copy/paste layers");
+            let command = crate::i18n::command();
+            ui.weak(format!(
+                "{} · {command}+wheel: {} · {command}+0: {}",
+                crate::i18n::tr("Wheel: pan · Space: pan"),
+                crate::i18n::tr("Zoom"),
+                crate::i18n::tr("Fit to Window")
+            ));
+            ui.weak(format!(
+                "{command}+S: {} · {command}+Z: {} · {command}+C/V: {}/{}",
+                crate::i18n::tr("Save"),
+                crate::i18n::tr("Undo"),
+                crate::i18n::tr("Copy"),
+                crate::i18n::tr("Paste")
+            ));
         }
     });
     action

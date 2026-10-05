@@ -16,14 +16,14 @@ pub(crate) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let mut commit = false;
 
     ui.horizontal(|ui| {
-        ui.label("W");
+        ui.label(crate::i18n::tr("W"));
         let rw = ui.add(
             egui::DragValue::new(&mut w)
                 .speed(2.0)
                 .range(16.0..=16384.0)
                 .max_decimals(0),
         );
-        ui.label("H");
+        ui.label(crate::i18n::tr("H"));
         let rh = ui.add(
             egui::DragValue::new(&mut h)
                 .speed(2.0)
@@ -98,7 +98,7 @@ fn page_size_presets_ui(
 ) -> bool {
     let mut selected = false;
     egui::ComboBox::from_id_salt("page_presets")
-        .selected_text("Presets")
+        .selected_text(crate::i18n::tr("Presets"))
         .width(72.0)
         .show_ui(ui, |ui| {
             let mut preset = |ui: &mut egui::Ui, label: &str, pw: f64, ph: f64| {
@@ -109,7 +109,7 @@ fn page_size_presets_ui(
                 }
             };
 
-            ui.strong("Social");
+            ui.strong(crate::i18n::tr("Social"));
             preset(
                 ui,
                 "Vertical / Reels / Shorts (1080 × 1920)",
@@ -132,13 +132,13 @@ fn page_size_presets_ui(
             preset(ui, "Pinterest vertical (1000 × 1500)", 1000.0, 1500.0);
 
             ui.separator();
-            ui.strong("Branding");
+            ui.strong(crate::i18n::tr("Branding"));
             preset(ui, "YouTube channel logo (800 × 800)", 800.0, 800.0);
             preset(ui, "Facebook page profile (320 × 320)", 320.0, 320.0);
             preset(ui, "Facebook page cover (851 × 315)", 851.0, 315.0);
 
             ui.separator();
-            ui.strong("Video");
+            ui.strong(crate::i18n::tr("Video"));
             preset(ui, "Video Full HD (1920 × 1080)", 1920.0, 1080.0);
             preset(ui, "Video 4K (3840 × 2160)", 3840.0, 2160.0);
             preset(ui, "YouTube thumbnail (1280 × 720)", 1280.0, 720.0);
@@ -146,7 +146,7 @@ fn page_size_presets_ui(
 
             if let Some((iw, ih)) = image_size {
                 ui.separator();
-                ui.strong("Source");
+                ui.strong(crate::i18n::tr("Source"));
                 let label = format!("Image ({} × {})", iw as i64, ih as i64);
                 preset(ui, &label, iw, ih);
             }
@@ -166,21 +166,21 @@ pub(in crate::editor) fn size_popup_ui(state: &mut EditorState, ctx: &egui::Cont
     let mut open = true;
     let mut apply = false;
     let mut cancel = false;
-    egui::Window::new("Page size")
+    egui::Window::new(crate::i18n::tr("Page size"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("W");
+                ui.label(crate::i18n::tr("W"));
                 ui.add(
                     egui::DragValue::new(&mut w)
                         .speed(2.0)
                         .range(16.0..=16384.0)
                         .max_decimals(0),
                 );
-                ui.label("H");
+                ui.label(crate::i18n::tr("H"));
                 ui.add(
                     egui::DragValue::new(&mut h)
                         .speed(2.0)
@@ -192,10 +192,10 @@ pub(in crate::editor) fn size_popup_ui(state: &mut EditorState, ctx: &egui::Cont
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button("Apply").clicked() {
+                if ui.button(crate::i18n::tr("Apply")).clicked() {
                     apply = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(crate::i18n::tr("Cancel")).clicked() {
                     cancel = true;
                 }
             });

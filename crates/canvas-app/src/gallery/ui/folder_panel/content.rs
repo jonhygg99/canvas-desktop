@@ -62,16 +62,16 @@ fn draw_navigation(
 ) {
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Folders");
+        ui.strong(crate::i18n::tr("Folders"));
         if ui
-            .small_button("↻")
-            .on_hover_text("Refresh folder list")
+            .small_button(crate::i18n::tr("↻"))
+            .on_hover_text(crate::i18n::tr("Refresh folder list"))
             .clicked()
         {
             state.refresh_folder_lists();
         }
         if ui
-            .small_button("Change View")
+            .small_button(crate::i18n::tr("Change View"))
             .on_hover_text(format!(
                 "Change folders view to {}",
                 super::next_folder_panel_side(state.folder_panel_side).label()
@@ -83,21 +83,27 @@ fn draw_navigation(
     });
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled(state.navigation.can_back(), egui::Button::new("<"))
+            .add_enabled(
+                state.navigation.can_back(),
+                egui::Button::new(crate::i18n::tr("<")),
+            )
             .clicked()
         {
             *action = Some(GalleryAction::Back);
         }
         if ui
-            .add_enabled(state.navigation.can_forward(), egui::Button::new(">"))
+            .add_enabled(
+                state.navigation.can_forward(),
+                egui::Button::new(crate::i18n::tr(">")),
+            )
             .clicked()
         {
             *action = Some(GalleryAction::Forward);
         }
         if let Some(parent) = state.folder.parent() {
             if ui
-                .small_button("Parent")
-                .on_hover_text("Open parent folder (Alt+Up)")
+                .small_button(crate::i18n::tr("Parent"))
+                .on_hover_text(crate::i18n::tr("Open parent folder (Alt+Up)"))
                 .clicked()
             {
                 *action = Some(GalleryAction::OpenFolder(parent.to_owned()));
@@ -132,19 +138,19 @@ fn draw_visible_folders(
         ui.colored_label(ui.visuals().warn_fg_color, "Could not list folders.")
             .on_hover_text(error.clone());
         if ui
-            .small_button("Retry")
-            .on_hover_text("List this folder's subfolders again.")
+            .small_button(crate::i18n::tr("Retry"))
+            .on_hover_text(crate::i18n::tr("List this folder's subfolders again."))
             .clicked()
         {
             state.refresh_folder_lists();
         }
         #[cfg(target_os = "macos")]
-        if cloud_folder && ui.small_button("Grant access…").clicked() {
+        if cloud_folder && ui.small_button(crate::i18n::tr("Grant access…")).clicked() {
             super::super::shell::open_full_disk_access_pane();
             state.note_settings_opened();
         }
     } else if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
-        ui.weak("No subfolders");
+        ui.weak(crate::i18n::tr("No subfolders"));
     } else if visible.is_empty() {
         ui.weak(format!("No folders match \"{}\"", ""));
     } else {
@@ -160,14 +166,14 @@ fn folder_search_ui(ui: &mut egui::Ui, width: f32) -> String {
             [width, 20.0],
             egui::TextEdit::singleline(&mut query)
                 .id(egui::Id::new(("gallery_folder_filter", "input")))
-                .hint_text("Search folders…"),
+                .hint_text(crate::i18n::tr("Search folders…")),
         );
         if response.changed() {
             ui.data_mut(|d| d.insert_temp(filter_id, query.clone()));
         }
         let has_query = !query.trim().is_empty();
         if ui
-            .add_enabled(has_query, egui::Button::new("✕").small())
+            .add_enabled(has_query, egui::Button::new(crate::i18n::tr("✕")).small())
             .clicked()
         {
             query.clear();
@@ -190,7 +196,7 @@ fn new_folder_ui(
             let response = ui.add(
                 egui::TextEdit::singleline(name)
                     .id(id)
-                    .hint_text("Folder name")
+                    .hint_text(crate::i18n::tr("Folder name"))
                     .desired_width(160.0),
             );
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

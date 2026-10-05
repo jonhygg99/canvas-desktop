@@ -139,7 +139,9 @@ pub(super) fn photo_card_ui(
         egui::Sense::click(),
     );
     let insert_clicked = click.clicked() && inserting.is_none();
-    let _ = resp.on_hover_text("Click to insert · drag to the canvas to place it");
+    let _ = resp.on_hover_text(crate::i18n::tr(
+        "Click to insert · drag to the canvas to place it",
+    ));
     insert_clicked
 }
 

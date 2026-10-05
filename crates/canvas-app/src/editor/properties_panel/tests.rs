@@ -550,14 +550,14 @@ fn drag_one(
 #[test]
 fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
     let ctx = egui::Context::default();
-    ctx.set_fonts(egui::FontDefinitions::empty());
+    ctx.set_fonts(egui::FontDefinitions::default());
     let mut state = EditorState::new_blank(400.0, 1200.0);
     let id = selected_rect(&mut state);
     let original = state.doc.layer(id).unwrap().transform;
 
     // Renderiza el panel y arrastra el campo W (fila superior de «Size»).
     let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -565,30 +565,41 @@ fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
             |ui| {
                 properties_ui(state, ui);
             },
-        );
+        )
     };
     wrap(&mut state, vec![]);
-    wrap(
-        &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(40.0, 110.0))],
-    );
+    let output = wrap(&mut state, vec![]);
+    let label = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                if text.galley.text() == "W" {
+                    return Some(
+                        text.pos + egui::vec2(text.galley.size().x, text.galley.size().y * 0.5),
+                    );
+                }
+            }
+            None
+        })
+        .expect("width field label");
+    let press = label + egui::vec2(20.0, 0.0);
+    let release = press + egui::vec2(70.0, 0.0);
+    wrap(&mut state, vec![egui::Event::PointerMoved(press)]);
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(40.0, 110.0),
+            pos: press,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    wrap(
-        &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(110.0, 110.0))],
-    );
+    wrap(&mut state, vec![egui::Event::PointerMoved(release)]);
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(110.0, 110.0),
+            pos: release,
             button: egui::PointerButton::Primary,
             pressed: false,
             modifiers: egui::Modifiers::NONE,
@@ -732,7 +743,7 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: pos,
+            pos,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
@@ -878,7 +889,7 @@ fn panel_click(ctx: &egui::Context, state: &mut EditorState, label: &str) {
             }
             _ => None,
         })
-        .last()
+        .next_back()
         .expect("panel action rendered");
     r(state, vec![egui::Event::PointerMoved(pos)]);
     r(

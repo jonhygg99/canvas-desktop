@@ -38,7 +38,7 @@ pub(super) fn advance_playhead(edit: &mut VideoEdit, ctx: &egui::Context) {
 pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if edit.frames.is_empty() || edit.frames_error.is_some() || edit.loading_frames {
-            let btn = ui.add_enabled(false, egui::Button::new("Play"));
+            let btn = ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Play")));
             btn.on_hover_text(edit.frames_error.as_deref().unwrap_or({
                 if edit.loading_frames {
                     "Extracting preview…"
@@ -46,7 +46,7 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
                     "No preview frames"
                 }
             }));
-            if !edit.loading_frames && ui.button("Retry preview").clicked() {
+            if !edit.loading_frames && ui.button(crate::i18n::tr("Retry preview")).clicked() {
                 edit.retry_frames = true;
             }
             return;
@@ -67,7 +67,7 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
                 crate::audio::pause_for(&edit.path);
             }
         }
-        if ui.button("Restart").clicked() {
+        if ui.button(crate::i18n::tr("Restart")).clicked() {
             edit.playback.stop();
             crate::audio::pause_for(&edit.path);
             edit.playhead = edit.trim_start;
@@ -77,7 +77,10 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
                 ui.ctx().request_repaint();
             }
         }
-        if ui.checkbox(&mut edit.mute, "Mute").changed() {
+        if ui
+            .checkbox(&mut edit.mute, crate::i18n::tr("Mute"))
+            .changed()
+        {
             if edit.mute {
                 crate::audio::pause_for(&edit.path);
             } else if edit.playing {
@@ -97,7 +100,7 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
 /// Timeline clicable (el Slider de egui salta al pulsar en cualquier punto).
 pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     let Some(duration) = edit.duration else {
-        ui.weak("Duration unknown yet.");
+        ui.weak(crate::i18n::tr("Duration unknown yet."));
         return;
     };
     let (start, end) = (edit.trim_start, edit.trim_end);
@@ -106,7 +109,7 @@ pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     if ui
         .add(
             egui::Slider::new(&mut edit.playhead, start..=end)
-                .text("Timeline")
+                .text(crate::i18n::tr("Timeline"))
                 .show_value(false),
         )
         .changed()
@@ -129,7 +132,7 @@ pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
 /// y el timeline esperan.
 pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.horizontal(|ui| {
-        ui.label("Canvas:");
+        ui.label(crate::i18n::tr("Canvas:"));
         for (label, w, h) in CANVAS_SIZES {
             if ui
                 .selectable_label(settings.ytdlp_canvas_size == (w, h), label)
@@ -145,10 +148,10 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut 
         let mut start = edit.trim_start;
         let mut end = edit.trim_end;
         let start_changed = ui
-            .add(egui::Slider::new(&mut start, 0.0..=duration).text("Trim start"))
+            .add(egui::Slider::new(&mut start, 0.0..=duration).text(crate::i18n::tr("Trim start")))
             .changed();
         let end_changed = ui
-            .add(egui::Slider::new(&mut end, 0.0..=duration).text("Trim end"))
+            .add(egui::Slider::new(&mut end, 0.0..=duration).text(crate::i18n::tr("Trim end")))
             .changed();
         (edit.trim_start, edit.trim_end) = clamp_trim(start, end, duration);
         if start_changed || end_changed {
@@ -162,11 +165,11 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut 
         }
         edit.playhead = edit.playhead.clamp(edit.trim_start, edit.trim_end);
     } else {
-        ui.weak("Trim waits for duration.");
+        ui.weak(crate::i18n::tr("Trim waits for duration."));
     }
-    ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0).text("Background blur"));
+    ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0).text(crate::i18n::tr("Background blur")));
     ui.horizontal(|ui| {
-        ui.label("Zoom");
+        ui.label(crate::i18n::tr("Zoom"));
         // Slider capado para ajuste rápido + campo manual hasta 10×.
         ui.add(egui::Slider::new(&mut edit.zoom, 1.0..=3.0).show_value(false));
         ui.add(

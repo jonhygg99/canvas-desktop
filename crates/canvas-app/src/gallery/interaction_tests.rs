@@ -71,6 +71,6 @@ fn double_click_opens_selected_design() {
     frame(&ctx, 0.12, Some(false), &mut selected);
     frame(&ctx, 0.2, Some(true), &mut selected);
     assert!(
-        matches!(frame(&ctx, 0.22, Some(false), &mut selected), Some(GalleryAction::Open(path)) if path == PathBuf::from("photo.png"))
+        matches!(frame(&ctx, 0.22, Some(false), &mut selected), Some(GalleryAction::Open(path)) if path == std::path::Path::new("photo.png"))
     );
 }

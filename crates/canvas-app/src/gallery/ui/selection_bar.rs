@@ -8,12 +8,12 @@ pub(super) fn show(
     action: &mut Option<GalleryAction>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        ui.label("Search");
+        ui.label(crate::i18n::tr("Search"));
         let changed = ui
             .add(
                 egui::TextEdit::singleline(&mut state.search)
                     .id_salt("gallery-search")
-                    .hint_text("Search by name…")
+                    .hint_text(crate::i18n::tr("Search by name…"))
                     .desired_width(180.0),
             )
             .changed();
@@ -27,7 +27,7 @@ pub(super) fn show(
         {
             state.selected = None;
         }
-        if !state.search.is_empty() && ui.button("Clear search").clicked() {
+        if !state.search.is_empty() && ui.button(crate::i18n::tr("Clear search")).clicked() {
             state.search.clear();
         }
         let count = state
@@ -40,22 +40,28 @@ pub(super) fn show(
     ui.horizontal_wrapped(|ui| {
         if let Some(path) = state.selected.clone() {
             if ui
-                .button("Open")
-                .on_hover_text("Enter or double-click")
+                .button(crate::i18n::tr("Open"))
+                .on_hover_text(crate::i18n::tr("Enter or double-click"))
                 .clicked()
             {
                 *action = Some(GalleryAction::Open(path.clone()));
             }
-            if ui.button("Rename").on_hover_text("F2").clicked() {
+            if ui
+                .button(crate::i18n::tr("Rename"))
+                .on_hover_text(crate::i18n::tr("F2"))
+                .clicked()
+            {
                 if let Some(item) = state.items.iter().find(|item| item.path == path) {
                     super::cell::begin_rename(item, &mut state.rename_edit, ui.ctx());
                 }
             }
-            if ui.button("Duplicate").clicked() {
+            if ui.button(crate::i18n::tr("Duplicate")).clicked() {
                 *action = Some(GalleryAction::Duplicate(path));
             }
         } else {
-            ui.weak("Click to select · Double-click to open · F2 to rename");
+            ui.weak(crate::i18n::tr(
+                "Click to select · Double-click to open · F2 to rename",
+            ));
         }
     });
 }

@@ -35,6 +35,9 @@ pub(super) fn handle(state: &mut GalleryState, ui: &egui::Ui) -> Option<GalleryA
         action = Some(clip_action);
     }
     if !ui.ctx().text_edit_focused() {
+        let columns = ui
+            .data(|d| d.get_temp::<usize>(egui::Id::new("gallery-visible-columns")))
+            .unwrap_or(state.gallery_columns);
         let offset = ui.input(|i| {
             if i.modifiers.alt {
                 return 0;
@@ -44,15 +47,16 @@ pub(super) fn handle(state: &mut GalleryState, ui: &egui::Ui) -> Option<GalleryA
             } else if i.key_pressed(egui::Key::ArrowLeft) {
                 -1
             } else if i.key_pressed(egui::Key::ArrowDown) {
-                state.gallery_columns as isize
+                columns as isize
             } else if i.key_pressed(egui::Key::ArrowUp) {
-                -(state.gallery_columns as isize)
+                -(columns as isize)
             } else {
                 0
             }
         });
         if offset != 0 {
             state.move_selection(offset);
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("gallery-scroll-selection"), true));
         }
         if let Some(path) = state.selected.clone() {
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {

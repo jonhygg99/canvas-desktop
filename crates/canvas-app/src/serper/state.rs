@@ -274,7 +274,7 @@ impl Panel {
             ui.visuals().error_fg_color,
             "No response for a while — the reply was likely lost.",
         );
-        if ui.button("Reset").clicked() {
+        if ui.button(crate::i18n::tr("Reset")).clicked() {
             self.reset_flight();
         }
         true

@@ -197,7 +197,7 @@ pub fn left_panel_ui(
                         toolbar_ui(state, ui);
                         ui.separator();
                         let Ok(page) = state.doc.page() else {
-                            ui.weak("No document.");
+                            ui.weak(crate::i18n::tr("No document."));
                             return;
                         };
                         let mut rows = Vec::new();
@@ -211,7 +211,7 @@ pub fn left_panel_ui(
                                 }
                             }
                             if is_empty {
-                                ui.weak("No layers yet.");
+                                ui.weak(crate::i18n::tr("No layers yet."));
                             }
                         });
                         if let Some((ids, drop)) = pending_drop {

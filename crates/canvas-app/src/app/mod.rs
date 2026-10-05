@@ -272,6 +272,7 @@ impl App {
         let Some(menus) = menus.as_mut() else {
             return;
         };
+        menus.set_language(inner.settings.language);
         let Some(ws0) = inner.workspaces.first().cloned() else {
             return;
         };

@@ -317,14 +317,14 @@ pub fn edit_window_ui(
             ui.horizontal(|ui| {
                 let ready =
                     !edit.loading_frames && edit.frames_error.is_none() && !edit.frames.is_empty();
-                let btn = ui.add_enabled(ready, egui::Button::new("Aceptar"));
+                let btn = ui.add_enabled(ready, egui::Button::new(crate::i18n::tr("Aceptar")));
                 if btn.clicked() {
                     accept = Some(build_accept(edit));
                 }
                 if !ready {
-                    btn.on_hover_text("Waiting for preview frames");
+                    btn.on_hover_text(crate::i18n::tr("Waiting for preview frames"));
                 }
-                if ui.button("Atrás").clicked() {
+                if ui.button(crate::i18n::tr("Atrás")).clicked() {
                     close = true;
                 }
             });

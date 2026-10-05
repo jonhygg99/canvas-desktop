@@ -24,18 +24,18 @@ pub(super) fn canvas_context_menu(
             ui.close();
         }
     };
-    item(ui, "Undo", state.can_undo(), MenuAction::Undo);
-    item(ui, "Redo", state.can_redo(), MenuAction::Redo);
+    item(ui, crate::i18n::tr("Undo"), state.can_undo(), MenuAction::Undo);
+    item(ui, crate::i18n::tr("Redo"), state.can_redo(), MenuAction::Redo);
     ui.separator();
-    item(ui, "Cut", true, MenuAction::Cut);
-    item(ui, "Copy", true, MenuAction::Copy);
-    item(ui, "Paste", true, MenuAction::Paste);
-    item(ui, "Duplicate", true, MenuAction::Duplicate);
-    item(ui, "Delete", true, MenuAction::Delete);
+    item(ui, crate::i18n::tr("Cut"), true, MenuAction::Cut);
+    item(ui, crate::i18n::tr("Copy"), true, MenuAction::Copy);
+    item(ui, crate::i18n::tr("Paste"), true, MenuAction::Paste);
+    item(ui, crate::i18n::tr("Duplicate"), true, MenuAction::Duplicate);
+    item(ui, crate::i18n::tr("Delete"), true, MenuAction::Delete);
     ui.separator();
-    item(ui, "Select All", true, MenuAction::SelectAll);
-    item(ui, "Group", true, MenuAction::Group);
-    item(ui, "Ungroup", true, MenuAction::Ungroup);
+    item(ui, crate::i18n::tr("Select All"), true, MenuAction::SelectAll);
+    item(ui, crate::i18n::tr("Group"), true, MenuAction::Group);
+    item(ui, crate::i18n::tr("Ungroup"), true, MenuAction::Ungroup);
     let selected_image = state.selection.primary().filter(|id| {
         state
             .doc
@@ -59,14 +59,14 @@ pub(super) fn canvas_context_menu(
         })
         .unwrap_or_default();
     ui.add_enabled_ui(selected_image.is_some(), |ui| {
-        ui.menu_button("Replace", |ui| {
+        ui.menu_button(crate::i18n::tr("Replace"), |ui| {
             let Some(target) = selected_image else {
                 return;
             };
 
-            ui.menu_button("From this design", |ui| {
+            ui.menu_button(crate::i18n::tr("From this design"), |ui| {
                 if design_sources.is_empty() {
-                    ui.add_enabled(false, egui::Button::new("No other images"));
+                    ui.add_enabled(false, egui::Button::new(crate::i18n::tr("No other images")));
                 }
                 for (source, name) in &design_sources {
                     if ui.button(name).clicked() {
@@ -78,11 +78,11 @@ pub(super) fn canvas_context_menu(
                 }
             });
 
-            if ui.button("From local file").clicked() {
+            if ui.button(crate::i18n::tr("From local file")).clicked() {
                 *action = Some(CanvasAction::ReplaceFromLocal(target));
                 ui.close();
             }
-            if ui.button("From internet URL").clicked() {
+            if ui.button(crate::i18n::tr("From internet URL")).clicked() {
                 state.replace_url_popup = Some((target, String::new()));
                 ui.close();
             }
@@ -94,7 +94,7 @@ pub(super) fn canvas_context_menu(
     // mostrar el submenú vacío o con todo gris dentro.
     let sel = state.selection.primary();
     ui.add_enabled_ui(sel.is_some(), |ui| {
-        ui.menu_button("Layers", |ui| {
+        ui.menu_button(crate::i18n::tr("Layers"), |ui| {
             let Some(id) = sel else {
                 return;
             };
@@ -112,14 +112,14 @@ pub(super) fn canvas_context_menu(
                     ui.close();
                 }
             };
-            z(ui, "Bring to Front", can_go_forward, ZOrder::Front);
-            z(ui, "Move Forward", can_go_forward, ZOrder::Forward);
-            z(ui, "Move Backward", can_go_backward, ZOrder::Backward);
-            z(ui, "Send to Back", can_go_backward, ZOrder::Back);
+            z(ui, crate::i18n::tr("Bring to Front"), can_go_forward, ZOrder::Front);
+            z(ui, crate::i18n::tr("Move Forward"), can_go_forward, ZOrder::Forward);
+            z(ui, crate::i18n::tr("Move Backward"), can_go_backward, ZOrder::Backward);
+            z(ui, crate::i18n::tr("Send to Back"), can_go_backward, ZOrder::Back);
         });
     });
     ui.add_enabled_ui(sel.is_some(), |ui| {
-        ui.menu_button("Align to Page", |ui| {
+        ui.menu_button(crate::i18n::tr("Align to Page"), |ui| {
             let Some(id) = sel else {
                 return;
             };
@@ -143,40 +143,40 @@ pub(super) fn canvas_context_menu(
             };
             a(
                 ui,
-                "Left",
+                crate::i18n::tr("Left"),
                 canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Left),
             );
             a(
                 ui,
-                "Center",
+                crate::i18n::tr("Center"),
                 canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center),
             );
             a(
                 ui,
-                "Right",
+                crate::i18n::tr("Right"),
                 canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Right),
             );
             ui.separator();
             a(
                 ui,
-                "Top",
+                crate::i18n::tr("Top"),
                 canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Top),
             );
             a(
                 ui,
-                "Middle",
+                crate::i18n::tr("Middle"),
                 canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Middle),
             );
             a(
                 ui,
-                "Bottom",
+                crate::i18n::tr("Bottom"),
                 canvas_core::align_vertical(&t, page_h, canvas_core::VAlign::Bottom),
             );
             ui.separator();
             let centered_h = canvas_core::align_horizontal(&t, page_w, canvas_core::HAlign::Center);
             let centered =
                 canvas_core::align_vertical(&centered_h, page_h, canvas_core::VAlign::Middle);
-            a(ui, "Center on page", centered);
+            a(ui, crate::i18n::tr("Center on page"), centered);
         });
     });
     ui.separator();
@@ -189,7 +189,7 @@ pub(super) fn canvas_context_menu(
     if ui
         .add_enabled(
             bg_can_toggle,
-            egui::Checkbox::new(&mut bg_on, "Blurred background"),
+            egui::Checkbox::new(&mut bg_on, crate::i18n::tr("Blurred background")),
         )
         .clicked()
     {
@@ -203,13 +203,13 @@ pub(super) fn canvas_context_menu(
         .is_some_and(|l| matches!(l.content, LayerContent::Image(_) | LayerContent::Video(_)));
     let mut crop_on = state.crop_mode;
     if ui
-        .add_enabled(crop_eligible, egui::Checkbox::new(&mut crop_on, "Crop"))
+        .add_enabled(crop_eligible, egui::Checkbox::new(&mut crop_on, crate::i18n::tr("Crop")))
         .clicked()
     {
         state.crop_mode = crop_on;
         ui.close();
     }
-    if ui.button("Size").clicked() {
+    if ui.button(crate::i18n::tr("Size")).clicked() {
         state.size_popup = state.doc.page().ok().map(|p| (p.width, p.height));
         ui.close();
     }

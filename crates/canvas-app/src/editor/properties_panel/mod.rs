@@ -148,10 +148,10 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
             "⚠ This file changed on disk outside Canvas Desktop.",
         );
         ui.horizontal(|ui| {
-            if ui.button("Reload").clicked() {
+            if ui.button(crate::i18n::tr("Reload")).clicked() {
                 state.reload_requested = true;
             }
-            if ui.button("Keep mine").clicked() {
+            if ui.button(crate::i18n::tr("Keep mine")).clicked() {
                 state.external_change = false;
             }
         });
@@ -190,7 +190,7 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         }
     } else {
         sidebar::section(ui, "Page", true, |ui| page::page_ui(state, ui));
-        ui.weak("Select a layer to edit its properties.");
+        ui.weak(crate::i18n::tr("Select a layer to edit its properties."));
     }
 
     // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
@@ -262,11 +262,11 @@ pub(crate) fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                     rect,
                     ui.visuals().selection.stroke.color,
                 );
-                ui.small("9:16");
+                ui.small(crate::i18n::tr("9:16"));
             }
             ui.heading(state.file_name());
             if state.doc.source_path.is_some()
-                && icon_button_ui(ui, 16.0, true, draw_pencil_icon).clicked()
+                && icon_button_ui(ui, 16.0, true, "Rename", draw_pencil_icon).clicked()
             {
                 let stem = state
                     .doc
@@ -294,7 +294,7 @@ pub(super) fn save_error_banner(
 ) -> Option<egui::Response> {
     if let Some(error) = &state.save_error {
         ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {error}"));
-        let resp = ui.button("Dismiss");
+        let resp = ui.button(crate::i18n::tr("Dismiss"));
         if resp.clicked() {
             state.save_error = None;
         }

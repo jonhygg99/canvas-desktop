@@ -35,8 +35,16 @@ pub(super) fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<Galler
 fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
     super::selection_bar::show(state, ui, action);
     ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(&mut state.framings.vertical, false, "Normal");
-        ui.selectable_value(&mut state.framings.vertical, true, "Framings 9:16");
+        ui.selectable_value(
+            &mut state.framings.vertical,
+            false,
+            crate::i18n::tr("Normal"),
+        );
+        ui.selectable_value(
+            &mut state.framings.vertical,
+            true,
+            crate::i18n::tr("Framings 9:16"),
+        );
         use crate::gallery::framing::StatusFilter;
         egui::ComboBox::from_id_salt("framing-status")
             .selected_text(match state.framings.filter {
@@ -62,8 +70,13 @@ fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Ga
                 );
             });
         if ui
-            .add_enabled(state.selected.is_some(), egui::Button::new("Framing 9:16"))
-            .on_hover_text("Select an item, then create or edit its framing")
+            .add_enabled(
+                state.selected.is_some(),
+                egui::Button::new(crate::i18n::tr("Framing 9:16")),
+            )
+            .on_hover_text(crate::i18n::tr(
+                "Select an item, then create or edit its framing",
+            ))
             .clicked()
         {
             if let Some(path) = &state.selected {
@@ -150,22 +163,26 @@ fn toolbar_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<G
                     GallerySort::DateModified.label(),
                 );
             });
-        ui.label("Sort by:");
+        ui.label(crate::i18n::tr("Sort by:"));
         if sort != state.sort {
             state.sort = sort;
             state.apply_sort();
             *action = Some(GalleryAction::SortChanged(sort));
         }
         ui.add_space(12.0);
-        if icon_button_ui(ui, 16.0, true, draw_plus_icon)
-            .on_hover_text("Show more designs per line")
+        if icon_button_ui(ui, 16.0, true, "More columns", draw_plus_icon)
+            .on_hover_text(crate::i18n::tr("Show more designs per line"))
             .clicked()
         {
             state.gallery_columns = (state.gallery_columns + 1).min(12);
         }
-        ui.label(format!("{} por línea", state.gallery_columns));
-        if icon_button_ui(ui, 16.0, true, draw_minus_icon)
-            .on_hover_text("Show fewer designs per line")
+        ui.label(format!(
+            "{} {}",
+            state.gallery_columns,
+            crate::i18n::tr("per row")
+        ));
+        if icon_button_ui(ui, 16.0, true, "Fewer columns", draw_minus_icon)
+            .on_hover_text(crate::i18n::tr("Show fewer designs per line"))
             .clicked()
         {
             state.gallery_columns = state.gallery_columns.saturating_sub(1).max(1);
@@ -209,7 +226,7 @@ fn op_error_ui(state: &mut GalleryState, ui: &mut egui::Ui) {
     if let Some(error) = state.op_error.clone() {
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(ui.visuals().error_fg_color, &error);
-            if icon_button_ui(ui, 16.0, true, draw_close_icon).clicked() {
+            if icon_button_ui(ui, 16.0, true, "Dismiss error", draw_close_icon).clicked() {
                 state.op_error = None;
             }
         });
@@ -229,7 +246,7 @@ fn scan_status_ui(
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             ui.add(egui::Spinner::new().size(28.0));
-            ui.label("Scanning for images…");
+            ui.label(crate::i18n::tr("Scanning for images…"));
         });
         return false;
     }
@@ -242,8 +259,8 @@ fn scan_status_ui(
     if state.items.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label("This folder is empty.");
-            ui.weak("Create a blank canvas or open an image.");
+            ui.label(crate::i18n::tr("This folder is empty."));
+            ui.weak(crate::i18n::tr("Create a blank canvas or open an image."));
         });
     }
     true
@@ -271,8 +288,8 @@ fn scan_error_ui(
         ui.label(error.as_str());
         ui.add_space(8.0);
         if ui
-            .button("Retry")
-            .on_hover_text("Rescan this folder.")
+            .button(crate::i18n::tr("Retry"))
+            .on_hover_text(crate::i18n::tr("Rescan this folder."))
             .clicked()
         {
             retry_clicked = true;
@@ -281,11 +298,11 @@ fn scan_error_ui(
         if cloud_folder {
             ui.add_space(8.0);
             if ui
-                .button("Open Privacy & Security settings")
-                .on_hover_text(
+                .button(crate::i18n::tr("Open Privacy & Security settings"))
+                .on_hover_text(crate::i18n::tr(
                     "Opens the Full Disk Access pane: grant disk access to \
                      the app or terminal that launched Canvas Desktop.",
-                )
+                ))
                 .clicked()
             {
                 state.note_settings_opened();
@@ -313,6 +330,7 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             .clamp(1, 12)
             .min((ui.available_width() / 140.0).floor().max(1.0) as usize);
         let mut cell_size = gallery_cell_size(ui.available_width(), columns);
+        ui.data_mut(|d| d.insert_temp(egui::Id::new("gallery-visible-columns"), columns));
         if state.framings.vertical {
             cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
         }
@@ -333,7 +351,7 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             if !label.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(20.0);
-                    ui.weak(label);
+                    ui.weak(crate::i18n::tr(label));
                 });
                 return;
             }

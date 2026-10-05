@@ -9,6 +9,7 @@ use muda::{Menu, MenuEvent, MenuItem, Submenu};
 use super::MenuAction;
 
 mod build;
+mod language;
 
 pub struct AppMenus {
     /// El menú debe seguir vivo mientras la ventana exista.
@@ -23,6 +24,8 @@ pub struct AppMenus {
     /// no solo según si hay editor abierto.
     undo_item: MenuItem,
     redo_item: MenuItem,
+    language: Option<crate::i18n::Language>,
+    translated_items: Vec<(muda::MenuItemKind, String)>,
 }
 
 impl AppMenus {

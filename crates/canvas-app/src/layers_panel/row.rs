@@ -151,10 +151,14 @@ fn row_prefix_buttons(
         ui.add_space(GROUP_ARROW_W);
     }
 
-    if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
-        draw_eye_icon(p, r, visible, c)
-    })
-    .on_hover_text("Toggle visibility")
+    if icon_button_ui(
+        ui,
+        GROUP_ARROW_W,
+        true,
+        "Toggle visibility",
+        move |p, r, c| draw_eye_icon(p, r, visible, c),
+    )
+    .on_hover_text(crate::i18n::tr("Toggle visibility"))
     .clicked()
     {
         let mut cmd = SetVisible {
@@ -167,10 +171,10 @@ fn row_prefix_buttons(
         }
     }
 
-    if icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
+    if icon_button_ui(ui, GROUP_ARROW_W, true, "Toggle lock", move |p, r, c| {
         draw_lock_icon(p, r, locked, c)
     })
-    .on_hover_text("Toggle lock")
+    .on_hover_text(crate::i18n::tr("Toggle lock"))
     .clicked()
     {
         let mut cmd = SetLocked {
@@ -184,7 +188,8 @@ fn row_prefix_buttons(
     }
 
     if is_background {
-        icon_label_ui(ui, GROUP_ARROW_W, draw_blur_icon).on_hover_text("Blurred background");
+        icon_label_ui(ui, GROUP_ARROW_W, draw_blur_icon)
+            .on_hover_text(crate::i18n::tr("Blurred background"));
     }
 }
 
@@ -232,9 +237,13 @@ fn group_arrow_ui(ui: &mut egui::Ui, collapsed: bool) -> bool {
     } else {
         IconDir::Down
     };
-    icon_button_ui(ui, GROUP_ARROW_W, true, move |p, r, c| {
-        draw_triangle_icon(p, r, dir, c)
-    })
+    icon_button_ui(
+        ui,
+        GROUP_ARROW_W,
+        true,
+        "Expand or collapse group",
+        move |p, r, c| draw_triangle_icon(p, r, dir, c),
+    )
     .clicked()
 }
 

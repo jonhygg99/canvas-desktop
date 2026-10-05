@@ -178,7 +178,7 @@ pub(super) fn paint_tabs(ui: &mut egui::Ui, p: PaintPass) {
             );
         }
         if p.drag.is_none() {
-            let _ = resp.on_hover_text(tab_tip(*tab));
+            let _ = resp.on_hover_text(crate::i18n::tr(tab_tip(*tab)));
         }
     }
 

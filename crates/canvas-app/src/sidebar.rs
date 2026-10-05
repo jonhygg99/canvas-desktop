@@ -4,12 +4,12 @@ use eframe::egui;
 
 pub const PANEL_PAD: f32 = 8.0;
 pub fn compact(ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
-    ui.spacing_mut().button_padding = egui::vec2(5.0, 2.0);
-    ui.spacing_mut().interact_size.y = 22.0;
+    // Conserva las métricas de densidad elegidas, también en el inspector.
+    ui.spacing_mut().item_spacing.x = 6.0;
 }
 
 pub fn title(ui: &mut egui::Ui, text: &str) {
+    let text = crate::i18n::tr(text);
     let width = ui.available_width().max(1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
     let painter = ui.painter();
@@ -40,6 +40,8 @@ pub fn section<R>(
     // `App::new` (egui 0.35 no trae negrita y `RichText::strong()` solo
     // cambia el color). En contextos sin registrar (tests, previews) cae a la
     // fuente proporcional por defecto.
+    let stable_id = egui::Id::new(text);
+    let text = crate::i18n::tr(text);
     let bold_family = egui::FontFamily::Name("Ubuntu-Bold".into());
     let families = ui.ctx().fonts(|f| f.families());
     let title = if families.contains(&bold_family) {
@@ -48,6 +50,7 @@ pub fn section<R>(
         egui::RichText::new(text).size(15.0)
     };
     egui::CollapsingHeader::new(title)
+        .id_salt(stable_id)
         .default_open(default_open)
         .show_unindented(ui, add_contents)
 }

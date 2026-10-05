@@ -50,7 +50,7 @@ pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool
     painter.text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        "New design",
+        crate::i18n::tr("New design"),
         egui::FontId::proportional(12.5),
         ui.visuals().text_color(),
     );
@@ -83,7 +83,7 @@ pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool
         ui.visuals().weak_text_color(),
     );
     response
-        .on_hover_text("Create a new blank canvas in this folder")
+        .on_hover_text(crate::i18n::tr("Create a new blank canvas in this folder"))
         .clicked()
 }
 
@@ -303,29 +303,29 @@ fn gallery_cell_inner(
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
             ui.separator();
-            if ui.button("Open").clicked() {
+            if ui.button(crate::i18n::tr("Open")).clicked() {
                 action = Some(GalleryAction::Open(item.path.clone()));
                 ui.close();
             }
-            if ui.button("Rename").clicked() {
+            if ui.button(crate::i18n::tr("Rename")).clicked() {
                 begin_rename(item, rename_edit, ui.ctx());
                 ui.close();
             }
-            if ui.button("Duplicate").clicked() {
+            if ui.button(crate::i18n::tr("Duplicate")).clicked() {
                 action = Some(GalleryAction::Duplicate(item.path.clone()));
                 ui.close();
             }
-            if ui.button("Copy").clicked() {
+            if ui.button(crate::i18n::tr("Copy")).clicked() {
                 *selected = Some(item.path.clone());
                 copy_to_slot(item.path.clone());
                 ui.close();
             }
-            if ui.button("Reveal in Explorer").clicked() {
+            if ui.button(crate::i18n::tr("Reveal in Explorer")).clicked() {
                 reveal_in_explorer(&item.path);
                 ui.close();
             }
             ui.separator();
-            let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+            let delete_label = egui::RichText::new(crate::i18n::tr("Delete")).color(ui.visuals().warn_fg_color);
             if ui.button(delete_label).clicked() {
                 action = Some(GalleryAction::Delete(item.path.clone()));
                 ui.close();

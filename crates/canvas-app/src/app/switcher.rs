@@ -135,7 +135,7 @@ pub(super) fn switcher_overlay(
         .interactable(true)
         .show(ctx, |ui| {
             ui.set_max_width(380.0);
-            ui.label(egui::RichText::new("Switch workspace").strong());
+            ui.label(egui::RichText::new(crate::i18n::tr("Switch workspace")).strong());
             ui.separator();
             for (i, (name, dirty)) in rows.iter().enumerate() {
                 let text = if *dirty {
@@ -149,9 +149,9 @@ pub(super) fn switcher_overlay(
                     focus_request = Some(i);
                 }
             }
-            ui.weak(
+            ui.weak(crate::i18n::tr(
                 "Ctrl+N new window  ·  Ctrl+T open folder…  ·  Ctrl+Tab cycles  ·  Enter switch",
-            );
+            ));
         });
     focus_request
 }

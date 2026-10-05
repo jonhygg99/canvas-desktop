@@ -125,8 +125,11 @@ impl Session {
                     self.status = Some(format!("Saved: {}", path.display()));
                     self.error = None;
                 }
-                Ok(jobs::Outcome::Cancelled) => {}
-                Err(error) => self.error = Some(error),
+                Ok(jobs::Outcome::Cancelled) => self.close_after_save = false,
+                Err(error) => {
+                    self.close_after_save = false;
+                    self.error = Some(error);
+                }
             }
         }
         if let Some(frame) = self.video.as_mut().and_then(|video| video.poll(ctx)) {
@@ -168,7 +171,10 @@ impl Session {
             return;
         }
         if self.value != self.saved.unwrap_or_default()
-            || self.video.as_ref().is_some_and(|video| video.trim != video.saved_trim)
+            || self
+                .video
+                .as_ref()
+                .is_some_and(|video| video.trim != video.saved_trim)
         {
             self.close_requested = true;
         } else {

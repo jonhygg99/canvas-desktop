@@ -30,15 +30,15 @@ pub(super) fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             Err(_) => (false, false, false),
         };
 
-        if icon_button_ui(ui, 18.0, can_group, draw_group_icon)
-            .on_hover_text("Group (Ctrl+G)")
+        if icon_button_ui(ui, 18.0, can_group, "Group layers", draw_group_icon)
+            .on_hover_text(crate::i18n::tr("Group (Ctrl+G)"))
             .clicked()
             && can_group
         {
             group_selection(state);
         }
-        if icon_button_ui(ui, 18.0, can_ungroup, draw_ungroup_icon)
-            .on_hover_text("Ungroup (Ctrl+Shift+G)")
+        if icon_button_ui(ui, 18.0, can_ungroup, "Ungroup layers", draw_ungroup_icon)
+            .on_hover_text(crate::i18n::tr("Ungroup (Ctrl+Shift+G)"))
             .clicked()
             && can_ungroup
         {

@@ -25,6 +25,8 @@ pub(super) fn show_panels(
     if state.framing.is_some() {
         egui::Panel::right("properties")
             .default_size(260.0)
+            .size_range(220.0..=400.0)
+            .resizable(true)
             .show(ui, |ui| editor::properties_ui(state, ui));
         egui::CentralPanel::default().show(ui, |ui| {
             if let Some(session) = &mut state.framing {
@@ -42,7 +44,8 @@ pub(super) fn show_panels(
         .show(ui, |ui| {
             status_bar_ui(f, ui);
         });
-    if f.deck.is_visible() && !state.isolate {
+    let narrow = ui.available_width() < 960.0;
+    if f.deck.is_visible() && !state.isolate && !narrow {
         let active_dirty = state.is_dirty();
         match f.deck.strip_side {
             deck::StripSide::Left => {
@@ -102,7 +105,7 @@ pub(super) fn show_panels(
     type AnimState = (bool, f64, bool);
     let mut anim: Option<AnimState> = ui.data_mut(|d| d.get_temp(anim_salt).unwrap_or(None));
     let now: f64 = ui.input(|i| i.time);
-    let target_collapsed = f.settings.layers_collapsed;
+    let target_collapsed = f.settings.layers_collapsed || narrow;
 
     if anim.is_none_or(|(t, _, _)| t != target_collapsed) {
         anim = Some((target_collapsed, now, false));
@@ -119,7 +122,7 @@ pub(super) fn show_panels(
             *started = true;
         }
         let elapsed = now - *start;
-        if elapsed >= PANEL_ANIM_SECS {
+        if elapsed >= PANEL_ANIM_SECS || f.settings.reduced_motion || narrow {
             // Animación terminada: NO ponemos `anim = None` porque en el
             // frame siguiente `None` se interpretaría como «arranca una
             // animación nueva» y el panel rebotaría sin fin.
@@ -137,20 +140,50 @@ pub(super) fn show_panels(
     ui.data_mut(|d| d.insert_temp(anim_salt, anim));
 
     let midpoint = (COLLAPSED_WIDTH + expanded_width) * 0.5;
-    egui::Panel::left("layers")
-        .frame(egui::Frame::NONE)
-        .exact_size(width)
-        .resizable(false)
-        .show(ui, |ui| {
-            ui.painter()
-                .rect_filled(ui.min_rect(), 0.0, ui.visuals().panel_fill);
-            if width < midpoint {
-                let new_order = layers_panel::vertical_tab_strip_ui(
+    let animating = anim.is_some_and(|(_, start, _)| now - start < PANEL_ANIM_SECS)
+        && !f.settings.reduced_motion
+        && !narrow;
+    let panel = egui::Panel::left("layers").frame(egui::Frame::NONE);
+    let panel = if target_collapsed || animating {
+        panel.exact_size(width).resizable(false)
+    } else {
+        panel
+            .default_size(expanded_width)
+            .size_range(180.0..=420.0)
+            .resizable(true)
+    };
+    panel.show(ui, |ui| {
+        ui.painter()
+            .rect_filled(ui.min_rect(), 0.0, ui.visuals().panel_fill);
+        if width < midpoint {
+            let new_order = layers_panel::vertical_tab_strip_ui(
+                ui,
+                &mut state.active_left_tab,
+                &mut f.settings.layers_collapsed,
+                f.settings.layers_tab_order,
+                true,
+            );
+            if let Some(new_order) = new_order {
+                if f.settings.layers_tab_order != new_order {
+                    f.settings.layers_tab_order = new_order;
+                    f.settings.save_in_background();
+                }
+            }
+        } else {
+            ui.add_enabled_ui(!locked, |ui| {
+                // Destino de inserción web/Unsplash (A07): la ranura
+                // activa de ESTA baraja en ESTA generación.
+                let insert_dest = crate::loader::ImageInsertDest {
+                    generation: f.deck.generation(),
+                    slot_id: f.deck.slots.get(f.deck.active).map_or(u64::MAX, |s| s.id),
+                };
+                let new_order = layers_panel::left_panel_ui(
+                    state,
                     ui,
-                    &mut state.active_left_tab,
-                    &mut f.settings.layers_collapsed,
-                    f.settings.layers_tab_order,
-                    true,
+                    &mut *f.settings,
+                    f.deck.folder.clone(),
+                    insert_dest,
+                    f.tx,
                 );
                 if let Some(new_order) = new_order {
                     if f.settings.layers_tab_order != new_order {
@@ -158,36 +191,16 @@ pub(super) fn show_panels(
                         f.settings.save_in_background();
                     }
                 }
-            } else {
-                ui.add_enabled_ui(!locked, |ui| {
-                    // Destino de inserción web/Unsplash (A07): la ranura
-                    // activa de ESTA baraja en ESTA generación.
-                    let insert_dest = crate::loader::ImageInsertDest {
-                        generation: f.deck.generation(),
-                        slot_id: f.deck.slots.get(f.deck.active).map_or(u64::MAX, |s| s.id),
-                    };
-                    let new_order = layers_panel::left_panel_ui(
-                        state,
-                        ui,
-                        &mut *f.settings,
-                        f.deck.folder.clone(),
-                        insert_dest,
-                        f.tx,
-                    );
-                    if let Some(new_order) = new_order {
-                        if f.settings.layers_tab_order != new_order {
-                            f.settings.layers_tab_order = new_order;
-                            f.settings.save_in_background();
-                        }
-                    }
-                });
-            }
-        });
+            });
+        }
+    });
     if f.settings.layers_collapsed != layers_collapsed_before {
         f.settings.save_in_background();
     }
     egui::Panel::right("properties")
         .default_size(260.0)
+        .size_range(220.0..=400.0)
+        .resizable(true)
         .show(ui, |ui| {
             ui.add_enabled_ui(!locked, |ui| editor::properties_ui(state, ui));
         });
@@ -221,7 +234,7 @@ fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(egui::RichText::new("RAM libre").weak());
+        ui.label(egui::RichText::new(crate::i18n::tr("RAM libre")).weak());
         match free {
             Some(bytes) => {
                 let (color, note) = if deck::is_critical_free_ram(free) {
@@ -240,11 +253,11 @@ fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
                 ui.colored_label(color, format!("{}{note}", fmt_bytes(bytes)));
             }
             None => {
-                ui.label(egui::RichText::new("—").weak());
+                ui.label(egui::RichText::new(crate::i18n::tr("—")).weak());
             }
         }
         ui.separator();
-        ui.label(egui::RichText::new("FX GPU").weak());
+        ui.label(egui::RichText::new(crate::i18n::tr("FX GPU")).weak());
         ui.label(format!("{} / {}", fmt_bytes(used), fmt_bytes(budget)));
     });
 }

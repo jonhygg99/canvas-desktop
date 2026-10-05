@@ -29,6 +29,8 @@ impl AppInner {
         is_root: bool,
         paste_requested: bool,
     ) {
+        crate::ui_style::apply(ctx, &self.settings);
+        crate::i18n::set_language(self.settings.language);
         let mut open_next: Option<Nav> = None;
         let mut pending_menu_action: Option<menus::MenuAction> = None;
 
