@@ -401,6 +401,10 @@ pub(super) fn layer_interaction(
     if response.clicked_by(egui::PointerButton::Primary) {
         if let Some(pos) = response.interact_pointer_pos() {
             let (px, py) = screen_to_page(&state.viewport, rect, pos);
+            if ui.input(|i| i.modifiers.alt) {
+                super::layer_picking::cycle(state, (px, py));
+                return;
+            }
             let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
             if hit != state.selection.primary() {
                 state.crop_mode = false;

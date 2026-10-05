@@ -43,6 +43,7 @@ impl EditorState {
             viewport: Viewport::default(),
             aspect_lock: true,
             gesture: Gesture::None,
+            context_point: None,
             panel_edit: None,
             page_edit: None,
             size_popup: None,

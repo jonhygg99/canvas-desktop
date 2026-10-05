@@ -50,6 +50,7 @@ pub struct EditorState {
     /// Proporción bloqueada al redimensionar (por defecto sí; `Shift` la libera).
     pub aspect_lock: bool,
     pub(super) gesture: Gesture,
+    pub(super) context_point: Option<(f64, f64)>,
     /// Edición en curso desde el panel (campos numéricos): capa y transform
     /// original, para consolidar en un solo comando al terminar.
     pub(super) panel_edit: Option<(LayerId, Transform)>,

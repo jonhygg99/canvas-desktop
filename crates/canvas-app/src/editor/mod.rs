@@ -15,6 +15,7 @@ pub(crate) mod document_bar;
 mod gesture_cancel;
 mod interaction;
 mod layer_ops;
+mod layer_picking;
 mod marquee;
 mod selection_geometry;
 mod selection_gesture;

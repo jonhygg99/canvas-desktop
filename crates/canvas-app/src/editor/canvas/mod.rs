@@ -98,6 +98,11 @@ pub fn canvas_ui(
     // para el hit-test de ranuras fallidas: no puede prestarse de `state`
     // a la vez que el menú lo usa mutablemente.
     let viewport = state.viewport.clone();
+    if response.secondary_clicked() {
+        state.context_point = response
+            .interact_pointer_pos()
+            .map(|pos| screen_to_page(&viewport, active_slot_rect(deck, rect, viewport.zoom), pos));
+    }
     response.context_menu(|ui| canvas_context_menu(ui, state, deck, &viewport, rect, &mut action));
 
     if action.is_none() {
