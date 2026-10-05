@@ -132,6 +132,7 @@ fn clearing_the_foreground_resets_the_next_image_paste_and_is_undoable() {
     );
     state.undo();
     assert_eq!(state.doc.page().unwrap().layers, original[..1]);
+    assert_eq!(state.background_layer, Some(original[0].id));
     state.undo();
     assert_eq!(state.doc.page().unwrap().layers, original);
 }

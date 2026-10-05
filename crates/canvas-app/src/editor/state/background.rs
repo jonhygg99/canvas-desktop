@@ -12,9 +12,9 @@ impl EditorState {
     /// Sin contenido principal; el fondo automático residual no cuenta.
     pub(crate) fn is_empty_canvas(&self) -> bool {
         self.doc.page().is_ok_and(|page| {
-            page.layers
-                .iter()
-                .all(|layer| Some(layer.id) == self.background_layer)
+            page.layers.iter().all(|layer| {
+                Some(layer.id) == self.background_layer && !page.effective_locked(layer.id)
+            })
         })
     }
 
