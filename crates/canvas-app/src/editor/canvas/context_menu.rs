@@ -8,16 +8,38 @@
 use canvas_core::{LayerContent, LayerId, Transform};
 use eframe::egui;
 
+use crate::deck::{Deck, SlotContent};
+
 use super::super::layer_ops::{apply_alignment, reorder_layer, sibling_position, ZOrder};
-use super::super::EditorState;
+use super::super::viewport::page_to_screen;
+use super::super::{EditorState, Viewport};
 use super::CanvasAction;
 
 pub(super) fn canvas_context_menu(
     ui: &mut egui::Ui,
     state: &mut EditorState,
+    deck: &Deck,
+    viewport: &Viewport,
+    canvas_rect: egui::Rect,
     action: &mut Option<CanvasAction>,
 ) {
     use crate::menus::MenuAction;
+    super::super::layer_picking::menu(state, ui);
+    super::super::selection_layout::controls(state, ui);
+    // Clic derecho sobre una ranura fallida: reparar o apartar sin tener
+    // que hacer zoom hasta que los botones del lienzo sean legibles.
+    if let Some((id, name)) = failed_slot_under_cursor(ui, deck, viewport, canvas_rect) {
+        ui.weak(format!("\"{name}\" failed to load"));
+        if ui.button(crate::i18n::tr("Try repair")).clicked() {
+            *action = Some(CanvasAction::Repair(id));
+            ui.close();
+        }
+        if ui.button(crate::i18n::tr("Move to quarantine")).clicked() {
+            *action = Some(CanvasAction::Quarantine(id));
+            ui.close();
+        }
+        ui.separator();
+    }
     let mut item = |ui: &mut egui::Ui, label: &str, enabled: bool, a: MenuAction| {
         if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
             *action = Some(CanvasAction::Menu(a));
@@ -59,14 +81,14 @@ pub(super) fn canvas_context_menu(
         })
         .unwrap_or_default();
     ui.add_enabled_ui(selected_image.is_some(), |ui| {
-        ui.menu_button("Replace", |ui| {
+        ui.menu_button(crate::i18n::tr("Replace"), |ui| {
             let Some(target) = selected_image else {
                 return;
             };
 
-            ui.menu_button("From this design", |ui| {
+            ui.menu_button(crate::i18n::tr("From this design"), |ui| {
                 if design_sources.is_empty() {
-                    ui.add_enabled(false, egui::Button::new("No other images"));
+                    ui.add_enabled(false, egui::Button::new(crate::i18n::tr("No other images")));
                 }
                 for (source, name) in &design_sources {
                     if ui.button(name).clicked() {
@@ -78,11 +100,11 @@ pub(super) fn canvas_context_menu(
                 }
             });
 
-            if ui.button("From local file").clicked() {
+            if ui.button(crate::i18n::tr("From local file")).clicked() {
                 *action = Some(CanvasAction::ReplaceFromLocal(target));
                 ui.close();
             }
-            if ui.button("From internet URL").clicked() {
+            if ui.button(crate::i18n::tr("From internet URL")).clicked() {
                 state.replace_url_popup = Some((target, String::new()));
                 ui.close();
             }
@@ -94,7 +116,7 @@ pub(super) fn canvas_context_menu(
     // mostrar el submenú vacío o con todo gris dentro.
     let sel = state.selection.primary();
     ui.add_enabled_ui(sel.is_some(), |ui| {
-        ui.menu_button("Layers", |ui| {
+        ui.menu_button(crate::i18n::tr("Layers"), |ui| {
             let Some(id) = sel else {
                 return;
             };
@@ -119,7 +141,7 @@ pub(super) fn canvas_context_menu(
         });
     });
     ui.add_enabled_ui(sel.is_some(), |ui| {
-        ui.menu_button("Align to Page", |ui| {
+        ui.menu_button(crate::i18n::tr("Align to Page"), |ui| {
             let Some(id) = sel else {
                 return;
             };
@@ -209,8 +231,35 @@ pub(super) fn canvas_context_menu(
         state.crop_mode = crop_on;
         ui.close();
     }
-    if ui.button("Size").clicked() {
+    if ui.button(crate::i18n::tr("Size")).clicked() {
         state.size_popup = state.doc.page().ok().map(|p| (p.width, p.height));
         ui.close();
     }
+}
+
+/// Ranura fallida bajo el cursor, si el clic derecho cayó sobre una: la
+/// entrada de reparación dentro de la edición que no depende del zoom.
+fn failed_slot_under_cursor(
+    ui: &egui::Ui,
+    deck: &Deck,
+    viewport: &Viewport,
+    canvas_rect: egui::Rect,
+) -> Option<(u64, String)> {
+    let pos = ui.input(|i| i.pointer.hover_pos())?;
+    for slot in &deck.slots {
+        if !matches!(slot.content, SlotContent::Failed { .. }) {
+            continue;
+        }
+        let top_left = page_to_screen(viewport, canvas_rect, slot.rect.x, slot.rect.y);
+        let bottom_right = page_to_screen(
+            viewport,
+            canvas_rect,
+            slot.rect.x + slot.rect.w,
+            slot.rect.y + slot.rect.h,
+        );
+        if egui::Rect::from_min_max(top_left, bottom_right).contains(pos) {
+            return Some((slot.id, slot.name.clone()));
+        }
+    }
+    None
 }

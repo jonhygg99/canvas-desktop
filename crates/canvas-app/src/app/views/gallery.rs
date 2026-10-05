@@ -129,6 +129,9 @@ pub(in crate::app) fn gallery_view_ui(
                 ctx.clone(),
             );
         }
+        Some(gallery::GalleryAction::Repair(path)) => {
+            loader::spawn_repair_png(path, tx.clone(), ctx.clone());
+        }
         None => {}
     }
 

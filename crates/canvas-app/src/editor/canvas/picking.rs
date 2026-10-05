@@ -6,12 +6,16 @@
 
 use eframe::egui;
 
-use crate::deck::{Deck, MoveDir};
+use crate::deck::{Deck, MoveDir, SlotContent};
 
-use super::super::slot_chrome::slot_header_layout;
+use super::super::slot_chrome::{failed_action_rects, slot_header_layout};
 use super::super::viewport::{page_to_screen, screen_to_page};
 use super::super::EditorState;
-use super::{CanvasAction, CanvasContext};
+use super::CanvasAction;
+
+#[cfg(test)]
+#[path = "picking_tests.rs"]
+mod tests;
 
 /// Geometría de la pulsación y el viewport que `handle_press` necesita,
 /// agrupada para reducir la firma de 9 a 6 parámetros (bajo el umbral).
@@ -27,9 +31,12 @@ pub(super) fn handle_press(
     deck: &mut Deck,
     ui: &egui::Ui,
     geo: &PressGeometry<'_>,
-    ctx: &CanvasContext,
+    new_canvas_ext: &str,
     action: &mut Option<CanvasAction>,
 ) {
+    if state.ytdlp.edit.is_some() {
+        return;
+    }
     // Pulsación sobre un lienzo que no es el activo: lo activa (el
     // intercambio en sí lo aplica `deck::apply_jump`, fuera de este módulo,
     // para no mutar el documento activo a mitad de este mismo frame). Se
@@ -48,6 +55,12 @@ pub(super) fn handle_press(
         && geo.response.contains_pointer()
     {
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            let coord = super::layout::active_slot_rect(deck, geo.rect, state.viewport.zoom);
+            if super::super::interaction::crop_corner_at(state, coord, pos).is_some() {
+                // El overlay se pinta encima de todos los lienzos: sus controles
+                // también deben recibir la pulsación antes que el vecino.
+                return;
+            }
             // Cabecera de CUALQUIER lienzo visible (activo o no) se
             // comprueba PRIMERO, en espacio de pantalla — antes del hit-test
             // en espacio de página de más abajo, que solo conoce el cuerpo
@@ -59,11 +72,14 @@ pub(super) fn handle_press(
                 if header_hit {
                     break;
                 }
-                let Some((id, is_placeholder, s_rect)) = deck
-                    .slots
-                    .get(idx)
-                    .map(|s| (s.id, s.is_placeholder, s.rect))
-                else {
+                let Some((id, is_placeholder, failed, s_rect)) = deck.slots.get(idx).map(|s| {
+                    (
+                        s.id,
+                        s.is_placeholder,
+                        matches!(s.content, SlotContent::Failed { .. }),
+                        s.rect,
+                    )
+                }) else {
                     continue;
                 };
                 let top_left = page_to_screen(&state.viewport, geo.rect, s_rect.x, s_rect.y);
@@ -112,6 +128,29 @@ pub(super) fn handle_press(
                 } else if header.del.contains(pos) {
                     *action = Some(CanvasAction::Delete(id));
                     header_hit = true;
+                } else if failed {
+                    // Botones bajo el aviso de la ranura fallida (mismos
+                    // rects que pinta `draw_slot_chrome`): se comprueban
+                    // aquí porque la cabecera ya falló el hit-test.
+                    let top = page_to_screen(&state.viewport, geo.rect, s_rect.x, s_rect.y);
+                    let bottom = page_to_screen(
+                        &state.viewport,
+                        geo.rect,
+                        s_rect.x + s_rect.w,
+                        s_rect.y + s_rect.h,
+                    );
+                    let screen_rect = egui::Rect::from_min_max(top, bottom);
+                    if let Some((repair_rect, quar_rect)) =
+                        failed_action_rects(screen_rect.center(), screen_rect.height())
+                    {
+                        if repair_rect.contains(pos) {
+                            *action = Some(CanvasAction::Repair(id));
+                            header_hit = true;
+                        } else if quar_rect.contains(pos) {
+                            *action = Some(CanvasAction::Quarantine(id));
+                            header_hit = true;
+                        }
+                    }
                 }
             }
             if header_hit {
@@ -135,7 +174,7 @@ pub(super) fn handle_press(
                         deck.jump_reframe = true;
                         state.press_on_other_slot = true;
                     }
-                } else if deck.folder.is_some()
+                } else if deck.can_add_canvas()
                     && dx >= deck.add_zone.x
                     && dx <= deck.add_zone.x + deck.add_zone.w
                     && dy >= deck.add_zone.y
@@ -147,8 +186,8 @@ pub(super) fn handle_press(
                     // aquí mismo — es una operación puramente en memoria, no
                     // toca disco ni el watcher, así que no hace falta pasar
                     // por `main.rs`.
-                    if let Some(idx) = deck
-                        .push_placeholder((deck.add_zone.w, deck.add_zone.h), ctx.new_canvas_ext)
+                    if let Some(idx) =
+                        deck.push_placeholder((deck.add_zone.w, deck.add_zone.h), new_canvas_ext)
                     {
                         deck.jump_to = Some(idx);
                         deck.jump_reframe = true;

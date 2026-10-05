@@ -11,6 +11,10 @@ use crate::settings::AppSettings;
 
 use super::api;
 use super::state::Panel;
+#[path = "download_jobs.rs"]
+mod jobs;
+#[path = "download_options.rs"]
+mod options;
 
 /// Contenido de la pestaña «Download» del panel lateral izquierdo.
 /// `dest` es la carpeta donde se guardará el clip (baraja/archivo/galería,
@@ -24,43 +28,41 @@ pub fn panel_ui(
 ) {
     let Some(ytdlp) = api::ytdlp_path() else {
         ui.add_space(8.0);
-        ui.label("yt-dlp.exe not found");
+        ui.label(crate::i18n::tr("yt-dlp.exe not found"));
         ui.add_space(4.0);
-        ui.weak(
+        ui.weak(crate::i18n::tr(
             "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\n\
              or set YTDLP_PATH and restart the app.",
-        );
+        ));
         return;
     };
     let _ = ytdlp;
 
+    download_form(panel, settings, dest, ui, tx);
+    jobs::show(panel, ui, tx);
+    downloaded_results(panel, ui, tx);
+}
+
+fn download_form(
+    panel: &mut Panel,
+    settings: &mut AppSettings,
+    dest: Option<PathBuf>,
+    ui: &mut egui::Ui,
+    tx: &Sender<loader::AppMsg>,
+) {
     ui.add_space(6.0);
-    ui.label("Video URL (one per line, playlist allowed):");
+    ui.label(crate::i18n::tr(
+        "Video URL (one per line, playlist allowed):",
+    ));
     ui.add(
         egui::TextEdit::multiline(&mut panel.urls)
-            .hint_text("https://youtube.com/watch?v=…")
+            .hint_text(crate::i18n::tr("https://youtube.com/watch?v=…"))
             .desired_rows(3)
             .desired_width(f32::INFINITY),
     );
 
     ui.add_space(6.0);
-    ui.label("Trim (optional, HH:MM:SS):");
-    ui.horizontal(|ui| {
-        ui.label("From");
-        ui.add(
-            egui::TextEdit::singleline(&mut panel.start)
-                .hint_text("0:00")
-                .desired_width(70.0),
-        );
-        ui.label("To");
-        ui.add(
-            egui::TextEdit::singleline(&mut panel.end)
-                .hint_text("end")
-                .desired_width(70.0),
-        );
-    });
-    ui.add_space(2.0);
-    ui.checkbox(&mut panel.mute, "Mute (no audio)");
+    let section = options::show(panel, ui);
 
     ui.add_space(4.0);
     match &dest {
@@ -68,16 +70,18 @@ pub fn panel_ui(
             ui.weak(format!("Save to: {}", d.display()));
         }
         None => {
-            ui.weak("Open a folder or canvas first to choose where to save.");
+            ui.weak(crate::i18n::tr(
+                "Open a folder or canvas first to choose where to save.",
+            ));
         }
     }
 
     ui.add_space(6.0);
     let urls = api::split_urls(&panel.urls);
     let has_urls = !urls.is_empty();
-    let can_download = !panel.downloading && has_urls && dest.is_some();
+    let can_download = !panel.downloading && has_urls && dest.is_some() && section.is_ok();
     if ui
-        .add_enabled(can_download, egui::Button::new("Download"))
+        .add_enabled(can_download, egui::Button::new(crate::i18n::tr("Download")))
         .clicked()
     {
         panel.downloading = true;
@@ -90,131 +94,43 @@ pub fn panel_ui(
         settings.save_in_background();
         let request = loader::YtdlpDownloadRequest {
             urls,
-            start: api::parse_time(&panel.start),
-            end: api::parse_time(&panel.end),
+            start: section.expect("validated section").0,
+            end: section.expect("validated section").1,
             mute: panel.mute,
             dest: dest.clone().expect("destino comprobado"),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            target: None,
         };
-        loader::spawn_ytdlp_download(request, tx.clone(), ui.ctx().clone());
+        jobs::start(panel, request, tx, ui.ctx());
     }
     if !has_urls && !panel.urls.trim().is_empty() {
-        ui.weak("Paste an http(s):// URL first.");
+        ui.weak(crate::i18n::tr("Paste an http(s):// URL first."));
     }
+}
 
-    if panel.downloading {
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.weak(&panel.progress);
-        });
-    }
+fn downloaded_results(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
     if let Some(err) = &panel.error {
         ui.add_space(4.0);
         ui.colored_label(ui.visuals().error_fg_color, err);
     }
     if !panel.done.is_empty() {
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Downloaded:");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(crate::i18n::tr("Downloaded:"));
             // Limpieza total a la derecha del título.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clear = ui.add_enabled(!panel.downloading, egui::Button::new("Clear"));
+                let clear =
+                    ui.add_enabled(!panel.downloading, egui::Button::new("Move all to trash"));
                 if clear.clicked() {
                     loader::spawn_ytdlp_delete(panel.done.clone(), tx.clone(), ui.ctx().clone());
                 }
-                clear.on_hover_text("Move every downloaded file to the trash");
+                clear.on_hover_text(crate::i18n::tr("Move every downloaded file to the trash"));
             });
         });
-        clips_ui(panel, ui, tx);
+        super::clip_cards::show(panel, ui, tx);
     }
     ui.add_space(4.0);
-    ui.weak("Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.");
-}
-
-/// Una fila por clip descargado: papelera roja a la izquierda, nombre y
-/// botones Insertar/Editar a la derecha. Con descarga en curso los borrados
-/// esperan (el fichero se está escribiendo).
-fn clips_ui(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
-    let busy = panel.downloading;
-    let mut delete: Option<PathBuf> = None;
-    let mut insert: Option<PathBuf> = None;
-    let mut edit: Option<PathBuf> = None;
-    for path in &panel.done {
-        ui.horizontal(|ui| {
-            let trash = trash_button(ui, !busy);
-            if trash.clicked() {
-                delete = Some(path.clone());
-            }
-            trash.on_hover_text("Move to trash");
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            ui.label(name);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("Editar").clicked() {
-                    edit = Some(path.clone());
-                }
-                if ui.small_button("Insertar al canvas").clicked() {
-                    insert = Some(path.clone());
-                }
-            });
-        });
-    }
-    if let Some(path) = delete {
-        loader::spawn_ytdlp_delete(vec![path], tx.clone(), ui.ctx().clone());
-    }
-    if let Some(path) = insert {
-        panel.pending_insert = Some(path);
-    }
-    if let Some(path) = edit {
-        panel.pending_edit = Some(path);
-    }
-}
-
-/// Botón papelera rojo dibujado a mano (sin depender de glifos Unicode).
-/// Apagado: gris y sin clic (p. ej. durante una descarga).
-fn trash_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
-    let size = 22.0;
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), sense);
-    if resp.hovered() && enabled {
-        ui.painter()
-            .rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
-    }
-    let red = if enabled {
-        egui::Color32::from_rgb(210, 40, 40)
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let p = ui.painter();
-    let body = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 6.0, rect.top() + 8.0),
-        egui::vec2(10.0, 10.0),
-    );
-    p.rect_stroke(
-        body,
-        1.5,
-        egui::Stroke::new(1.3, red),
-        egui::StrokeKind::Inside,
-    );
-    p.line_segment(
-        [
-            egui::pos2(rect.left() + 4.0, rect.top() + 5.5),
-            egui::pos2(rect.right() - 4.0, rect.top() + 5.5),
-        ],
-        egui::Stroke::new(1.3, red),
-    );
-    p.line_segment(
-        [
-            egui::pos2(rect.center().x - 3.0, rect.top() + 3.0),
-            egui::pos2(rect.center().x + 3.0, rect.top() + 3.0),
-        ],
-        egui::Stroke::new(1.3, red),
-    );
-    resp
+    ui.weak(crate::i18n::tr(
+        "Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.",
+    ));
 }

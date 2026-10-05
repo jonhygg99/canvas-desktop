@@ -198,3 +198,27 @@ fn folder_navigation_discards_forward_branch_after_new_visit() {
     assert_eq!(navigation.back(), Some(b.clone()));
     assert_eq!(navigation.back(), Some(a));
 }
+
+/// Tras reparar en su sitio, el rescan trae otro `mtime` y la celda deja
+/// de mostrarse fallida (la miniatura en vuelo la confirma o la vuelve a
+/// marcar). Sin cambio de `mtime`, el fallo se conserva.
+#[test]
+fn merge_clears_a_stale_failed_flag_when_the_file_changed() {
+    use std::time::{Duration, SystemTime};
+
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    let t1 = SystemTime::UNIX_EPOCH + Duration::from_secs(2000);
+    let path = PathBuf::from("raiz/a.png");
+
+    let mut g = open_at("raiz");
+    g.merge_files(vec![(path.clone(), Some(t0))]);
+    g.set_thumb(&path, None);
+    assert!(g.items[0].failed);
+
+    g.merge_files(vec![(path.clone(), Some(t1))]);
+    assert!(!g.items[0].failed, "archivo cambiado: el fallo es obsoleto");
+
+    g.set_thumb(&path, None);
+    g.merge_files(vec![(path.clone(), Some(t1))]);
+    assert!(g.items[0].failed, "sin cambios: el fallo se conserva");
+}

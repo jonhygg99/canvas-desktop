@@ -37,6 +37,7 @@ use super::EditorState;
 
 mod camera;
 mod layout;
+mod navigation;
 
 #[cfg(test)]
 #[path = "camera_tests.rs"]
@@ -61,6 +62,11 @@ pub enum CanvasAction {
     Rename(u64, String),
     Duplicate(u64),
     Delete(u64),
+    /// Intentar reparar la ranura fallida (su archivo en disco).
+    Repair(u64),
+    /// Apartar el archivo a la cuarentena del proyecto (reversible a mano
+    /// desde `.canvas/quarantine`, sin deshacer integrado como el borrado).
+    Quarantine(u64),
     ReplaceFromLocal(LayerId),
     ReplaceFromUrl(LayerId, String),
     /// Elegido en el menú contextual (clic derecho) del propio lienzo —
@@ -89,8 +95,16 @@ pub fn canvas_ui(
     // Menú contextual (clic derecho): antes no había ninguno en el área de
     // edición. Solo las acciones que de verdad se usan desde un clic
     // derecho — no una copia entera del menú Edit (eso ya está a un atajo
-    // de teclado o al menú superior de distancia).
-    response.context_menu(|ui| canvas_context_menu(ui, state, &mut action));
+    // de teclado o al menú superior de distancia). El viewport se clona
+    // para el hit-test de ranuras fallidas: no puede prestarse de `state`
+    // a la vez que el menú lo usa mutablemente.
+    let viewport = state.viewport.clone();
+    if response.secondary_clicked() {
+        state.context_point = response
+            .interact_pointer_pos()
+            .map(|pos| screen_to_page(&viewport, active_slot_rect(deck, rect, viewport.zoom), pos));
+    }
+    response.context_menu(|ui| canvas_context_menu(ui, state, deck, &viewport, rect, &mut action));
 
     if action.is_none() {
         action = replace_url_popup_ui(state, ui.ctx());
@@ -113,6 +127,9 @@ pub fn canvas_ui(
         &mut state.viewport.pan,
     );
 
+    if state.ytdlp.edit.is_none() {
+        navigation::show(state, deck, ui, rect);
+    }
     let Camera {
         panning,
         space_down,
@@ -159,7 +176,7 @@ pub fn canvas_ui(
             visible: &visible,
             space_down,
         },
-        ctx,
+        ctx.new_canvas_ext,
         &mut action,
     );
 
@@ -167,7 +184,12 @@ pub fn canvas_ui(
     // gesto en curso no pertenece a la baraja, y el diseño activo no está
     // bloqueado — `Slot::locked`, cabecera del lienzo).
     let active_locked = deck.slots.get(deck.active).is_some_and(|s| s.locked);
-    if !panning && !space_down && !state.press_on_other_slot && !active_locked {
+    if state.ytdlp.edit.is_none()
+        && !panning
+        && !space_down
+        && !state.press_on_other_slot
+        && !active_locked
+    {
         layer_interaction(state, ui, &response, slot_rect);
     }
 

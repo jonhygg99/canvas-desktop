@@ -21,6 +21,9 @@ pub(super) fn resolve(
     canvas_action: Option<editor::CanvasAction>,
     pending_menu_action: &mut Option<menus::MenuAction>,
 ) {
+    if state.ytdlp.edit.is_some() {
+        return;
+    }
     let mut deck_target = state.deck_nav.take().and_then(|nav| match nav {
         editor::DeckNav::Next => f.deck.next_path(),
         editor::DeckNav::Prev => f.deck.prev_path(),
@@ -82,15 +85,19 @@ pub(super) fn resolve(
                 .deck
                 .find_by_id(id)
                 .and_then(|i| f.deck.slots.get(i))
-                .map(|slot| (slot.is_placeholder, slot.page, slot.path.clone()));
-            if let Some((true, page, path)) = source {
+                .map(|slot| (slot.is_placeholder, slot.path.clone()));
+            if let Some((true, path)) = source {
                 let ext = path
                     .extension()
                     .and_then(|value| value.to_str())
                     .unwrap_or(f.settings.new_canvas_format.extension());
-                f.deck
-                    .push_placeholder(page.unwrap_or(f.settings.last_page_size), ext);
-            } else if let Some((false, _, path)) = source {
+                if let Some(index) = f.deck.duplicate_placeholder(id, state, ext) {
+                    let new_id = f.deck.slots[index].id;
+                    state.record_creation(new_id);
+                    f.deck.jump_to = Some(index);
+                    f.deck.jump_reframe = true;
+                }
+            } else if let Some((false, path)) = source {
                 loader::spawn_gallery_op(
                     loader::GalleryOp::Duplicate { path },
                     false,
@@ -132,6 +139,34 @@ pub(super) fn resolve(
         }
         Some(editor::CanvasAction::Menu(action)) => {
             *pending_menu_action = Some(action);
+        }
+        Some(editor::CanvasAction::Repair(id)) => {
+            if let Some(path) = f
+                .deck
+                .find_by_id(id)
+                .and_then(|i| f.deck.slots.get(i))
+                .map(|s| s.path.clone())
+            {
+                loader::spawn_repair_png(path, f.tx.clone(), ctx.clone());
+            }
+        }
+        Some(editor::CanvasAction::Quarantine(id)) => {
+            if let Some(path) = f
+                .deck
+                .find_by_id(id)
+                .and_then(|i| f.deck.slots.get(i))
+                .map(|s| s.path.clone())
+            {
+                *f.ignore_fs_events_until =
+                    Some(Instant::now() + std::time::Duration::from_secs(2));
+                *f.watcher = None;
+                loader::spawn_gallery_op(
+                    loader::GalleryOp::Quarantine { path },
+                    false,
+                    f.tx.clone(),
+                    ctx.clone(),
+                );
+            }
         }
         None => {}
     }
@@ -195,17 +230,26 @@ pub(super) fn resolve(
     let save_modal_pending = f.save.overwrite_prompt.is_some()
         || f.save.readonly_prompt.is_some()
         || f.save.low_memory_prompt.is_some()
+        || f.save.save_path_dialog_open
+        || f.save.pending_save_as.is_some()
         || f.deck_ops.materializing.is_some();
-    if !save_modal_pending
-        && deck::apply_jump(f.deck, state)
-        && std::mem::take(&mut f.deck.jump_reframe)
-    {
-        state.viewport.request_fit();
+    if !save_modal_pending {
+        match deck::apply_jump(f.deck, state) {
+            deck::JumpOutcome::Applied if std::mem::take(&mut f.deck.jump_reframe) => {
+                state.viewport.request_fit();
+            }
+            deck::JumpOutcome::DroppedFailed { name, kind } => {
+                state.save_error = Some(format!("\"{name}\": {}", deck::failure_notice(kind, "")));
+            }
+            _ => {}
+        }
     }
     if let Some(&next_id) = f.save.save_all_queue.first() {
         if f.deck.slots.get(f.deck.active).map(|s| s.id) == Some(next_id) {
-            let waiting_on_modal =
-                f.save.overwrite_prompt.is_some() || f.save.readonly_prompt.is_some();
+            let waiting_on_modal = f.save.overwrite_prompt.is_some()
+                || f.save.readonly_prompt.is_some()
+                || f.save.save_path_dialog_open
+                || f.save.pending_save_as.is_some();
             if !state.is_dirty() {
                 // Ya está limpio sin pasar por `Saved` (p. ej. se deshizo
                 // hasta el punto guardado a mano): no hay nada que guardar,

@@ -23,15 +23,20 @@ impl Deck {
     /// elegida en Ajustes (`settings.new_canvas_format`) — `"canvas"` sigue
     /// siendo un diseño autónomo, cualquier otra cosa es un raster real con
     /// su sidecar. Devuelve su índice para que el llamador salte a ella.
-    /// `None` si la baraja no tiene carpeta (`Deck::single`: un archivo
-    /// suelto no tiene dónde escribir un hermano).
+    /// New design conserva las provisionales en memoria sin carpeta.
+    /// Un archivo abierto suelto necesita carpeta para crear hermanos.
     /// Cada llamada crea una ranura provisional independiente. Sus nombres
     /// visibles se derivan del id de la ranura para no colisionar antes de
     /// que ninguna de ellas exista en disco.
     pub fn push_placeholder(&mut self, page: (f64, f64), ext: &str) -> Option<usize> {
-        let folder = self.folder.clone()?;
+        if !self.can_add_canvas() {
+            return None;
+        }
         let is_design = ext == canvas_io::CANVAS_EXTENSION;
-        let path = canvas_io::peek_numbered_path(&folder, ext, self.next_id);
+        let path = self.folder.as_ref().map_or_else(
+            || PathBuf::from(format!("Untitled {}.{ext}", self.next_id)),
+            |folder| canvas_io::peek_numbered_path(folder, ext, self.next_id),
+        );
         let mut state = if is_design {
             crate::editor::EditorState::new_blank(page.0, page.1)
         } else {
@@ -90,6 +95,9 @@ impl Deck {
             locked: false,
         });
         self.layout_dirty = true;
+        if self.unsaved_session {
+            self.strip_visible = true;
+        }
         Some(self.slots.len() - 1)
     }
 
@@ -257,6 +265,19 @@ impl Deck {
         for (path, mtime) in files {
             match old.remove(&path) {
                 Some(mut existing) => {
+                    // El archivo cambió en disco desde que se vio: lo que se
+                    // sabía de él (fallo de carga, miniatura fallida, tamaño
+                    // sondeado) puede estar obsoleto. Una ranura `Failed`
+                    // vuelve a `Idle` para que `request_loads` la reintente —
+                    // sin esto, un PNG re-descargado sano seguiría fallando
+                    // toda la sesión.
+                    if existing.mtime != mtime {
+                        if matches!(existing.content, SlotContent::Failed { .. }) {
+                            existing.content = SlotContent::Idle;
+                        }
+                        existing.thumb_failed = false;
+                        existing.page = None;
+                    }
                     existing.mtime = mtime;
                     slots.push(existing);
                 }
@@ -298,7 +319,10 @@ impl Deck {
     pub fn set_thumb(&mut self, path: &Path, tex: Option<egui::TextureHandle>) {
         if let Some(slot) = self.slots.iter_mut().find(|s| s.path == path) {
             match tex {
-                Some(tex) => slot.thumb = Some(tex),
+                Some(tex) => {
+                    slot.thumb = Some(tex);
+                    slot.thumb_failed = false;
+                }
                 None => slot.thumb_failed = true,
             }
         }

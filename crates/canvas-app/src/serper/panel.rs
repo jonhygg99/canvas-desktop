@@ -39,7 +39,7 @@ pub fn panel_ui(
         ui.add_space(8.0);
         ui.label(format!("{API_KEY_ENV} is not set"));
         ui.add_space(4.0);
-        ui.weak("Get a key at serper.dev and add it\nto the project .env as SERPER_API_KEY,\nthen restart the app.");
+        ui.weak(crate::i18n::tr("Get a key at serper.dev and add it\nto the project .env as SERPER_API_KEY,\nthen restart the app."));
         return;
     }
 
@@ -87,23 +87,30 @@ fn search_bar_ui(
         }
     });
     if panel.mode == SearchMode::Social {
-        ui.weak("Instagram/Facebook · social filter off · links expire fast");
+        ui.weak(crate::i18n::tr(
+            "Instagram/Facebook · social filter off · links expire fast",
+        ));
     }
     let hint = match panel.mode {
         SearchMode::Web => "Search the web…",
         SearchMode::Social => "Paste an Instagram/Facebook link or name…",
     };
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 58.0).max(110.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut panel.query)
-                .hint_text(hint)
-                .desired_width(width),
-        );
-        let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = ui.button("Search").clicked();
-        do_search = (submit || clicked) && !panel.query.trim().is_empty();
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            // Reservar primero el botón evita recortarlo en el sidebar estrecho.
+            let clicked = ui.button(crate::i18n::tr("Search")).clicked();
+            let width = (ui.available_width() - 8.0).max(1.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut panel.query)
+                    .hint_text(hint)
+                    .desired_width(width),
+            );
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            do_search = (submit || clicked) && !panel.query.trim().is_empty();
+        },
+    );
     budget_ui(panel, settings, ui);
     if do_search {
         start_search(panel, &settings.serper_blocked, tx, ui.ctx());
@@ -116,7 +123,7 @@ fn search_bar_ui(
 fn budget_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
-        ui.weak("Cost per keyword:");
+        ui.weak(crate::i18n::tr("Cost per keyword:"));
         for b in TokenBudget::ALL {
             if ui
                 .selectable_label(panel.budget == b, format!("{} ({})", b.label(), b.detail()))
@@ -232,10 +239,10 @@ pub(super) fn spend_token(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &
 /// largos como `lookaside.instagram.com` sangren fuera del panel.
 fn advanced_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
     ui.add_space(2.0);
-    egui::CollapsingHeader::new("Advanced")
+    egui::CollapsingHeader::new(crate::i18n::tr("Advanced"))
         .default_open(false)
         .show(ui, |ui| {
-            ui.weak("Blocked domains (one per line):\nhidden from results and excluded\nfrom the query when it fits.");
+            ui.weak(crate::i18n::tr("Blocked domains (one per line):\nhidden from results and excluded\nfrom the query when it fits."));
             // Scroll vertical dedicado: sin él la rueda iba al
             // `ScrollArea` de los resultados de abajo y el `TextEdit`
             // parecía no hacer scroll aunque tuviera 40 líneas. Con altura
@@ -255,13 +262,13 @@ fn advanced_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui)
                         });
                 });
             ui.horizontal(|ui| {
-                if ui.button("Apply").clicked() {
+                if ui.button(crate::i18n::tr("Apply")).clicked() {
                     let blocked = parse_blocked(&panel.blocked_text);
                     panel.blocked_text = blocked.join("\n");
                     settings.serper_blocked = blocked;
                     settings.save_in_background();
                 }
-                if ui.button("Reset defaults").clicked() {
+                if ui.button(crate::i18n::tr("Reset defaults")).clicked() {
                     let defaults = super::filter::default_blocked_domains();
                     panel.blocked_text = defaults.join("\n");
                     settings.serper_blocked = defaults;
@@ -307,7 +314,7 @@ fn results_ui(
         }
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak("Searching… (1 token)");
+            ui.weak(crate::i18n::tr("Searching… (1 token)"));
         });
         return;
     }
@@ -317,7 +324,9 @@ fn results_ui(
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
             ui.add_space(8.0);
-            ui.weak("Search the web and click a photo\nto add it to the canvas.");
+            ui.weak(crate::i18n::tr(
+                "Search the web and click a photo\nto add it to the canvas.",
+            ));
         }
         return;
     }
@@ -388,14 +397,14 @@ fn select_row_ui(panel: &mut Panel, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if ui
                 .button(format!("Select… ({})", panel.photos.len()))
-                .on_hover_text("Choose images and save one per canvas")
+                .on_hover_text(crate::i18n::tr("Choose images and save one per canvas"))
                 .clicked()
             {
                 panel.open_bulk();
             }
             if panel.bulk_busy {
                 ui.spinner();
-                ui.weak("Bulk saving…");
+                ui.weak(crate::i18n::tr("Bulk saving…"));
             } else if let Some(msg) = panel.bulk_done_msg.clone() {
                 ui.weak(msg);
             }
@@ -420,7 +429,7 @@ fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sende
     }
     if let Some(err) = panel.error.clone() {
         ui.colored_label(ui.visuals().error_fg_color, err);
-        if ui.button("Try again").clicked() && panel.photos.is_empty() {
+        if ui.button(crate::i18n::tr("Try again")).clicked() && panel.photos.is_empty() {
             // Reintento de la página actual con la spec sellada (A09) y
             // sin tocar el gasto (esa llamada ya se pagó).
             if let Some(spec) = panel.active_search.clone() {
@@ -452,7 +461,7 @@ fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sende
             panel.budget.calls()
         ));
     } else if panel.reached_end {
-        ui.weak("No more results for this search.");
+        ui.weak(crate::i18n::tr("No more results for this search."));
     } else if panel.can_spend_more() {
         let left = panel.budget.calls() - panel.tokens_spent;
         // La etiqueta nombra la búsqueda que se pagina (A09): si el
@@ -464,7 +473,9 @@ fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sende
         };
         if ui
             .button(more_label)
-            .on_hover_text("Loads the next page (~100 images, ~2 credits)")
+            .on_hover_text(crate::i18n::tr(
+                "Loads the next page (~100 images, ~2 credits)",
+            ))
             .clicked()
         {
             spend_token(panel, tx, ui.ctx());
@@ -486,11 +497,13 @@ fn cost_footer_ui(panel: &Panel, settings: &AppSettings, ui: &mut egui::Ui) {
     ));
     // Insignia de caché: esta página se re-sirvió sin gastar nada.
     if panel.cached_badge && !panel.photos.is_empty() {
-        ui.weak("cached result · 0 credits spent");
+        ui.weak(crate::i18n::tr("cached result · 0 credits spent"));
     }
     if ui
         .link("Serper balance →")
-        .on_hover_text("Serper has no balance API — see the remaining credits on the dashboard")
+        .on_hover_text(crate::i18n::tr(
+            "Serper has no balance API — see the remaining credits on the dashboard",
+        ))
         .clicked()
     {
         ui.ctx()
@@ -517,9 +530,9 @@ fn cost_footer_ui(panel: &Panel, settings: &AppSettings, ui: &mut egui::Ui) {
         ));
     }
     if panel.query_simplified && !panel.photos.is_empty() {
-        ui.weak(
+        ui.weak(crate::i18n::tr(
             "Free Serper account: query sent without -site:/filters — local filter still applies.",
-        );
+        ));
     }
 }
 
@@ -530,4 +543,27 @@ fn truncate_query(query: &str) -> String {
         return query.to_owned();
     }
     format!("{}…", query.chars().take(MAX).collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_search_bar_keeps_controls_inside_sidebar() {
+        for width in [180.0, 220.0, 320.0] {
+            let ctx = egui::Context::default();
+            let mut panel = Panel::default();
+            let mut settings = AppSettings::default();
+            let (tx, _rx) = std::sync::mpsc::channel();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0)),
+                ));
+                search_bar_ui(&mut panel, &mut settings, &mut child, &tx);
+                assert!(child.min_rect().width() <= width + 0.5);
+                assert!(child.min_rect().height() < 220.0);
+            });
+        }
+    }
 }

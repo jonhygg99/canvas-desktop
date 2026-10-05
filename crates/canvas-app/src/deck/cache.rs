@@ -33,6 +33,10 @@ impl Deck {
     }
 
     pub fn evict_with_budget(&mut self, budget: usize) -> Vec<FxScope> {
+        // Una sesión sin carpeta no tiene conductor de recargas desde disco.
+        if self.unsaved_session {
+            return Vec::new();
+        }
         let active = self.active;
         let mut freed = Vec::new();
         loop {

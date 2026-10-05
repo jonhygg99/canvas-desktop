@@ -32,24 +32,28 @@ pub fn panel_ui(
         ui.add_space(8.0);
         ui.label(format!("{ACCESS_KEY_ENV} is not set"));
         ui.add_space(4.0);
-        ui.weak("Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app.");
+        ui.weak(crate::i18n::tr("Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app."));
         return;
     }
     let panel = &mut state.unsplash;
 
     ui.add_space(6.0);
     let mut do_search = false;
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 58.0).max(110.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut panel.query)
-                .hint_text("Search Unsplash…")
-                .desired_width(width),
-        );
-        let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = ui.button("Search").clicked();
-        do_search = (submit || clicked) && !panel.query.trim().is_empty();
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let clicked = ui.button(crate::i18n::tr("Search")).clicked();
+            let width = (ui.available_width() - 8.0).max(1.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut panel.query)
+                    .hint_text(crate::i18n::tr("Search Unsplash…"))
+                    .desired_width(width),
+            );
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            do_search = (submit || clicked) && !panel.query.trim().is_empty();
+        },
+    );
     // Cambiar un filtro relanza la búsqueda (si ya hay una consulta).
     if filters_ui(panel, ui) && !panel.query.trim().is_empty() {
         do_search = true;
@@ -65,7 +69,7 @@ pub fn panel_ui(
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak("Searching…");
+            ui.weak(crate::i18n::tr("Searching…"));
         });
         return;
     }
@@ -75,7 +79,9 @@ pub fn panel_ui(
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
             ui.add_space(8.0);
-            ui.weak("Search for photos and click one\nto add it to the canvas.");
+            ui.weak(crate::i18n::tr(
+                "Search for photos and click one\nto add it to the canvas.",
+            ));
         }
         return;
     }
@@ -126,11 +132,11 @@ pub fn panel_ui(
                     ui.add(egui::Spinner::new().size(26.0));
                 } else if let Some(err) = &panel.error {
                     ui.colored_label(ui.visuals().error_fg_color, err);
-                    if ui.button("Try again").clicked() {
+                    if ui.button(crate::i18n::tr("Try again")).clicked() {
                         load_more(panel, tx, ui.ctx());
                     }
                 } else if panel.reached_end {
-                    ui.weak("No more results for this search.");
+                    ui.weak(crate::i18n::tr("No more results for this search."));
                 } else if load_more_button_ui(ui, row_w).clicked() {
                     load_more(panel, tx, ui.ctx());
                 }
@@ -140,7 +146,9 @@ pub fn panel_ui(
             });
         });
     ui.add_space(4.0);
-    ui.weak("Photos from Unsplash — unsplash.com/license");
+    ui.weak(crate::i18n::tr(
+        "Photos from Unsplash — unsplash.com/license",
+    ));
 }
 
 /// Lanza una búsqueda nueva (página 1) con la consulta y filtros actuales.
@@ -190,7 +198,7 @@ fn filters_ui(panel: &mut Panel, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
 
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for o in Orientation::ALL {
             if ui
                 .selectable_label(panel.filters.orientation == o, o.label())
@@ -295,5 +303,26 @@ fn load_more_button_ui(ui: &mut egui::Ui, w: f32) -> egui::Response {
         galley,
         color,
     );
-    resp.on_hover_text("Load the next page of photos")
+    resp.on_hover_text(crate::i18n::tr("Load the next page of photos"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_filters_wrap_inside_a_compact_sidebar() {
+        for width in [140.0, 180.0, 320.0] {
+            let ctx = egui::Context::default();
+            let mut panel = Panel::default();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0)),
+                ));
+                assert!(!filters_ui(&mut panel, &mut child));
+                assert!(child.min_rect().width() <= width + 0.5);
+                assert!(child.min_rect().height() < 220.0);
+            });
+        }
+    }
 }

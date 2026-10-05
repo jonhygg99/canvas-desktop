@@ -10,6 +10,10 @@ use super::content_text::text_content_ui;
 use super::EditorState;
 
 pub(super) fn content_properties_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId) {
+    if state.inline_text.is_some() {
+        ui.weak(crate::i18n::tr("Editing text on canvas"));
+        return;
+    }
     let Ok(layer) = state.doc.layer(sel) else {
         return;
     };

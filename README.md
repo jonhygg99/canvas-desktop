@@ -23,6 +23,27 @@ Solo el instalador de **Windows x64** está soportado de verdad hoy (ver
 `CLAUDE.md`); los paquetes de macOS y Linux se publican *best-effort* y aún no
 se han verificado en hardware real.
 
+## Interfaz y preferencias
+
+La barra superior reúne navegación, nombre del archivo, estado de guardado y
+acciones: **Guardar diseño editable** conserva las capas en un `.canvas`
+independiente; **Sobrescribir original** actualiza la imagen; **Exportar imagen**
+produce un archivo de salida. Las capas de vídeo se exportan como fotograma.
+El inspector muestra propiedades según la selección y mantiene los efectos
+avanzados plegados hasta que se necesitan.
+
+**Editar / Encuadre 9:16** son modos explícitos. El encuadre no cambia el tamaño
+ni las capas del diseño. Incluye centrado, restablecimiento, guías de composición
+con margen geométrico del 10 % y aviso al salir con ajustes pendientes. Estas
+guías no representan las zonas seguras específicas de una red social.
+
+En **Ajustes** puedes elegir inglés o español, tema claro/oscuro/sistema,
+densidad cómoda/compacta, escala de interfaz del 75 al 200 % y reducción de
+movimiento. Las preferencias se conservan entre sesiones. Los paneles se pueden
+redimensionar; en ventanas estrechas se alternan herramientas e inspector.
+Los botones tienen foco visible y nombres accesibles; las pestañas admiten
+Tab e Intro/Espacio, y las capas pueden subir o bajar con botones deshacibles.
+
 ## Estado: primera entrega
 
 El canvas mínimo funcionando de punta a punta:
@@ -44,13 +65,14 @@ El canvas mínimo funcionando de punta a punta:
   Respeta la orientación EXIF. La página toma las dimensiones reales.
 - **Galería de carpeta**: abrir una carpeta muestra sus imágenes en una
   cuadrícula de miniaturas (generadas en paralelo con `rayon` y cacheadas en
-  disco). Clic para editar, botón para volver (pregunta si hay cambios).
+  disco). Un clic selecciona; doble clic o Intro abre; F2 renombra.
+  Búsqueda por nombre, filtros combinados y navegación con las flechas.
 - **Editar**: seleccionar, mover y redimensionar con manejadores de esquina
   (proporción bloqueada por defecto; `Shift` la libera), campos numéricos de
   X/Y/ancho/alto y % de escala, botones de alineación respecto a la página.
 - **Desenfoque gaussiano en GPU** (shader wgpu de dos pasadas), no
   destructivo, con vista previa en vivo. Solo se aplica de verdad al guardar.
-- **Guardar**: `Ctrl+S` (o el botón «💾 Guardar» del panel) actualiza el
+- **Guardar**: `Ctrl+S` (o «Sobrescribir original» en la barra superior) actualiza el
   archivo original en disco con escritura atómica (temporal en el mismo
   directorio + fsync + `ReplaceFileW` en Windows). `Ctrl+Shift+S` para
   «Guardar como…». Asterisco en el título con cambios sin guardar y
@@ -291,6 +313,23 @@ paquete (nombre, icono, asociaciones) vive en
 plantilla NSIS con los hooks de registro del Explorador está en
 `packaging/windows/installer.nsi` (ver comentarios «CANVAS DESKTOP» ahí para
 las diferencias respecto a la plantilla original de cargo-packager).
+
+## Edición sobre el lienzo
+
+- **Insertar:** elige texto o una forma en Insert y haz clic sobre el lienzo para colocarla, o arrastra para dibujar su tamaño. La caja previa muestra posición y dimensiones. «Place centered» conserva la inserción centrada; Esc cancela la herramienta.
+- **Texto:** doble clic sobre una capa de texto, o «Edit text» en su barra contextual, abre el campo superpuesto. «Done», Ctrl/Cmd+Enter o perder el foco confirma; Esc restaura el contenido anterior. Los controles de fuente, tamaño y color afectan al texto completo.
+- **Selección:** Ctrl/Cmd+clic añade o quita capas; Shift+clic extiende un tramo de la pila. Arrastrar desde espacio vacío selecciona los objetos completos dentro del rectángulo; Shift añade a la selección existente. Las capas bloqueadas quedan excluidas del rectángulo y de las transformaciones.
+- **Transformación:** varias capas y grupos comparten una caja para mover, escalar proporcionalmente y rotar. Los manejadores laterales de una capa cambian solo ancho o alto; las esquinas siguen el candado de proporción. Esc cancela el gesto y cada gesto confirmado ocupa un único paso de deshacer.
+- **Precisión:** las flechas desplazan 1 píxel del documento; Shift+flechas, 10. Shift durante el movimiento restringe el eje; Shift al rotar ajusta a pasos de 15°. Alt desactiva las guías magnéticas. Las distancias a los vecinos aparecen durante las transformaciones.
+- **Superposición:** Alt+clic recorre las capas visibles de ese punto; «Select layer» en el menú contextual permite elegir por nombre.
+- **Composición:** la barra contextual y el inspector permiten alinear con la caja de la selección, o con la página si hay una sola raíz seleccionada. La distribución iguala las separaciones entre bordes con al menos tres raíces, conservando los extremos.
+- **Tipografía y apariencia:** el editor de texto utiliza la familia, peso, cursiva, alineación, interletrado e interlineado de la capa. Los motores de composición de egui y del render son distintos, por lo que puede haber pequeñas diferencias; el campo de edición de texto rotado sigue siendo horizontal. La barra contextual admite tamaño de texto libre, cursiva y selector de color; las formas ofrecen relleno, borde y grosor.
+- **Navegación:** los controles inferiores muestran el porcentaje de zoom, permiten elegir niveles y ajustar la página o la selección visible. «Guides» permite mostrar las reglas existentes.
+- **Capas:** búsqueda por nombre, filtro por tipo y miniaturas. La selección del lienzo revela su fila y expande sus grupos antecesores.
+- **Duplicación:** Ctrl/Cmd+Alt+arrastrar copia la selección sin mover los originales; Shift restringe el eje y Esc cancela la copia. Ctrl/Cmd+D crea una copia desplazada 24 px; Ctrl/Cmd+Shift+D repite la última separación. Cada duplicación ocupa un paso de deshacer.
+- **Guías:** «Guides → Edit guides…» permite añadir guías horizontales o verticales, editar X/Y, bloquearlas y eliminarlas. «Apply» confirma el conjunto en un solo paso; «Cancel» descarta los cambios. Las guías se conservan en el diseño editable y no aparecen en la imagen exportada.
+- **Historial:** «History» muestra las acciones de la sesión del diseño activo y permite regresar a un estado o rehacerlo. Cuando hay ediciones intercaladas en otros lienzos, los saltos se limitan al tramo consecutivo del lienzo activo; los atajos globales mantienen su comportamiento.
+- **Comandos y ayuda:** Ctrl/Cmd+Shift+P o «Commands» abre la búsqueda de acciones, también con nombres traducidos. ↑/↓ elige, Intro ejecuta y Esc cierra. «Help» muestra los atajos relevantes para insertar, seleccionar o editar texto.
 
 ## Verificación
 

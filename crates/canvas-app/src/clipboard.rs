@@ -202,6 +202,27 @@ fn paste_internal(state: &mut EditorState, json: &str) -> bool {
     let Ok(clip) = canvas_io::read_clipboard(json) else {
         return false;
     };
+    // Una imagen copiada dentro del editor inicia un lienzo vacío igual
+    // que una imagen del sistema. Duplicar capas conserva su geometría.
+    if state.is_empty_canvas() && clip.layers.len() == 1 {
+        let layer = &clip.layers[0];
+        if let canvas_core::LayerContent::Image(content) = &layer.content {
+            if let Some((_, png)) = clip.images.iter().find(|(id, _)| *id == layer.id.raw()) {
+                if let Ok((rgba, width, height)) = canvas_io::decode_layer_png(png) {
+                    state.add_image_layer(
+                        layer.name.clone(),
+                        content.source_path.clone(),
+                        canvas_io::LoadedImage {
+                            rgba,
+                            width,
+                            height,
+                        },
+                    );
+                    return true;
+                }
+            }
+        }
+    }
     let n = clip.layers.len();
     let Some(ids) = paste_doc(state, clip) else {
         return false;
@@ -279,6 +300,31 @@ pub fn system_image() -> Option<canvas_io::LoadedImage> {
 #[cfg(test)]
 mod tests {
     use super::prefer_system;
+
+    #[test]
+    fn an_internal_image_paste_initializes_an_empty_image_canvas() {
+        let mut source = crate::editor::EditorState::new_blank_image(500.0, 500.0);
+        source.add_image_layer(
+            "Copied",
+            None,
+            canvas_io::LoadedImage {
+                rgba: vec![255; 100 * 200 * 4],
+                width: 100,
+                height: 200,
+            },
+        );
+        let id = source.selection.primary().unwrap();
+        let json = super::encode_layers(&source, &[id]).unwrap();
+        let mut target = crate::editor::EditorState::new_blank_image(1000.0, 1000.0);
+        assert!(super::paste_internal(&mut target, &json));
+        let page = target.doc.page().unwrap();
+        assert_eq!(page.layers.len(), 2);
+        assert_eq!(page.layers[0].effects.blur_radius, 50.0);
+        assert_eq!(
+            page.layers[1].transform,
+            canvas_core::Transform::new(250.0, 0.0, 500.0, 1000.0)
+        );
+    }
 
     #[test]
     fn keeps_internal_first_when_system_clipboard_is_unchanged() {

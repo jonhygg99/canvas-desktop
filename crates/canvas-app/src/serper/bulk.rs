@@ -42,7 +42,7 @@ pub(super) fn bulk_window_ui(
     // pocas imágenes); el usuario la agranda a gusto: es movible y
     // redimensionable. El `Window` reparte el alto disponible de verdad
     // (el `Area` manual anterior colapsaba el scroll).
-    egui::Window::new("Select web images")
+    egui::Window::new(crate::i18n::tr("Select web images"))
         .collapsible(false)
         .resizable(true)
         .movable(true)
@@ -69,20 +69,24 @@ const FOOTER_H: f32 = 88.0;
 /// Cabecera: título + Select all / Deselect + contador + ✕.
 fn bulk_header(panel: &mut Panel, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.heading("Select web images");
+        ui.heading(crate::i18n::tr("Select web images"));
         ui.separator();
         ui.add_enabled_ui(!panel.bulk_busy, |ui| {
-            if ui.button("Select all").clicked() {
+            if ui.button(crate::i18n::tr("Select all")).clicked() {
                 panel.select_all_bulk();
             }
-            if ui.button("Deselect").clicked() {
+            if ui.button(crate::i18n::tr("Deselect")).clicked() {
                 panel.deselect_all_bulk();
             }
         });
         ui.weak(format!("{} selected", panel.bulk_selected.len()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(!panel.bulk_busy, |ui| {
-                if ui.button("✕").on_hover_text("Close").clicked() {
+                if ui
+                    .button(crate::i18n::tr("✕"))
+                    .on_hover_text(crate::i18n::tr("Close"))
+                    .clicked()
+                {
                     panel.bulk_open = false;
                 }
             });
@@ -101,7 +105,9 @@ fn bulk_grid_at_height(
     max_h: f32,
 ) {
     if panel.photos.is_empty() {
-        ui.weak("No images to choose from yet — run a search first.");
+        ui.weak(crate::i18n::tr(
+            "No images to choose from yet — run a search first.",
+        ));
         return;
     }
     // Barrido de retiradas aplazadas (A02): los banners cazados a mitad de
@@ -221,7 +227,7 @@ fn bulk_masonry_cell(
     ui.push_id(("bulk_cell", id.clone()), |ui| {
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                if ui.checkbox(&mut selected, "").changed() {
+                if ui.checkbox(&mut selected, crate::i18n::tr("")).changed() {
                     toggle_bulk(panel, &id, selected);
                 }
             });
@@ -239,7 +245,7 @@ fn bulk_masonry_cell(
                 let cur = panel.bulk_selected.contains(&id);
                 toggle_bulk(panel, &id, !cur);
             }
-            let _ = click.on_hover_text("Click to select / deselect");
+            let _ = click.on_hover_text(crate::i18n::tr("Click to select / deselect"));
         } else if let Some(err) = error {
             retry_cell(
                 panel,
@@ -317,7 +323,7 @@ fn retry_cell(
     );
     ui.add_enabled_ui(!busy, |ui| {
         if ui
-            .put(btn, egui::Button::new("Retry"))
+            .put(btn, egui::Button::new(crate::i18n::tr("Retry")))
             .on_hover_text(&paint.err)
             .clicked()
         {
@@ -452,9 +458,9 @@ fn bulk_footer(
                 );
             }
         } else {
-            ui.weak("No folder available");
+            ui.weak(crate::i18n::tr("No folder available"));
         }
-        if ui.button("Cancel").clicked() {
+        if ui.button(crate::i18n::tr("Cancel")).clicked() {
             panel.bulk_open = false;
         }
     });
@@ -486,7 +492,7 @@ fn bulk_progress_ui(panel: &mut Panel, ui: &mut egui::Ui) {
         ui.spinner();
         match panel.bulk_progress {
             Some((done, total)) => ui.weak(format!("Saving {done}/{total}…")),
-            None => ui.weak("Saving…"),
+            None => ui.weak(crate::i18n::tr("Saving…")),
         };
     });
 }

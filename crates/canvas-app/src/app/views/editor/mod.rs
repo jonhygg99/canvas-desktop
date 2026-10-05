@@ -21,6 +21,7 @@ mod framing_flow;
 mod modals;
 mod panels;
 mod save_flow;
+mod toolbar;
 
 /// Vista de editor: baraja + panel de capas/propiedades + lienzo, y toda la
 /// orquestación de guardado, exportación, navegación de la baraja y
@@ -54,7 +55,8 @@ pub(in crate::app) fn editor_view_ui(
     // muta `state.doc` sin pasos de deshacer, así que no marca nada sucio.
     simulate_edits(state, f, ctx);
     state.tick_video(ctx);
-    if state.framing.is_none() {
+    if state.framing.is_none() && state.ytdlp.edit.is_none() {
+        editor::inline_text::prepare(state, ctx);
         state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
     }
 
@@ -85,7 +87,14 @@ pub(in crate::app) fn editor_view_ui(
         save_flow::handle_save(state, ctx, rs, f, &mut open_next);
     }
     modals::show_modals(state, ctx, rs, f);
+    if let Some(action) = toolbar::show(state, ui, f) {
+        pending_menu_action = Some(action);
+    }
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
+    crate::ytdlp::retry_pending_frames(&mut state.ytdlp, f.tx, ctx);
+    if let Some(accept) = crate::ytdlp::edit_window_ui(&mut state.ytdlp, f.settings, ui) {
+        let _ = f.tx.send(loader::AppMsg::YtdlpEditAccepted(accept));
+    }
     deck_nav::resolve(
         state,
         ctx,

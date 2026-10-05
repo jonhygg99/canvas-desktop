@@ -162,6 +162,11 @@ impl History {
         self.saved_depth = Some(self.undo.len());
     }
 
+    /// Documento copiado en memoria que aún no tiene versión guardada.
+    pub fn mark_unsaved(&mut self) {
+        self.saved_depth = None;
+    }
+
     /// Revisión actual del historial (ver campo `revision`).
     pub fn revision(&self) -> u64 {
         self.revision
@@ -171,6 +176,16 @@ impl History {
     /// `revision()` al lanzar un guardado).
     pub fn undo_depth(&self) -> usize {
         self.undo.len()
+    }
+
+    /// Etiquetas de más antiguo a más reciente, sin exponer comandos mutables.
+    pub fn undo_labels(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.undo.iter().map(|command| command.label())
+    }
+
+    /// Etiquetas en el orden en que se pueden rehacer.
+    pub fn redo_labels(&self) -> impl Iterator<Item = &str> {
+        self.redo.iter().rev().map(|command| command.label())
     }
 
     /// Marca como guardado SOLO si el historial sigue en la revisión

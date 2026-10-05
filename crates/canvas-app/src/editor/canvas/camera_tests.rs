@@ -482,7 +482,10 @@ fn a_strip_jump_reframes_the_new_active_canvas() {
     deck.jump_to = Some(1);
     deck.jump_reframe = true;
     assert!(
-        crate::deck::apply_jump(&mut deck, &mut state),
+        matches!(
+            crate::deck::apply_jump(&mut deck, &mut state),
+            crate::deck::JumpOutcome::Applied
+        ),
         "el salto debe aplicarse"
     );
     assert_eq!(deck.active, 1);

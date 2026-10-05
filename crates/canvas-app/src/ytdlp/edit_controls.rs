@@ -1,7 +1,7 @@
 //! Transporte, timeline y parámetros de la ventana de vídeo.
 
 use super::playback::PLAYBACK_FPS;
-use super::{clamp_trim, mmss, VideoEdit, CANVAS_SIZES};
+use super::{timecode, VideoEdit, CANVAS_SIZES};
 use crate::settings::AppSettings;
 use eframe::egui;
 
@@ -23,8 +23,12 @@ pub(super) fn advance_playhead(edit: &mut VideoEdit, ctx: &egui::Context) {
     }
     edit.last_tick = Some(now);
     if edit.playhead >= edit.trim_end {
-        edit.playhead = edit.trim_end;
-        edit.playing = false;
+        edit.playhead = if edit.loop_selection {
+            edit.trim_start
+        } else {
+            edit.trim_end
+        };
+        edit.playing = edit.loop_selection;
         crate::audio::pause_for(&edit.path);
     }
     if edit.playing {
@@ -35,140 +39,155 @@ pub(super) fn advance_playhead(edit: &mut VideoEdit, ctx: &egui::Context) {
 
 /// Play/Pause y Restart sobre el trim, con audio salvo mute.
 /// Sin fotogramas el Play se apaga explicando por qué, con reintento.
-pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        if edit.frames.is_empty() || edit.frames_error.is_some() || edit.loading_frames {
-            let btn = ui.add_enabled(false, egui::Button::new("Play"));
-            btn.on_hover_text(edit.frames_error.as_deref().unwrap_or({
-                if edit.loading_frames {
-                    "Extracting preview…"
-                } else {
-                    "No preview frames"
-                }
-            }));
-            if !edit.loading_frames && ui.button("Retry preview").clicked() {
-                edit.retry_frames = true;
-            }
-            return;
-        }
-        let label = if edit.playing { "Pause" } else { "Play" };
-        if ui.button(label).clicked() && !edit.frames.is_empty() {
-            if !edit.playing && edit.playhead >= edit.trim_end {
-                edit.playhead = edit.trim_start;
-            }
-            edit.playing = !edit.playing;
-            edit.playback.stop();
-            edit.last_tick = edit.playing.then(std::time::Instant::now);
-            if edit.playing {
-                // Arranca el bucle: advance programa los siguientes, pero
-                // este frame no tendría continuación sin pedirlo aquí.
-                ui.ctx().request_repaint();
-            } else {
-                crate::audio::pause_for(&edit.path);
-            }
-        }
-        if ui.button("Restart").clicked() {
-            edit.playback.stop();
-            crate::audio::pause_for(&edit.path);
-            edit.playhead = edit.trim_start;
-            edit.playing = !edit.frames.is_empty();
-            edit.last_tick = edit.playing.then(std::time::Instant::now);
-            if edit.playing {
-                ui.ctx().request_repaint();
-            }
-        }
-        if ui.checkbox(&mut edit.mute, "Mute").changed() {
-            if edit.mute {
-                crate::audio::pause_for(&edit.path);
-            } else if edit.playing {
-                let _ = crate::audio::play(&edit.path, edit.playhead);
-            }
-        }
+pub(super) fn transport_ui(
+    edit: &mut VideoEdit,
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+) -> [egui::Response; 2] {
+    let row_width = ui.available_width().min(403.0);
+    let buttons = ui
+        .vertical_centered(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(row_width, 0.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let ready = !edit.frames.is_empty()
+                            && edit.frames_error.is_none()
+                            && !edit.loading_frames;
+                        let buttons = playback_buttons(edit, ui, ready);
+                        ui.add_enabled_ui(ready, |ui| {
+                            if super::transport_icons::frame_button(ui, false).clicked() {
+                                edit.seek(edit.playhead - 1.0 / edit.source_fps);
+                            }
+                            if super::transport_icons::frame_button(ui, true).clicked() {
+                                edit.seek(edit.playhead + 1.0 / edit.source_fps);
+                            }
+                        });
+                        if super::transport_icons::mute_button(ui, edit.mute, ready).clicked() {
+                            edit.mute = !edit.mute;
+                            if edit.mute {
+                                crate::audio::pause_for(&edit.path);
+                            } else if edit.playing {
+                                let _ = crate::audio::play(&edit.path, edit.playhead);
+                            }
+                        }
+                        canvas_size_ui(edit, settings, ui);
+                        buttons
+                    })
+                    .inner
+                },
+            )
+            .inner
+        })
+        .inner;
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.weak(format!(
             "{} / {}",
-            mmss(edit.playhead),
+            timecode(edit.playhead),
             edit.duration
-                .map(mmss)
+                .map(timecode)
                 .unwrap_or_else(|| "--:--".to_owned())
-        ));
+        ))
     });
+    buttons
+}
+
+fn playback_buttons(edit: &mut VideoEdit, ui: &mut egui::Ui, ready: bool) -> [egui::Response; 2] {
+    let mut play = super::transport_icons::play_button(ui, edit.playing, ready);
+    if !ready {
+        play = play.on_hover_text(
+            edit.frames_error
+                .as_deref()
+                .unwrap_or(if edit.loading_frames {
+                    "Extracting preview..."
+                } else {
+                    "No preview frames"
+                }),
+        );
+    }
+    if play.clicked() {
+        if !edit.playing {
+            edit.prepare_playback_start();
+        }
+        edit.playing = !edit.playing;
+        edit.playback.stop();
+        edit.last_tick = edit.playing.then(std::time::Instant::now);
+        if edit.playing {
+            ui.ctx().request_repaint();
+        } else {
+            crate::audio::pause_for(&edit.path);
+        }
+    }
+    let label = if ready { "Restart" } else { "Retry preview" };
+    let restart = super::transport_icons::restart_button(ui, !edit.loading_frames, label);
+    if restart.clicked() {
+        if ready {
+            edit.seek(edit.trim_start);
+            edit.playing = true;
+            edit.last_tick = Some(std::time::Instant::now());
+            ui.ctx().request_repaint();
+        } else {
+            edit.retry_frames = true;
+        }
+    }
+    [play, restart]
+}
+
+fn canvas_size_ui(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
+    let before = settings.ytdlp_canvas_size;
+    let selected = CANVAS_SIZES
+        .iter()
+        .find(|(_, w, h)| (*w, *h) == before)
+        .map(|(label, _, _)| *label)
+        .unwrap_or("Custom");
+    ui.allocate_ui_with_layout(
+        egui::vec2(175.0, 30.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            egui::ComboBox::from_id_salt("video-canvas-size")
+                .selected_text(selected)
+                .width(175.0)
+                .truncate()
+                .show_ui(ui, |ui| {
+                    for (label, w, h) in CANVAS_SIZES {
+                        ui.selectable_value(&mut settings.ytdlp_canvas_size, (w, h), label);
+                    }
+                })
+                .response
+                .on_hover_text(format!("Canvas size: {selected}"));
+        },
+    );
+    if before != settings.ytdlp_canvas_size {
+        settings.save_in_background();
+    }
+    edit.size = settings.ytdlp_canvas_size;
 }
 
 /// Timeline clicable (el Slider de egui salta al pulsar en cualquier punto).
 pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
-    let Some(duration) = edit.duration else {
-        ui.weak("Duration unknown yet.");
+    if edit.duration.is_none() {
+        ui.weak(crate::i18n::tr("Duration unknown yet."));
         return;
-    };
-    let (start, end) = (edit.trim_start, edit.trim_end);
-    // Al mover a mano se pausa (como el panel de propiedades): el audio no
-    // persigue el scrub.
-    if ui
-        .add(
-            egui::Slider::new(&mut edit.playhead, start..=end)
-                .text("Timeline")
-                .show_value(false),
-        )
-        .changed()
-    {
-        edit.playing = false;
-        edit.playback.stop();
-        edit.last_tick = None;
-        crate::audio::pause_for(&edit.path);
     }
-    ui.weak(format!(
-        "Trim {} – {}  ·  full {}",
-        mmss(start),
-        mmss(end),
-        mmss(duration)
-    ));
-    edit.playhead = edit.playhead.clamp(start, end);
+    super::timeline::show(edit, ui);
 }
 
-/// Tamaño de lienzo + trim + background blur + zoom. Sin duración, el trim
-/// y el timeline esperan.
-pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut AppSettings) {
-    ui.horizontal(|ui| {
-        ui.label("Canvas:");
-        for (label, w, h) in CANVAS_SIZES {
-            if ui
-                .selectable_label(settings.ytdlp_canvas_size == (w, h), label)
-                .clicked()
-            {
-                settings.ytdlp_canvas_size = (w, h);
-                settings.save_in_background();
-            }
-        }
-    });
-    edit.size = settings.ytdlp_canvas_size;
-    if let Some(duration) = edit.duration {
-        let mut start = edit.trim_start;
-        let mut end = edit.trim_end;
-        let start_changed = ui
-            .add(egui::Slider::new(&mut start, 0.0..=duration).text("Trim start"))
-            .changed();
-        let end_changed = ui
-            .add(egui::Slider::new(&mut end, 0.0..=duration).text("Trim end"))
-            .changed();
-        (edit.trim_start, edit.trim_end) = clamp_trim(start, end, duration);
-        if start_changed || end_changed {
-            edit.playing = false;
-            edit.playback.stop();
-            edit.last_tick = None;
-            crate::audio::pause_for(&edit.path);
-            if start_changed {
-                edit.playhead = edit.trim_start;
-            }
-        }
-        edit.playhead = edit.playhead.clamp(edit.trim_start, edit.trim_end);
-    } else {
-        ui.weak("Trim waits for duration.");
-    }
-    ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0).text("Background blur"));
+/// Zoom, background blur y trim; el tamaño se ajusta junto al transporte.
+pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
     ui.horizontal(|ui| {
         ui.label("Zoom");
-        // Slider capado para ajuste rápido + campo manual hasta 10×.
-        ui.add(egui::Slider::new(&mut edit.zoom, 1.0..=3.0).show_value(false));
+        if super::transport_icons::restart_button(ui, true, "Reset zoom").clicked() {
+            edit.zoom = 1.0;
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add(
+            egui::Slider::new(&mut edit.zoom, 1.0..=3.0)
+                .show_value(false)
+                .clamping(egui::SliderClamping::Edits),
+        );
         ui.add(
             egui::DragValue::new(&mut edit.zoom)
                 .range(1.0..=10.0)
@@ -176,4 +195,42 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut 
         );
     });
     edit.zoom = edit.zoom.clamp(1.0, 10.0);
+    position_ui(edit, ui);
+    ui.horizontal(|ui| {
+        ui.label("Background blur");
+        if super::transport_icons::restart_button(ui, true, "Reset background blur").clicked() {
+            edit.blur = 100.0;
+        }
+    });
+    ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0));
+    ui.separator();
+    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).min(300.0);
+    super::trim_controls::trim_controls(edit, ui);
+}
+
+fn position_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    ui.label("Position (px)")
+        .on_hover_text("Offset from center: positive X moves right, positive Y moves down");
+    for (label, value, limit) in [
+        ("X", &mut edit.position.0, edit.size.0),
+        ("Y", &mut edit.position.1, edit.size.1),
+    ] {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.spacing_mut().slider_width = (ui.available_width() - 138.0).max(60.0);
+            ui.add(
+                egui::Slider::new(value, -limit..=limit)
+                    .clamping(egui::SliderClamping::Edits)
+                    .show_value(false),
+            );
+            ui.add(egui::DragValue::new(value).speed(1.0).suffix(" px"));
+            if super::transport_icons::restart_button(ui, true, &format!("Reset {label}")).clicked()
+            {
+                *value = 0.0;
+            }
+        });
+    }
+    if ui.button("Center video").clicked() {
+        edit.position = (0.0, 0.0);
+    }
 }

@@ -4,6 +4,21 @@ use std::time::{Duration, Instant};
 
 static STREAM_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[test]
+fn a_paused_seek_decodes_the_requested_time_between_sparse_thumbnails() {
+    let Some((_fixture, mut edit, ctx)) = real_video_editor() else {
+        return;
+    };
+    edit.seek(1.133);
+    let until = Instant::now() + Duration::from_secs(5);
+    while edit.exact.shown_time() != Some(1.133) && Instant::now() < until {
+        render_preview(&mut edit, &ctx);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(edit.exact.shown_time(), Some(1.133));
+    assert!(!edit.playing);
+}
+
 struct RealVideo {
     // El vídeo y las miniaturas deben vivir hasta que se cierre el editor.
     _video_dir: tempfile::TempDir,
@@ -58,6 +73,7 @@ fn real_video_editor() -> Option<(RealVideo, VideoEdit, egui::Context)> {
     // Se conserva la extracción barata para scrub/póster. El play debe
     // superar su cadencia sin convertirla en una extracción masiva.
     assert_eq!(outcome.fps, 2.0);
+    assert_eq!(outcome.source_fps, 30.0);
     assert_eq!(outcome.files.len(), 6);
     let thumbnail_dir = outcome.files[0].parent().unwrap().to_owned();
     let mut edit = VideoEdit::open(
@@ -68,6 +84,7 @@ fn real_video_editor() -> Option<(RealVideo, VideoEdit, egui::Context)> {
         (1920.0, 1080.0),
         &Document::new(1920.0, 1080.0),
     );
+    edit.set_source_fps(outcome.source_fps);
     edit.set_frames(
         outcome.files,
         outcome.fps,
@@ -144,7 +161,9 @@ fn start_and_wait_for_foreground(edit: &mut VideoEdit, ctx: &egui::Context) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let output = render_preview(edit, ctx);
-        if foreground_updated(&output) {
+        // El póster permanece visible durante el arranque del decoder;
+        // medimos la reproducción desde su primer fotograma real.
+        if edit.playback.has_frame() && foreground_updated(&output) {
             return;
         }
         assert!(

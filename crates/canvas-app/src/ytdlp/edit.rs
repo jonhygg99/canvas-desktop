@@ -14,7 +14,9 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use canvas_core::{Document, LayerContent, LayerId, Transform};
+#[cfg(test)]
+use canvas_core::Transform;
+use canvas_core::{Document, LayerContent, LayerId};
 use eframe::egui;
 
 use super::api::clamp_trim;
@@ -38,11 +40,32 @@ use preview::{frame_index_at, preview_ui, PreviewCache};
 
 #[path = "edit_controls.rs"]
 mod controls;
+#[path = "timeline.rs"]
+mod timeline;
+#[path = "timeline_thumbnails.rs"]
+mod timeline_thumbnails;
+#[path = "timeline_view.rs"]
+mod timeline_view;
+#[path = "transport_icons.rs"]
+mod transport_icons;
+#[path = "trim.rs"]
+mod trim;
+#[path = "trim_controls.rs"]
+mod trim_controls;
+use trim::{timecode, TrimEdge, TrimHistory};
+#[path = "timeline_tests.rs"]
+#[cfg(test)]
+mod timeline_tests;
+#[path = "trim_tests.rs"]
+#[cfg(test)]
+mod trim_tests;
 use controls::{advance_playhead, params_ui, timeline_ui, transport_ui};
 
 #[path = "edit_playback.rs"]
 mod playback;
 use playback::LivePreview;
+#[path = "edit_exact.rs"]
+mod exact;
 
 /// Tamaños de lienzo ofrecidos (nombre, ancho, alto).
 pub const CANVAS_SIZES: [(&str, f64, f64); 3] = [
@@ -63,6 +86,8 @@ pub struct VideoAccept {
     pub trim_end: Option<f64>,
     pub blur_radius: f32,
     pub zoom: f32,
+    /// Desplazamiento desde el centro, en píxeles del lienzo.
+    pub position: (f64, f64),
     pub poster: PathBuf,
 }
 
@@ -76,10 +101,17 @@ pub struct VideoEdit {
     pub(crate) trim_end: f64,
     pub(crate) blur: f32,
     pub(crate) zoom: f32,
+    position: (f64, f64),
     pub(crate) size: (f64, f64),
     pub(crate) video_size: Option<(f64, f64)>,
     playing: bool,
     playhead: f64,
+    source_fps: f64,
+    trim_history: TrimHistory,
+    timeline_range: Option<(f64, f64)>,
+    thumbnails: timeline_thumbnails::Thumbnails,
+    timeline_gesture: Option<timeline::Gesture>,
+    loop_selection: bool,
     /// Pide re-extraer los fotogramas (lo sirve `layers_panel`).
     pub(crate) retry_frames: bool,
     /// Vista previa muda por defecto (se puede quitar).
@@ -91,6 +123,7 @@ pub struct VideoEdit {
     frames_error: Option<String>,
     preview: PreviewCache,
     playback: LivePreview,
+    exact: exact::ExactPreview,
 }
 
 impl VideoEdit {
@@ -115,10 +148,17 @@ impl VideoEdit {
             // Fondo con blur 50 por defecto (receta imágenes); 0 = sin fondo.
             blur: 100.0,
             zoom: 1.0,
+            position: (0.0, 0.0),
             size,
             video_size: None,
             playing: false,
             playhead: 0.0,
+            source_fps: 30.0,
+            trim_history: TrimHistory::default(),
+            timeline_range: None,
+            thumbnails: timeline_thumbnails::Thumbnails::default(),
+            timeline_gesture: None,
+            loop_selection: false,
             retry_frames: false,
             mute: true,
             last_tick: None,
@@ -128,6 +168,7 @@ impl VideoEdit {
             frames_error: None,
             preview: PreviewCache::default(),
             playback: LivePreview::default(),
+            exact: exact::ExactPreview::default(),
         };
         if let Some(id) = target_layer {
             edit.restore_from_layer(doc, id);
@@ -154,6 +195,10 @@ impl VideoEdit {
                 page.height,
             );
             self.trim_start = link.trim_start.max(0.0);
+            self.position = (
+                layer.transform.x - (page.width - layer.transform.width) / 2.0,
+                layer.transform.y - (page.height - layer.transform.height) / 2.0,
+            );
             if let Some(end) = link.trim_end {
                 self.trim_end = end;
             }
@@ -187,12 +232,20 @@ impl VideoEdit {
         (self.trim_start, self.trim_end) = clamp_trim(self.trim_start, end, duration);
         self.playhead = self.trim_start;
         self.preview = PreviewCache::default();
+        self.thumbnails = timeline_thumbnails::Thumbnails::default();
         self.playback = LivePreview::default();
+        self.exact = exact::ExactPreview::default();
         self.loading_frames = false;
         self.frames_error = None;
     }
 
     /// La vista previa falló: queda la guía visible (el trim espera).
+    pub(crate) fn set_source_fps(&mut self, fps: f64) {
+        if fps.is_finite() && fps > 0.0 {
+            self.source_fps = fps;
+        }
+    }
+
     pub(crate) fn set_frames_error(&mut self, error: String) {
         self.loading_frames = false;
         self.frames_error = Some(error);
@@ -239,6 +292,7 @@ pub(crate) fn default_accept(path: PathBuf, title: String, size: (f64, f64)) -> 
         trim_end: None,
         blur_radius: 50.0,
         zoom: 1.0,
+        position: (0.0, 0.0),
         poster: PathBuf::new(),
     }
 }
@@ -277,7 +331,11 @@ pub fn open_pending_edit(
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let title = clip_title(&file_name);
+    let title = video
+        .clip_info
+        .get(&path)
+        .map(|clip| clip.title.clone())
+        .unwrap_or_else(|| clip_title(&file_name));
     // La duración la sondea el worker (ffprobe); hasta entonces el trim
     // espera. El tamaño, el recordado en ajustes.
     video.edit = Some(VideoEdit::open(
@@ -293,60 +351,9 @@ pub fn open_pending_edit(
 
 /// Ventana de edición. Devuelve el `VideoAccept` si se pulsó Aceptar (el
 /// llamador crea el lienzo); cerrar/X/Cancelar devuelve `None`.
-pub fn edit_window_ui(
-    video: &mut Panel,
-    settings: &mut AppSettings,
-    ui: &mut egui::Ui,
-) -> Option<VideoAccept> {
-    let title = format!("Edit video — {}", video.edit.as_ref()?.title);
-    let mut open = true;
-    let mut close = false;
-    let mut accept = None;
-    egui::Window::new(title)
-        .open(&mut open)
-        .resizable(true)
-        .default_size(egui::vec2(430.0, 600.0))
-        .show(ui.ctx(), |ui| {
-            let edit = video.edit.as_mut().expect("checked above");
-            advance_playhead(edit, &ui.ctx().clone());
-            preview_ui(edit, ui);
-            transport_ui(edit, ui);
-            timeline_ui(edit, ui);
-            params_ui(edit, ui, settings);
-            ui.separator();
-            ui.horizontal(|ui| {
-                let ready =
-                    !edit.loading_frames && edit.frames_error.is_none() && !edit.frames.is_empty();
-                let btn = ui.add_enabled(ready, egui::Button::new("Aceptar"));
-                if btn.clicked() {
-                    accept = Some(build_accept(edit));
-                }
-                if !ready {
-                    btn.on_hover_text("Waiting for preview frames");
-                }
-                if ui.button("Atrás").clicked() {
-                    close = true;
-                }
-            });
-        });
-    if !open || close {
-        stop_preview_audio(video);
-        video.edit = None;
-        return None;
-    }
-    if accept.is_some() {
-        stop_preview_audio(video);
-        video.edit = None;
-    }
-    accept
-}
-
-/// Corta el audio de la preview al cerrar/aceptar (el lienzo no autoplayea).
-fn stop_preview_audio(video: &Panel) {
-    if let Some(edit) = video.edit.as_ref() {
-        crate::audio::pause_for(&edit.path);
-    }
-}
+#[path = "edit_window.rs"]
+mod window;
+pub use window::edit_window_ui;
 
 /// Construye el accept (siempre con algo válido: el botón lo exige).
 fn build_accept(edit: &VideoEdit) -> VideoAccept {
@@ -359,39 +366,12 @@ fn build_accept(edit: &VideoEdit) -> VideoAccept {
         trim_end: Some(edit.trim_end),
         blur_radius: blur_radius_for_slider(edit.blur),
         zoom: edit.zoom,
+        position: edit.position,
         poster: frame_index_at(edit, edit.trim_start)
             .and_then(|i| edit.frames.get(i))
             .cloned()
             .unwrap_or_default(),
     }
-}
-
-/// Fija el playhead al fotograma anterior o igual (rejilla `fps`).
-pub(crate) fn quantize_playhead(playhead: f64, trim_start: f64, fps: f64) -> f64 {
-    if fps <= 0.0 {
-        return playhead;
-    }
-    let k = ((playhead - trim_start) * fps).floor().max(0.0);
-    trim_start + k / fps
-}
-
-/// Rect contain (x, y, w, h) del vídeo dentro de la caja: crece solo hasta
-/// que un lado toca el borde, proporción intacta (como al pegar imágenes).
-pub(crate) fn contain_rect(box_w: f32, box_h: f32, vw: f64, vh: f64) -> (f32, f32, f32, f32) {
-    if vw <= 0.0 || vh <= 0.0 {
-        return (0.0, 0.0, box_w, box_h);
-    }
-    let scale = (f64::from(box_w) / vw).min(f64::from(box_h) / vh) as f32;
-    let (w, h) = (vw as f32 * scale, vh as f32 * scale);
-    ((box_w - w) / 2.0, (box_h - h) / 2.0, w, h)
-}
-
-/// Rect contain crecido por el zoom alrededor de su centro (como el
-/// Transform en el lienzo): la caja de preview lo recorta.
-pub(crate) fn grown_rect(x: f32, y: f32, w: f32, h: f32, zoom: f32) -> (f32, f32, f32, f32) {
-    let z = zoom.max(1.0);
-    let (nw, nh) = (w * z, h * z);
-    (x + (w - nw) / 2.0, y + (h - nh) / 2.0, nw, nh)
 }
 
 /// Reintento pedido desde la ventana (lo sirve `layers_panel`, que tiene
@@ -421,43 +401,11 @@ pub fn retry_pending_frames(video: &mut Panel, tx: &Sender<AppMsg>, ctx: &egui::
     );
 }
 
-/// Encaja la vista previa en 380×300 manteniendo el aspecto elegido.
-fn fit_preview(pw: f64, ph: f64) -> egui::Vec2 {
-    const MAX_W: f32 = 380.0;
-    const MAX_H: f32 = 300.0;
-    let scale = (MAX_W / pw as f32).min(MAX_H / ph as f32).max(0.01);
-    egui::vec2(pw as f32 * scale, ph as f32 * scale)
-}
-
-fn mmss(s: f64) -> String {
-    format!("{:02}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32)
-}
-
-/// Slider 0..=100 → radio de blur de la capa (el fondo de referencia usa 50).
-pub(crate) fn blur_radius_for_slider(v: f32) -> f32 {
-    v.clamp(0.0, 100.0) / 2.0
-}
-
-/// Radio de la capa → slider (restaura al abrir).
-pub(crate) fn slider_for_radius(r: f32) -> f32 {
-    (r * 2.0).clamp(0.0, 100.0)
-}
-
-/// Transform contain escalado `zoom` desde el centro: base encajada (crece
-/// solo hasta tocar el borde), la página recorta lo que sobresale.
-pub(crate) fn zoom_transform(vw: f64, vh: f64, pw: f64, ph: f64, zoom: f32) -> Transform {
-    let base = (pw / vw.max(1.0)).min(ph / vh.max(1.0));
-    let z = zoom.max(1.0) as f64 * base;
-    Transform::new((pw - vw * z) / 2.0, (ph - vh * z) / 2.0, vw * z, vh * z)
-}
-
-/// Ancho actual → zoom contra la base contain (restaura al abrir). Libre
-/// hasta 10× (el slider solo llega a 3, el campo manual más).
-pub(crate) fn zoom_for_transform(layer_w: f64, vw: f64, vh: f64, pw: f64, ph: f64) -> f32 {
-    let base = (pw / vw.max(1.0)).min(ph / vh.max(1.0));
-    if base > 0.0 {
-        (layer_w / (vw * base)).clamp(1.0, 10.0) as f32
-    } else {
-        1.0
-    }
-}
+#[path = "edit_geometry.rs"]
+mod geometry;
+#[cfg(test)]
+use geometry::zoom_transform;
+pub(crate) use geometry::{
+    blur_radius_for_slider, contain_rect, grown_rect, positioned_transform, quantize_playhead,
+    slider_for_radius, zoom_for_transform,
+};

@@ -11,15 +11,39 @@ pub(super) const HANDLE_SIZE: f32 = 9.0;
 pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 
 pub(crate) mod canvas;
+mod context_toolbar;
+pub(crate) mod document_bar;
+pub(crate) mod duplicate_gesture;
+mod edge_handles;
+mod gesture_cancel;
+mod guides;
+pub(crate) mod history_panel;
+pub(crate) mod inline_text;
+#[cfg(test)]
+mod inline_text_tests;
+mod inline_typography;
+pub(crate) mod insert_tool;
+#[cfg(test)]
+mod insert_tool_tests;
 mod interaction;
 mod layer_ops;
+mod layer_picking;
+mod marquee;
+mod selection_geometry;
+mod selection_gesture;
+#[cfg(test)]
+mod selection_gesture_tests;
+mod selection_layout;
 
 #[cfg(test)]
 #[path = "layer_ops_tests.rs"]
 mod layer_ops_tests;
 mod overlay;
+pub(crate) mod palette;
+mod palette_actions;
 pub(crate) mod properties_panel;
 mod slot_chrome;
+mod spacing_overlay;
 mod video_playback;
 mod viewport;
 

@@ -43,6 +43,11 @@ pub(super) fn draw_selection_overlay(
     clip: egui::Rect,
 ) {
     let painter = ui.painter_at(clip);
+    super::guides::draw(state, ui, coord, clip);
+    super::insert_tool::draw(state, ui, coord, clip);
+    super::marquee::draw(state, ui, coord, clip);
+    super::layer_picking::draw(state, ui, coord, clip);
+    super::spacing_overlay::draw(state, ui, coord, clip);
 
     // Guías magnéticas activas (líneas que cruzan todo el lienzo).
     let guide_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 64, 129));
@@ -78,13 +83,10 @@ pub(super) fn draw_selection_overlay(
         ));
     }
 
-    let Some(sel) = state.selection.primary() else {
+    let Some(t) = super::selection_geometry::selection_box(state) else {
         return;
     };
-    let Ok(layer) = state.doc.layer(sel) else {
-        return;
-    };
-    let t = &layer.transform;
+    let t = &t;
     let accent = if state.crop_mode {
         egui::Color32::from_rgb(255, 149, 0) // naranja: modo recorte
     } else {
@@ -117,6 +119,27 @@ pub(super) fn draw_selection_overlay(
             egui::Stroke::new(1.5, accent),
             egui::StrokeKind::Inside,
         );
+    }
+
+    if !state.crop_mode
+        && state.selection.len() == 1
+        && state.selection.primary().is_some_and(|id| {
+            state
+                .doc
+                .layer(id)
+                .is_ok_and(|l| !matches!(l.content, canvas_core::LayerContent::Group(_)))
+        })
+    {
+        for (_, pos) in super::edge_handles::positions([tl, tr, bl, br]) {
+            let r = egui::Rect::from_center_size(pos, egui::Vec2::splat(HANDLE_SIZE));
+            painter.rect_filled(r, 2.0, egui::Color32::WHITE);
+            painter.rect_stroke(
+                r,
+                2.0,
+                egui::Stroke::new(1.5, accent),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
 
     if state.crop_mode {

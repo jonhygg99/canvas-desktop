@@ -16,7 +16,7 @@ mod text;
 mod tests;
 
 pub use raster::{image_data_from_rgba, ImageMap};
-pub use text::text_lines;
+pub use text::{text_font, text_lines};
 
 /// Píxel de 1x1 transparente que se dibuja (fuera de página) en TODA escena
 /// que se mande al renderizador compartido. Ver `draw_atlas_anchor`.

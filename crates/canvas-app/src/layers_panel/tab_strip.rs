@@ -115,6 +115,9 @@ fn tick_swap_anim(
     let Some(mut a) = anim.take() else {
         return (0.0, None);
     };
+    if ctx.style_of(egui::Theme::Dark).animation_time == 0.0 {
+        return (0.0, None);
+    }
     if !a.started {
         a.start = now;
         a.started = true;
@@ -287,6 +290,7 @@ pub(crate) fn vertical_tab_strip_ui(
     }
 
     let tab_rects = tab_layout(strip_rect, order);
+    keyboard_tabs(ui, &tab_rects, active_tab, layers_collapsed);
     let now: f64 = ui.input(|i| i.time);
     let (slide, swap) = tick_swap_anim(&mut anim, now, ui.ctx());
     let icon_fade = icon_fade_factor(slide, tab_rects.len(), TAB_H);
@@ -335,4 +339,42 @@ pub(crate) fn vertical_tab_strip_ui(
     ui.data_mut(|d| d.insert_temp(dead_salt, dead_press));
 
     new_order
+}
+
+fn keyboard_tabs(
+    ui: &egui::Ui,
+    rects: &[(LeftTab, egui::Rect)],
+    active: &mut LeftTab,
+    collapsed: &mut bool,
+) {
+    for (tab, rect) in rects {
+        let response = ui.interact(
+            *rect,
+            egui::Id::new(("left-tab-keyboard", tab)),
+            egui::Sense::focusable_noninteractive(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                ui.is_enabled(),
+                *active == *tab,
+                crate::i18n::tr(super::tab_draw::tab_tip(*tab)),
+            )
+        });
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                *rect,
+                4.0,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Inside,
+            );
+            if ui.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Space)
+            }) {
+                *active = *tab;
+                *collapsed = false;
+            }
+        }
+    }
 }

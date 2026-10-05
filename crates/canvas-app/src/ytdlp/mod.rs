@@ -1,6 +1,8 @@
 //! Descargas con yt-dlp: panel del sidebar izquierdo.
 
 pub mod api;
+mod clip_cards;
+mod clip_preview;
 pub mod edit;
 pub mod panel;
 pub mod state;

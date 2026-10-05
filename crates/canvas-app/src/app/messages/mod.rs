@@ -22,6 +22,7 @@ mod document;
 mod export;
 mod gallery;
 mod load;
+mod repair;
 mod save;
 mod serper;
 mod shell;
@@ -104,7 +105,10 @@ impl AppInner {
                 *open_after = Some(Nav::Open(path));
             }
             AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
-            AppMsg::SaveAsPicked(path) => ws.save.pending_save_as = path,
+            AppMsg::SaveAsPicked(path) => {
+                ws.save.save_path_dialog_open = false;
+                ws.save.pending_save_as = path;
+            }
             AppMsg::Saved {
                 path,
                 result,
@@ -204,7 +208,7 @@ impl AppInner {
                 generation,
                 path,
                 result,
-            } => self.on_slot_prepared(ws, folder, generation, path, result),
+            } => self.on_slot_prepared(ws, folder, generation, path, result, ctx),
             AppMsg::CanvasPathReserved {
                 folder,
                 slot,
@@ -229,6 +233,7 @@ impl AppInner {
                 result,
                 metadata,
             } => self.on_image_loaded(ws, path, result, metadata, ctx),
+            AppMsg::YtdlpItemFinished(outcome) => self.on_ytdlp_item(ws, outcome),
             AppMsg::YtdlpDownloadProgress { index, total, text } => {
                 self.on_ytdlp_progress(ws, index, total, text, ctx)
             }
@@ -245,6 +250,14 @@ impl AppInner {
                 self.on_ytdlp_frames_failed(ws, clip_id, error)
             }
             AppMsg::YtdlpEditAccepted(accept) => self.on_ytdlp_edit_accepted(ws, accept, ctx),
+            AppMsg::PngRepaired { original, repaired } => {
+                self.on_png_repaired(ws, original, repaired, ctx)
+            }
+            AppMsg::RepairFailed {
+                original,
+                kind,
+                message,
+            } => self.on_repair_failed(ws, original, kind, message),
         }
     }
 

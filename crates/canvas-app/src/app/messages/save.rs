@@ -107,6 +107,9 @@ impl AppInner {
                         );
                     }
                     if new_source {
+                        if let Some(slot) = ws.deck.slots.get(ws.deck.active) {
+                            ws.deck.materialize_placeholder(slot.id, path.clone());
+                        }
                         state.doc.source_path = Some(path);
                     }
                     // A04: el worker escribió la captura tomada al lanzar el

@@ -95,6 +95,15 @@ impl AppInner {
                 }
                 Err(e) => {
                     tracing::warn!("miniatura de {} falló: {e}", path.display());
+                    if canvas_io::is_image_file(&path) {
+                        super::repair::maybe_auto_handle(
+                            ws,
+                            &self.settings,
+                            &path,
+                            canvas_io::classify(&path),
+                            ctx,
+                        );
+                    }
                     if want_deck {
                         ws.deck.set_thumb(&path, None);
                     }

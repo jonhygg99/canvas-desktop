@@ -25,7 +25,13 @@ pub enum SlotContent {
     /// Cargado, listo para renderizar y para activarse.
     Ready(Box<SlotDoc>),
     /// La carga falló; no se reintenta sola, solo si el usuario la activa.
-    Failed(String),
+    /// `kind` clasifica el fallo una sola vez (en `on_slot_prepared`) para
+    /// que la UI explique en vez de mostrar el error técnico crudo; `None`
+    /// conserva el mensaje tal cual (compatibilidad).
+    Failed {
+        message: String,
+        kind: Option<canvas_io::CorruptionKind>,
+    },
     /// ES el lienzo activo: su contenido está prestado a `EditorState`
     /// (`EditorState::take_slot`/`put_slot`).
     Active,
@@ -117,6 +123,30 @@ pub struct Slot {
     /// siembra de la galería (`seed_gallery_from_deck`): ninguno de esos
     /// tiene sentido sobre un archivo que no existe.
     pub is_placeholder: bool,
+}
+
+/// Explicación corta (inglés, va a la UI) de una ranura fallida según su
+/// tipo clasificado. Con `kind == None` se conserva el mensaje técnico
+/// tal cual (truncado): es lo que había antes para todo.
+pub fn failure_notice(kind: Option<canvas_io::CorruptionKind>, message: &str) -> String {
+    use canvas_io::CorruptionKind as Kind;
+    let short = match kind {
+        Some(Kind::Empty) => "Empty file (0 bytes) — re-download it; nothing to repair".to_owned(),
+        Some(Kind::Truncated) => "Truncated file — re-download it; nothing to repair".to_owned(),
+        Some(Kind::ChecksumMismatch) => {
+            "Checksum error — right-click the file in Gallery and choose Try repair".to_owned()
+        }
+        Some(Kind::Undecodable) => "Unreadable file — quarantine or delete it".to_owned(),
+        Some(Kind::Unsupported) => "Unsupported file".to_owned(),
+        Some(Kind::Healthy) | None => {
+            let mut short = message.to_owned();
+            if short.chars().count() > 60 {
+                short = format!("{}…", short.chars().take(59).collect::<String>());
+            }
+            short
+        }
+    };
+    short
 }
 
 impl Slot {

@@ -19,8 +19,10 @@ use crate::editor::EditorState;
 use crate::settings::LayersTabOrder;
 use crate::sidebar;
 
+mod browser;
 mod insert;
 mod ops;
+mod preview;
 mod row;
 mod tab_draw;
 mod tab_strip;
@@ -34,7 +36,7 @@ pub(crate) use tab_strip::vertical_tab_strip_ui;
 
 // Nombres que solo usan los tests (glob `use super::*` en `tests.rs`).
 #[cfg(test)]
-use insert::{insert_item, INSERT_ITEMS, INSERT_TILE_H};
+use insert::{insert_item, INSERT_ITEMS};
 #[cfg(test)]
 use tab_strip::ordered_tabs;
 
@@ -94,6 +96,7 @@ pub fn left_panel_ui(
     deck_folder: Option<std::path::PathBuf>,
     insert_dest: crate::loader::ImageInsertDest,
     tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
+    collapsed: &mut bool,
 ) -> Option<LayersTabOrder> {
     sidebar::compact(ui);
     let mut new_order = None;
@@ -110,7 +113,7 @@ pub fn left_panel_ui(
             new_order = vertical_tab_strip_ui(
                 ui,
                 &mut state.active_left_tab,
-                &mut settings.layers_collapsed,
+                collapsed,
                 settings.layers_tab_order,
                 false,
             );
@@ -186,23 +189,16 @@ pub fn left_panel_ui(
                             tx,
                             &ui.ctx().clone(),
                         );
-                        crate::ytdlp::retry_pending_frames(&mut state.ytdlp, tx, &ui.ctx().clone());
-                        if let Some(accept) =
-                            crate::ytdlp::edit_window_ui(&mut state.ytdlp, settings, ui)
-                        {
-                            let _ = tx.send(crate::loader::AppMsg::YtdlpEditAccepted(accept));
-                        }
                     }
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);
                         ui.separator();
+                        let rows = browser::rows(state, ui);
                         let Ok(page) = state.doc.page() else {
-                            ui.weak("No document.");
+                            ui.weak(crate::i18n::tr("No document."));
                             return;
                         };
-                        let mut rows = Vec::new();
-                        push_rows(page, None, 0, &mut rows);
-                        let is_empty = rows.is_empty();
+                        let is_empty = page.layers.is_empty();
                         let mut pending_drop: Option<(Vec<LayerId>, Drop)> = None;
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             for row in &rows {
@@ -211,7 +207,9 @@ pub fn left_panel_ui(
                                 }
                             }
                             if is_empty {
-                                ui.weak("No layers yet.");
+                                ui.weak(crate::i18n::tr("No layers yet."));
+                            } else if rows.is_empty() {
+                                ui.weak(crate::i18n::tr("No matching layers"));
                             }
                         });
                         if let Some((ids, drop)) = pending_drop {

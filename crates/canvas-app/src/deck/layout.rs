@@ -78,14 +78,14 @@ impl Deck {
         if self.slots.is_empty() {
             return DeckRect::ZERO;
         }
-        // Incluye `add_zone` (si hay carpeta: sin ella no se pinta ni se
-        // puede pulsar) — si no, "ver toda la baraja" (`Ctrl+Alt+0`) deja la
+        // Incluye `add_zone` si se pueden añadir lienzos; de lo contrario,
+        // "ver toda la baraja" (`Ctrl+Alt+0`) deja la
         // zona "+" fuera o al borde del encuadre.
         let rects = self
             .slots
             .iter()
             .map(|s| s.rect)
-            .chain(self.folder.is_some().then_some(self.add_zone));
+            .chain(self.can_add_canvas().then_some(self.add_zone));
         let mut x0 = f64::INFINITY;
         let mut x1 = f64::NEG_INFINITY;
         let mut y0 = f64::INFINITY;

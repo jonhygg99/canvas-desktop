@@ -59,6 +59,114 @@ fn layer_count(state: &EditorState) -> usize {
 }
 
 #[test]
+fn undo_in_layer_search_does_not_undo_the_document() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    inserted(&mut state);
+    let ctx = egui::Context::default();
+    let mut query = String::new();
+    for events in [vec![], vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]] {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                state.handle_shortcuts(&ctx, false, false);
+                ui.add(egui::TextEdit::singleline(&mut query).id(egui::Id::new("layer_search")))
+                    .request_focus();
+            },
+        );
+    }
+    assert_eq!(layer_count(&state), 1);
+    assert_eq!(state.history.undo_depth(), 1);
+}
+
+#[test]
+fn open_palette_keeps_delete_and_undo_from_editing_the_document() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    inserted(&mut state);
+    let ctx = egui::Context::default();
+    crate::editor::palette::open(&ctx);
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            events: vec![
+                key(egui::Key::Delete, egui::Modifiers::NONE),
+                key(egui::Key::Z, egui::Modifiers::COMMAND),
+            ],
+            ..Default::default()
+        },
+        |_ui| state.handle_shortcuts(&ctx, false, false),
+    );
+    assert_eq!(layer_count(&state), 1);
+    assert_eq!(state.history.undo_depth(), 1);
+}
+
+#[test]
+fn guide_dialog_keeps_undo_from_editing_the_document() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    inserted(&mut state);
+    let ctx = egui::Context::default();
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::new(("guide_editor", state.active_slot_id)),
+            Vec::<canvas_core::Guide>::new(),
+        )
+    });
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            events: vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+            ..Default::default()
+        },
+        |_ui| state.handle_shortcuts(&ctx, false, false),
+    );
+    assert_eq!(layer_count(&state), 1);
+    assert_eq!(state.history.undo_depth(), 1);
+}
+
+#[test]
+fn arrows_move_selection_in_document_pixels_and_undo_together() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = inserted(&mut state);
+    let b = inserted(&mut state);
+    state.selection.toggle(a);
+    state.viewport.zoom = 0.25;
+    let before = state.doc.layer(a).unwrap().transform;
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
+    );
+    assert_eq!(state.doc.layer(a).unwrap().transform.x, before.x + 1.0);
+    assert_eq!(state.doc.layer(b).unwrap().transform.x, before.x + 1.0);
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::ArrowUp, egui::Modifiers::SHIFT)],
+    );
+    assert_eq!(state.doc.layer(a).unwrap().transform.y, before.y - 10.0);
+    state.undo();
+    assert_eq!(state.doc.layer(b).unwrap().transform.y, before.y);
+    state.undo();
+    assert_eq!(state.doc.layer(a).unwrap().transform, before);
+}
+
+#[test]
+fn arrows_respect_locked_layers_and_expand_groups_once() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let a = inserted(&mut state);
+    let b = inserted(&mut state);
+    state.selection.toggle(a);
+    crate::layers_panel::group_selection(&mut state);
+    state.selection.toggle(a);
+    state.doc.layer_mut(b).unwrap().locked = true;
+    let before = state.doc.layer(a).unwrap().transform;
+    run_with_keys(
+        &mut state,
+        vec![key(egui::Key::ArrowDown, egui::Modifiers::SHIFT)],
+    );
+    assert_eq!(state.doc.layer(a).unwrap().transform.y, before.y + 10.0);
+    assert_eq!(state.doc.layer(b).unwrap().transform.y, before.y);
+}
+
+#[test]
 fn ctrl_z_undoes_and_shift_z_or_ctrl_y_redoes() {
     let mut state = EditorState::new_blank(800.0, 600.0);
     inserted(&mut state);

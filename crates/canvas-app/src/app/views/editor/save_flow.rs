@@ -41,6 +41,7 @@ pub(super) fn handle_save(
     f.save.save_requested = false;
 
     if save_as {
+        f.save.save_path_dialog_open = true;
         if state.is_design {
             loader::spawn_pick_design_path(Some(state.file_name()), f.tx.clone(), ctx.clone());
         } else {
@@ -80,11 +81,14 @@ pub(super) fn handle_save(
                     };
                     start_save_design(state, &mut sctx, path, false);
                 }
-                None => loader::spawn_pick_design_path(
-                    Some(state.file_name()),
-                    f.tx.clone(),
-                    ctx.clone(),
-                ),
+                None => {
+                    f.save.save_path_dialog_open = true;
+                    loader::spawn_pick_design_path(
+                        Some(state.file_name()),
+                        f.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
             }
         } else {
             match state.doc.source_path.clone() {
@@ -140,6 +144,7 @@ pub(super) fn handle_save(
                 }
                 // Sin origen en disco: cae a «Guardar como…».
                 None => {
+                    f.save.save_path_dialog_open = true;
                     loader::spawn_pick_save_path(Some(state.file_name()), f.tx.clone(), ctx.clone())
                 }
             }

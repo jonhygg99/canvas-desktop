@@ -35,6 +35,10 @@ impl AppInner {
         );
         if self.settings != before {
             self.settings.save_in_background();
+            let viewports = ctx.input(|i| i.raw.viewports.keys().copied().collect::<Vec<_>>());
+            for viewport in viewports {
+                ctx.request_repaint_of(viewport);
+            }
         }
         if let Some(action) = action {
             self.shell_status = "Working…".to_owned();
@@ -71,14 +75,16 @@ impl AppInner {
         if !ws.show_about {
             return;
         }
-        egui::Window::new("About Canvas Desktop")
+        egui::Window::new(crate::i18n::tr("About Canvas Desktop"))
             .open(&mut ws.show_about)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label(format!("Canvas Desktop {}", env!("CARGO_PKG_VERSION")));
-                ui.weak("A native canvas editor that saves straight to your image files.");
+                ui.weak(crate::i18n::tr(
+                    "A native canvas editor that saves straight to your image files.",
+                ));
             });
     }
 }
@@ -109,7 +115,7 @@ pub(super) fn overwrite_modal_ui(
     let jpeg_quality = settings.jpeg_quality;
     let modal = egui::Modal::new(egui::Id::new("overwrite_warning")).show(sctx.ctx, |ui| {
         ui.set_max_width(400.0);
-        ui.heading("Overwrite the original file?");
+        ui.heading(crate::i18n::tr("Overwrite the original file?"));
         ui.add_space(6.0);
         ui.label(format!(
             "Saving will permanently replace \"{file_name}\" on disk \
@@ -121,16 +127,19 @@ pub(super) fn overwrite_modal_ui(
             ));
         }
         ui.add_space(8.0);
-        ui.checkbox(&mut save.overwrite_dont_ask, "Don't ask again");
+        ui.checkbox(
+            &mut save.overwrite_dont_ask,
+            crate::i18n::tr("Don't ask again"),
+        );
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("Overwrite").clicked() {
+            if ui.button(crate::i18n::tr("Overwrite")).clicked() {
                 choice = Choice::Overwrite;
             }
-            if ui.button("Save as… instead").clicked() {
+            if ui.button(crate::i18n::tr("Save as… instead")).clicked() {
                 choice = Choice::SaveAs;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
                 choice = Choice::Cancel;
             }
         });
@@ -206,7 +215,7 @@ pub(super) fn readonly_modal_ui(
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
     let modal = egui::Modal::new(egui::Id::new("readonly_source")).show(ctx, |ui| {
         ui.set_max_width(400.0);
-        ui.heading("This file can't be overwritten");
+        ui.heading(crate::i18n::tr("This file can't be overwritten"));
         ui.add_space(6.0);
         if is_svg {
             ui.label(format!(
@@ -221,13 +230,15 @@ pub(super) fn readonly_modal_ui(
                  frame, so the original stays untouched."
             ));
         }
-        ui.label("Use \"Save as…\" to save the result as a new file.");
+        ui.label(crate::i18n::tr(
+            "Use \"Save as…\" to save the result as a new file.",
+        ));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("Save as…").clicked() {
+            if ui.button(crate::i18n::tr("Save as…")).clicked() {
                 save_as_instead = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
                 cancel = true;
             }
         });
@@ -274,7 +285,7 @@ pub(super) fn discard_raster_modal_ui(
         .unwrap_or_else(|| path.display().to_string());
     let modal = egui::Modal::new(egui::Id::new("discard_raster")).show(sctx.ctx, |ui| {
         ui.set_max_width(400.0);
-        ui.heading("Save without any images?");
+        ui.heading(crate::i18n::tr("Save without any images?"));
         ui.add_space(6.0);
         ui.label(format!(
             "The document you're saving as \"{file_name}\" has no image \
@@ -285,13 +296,13 @@ pub(super) fn discard_raster_modal_ui(
         ));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("Save anyway").clicked() {
+            if ui.button(crate::i18n::tr("Save anyway")).clicked() {
                 choice = Choice::Flatten;
             }
-            if ui.button("Save as design…").clicked() {
+            if ui.button(crate::i18n::tr("Save as design…")).clicked() {
                 choice = Choice::Design;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
                 choice = Choice::Cancel;
             }
         });
@@ -341,7 +352,7 @@ pub(super) fn low_memory_modal_ui(
     let plural = if count == 1 { "file" } else { "files" };
     let modal = egui::Modal::new(egui::Id::new("low_memory_save_all")).show(ctx, |ui| {
         ui.set_max_width(400.0);
-        ui.heading("Low on memory — save anyway?");
+        ui.heading(crate::i18n::tr("Low on memory — save anyway?"));
         ui.add_space(6.0);
         ui.label(format!(
             "Your system is low on available RAM and Save All will write \
@@ -352,10 +363,10 @@ pub(super) fn low_memory_modal_ui(
         ));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("Save All anyway").clicked() {
+            if ui.button(crate::i18n::tr("Save All anyway")).clicked() {
                 proceed = true;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
                 cancel = true;
             }
         });
@@ -385,7 +396,12 @@ pub(super) fn export_flow_ui(
             .page()
             .map(|p| (p.width, p.height))
             .unwrap_or((0.0, 0.0));
-        match export::export_modal(dialog, sctx.ctx, page_size) {
+        let has_video = state.doc.page().is_ok_and(|page| {
+            page.layers
+                .iter()
+                .any(|layer| matches!(layer.content, canvas_core::LayerContent::Video(_)))
+        });
+        match export::export_modal(dialog, sctx.ctx, page_size, has_video) {
             export::ExportChoice::None => {}
             export::ExportChoice::Cancel => {
                 export.export_dialog = None;

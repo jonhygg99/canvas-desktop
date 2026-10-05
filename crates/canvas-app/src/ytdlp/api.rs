@@ -133,14 +133,20 @@ pub fn parse_time(text: &str) -> Option<f64> {
 
 /// Formatea segundos como `H:MM:SS` para `--download-sections "*a-b"`.
 pub fn fmt_section_time(secs: f64) -> String {
-    let total = secs.max(0.0).floor() as u64;
+    let millis = (secs.max(0.0) * 1000.0).round() as u64;
+    let total = millis / 1000;
+    let fraction = if millis.is_multiple_of(1000) {
+        String::new()
+    } else {
+        format!(".{:03}", millis % 1000)
+    };
     let h = total / 3600;
     let m = (total % 3600) / 60;
     let s = total % 60;
     if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
+        format!("{h}:{m:02}:{s:02}{fraction}")
     } else {
-        format!("{m}:{s:02}")
+        format!("{m}:{s:02}{fraction}")
     }
 }
 
@@ -199,6 +205,20 @@ pub fn reserve_clip_path(folder: &Path, stem: &str) -> Result<PathBuf, std::io::
             format!("{stem} ({}).mp4", n + 1)
         };
         let candidate = folder.join(&name);
+        let prefix = format!(
+            "{}.",
+            candidate.file_stem().unwrap_or_default().to_string_lossy()
+        );
+        // Un parcial pertenece a su URL: otra descarga no debe ocuparlo.
+        let partial = std::fs::read_dir(folder).ok().is_some_and(|entries| {
+            entries.flatten().any(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with(&prefix) && (name.ends_with(".part") || name.ends_with(".ytdl"))
+            })
+        });
+        if partial {
+            continue;
+        }
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

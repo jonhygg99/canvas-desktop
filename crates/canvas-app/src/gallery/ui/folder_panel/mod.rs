@@ -38,15 +38,15 @@ pub(super) fn folder_search_ui(ui: &mut egui::Ui, width: f32) -> String {
             [width, 20.0],
             egui::TextEdit::singleline(&mut query)
                 .id(egui::Id::new(("gallery_folder_filter", "input")))
-                .hint_text("Search folders…"),
+                .hint_text(crate::i18n::tr("Search folders…")),
         );
         if response.changed() {
             ui.data_mut(|d| d.insert_temp(filter_id, query.clone()));
         }
         let has_query = !query.trim().is_empty();
         if ui
-            .add_enabled(has_query, egui::Button::new("✕").small())
-            .on_hover_text("Clear search")
+            .add_enabled(has_query, egui::Button::new(crate::i18n::tr("✕")).small())
+            .on_hover_text(crate::i18n::tr("Clear search"))
             .clicked()
         {
             query.clear();
@@ -82,16 +82,16 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
     let cloud_folder = canvas_io::is_cloud_storage_path(&state.folder);
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
-        ui.strong("Folders");
+        ui.strong(crate::i18n::tr("Folders"));
         if ui
-            .small_button("↻")
-            .on_hover_text("Refresh folder list")
+            .small_button(crate::i18n::tr("↻"))
+            .on_hover_text(crate::i18n::tr("Refresh folder list"))
             .clicked()
         {
             state.refresh_folder_lists();
         }
         if ui
-            .small_button("Change View")
+            .small_button(crate::i18n::tr("Change View"))
             .on_hover_text(format!(
                 "Change folders view to {}",
                 next_folder_panel_side(state.folder_panel_side).label()
@@ -103,23 +103,23 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
     });
     ui.horizontal_wrapped(|ui| {
         if ui
-            .add_enabled(state.navigation.can_back(), egui::Button::new("<"))
-            .on_hover_text("Back to previous folder (Alt+Left)")
+            .add_enabled(state.navigation.can_back(), egui::Button::new(crate::i18n::tr("<")))
+            .on_hover_text(crate::i18n::tr("Back to previous folder (Alt+Left)"))
             .clicked()
         {
             action = Some(GalleryAction::Back);
         }
         if ui
-            .add_enabled(state.navigation.can_forward(), egui::Button::new(">"))
-            .on_hover_text("Forward to next folder (Alt+Right)")
+            .add_enabled(state.navigation.can_forward(), egui::Button::new(crate::i18n::tr(">")))
+            .on_hover_text(crate::i18n::tr("Forward to next folder (Alt+Right)"))
             .clicked()
         {
             action = Some(GalleryAction::Forward);
         }
         if let Some(parent) = state.folder.parent() {
             if ui
-                .small_button("Parent")
-                .on_hover_text("Open parent folder (Alt+Up)")
+                .small_button(crate::i18n::tr("Parent"))
+                .on_hover_text(crate::i18n::tr("Open parent folder (Alt+Up)"))
                 .clicked()
             {
                 action = Some(GalleryAction::OpenFolder(parent.to_owned()));
@@ -150,19 +150,19 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                     ui.colored_label(ui.visuals().warn_fg_color, "Could not list folders.")
                         .on_hover_text(error.clone());
                     if ui
-                        .small_button("Retry")
-                        .on_hover_text("List this folder's subfolders again.")
+                        .small_button(crate::i18n::tr("Retry"))
+                        .on_hover_text(crate::i18n::tr("List this folder's subfolders again."))
                         .clicked()
                     {
                         state.refresh_folder_lists();
                     }
                     #[cfg(target_os = "macos")]
-                    if cloud_folder && ui.small_button("Grant access…").clicked() {
+                    if cloud_folder && ui.small_button(crate::i18n::tr("Grant access…")).clicked() {
                         super::shell::open_full_disk_access_pane();
                         state.note_settings_opened();
                     }
                 } else if state.folders.children.is_empty() && state.new_folder_inside.is_none() {
-                    ui.weak("No subfolders");
+                    ui.weak(crate::i18n::tr("No subfolders"));
                 } else if visible.is_empty() {
                     ui.weak(format!("No folders match \"{}\"", query.trim()));
                 } else {
@@ -197,20 +197,20 @@ fn folder_panel_contents(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<
                         ui.colored_label(ui.visuals().warn_fg_color, "Could not list folders.")
                             .on_hover_text(error.clone());
                         if ui
-                            .small_button("Retry")
-                            .on_hover_text("List this folder's subfolders again.")
+                            .small_button(crate::i18n::tr("Retry"))
+                            .on_hover_text(crate::i18n::tr("List this folder's subfolders again."))
                             .clicked()
                         {
                             state.refresh_folder_lists();
                         }
                         #[cfg(target_os = "macos")]
-                        if cloud_folder && ui.small_button("Grant access…").clicked() {
+                        if cloud_folder && ui.small_button(crate::i18n::tr("Grant access…")).clicked() {
                             super::shell::open_full_disk_access_pane();
                             state.note_settings_opened();
                         }
                     } else if state.folders.children.is_empty() && state.new_folder_inside.is_none()
                     {
-                        ui.weak("No subfolders");
+                        ui.weak(crate::i18n::tr("No subfolders"));
                     } else if visible.is_empty() {
                         ui.weak(format!("No folders match \"{}\"", query.trim()));
                     } else {
@@ -241,7 +241,7 @@ fn new_folder_ui(
             let response = ui.add(
                 egui::TextEdit::singleline(name)
                     .id(id)
-                    .hint_text("Folder name")
+                    .hint_text(crate::i18n::tr("Folder name"))
                     .desired_width(160.0),
             );
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

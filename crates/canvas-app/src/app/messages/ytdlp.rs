@@ -7,6 +7,12 @@ use crate::loader;
 use super::super::{View, Workspace};
 
 impl super::AppInner {
+    pub(super) fn on_ytdlp_item(&mut self, ws: &mut Workspace, outcome: loader::YtdlpItemOutcome) {
+        if let View::Editor(state) = &mut ws.view {
+            state.ytdlp.finish_download_item(outcome);
+        }
+    }
+
     pub(super) fn on_ytdlp_progress(
         &mut self,
         ws: &mut Workspace,
@@ -32,6 +38,7 @@ impl super::AppInner {
     ) {
         if let View::Editor(state) = &mut ws.view {
             state.ytdlp.downloading = false;
+            state.ytdlp.cancel = None;
             // La lista acumula: lo descargado se queda hasta que se borre
             // (los que ya no existen en disco se podan).
             state.ytdlp.done = merge_done(&state.ytdlp.done, paths.clone());
@@ -86,6 +93,7 @@ impl super::AppInner {
         if let View::Editor(state) = &mut ws.view {
             if let Some(edit) = state.ytdlp.edit.as_mut() {
                 if edit.matches(&done.clip_id) {
+                    edit.set_source_fps(done.source_fps);
                     edit.set_frames(done.files, done.fps, done.duration, done.video_size);
                 }
             }

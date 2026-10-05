@@ -14,10 +14,16 @@ mod file_ops;
 mod gallery_ops;
 mod image_import;
 mod load_ops;
+mod repair_ops;
 mod save_ops;
 mod serper_ops;
 mod unsplash_ops;
+mod ytdlp_download;
 mod ytdlp_ops;
+mod ytdlp_process;
+pub use ytdlp_download::{
+    spawn_ytdlp_download, DownloadedClip, YtdlpDownloadRequest, YtdlpItemOutcome,
+};
 
 use std::path::PathBuf;
 
@@ -36,6 +42,7 @@ pub use load_ops::{
     spawn_deck_probe, spawn_load_design, spawn_load_image, spawn_load_slot, spawn_pick_file,
     spawn_pick_folder,
 };
+pub use repair_ops::{auto_action_for, spawn_repair_png, AutoRepairAction};
 pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_reserve_canvas_path, spawn_save,
     spawn_save_design, SaveInput,
@@ -45,10 +52,7 @@ pub use serper_ops::{
     spawn_serper_thumb, BulkItem, SerperImageRequest,
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
-pub use ytdlp_ops::{
-    spawn_ytdlp_delete, spawn_ytdlp_download, spawn_ytdlp_frames, YtdlpDownloadRequest,
-    YtdlpFramesOutcome,
-};
+pub use ytdlp_ops::{spawn_ytdlp_delete, spawn_ytdlp_frames, YtdlpFramesOutcome};
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -321,6 +325,7 @@ pub enum AppMsg {
     /// congela todo el event loop multi-ventana.
     UnsavedDialogAnswer(DialogDecision),
     /// Progreso de una descarga yt-dlp (índice, total, texto).
+    YtdlpItemFinished(YtdlpItemOutcome),
     YtdlpDownloadProgress {
         index: usize,
         total: usize,
@@ -347,6 +352,20 @@ pub enum AppMsg {
     },
     /// Aceptar de la ventana Editar: crear el lienzo nuevo con estos params.
     YtdlpEditAccepted(crate::ytdlp::VideoAccept),
+    /// Un PNG con checksum roto se reparó en su mismo nombre: la corrupta
+    /// está en la papelera del sistema y `repaired` (== `original`) ya
+    /// trae los píxeles sanos.
+    PngRepaired {
+        original: PathBuf,
+        repaired: PathBuf,
+    },
+    /// La reparación no fue posible: `kind` dice por qué (vacío, truncado,
+    /// daño mayor) y `message` lleva el texto para la UI/log.
+    RepairFailed {
+        original: PathBuf,
+        kind: canvas_io::CorruptionKind,
+        message: String,
+    },
 }
 
 /// Qué decidió el usuario en un diálogo «¿guardar los cambios?».
@@ -384,6 +403,12 @@ pub enum GalleryOp {
     },
     /// A la Papelera de reciclaje (crate `trash`), no borrado permanente.
     Delete {
+        path: PathBuf,
+    },
+    /// A la cuarentena del proyecto (`.canvas/quarantine/`): aparta un
+    /// archivo ilegible sin borrarlo. Sin deshacer integrado (a diferencia
+    /// del borrado del editor): restaurar es moverlo de vuelta a mano.
+    Quarantine {
         path: PathBuf,
     },
     CreateFolder {

@@ -16,10 +16,10 @@ mod snap;
 
 pub use command::{
     Command, Composite, Group, History, InsertLayer, RemoveLayer, Rename, Reorder, SetBlur,
-    SetContent, SetCrop, SetEffects, SetLocked, SetOpacity, SetPageSize, SetShadow, SetTransform,
-    SetVisible, Ungroup,
+    SetContent, SetCrop, SetEffects, SetGuides, SetLocked, SetOpacity, SetPageSize, SetShadow,
+    SetTransform, SetVisible, Ungroup,
 };
-pub use document::{Document, Page};
+pub use document::{Document, Guide, Page};
 pub use error::CoreError;
 pub use geometry::{
     align_horizontal, align_vertical, contain_transform, cover_transform, resize_around_center,

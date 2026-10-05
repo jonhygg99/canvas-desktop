@@ -23,11 +23,16 @@ pub enum WelcomeAction {
     RemoveRecent(PathBuf),
     PinRecent(PathBuf),
     UnpinRecent(PathBuf),
+    /// Intentar reparar el archivo de la apertura fallida.
+    Repair(PathBuf),
+    /// Apartarlo a la cuarentena del proyecto.
+    Quarantine(PathBuf),
 }
 
 pub fn show(
     ui: &mut egui::Ui,
     error: Option<&str>,
+    failed: Option<(&std::path::Path, canvas_io::CorruptionKind)>,
     recents: &[PathBuf],
     pinned: &[PathBuf],
 ) -> Option<WelcomeAction> {
@@ -37,7 +42,9 @@ pub fn show(
             draw_welcome_actions(ui, &mut action);
             draw_recent_folders(ui, recents, pinned, &mut action);
             ui.add_space(18.0);
-            ui.weak("You can also drag an image or a folder onto this window.");
+            ui.weak(crate::i18n::tr(
+                "You can also drag an image or a folder onto this window.",
+            ));
             ui.add_space(8.0);
             if icon_text_button_ui(ui, true, draw_gear_icon, "Settings", None, egui::Vec2::ZERO)
                 .clicked()
@@ -48,6 +55,29 @@ pub fn show(
                 ui.add_space(18.0);
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
+            if let Some((path, kind)) = failed {
+                // Salida del callejón: reparar (solo si el tipo lo admite)
+                // o apartar a cuarentena.
+                if kind == canvas_io::CorruptionKind::ChecksumMismatch
+                    && ui
+                        .add_sized(
+                            egui::vec2(BUTTON_W, BUTTON_H),
+                            egui::Button::new(crate::i18n::tr("Try repair")),
+                        )
+                        .clicked()
+                {
+                    action = Some(WelcomeAction::Repair(path.to_path_buf()));
+                }
+                if ui
+                    .add_sized(
+                        egui::vec2(BUTTON_W, BUTTON_H),
+                        egui::Button::new(crate::i18n::tr("Move to quarantine")),
+                    )
+                    .clicked()
+                {
+                    action = Some(WelcomeAction::Quarantine(path.to_path_buf()));
+                }
+            }
         });
     });
     action
@@ -55,9 +85,9 @@ pub fn show(
 
 fn draw_welcome_actions(ui: &mut egui::Ui, action: &mut Option<WelcomeAction>) {
     ui.add_space(ui.available_height() * 0.28);
-    ui.heading(egui::RichText::new("Canvas Desktop").size(32.0));
+    ui.heading(egui::RichText::new(crate::i18n::tr("Canvas Desktop")).size(32.0));
     ui.add_space(6.0);
-    ui.label("Edit images right on top of your files.");
+    ui.label(crate::i18n::tr("Edit images right on top of your files."));
     ui.add_space(24.0);
     if icon_text_button_ui(
         ui,
@@ -119,7 +149,7 @@ fn draw_recent_folders(
     let scroll_h = (30.0 * total_items.min(5) as f32).max(90.0);
     let scroll_w = BUTTON_W + 18.0;
     ui.add_space(24.0);
-    ui.label("Recent folders");
+    ui.label(crate::i18n::tr("Recent folders"));
     ui.add_space(8.0);
     let ox = ((ui.available_width() - scroll_w) / 2.0).max(0.0);
     let rect = egui::Rect::from_min_size(

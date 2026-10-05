@@ -3,6 +3,7 @@
 
 pub(crate) mod framing;
 mod item;
+mod query;
 mod ui;
 
 pub use item::{GalleryItem, ItemKind};
@@ -92,6 +93,7 @@ pub struct GalleryState {
     pub media_filter: MediaFilter,
     /// Número de diseños que se muestran por línea (no cambia los archivos).
     pub gallery_columns: usize,
+    pub search: String,
     /// Última celda marcada con clic derecho: lo que copia Ctrl+C.
     pub selected: Option<PathBuf>,
     /// Renombrado en curso: ruta y texto editable (solo el nombre base, sin
@@ -176,6 +178,7 @@ impl GalleryState {
             sort,
             media_filter,
             gallery_columns: 5,
+            search: String::new(),
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
@@ -223,6 +226,7 @@ impl GalleryState {
             sort,
             media_filter,
             gallery_columns: 5,
+            search: String::new(),
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
@@ -296,15 +300,21 @@ impl GalleryState {
 
     pub fn merge_files(&mut self, files: Vec<(PathBuf, Option<SystemTime>)>) {
         self.scan_error = None;
-        let mut old: HashMap<PathBuf, (Option<egui::TextureHandle>, bool)> = self
-            .items
-            .drain(..)
-            .map(|i| (i.path, (i.tex, i.failed)))
-            .collect();
+        let mut old: HashMap<PathBuf, (Option<egui::TextureHandle>, bool, Option<SystemTime>)> =
+            self.items
+                .drain(..)
+                .map(|i| (i.path, (i.tex, i.failed, i.mtime)))
+                .collect();
         self.items = files
             .into_iter()
             .map(|(path, mtime)| {
-                let (tex, failed) = old.remove(&path).unwrap_or((None, false));
+                let (tex, mut failed, old_mtime) = old.remove(&path).unwrap_or((None, false, None));
+                // El archivo cambió en disco: el fallo anterior (y su
+                // miniatura) están obsoletos; la miniatura en vuelo lo
+                // confirmará o marcará el fallo de nuevo.
+                if old_mtime != mtime {
+                    failed = false;
+                }
                 let kind = if canvas_io::is_canvas_file(&path) {
                     ItemKind::Design
                 } else if canvas_io::is_video_file(&path) {
@@ -387,7 +397,10 @@ impl GalleryState {
     pub fn set_thumb(&mut self, path: &std::path::Path, tex: Option<egui::TextureHandle>) {
         if let Some(item) = self.items.iter_mut().find(|i| i.path == path) {
             match tex {
-                Some(tex) => item.tex = Some(tex),
+                Some(tex) => {
+                    item.tex = Some(tex);
+                    item.failed = false;
+                }
                 None => item.failed = true,
             }
         }
@@ -417,6 +430,10 @@ pub enum GalleryAction {
     /// Enviar este archivo a la Papelera de reciclaje. La confirmación ya
     /// ocurrió (diálogo nativo) antes de devolver esta acción.
     Delete(PathBuf),
+    /// Intentar reparar este archivo (solo se ofrece en celdas fallidas).
+    /// El worker clasifica primero: lo irreparable vuelve como aviso, no
+    /// como otro intento ciego.
+    Repair(PathBuf),
     CreateFolder(PathBuf, String),
     RenameFolder(PathBuf, String),
     DeleteFolder(PathBuf),
@@ -440,5 +457,7 @@ fn slot_contents() -> Option<PathBuf> {
     file_slot().lock_ok().clone()
 }
 
+#[cfg(test)]
+mod interaction_tests;
 #[cfg(test)]
 mod tests;

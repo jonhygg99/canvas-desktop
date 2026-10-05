@@ -23,6 +23,7 @@ mod export;
 mod framing;
 mod gallery;
 mod http;
+mod i18n;
 mod layers_panel;
 mod loader;
 mod lock;
@@ -32,6 +33,7 @@ mod serper;
 mod settings;
 mod sidebar;
 mod surface;
+mod ui_style;
 // Servidor HTTP de prueba compartido (solo compila en `cargo test`):
 // corrección del «FIN limpio» de las descargas, un único sitio.
 #[cfg(test)]

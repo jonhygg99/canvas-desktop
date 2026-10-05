@@ -57,6 +57,11 @@ impl GlobalStep {
 }
 
 impl EditorState {
+    pub(crate) fn record_creation(&mut self, slot_id: u64) {
+        self.global_undo.push(GlobalStep::Create(slot_id));
+        self.global_redo.clear();
+    }
+
     /// Aplica `cmd` al documento y lo apila como paso de deshacer del diseño
     /// activo — igual que `History::apply`, pero además registra el paso en
     /// la pila GLOBAL cruzada entre diseños (`global_undo`). Todo comando
@@ -270,6 +275,18 @@ impl EditorState {
     pub(crate) fn forget_deleted_selection(&mut self) {
         if let Ok(page) = self.doc.page() {
             self.selection.retain_existing(page);
+            // Sustituir el fondo al pegar crea otro id. Deshacer/rehacer
+            // recupera el fondo automático que vuelve a estar en la página.
+            if self
+                .background_layer
+                .is_some_and(|id| page.layer(id).is_none())
+            {
+                if let Some(background) = page.layers.iter().find(|layer| {
+                    layer.name == "Blurred background" && layer.effects.blur_radius > 0.0
+                }) {
+                    self.background_layer = Some(background.id);
+                }
+            }
         }
     }
 }

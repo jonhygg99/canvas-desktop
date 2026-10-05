@@ -26,6 +26,12 @@ pub(super) fn apply_camera(
     rect: egui::Rect,
     response: &egui::Response,
 ) -> Camera {
+    if state.ytdlp.edit.is_some() {
+        return Camera {
+            panning: false,
+            space_down: false,
+        };
+    }
     // Un salto de baraja (tira, clic directo, teclado…) deja `needs_fit`
     // pendiente (`viewport.request_fit` desde `deck_nav`): el encuadre del
     // lienzo nuevo ocurre aquí abajo, en la rama `fit_active || needs_fit`

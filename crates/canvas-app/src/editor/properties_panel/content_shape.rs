@@ -13,9 +13,9 @@ pub(super) fn shape_content_ui(
     let mut changed = false;
     let mut commit = false;
 
-    ui.label("Shape");
+    ui.label(crate::i18n::tr("Shape"));
     ui.horizontal(|ui| {
-        ui.label("Fill");
+        ui.label(crate::i18n::tr("Fill"));
         let mut fill = egui::Color32::from_rgba_unmultiplied(
             shape.fill[0],
             shape.fill[1],
@@ -27,7 +27,7 @@ pub(super) fn shape_content_ui(
             changed = true;
             commit = true;
         }
-        ui.label("Stroke");
+        ui.label(crate::i18n::tr("Stroke"));
         let mut stroke = egui::Color32::from_rgba_unmultiplied(
             shape.stroke[0],
             shape.stroke[1],
@@ -55,7 +55,7 @@ pub(super) fn shape_content_ui(
         canvas_core::ShapeKind::Rect | canvas_core::ShapeKind::Line | canvas_core::ShapeKind::Arrow
     ) {
         ui.horizontal(|ui| {
-            ui.label("Corner radius");
+            ui.label(crate::i18n::tr("Corner radius"));
             let r = ui.add(
                 egui::DragValue::new(&mut shape.corner_radius)
                     .range(0.0..=500.0)

@@ -65,8 +65,12 @@ impl EditorState {
     ) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
-        let empty = page.layers.is_empty();
-        let index = page.layers.len();
+        let empty = self.is_empty_canvas();
+        let old_background = matches!(placement, ImagePlacement::Centered)
+            .then_some(self.background_layer)
+            .flatten()
+            .filter(|id| empty && page.layer(*id).is_some());
+        let index = page.layers.len() - usize::from(old_background.is_some());
 
         let (nw, nh) = (f64::from(img.width), f64::from(img.height));
         let transform = match placement {
@@ -124,6 +128,9 @@ impl EditorState {
         let layer = Layer::new(id, name, transform, content);
 
         let mut commands: Vec<Box<dyn canvas_core::Command>> = Vec::new();
+        if let Some(id) = old_background {
+            commands.push(Box::new(RemoveLayer::new(id)));
+        }
         let mut bg_id = None;
         if needs_background {
             let new_bg_id = self.doc.allocate_layer_id();
@@ -270,14 +277,23 @@ impl EditorState {
     pub fn insert_layer_centered(&mut self, name: &str, w: f64, h: f64, content: LayerContent) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
-        let index = page.layers.len();
-        let id = self.doc.allocate_layer_id();
-        let layer = Layer::new(
-            id,
+        self.insert_layer_at(
             name,
             Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h),
             content,
         );
+    }
+
+    pub(crate) fn insert_layer_at(
+        &mut self,
+        name: &str,
+        transform: Transform,
+        content: LayerContent,
+    ) {
+        let Ok(page) = self.doc.page() else { return };
+        let index = page.layers.len();
+        let id = self.doc.allocate_layer_id();
+        let layer = Layer::new(id, name, transform, content);
         if let Err(e) = self.apply_undo_step(Box::new(InsertLayer { index, layer })) {
             tracing::error!("insertar capa falló: {e}");
             return;

@@ -45,7 +45,9 @@ pub(super) fn layer_properties_ui(
             opacity_control(state, ui, sel);
         });
         ui.label(format!("Group: {group_name}"));
-        ui.weak("Manage its contents from the layers panel on the left.");
+        ui.weak(crate::i18n::tr(
+            "Manage its contents from the layers panel on the left.",
+        ));
         return;
     }
 
@@ -102,7 +104,9 @@ pub(super) fn layer_properties_ui(
             };
             draw_lock_icon(ui.painter(), lock_rect, locked, lock_c);
             if lock_resp
-                .on_hover_text("Locked aspect ratio (hold Shift while dragging to invert)")
+                .on_hover_text(crate::i18n::tr(
+                    "Locked aspect ratio (hold Shift while dragging to invert)",
+                ))
                 .clicked()
             {
                 state.aspect_lock = !state.aspect_lock;
@@ -110,7 +114,7 @@ pub(super) fn layer_properties_ui(
         });
         let ratio = original.aspect_ratio();
         ui.horizontal(|ui| {
-            ui.label("W");
+            ui.label(crate::i18n::tr("W"));
             let before_w = t.width;
             if track(
                 ui.add(
@@ -125,7 +129,7 @@ pub(super) fn layer_properties_ui(
                     t.height = (t.width / ratio).max(1.0);
                 }
             }
-            ui.label("H");
+            ui.label(crate::i18n::tr("H"));
             let before_h = t.height;
             if track(
                 ui.add(
@@ -146,11 +150,13 @@ pub(super) fn layer_properties_ui(
         if natural.0 > 0.0 && natural.1 > 0.0 {
             let mut scale = t.width / natural.0 * 100.0;
             ui.horizontal(|ui| {
-                ui.label(if matches!(layer.content, LayerContent::Video(_)) {
-                    "Zoom"
-                } else {
-                    "Scale"
-                });
+                ui.label(crate::i18n::tr(
+                    if matches!(layer.content, LayerContent::Video(_)) {
+                        "Zoom"
+                    } else {
+                        "Scale"
+                    },
+                ));
                 if track(
                     ui.add(
                         egui::DragValue::new(&mut scale)
@@ -181,16 +187,16 @@ pub(super) fn layer_properties_ui(
     // desplegables propios, dentro de "Position") ---
     sidebar::section(ui, "Position", true, |ui| {
         ui.horizontal(|ui| {
-            ui.label("X");
+            ui.label(crate::i18n::tr("X"));
             changed |= track(ui.add(egui::DragValue::new(&mut t.x).speed(1.0).max_decimals(1)));
-            ui.label("Y");
+            ui.label(crate::i18n::tr("Y"));
             changed |= track(ui.add(egui::DragValue::new(&mut t.y).speed(1.0).max_decimals(1)));
         });
         ui.add_space(6.0);
         let mut reset_rotation = false;
         let mut flip_h = false;
         let mut flip_v = false;
-        ui.label("Rotation");
+        ui.label(crate::i18n::tr("Rotation"));
         ui.horizontal(|ui| {
             if track(
                 ui.add(
@@ -205,18 +211,18 @@ pub(super) fn layer_properties_ui(
             }
             reset_rotation = t.rotation != 0.0
                 && ui
-                    .small_button("0°")
-                    .on_hover_text("Reset rotation")
+                    .small_button(crate::i18n::tr("0°"))
+                    .on_hover_text(crate::i18n::tr("Reset rotation"))
                     .clicked();
-            flip_h = icon_button_ui(ui, 18.0, true, |p, r, c| {
+            flip_h = icon_button_ui(ui, 18.0, true, "Flip horizontal", |p, r, c| {
                 draw_double_arrow_icon(p, r, true, true, c)
             })
-            .on_hover_text("Flip horizontally")
+            .on_hover_text(crate::i18n::tr("Flip horizontally"))
             .clicked();
-            flip_v = icon_button_ui(ui, 18.0, true, |p, r, c| {
+            flip_v = icon_button_ui(ui, 18.0, true, "Flip vertical", |p, r, c| {
                 draw_double_arrow_icon(p, r, false, false, c)
             })
-            .on_hover_text("Flip vertically")
+            .on_hover_text(crate::i18n::tr("Flip vertically"))
             .clicked();
         });
         if reset_rotation {
@@ -365,7 +371,9 @@ pub(super) fn layer_properties_ui(
             None,
             egui::Vec2::ZERO,
         )
-        .on_hover_text("The image fills the whole page keeping its aspect ratio")
+        .on_hover_text(crate::i18n::tr(
+            "The image fills the whole page keeping its aspect ratio",
+        ))
         .clicked()
         {
             aligned = Some(cover_transform(natural.0, natural.1, page_w, page_h));
@@ -390,14 +398,14 @@ pub(super) fn layer_properties_ui(
                     icon_text_button_ui(ui, true, draw_crop_icon, "Crop", None, egui::Vec2::ZERO)
                 };
                 if crop_resp
-                    .on_hover_text(
+                    .on_hover_text(crate::i18n::tr(
                         "Drag the corner handles to trim the image; the pixels stay intact",
-                    )
+                    ))
                     .clicked()
                 {
                     state.crop_mode = !state.crop_mode;
                 }
-                if current_crop.is_some() && ui.button("Reset").clicked() {
+                if current_crop.is_some() && ui.button(crate::i18n::tr("Reset")).clicked() {
                     reset_crop = true;
                 }
             });
@@ -405,17 +413,17 @@ pub(super) fn layer_properties_ui(
     }
 
     // --- Desenfoque (no destructivo, vista previa en vivo) ---
-    sidebar::section(ui, "Blur", true, |ui| {
+    sidebar::section(ui, "Blur", false, |ui| {
         blur_control(state, ui, sel);
     });
 
     // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
-    sidebar::section(ui, "Color", true, |ui| {
+    sidebar::section(ui, "Color", false, |ui| {
         color_adjustments_ui(state, ui, sel);
     });
 
     // --- Sombra proyectada ---
-    sidebar::section(ui, "Shadow", true, |ui| {
+    sidebar::section(ui, "Shadow", false, |ui| {
         shadow_ui(state, ui, sel);
     });
 

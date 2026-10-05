@@ -7,6 +7,100 @@ use crate::settings::LayersTabOrder;
 use canvas_core::{LayerId, Selection, ShapeKind};
 use eframe::egui;
 
+#[test]
+fn arrow_and_diamond_previews_keep_their_aspect_when_sidebar_grows() {
+    type DrawPreview = fn(&egui::Painter, egui::Rect, egui::Color32);
+    let previews: [DrawPreview; 2] = [
+        crate::app_icons::draw_arrow_preview,
+        crate::app_icons::draw_diamond_preview,
+    ];
+    for draw in previews {
+        let mut ratios = Vec::new();
+        for width in [50.0, 90.0, 170.0] {
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                draw(
+                    ui.painter(),
+                    egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(width, 38.0)),
+                    egui::Color32::WHITE,
+                );
+            });
+            let bounds = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Path(path) = &shape.shape {
+                        Some(egui::Rect::from_points(&path.points))
+                    } else {
+                        None
+                    }
+                })
+                .expect("el preview dibuja una silueta poligonal");
+            ratios.push(bounds.width() / bounds.height());
+            assert!(bounds.width() <= width && bounds.height() <= 38.001);
+        }
+        for ratio in &ratios[1..] {
+            assert!((ratios[0] - ratio).abs() < 0.001, "{ratios:?}");
+        }
+    }
+}
+
+#[test]
+fn focused_tool_tab_opens_with_enter_without_a_mouse_gesture() {
+    let ctx = egui::Context::default();
+    let mut active = crate::editor::state::LeftTab::Layers;
+    let mut collapsed = true;
+    let focus = egui::Id::new(("left-tab-keyboard", crate::editor::state::LeftTab::Insert));
+    for frame in 0..2 {
+        if frame == 1 {
+            ctx.memory_mut(|memory| memory.request_focus(focus));
+        }
+        let events = if frame == 1 {
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        } else {
+            vec![]
+        };
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                vertical_tab_strip_ui(ui, &mut active, &mut collapsed, Default::default(), true);
+            },
+        );
+    }
+    assert_eq!(active, crate::editor::state::LeftTab::Insert);
+    assert!(!collapsed);
+}
+
+#[test]
+fn button_reordering_is_undoable_and_stays_inside_the_stack() {
+    let mut state = crate::editor::EditorState::new_blank(100.0, 100.0);
+    for name in ["bottom", "top"] {
+        state.insert_layer_centered(
+            name,
+            20.0,
+            20.0,
+            canvas_core::LayerContent::Shape(Default::default()),
+        );
+    }
+    let selected = state.selection.primary().unwrap();
+    ops::move_selected(&mut state, -1);
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(0));
+    ops::move_selected(&mut state, -1);
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(0));
+    state.undo();
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(1));
+    assert_eq!(state.selection.primary(), Some(selected));
+}
+
 /// Lo que debe crear `insert_item` para cada etiqueta del panel Insert:
 /// nombre de la capa, tamaño y tipo de contenido. Espejo de `insert_item`
 /// para detectar cualquier desvío entre lo que ofrece la cuadrícula y lo
@@ -1124,18 +1218,11 @@ fn click_insert_tile(ctx: &egui::Context, state: &mut EditorState, width: f32, p
     );
 }
 
-/// Un clic sobre cada tile de la cuadrícula Insert inserta la capa de la
-/// etiqueta de ESE tile (el clic llama a `insert_item` con su label).
+/// Cada tile elige su herramienta sin modificar aún el documento.
 #[test]
-fn clicking_each_insert_tile_inserts_the_matching_layer() {
+fn clicking_each_insert_tile_arms_the_matching_tool_without_inserting() {
     let width = 400.0;
-    // El mismo layout que `insert_tab_ui`: dos columnas de tiles.
-    let pad = sidebar::PANEL_PAD * 2.0;
-    let gap = 8.0;
-    let tile_w = ((width - pad - gap) * 0.5).max(1.0);
-    let x0 = pad / 2.0;
-
-    for (i, item) in INSERT_ITEMS.iter().enumerate() {
+    for item in &INSERT_ITEMS {
         let expected = INSERT_CASES
             .iter()
             .find(|c| c.label == item.label)
@@ -1143,34 +1230,23 @@ fn clicking_each_insert_tile_inserts_the_matching_layer() {
         let mut state = EditorState::new_blank(800.0, 600.0);
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
-        // Centro del tile: fila = i/2, columna = i%2.
-        let center = egui::pos2(
-            x0 + (i % 2) as f32 * (tile_w + gap) + tile_w / 2.0,
-            (i / 2) as f32 * (INSERT_TILE_H + 10.0) + INSERT_TILE_H / 2.0,
-        );
+        run_insert_frame(&ctx, &mut state, width, vec![]);
+        let center = ctx
+            .read_response(egui::Id::new(("ins_tile", item.label)))
+            .unwrap()
+            .rect
+            .center();
         click_insert_tile(&ctx, &mut state, width, center);
 
         let page = state
             .doc
             .page()
             .expect("un documento en blanco tiene página");
-        assert_eq!(
-            page.layers.len(),
-            1,
-            "{}: el clic inserta exactamente una capa",
-            item.label
-        );
-        assert_eq!(
-            page.layers[0].name, expected.name,
-            "{}: el clic inserta la capa de la etiqueta del tile",
-            item.label
-        );
-        assert_eq!(page.layers[0].transform.width, expected.w, "{}", item.label);
-        assert_eq!(
-            page.layers[0].transform.height, expected.h,
-            "{}",
-            item.label
-        );
+        assert!(page.layers.is_empty(), "el clic solo elige herramienta");
+        let tool = state.insert_tool.as_ref().expect("herramienta activa");
+        assert_eq!(tool.name, expected.name, "{}", item.label);
+        assert_eq!(tool.width, expected.w, "{}", item.label);
+        assert_eq!(tool.height, expected.h, "{}", item.label);
     }
 }
 
@@ -1357,7 +1433,16 @@ fn left_panel_renders_every_tab_without_panicking() {
                     generation: 0,
                     slot_id: 0,
                 };
-                let _ = left_panel_ui(&mut state, ui, &mut settings, None, insert_dest, &tx);
+                let mut collapsed = settings.layers_collapsed;
+                let _ = left_panel_ui(
+                    &mut state,
+                    ui,
+                    &mut settings,
+                    None,
+                    insert_dest,
+                    &tx,
+                    &mut collapsed,
+                );
             },
         );
         assert!(

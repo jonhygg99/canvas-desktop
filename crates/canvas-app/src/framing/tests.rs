@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn leaving_framing_preserves_unsaved_adjustments_until_discarded() {
+    let mut clean = Session::new(None, true);
+    clean.request_close();
+    assert!(clean.closed);
+    let mut edited = Session::new(None, true);
+    edited.value.x_pct = 25.0;
+    edited.request_close();
+    assert!(!edited.closed);
+    assert!(edited.close_requested);
+    assert_eq!(edited.value.x_pct, 25.0);
+}
+
+#[test]
+fn save_and_return_closes_only_after_success() {
+    let ctx = egui::Context::default();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut session = Session::new(Some(PathBuf::from("photo.png")), true);
+    session.close_after_save = true;
+    session.receiver = Some(rx);
+    tx.send(Err("write failed".into())).unwrap();
+    session.poll(&ctx);
+    assert!(!session.closed);
+    assert!(!session.close_after_save);
+    assert_eq!(session.error.as_deref(), Some("write failed"));
+}
+
+#[test]
 fn late_results_from_a_closed_session_cannot_reach_another_document() {
     let ctx = egui::Context::default();
     let (old_tx, old_rx) = std::sync::mpsc::channel();

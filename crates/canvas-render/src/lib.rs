@@ -6,7 +6,8 @@ mod scene;
 
 pub use blur::{resolve_fx_budget, ColorParams, FxScope, SyncLayerRequest};
 pub use scene::{
-    append_document, build_scene, draw_atlas_anchor, image_data_from_rgba, text_lines, ImageMap,
+    append_document, build_scene, draw_atlas_anchor, image_data_from_rgba, text_font, text_lines,
+    ImageMap,
 };
 
 /// Dimensiones y color base para `render_with_base`, agrupadas para reducir

@@ -21,6 +21,20 @@ impl EditorState {
         deck_renaming: bool,
     ) {
         use egui::{Event, Key, KeyboardShortcut, Modifiers};
+        if super::super::palette::is_open(ctx) || super::super::guides::is_open(self, ctx) {
+            return;
+        }
+        if self.is_idle()
+            && ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::P,
+                ))
+            })
+        {
+            super::super::palette::open(ctx);
+            return;
+        }
         // Deshacer/rehacer se evalúan primero y con su propia guarda: un
         // `TextEdit` con foco propio (renombrar una capa, editar su texto, o
         // renombrar una ranura de la baraja) debe quedarse con Ctrl+Z para su
@@ -32,9 +46,11 @@ impl EditorState {
         // aquí se miran las banderas propias del editor en vez de esa guarda
         // global.
         let editing_own_text = self.rename_edit.is_some()
+            || self.inline_text.is_some()
             || self.file_rename_edit.is_some()
             || self.content_edit.is_some()
-            || deck_renaming;
+            || deck_renaming
+            || ctx.memory(|m| m.has_focus(egui::Id::new("layer_search")));
         if !editing_own_text {
             // El orden importa: Ctrl+Shift+Z debe consumirse antes que Ctrl+Z.
             let redo = ctx.input_mut(|i| {
@@ -124,9 +140,17 @@ impl EditorState {
                 self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
             }
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::D,
+            ))
+        }) {
+            super::super::duplicate_gesture::duplicate(self, true);
+        } else if ctx
+            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
         {
-            crate::clipboard::duplicate(self);
+            super::super::duplicate_gesture::duplicate(self, false);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::A)))
         {
@@ -140,9 +164,36 @@ impl EditorState {
             crate::editor::delete_selected(self);
         }
 
-        // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un
-        // alias (memoria muscular de pestañas de navegador); las flechas se
-        // dejan libres a propósito para el futuro «mover capa con teclado».
+        // Flechas: píxeles del documento, independientes del zoom. No se
+        // ejecutan mientras un gesto está mutando geometría en directo.
+        if matches!(self.gesture, super::super::interaction::Gesture::None) {
+            let (dx, dy) = ctx.input_mut(|i| {
+                let mut delta = (0.0, 0.0);
+                for (key, x, y) in [
+                    (Key::ArrowLeft, -1.0, 0.0),
+                    (Key::ArrowRight, 1.0, 0.0),
+                    (Key::ArrowUp, 0.0, -1.0),
+                    (Key::ArrowDown, 0.0, 1.0),
+                ] {
+                    let step = if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, key))
+                    {
+                        10.0
+                    } else if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, key)) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    delta.0 += x * step;
+                    delta.1 += y * step;
+                }
+                delta
+            });
+            if dx != 0.0 || dy != 0.0 {
+                super::super::layer_ops::nudge_selection(self, dx, dy);
+            }
+        }
+
+        // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un alias.
         if ctx.input_mut(|i| {
             i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::PageDown))
                 || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown))

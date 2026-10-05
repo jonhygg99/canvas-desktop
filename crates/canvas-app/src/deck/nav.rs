@@ -50,33 +50,55 @@ impl Deck {
 /// sin gestos ni ediciones de panel a medias) — si no, la petición se deja
 /// pendiente y se reintenta el siguiente frame; un arrastre termina al
 /// soltar, así que la espera real es de uno o dos frames, invisible.
-/// Devuelve `true` si el salto se aplicó.
-pub fn apply_jump(deck: &mut Deck, state: &mut crate::editor::EditorState) -> bool {
+#[derive(Debug)]
+pub enum JumpOutcome {
+    /// El salto se aplicó.
+    Applied,
+    /// Todavía no (sin destino, destino no listo o editor ocupado): la UI no
+    /// hace nada este frame y se reintenta en el siguiente.
+    Waiting,
+    /// El destino falló al cargar: la petición se descarta (reintentarla
+    /// cada frame no tendría efecto) y la UI debe explicarlo una vez — el
+    /// nombre es para el banner.
+    DroppedFailed {
+        name: String,
+        kind: Option<canvas_io::CorruptionKind>,
+    },
+}
+
+/// Devuelve cómo quedó el salto pendiente (`JumpOutcome` en vez de un bool
+/// a propósito: el descarte de un destino fallido y "todavía no" piden
+/// respuestas distintas en la UI y antes se confundían en un `false`).
+pub fn apply_jump(deck: &mut Deck, state: &mut crate::editor::EditorState) -> JumpOutcome {
     let Some(target) = deck.jump_to else {
-        return false;
+        return JumpOutcome::Waiting;
     };
     if target >= deck.slots.len() || target == deck.active {
         deck.jump_to = None;
         deck.jump_reframe = false;
-        return false;
+        return JumpOutcome::Waiting;
     }
     if !state.is_idle() {
-        return false;
+        return JumpOutcome::Waiting;
     }
-    if let SlotContent::Failed(_) = &deck.slots[target].content {
+    if let SlotContent::Failed { kind, .. } = &deck.slots[target].content {
         // No se reintenta sola: si se dejara `jump_to` puesto, `request_loads`
         // la seguiría priorizando cada frame sin ningún efecto — mejor
         // avisar una vez y soltar la petición.
+        let dropped = JumpOutcome::DroppedFailed {
+            name: deck.slots[target].name.clone(),
+            kind: *kind,
+        };
         tracing::warn!(
             "baraja: se pidió saltar a «{}», que falló al cargar; se descarta el salto",
             deck.slots[target].name
         );
         deck.jump_to = None;
         deck.jump_reframe = false;
-        return false;
+        return dropped;
     }
     if !matches!(deck.slots[target].content, SlotContent::Ready(_)) {
-        return false;
+        return JumpOutcome::Waiting;
     }
     let SlotContent::Ready(incoming) =
         std::mem::replace(&mut deck.slots[target].content, SlotContent::Active)
@@ -88,5 +110,5 @@ pub fn apply_jump(deck: &mut Deck, state: &mut crate::editor::EditorState) -> bo
     state.put_slot(*incoming);
     deck.active = target;
     deck.jump_to = None;
-    true
+    JumpOutcome::Applied
 }

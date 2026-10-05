@@ -172,6 +172,8 @@ impl AppMenus {
         ];
 
         Ok(Self {
+            translated_items: super::language::collect(menu.items()),
+            language: None,
             _menu: menu,
             recent_menu,
             recent_items: Vec::new(),

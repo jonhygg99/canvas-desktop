@@ -53,8 +53,17 @@ mod ws_frame;
 pub(crate) use workspace::Workspace;
 
 pub(crate) enum View {
-    Welcome { error: Option<String> },
-    Loading { path: PathBuf },
+    /// Pantalla inicial o callejón tras una apertura fallida: `failed_*`
+    /// guardan QUÉ archivo falló y su tipo clasificado para ofrecer
+    /// reparación/cuarentena en vez de un texto muerto.
+    Welcome {
+        error: Option<String>,
+        failed_path: Option<PathBuf>,
+        failed_kind: Option<canvas_io::CorruptionKind>,
+    },
+    Loading {
+        path: PathBuf,
+    },
     Gallery(Box<gallery::GalleryState>),
     Editor(Box<editor::EditorState>),
 }
@@ -161,6 +170,8 @@ pub(crate) struct AppInner {
 pub(super) struct SaveFlow {
     /// «Guardar como…» elegido, pendiente de hornear (necesita la GPU).
     pub(super) pending_save_as: Option<PathBuf>,
+    /// El diálogo de ruta pertenece al canvas activo; impide cambiarlo.
+    pub(super) save_path_dialog_open: bool,
     /// Guardar solicitado desde el diálogo de cierre.
     pub(super) save_requested: bool,
     /// Cerrar la ventana en cuanto termine el guardado en curso.
@@ -272,6 +283,7 @@ impl App {
         let Some(menus) = menus.as_mut() else {
             return;
         };
+        menus.set_language(inner.settings.language);
         let Some(ws0) = inner.workspaces.first().cloned() else {
             return;
         };

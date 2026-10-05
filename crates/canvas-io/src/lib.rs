@@ -9,12 +9,16 @@ mod metadata;
 mod mounts;
 mod png_codec;
 mod probe;
+mod repair;
 mod save;
 mod sidecar;
 mod svg;
 mod thumbs;
+mod verify;
 mod video;
+mod video_rate;
 mod video_stream;
+pub use video_rate::probe_video_fps;
 
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
@@ -36,16 +40,18 @@ pub use metadata::{
 };
 pub use mounts::{describe_read_dir_error, is_cloud_storage_path, read_dir_resilient};
 pub use probe::{probe_page_size, probe_page_size_with};
+pub use repair::{repair_png, RepairError};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
     blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, local_trash_path, make_preview,
-    move_to_local_trash, preview_scale, purge_local_trash, read_design, read_preview, read_sidecar,
-    restore_from_local_trash, sidecar_dir, sidecar_path, trash_dir, write_blank_canvas,
-    write_design, write_sidecar, CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM,
-    SIDECAR_DIR,
+    move_to_local_trash, move_to_quarantine, preview_scale, purge_local_trash, quarantine_dir,
+    read_design, read_preview, read_sidecar, restore_from_local_trash, restore_from_quarantine,
+    sidecar_dir, sidecar_path, trash_dir, write_blank_canvas, write_design, write_sidecar,
+    CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM, SIDECAR_DIR,
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;
+pub use verify::{classify, CorruptionKind};
 pub use video::{ffmpeg_path, ffprobe_path, load_video_frame, media_command, probe_video_size};
 pub use video_stream::{VideoFrameStream, VideoStreamCancellation};
 

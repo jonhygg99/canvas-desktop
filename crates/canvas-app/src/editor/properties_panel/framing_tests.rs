@@ -15,7 +15,7 @@ fn sidebar_button_enters_and_leaves_framing_without_changing_the_page() {
                 )),
                 ..Default::default()
             },
-            |ui| framing_header_ui(state, ui),
+            |ui| crate::editor::document_bar::mode_ui(state, ui),
         )
     };
     let click = |label: &str, state: &mut EditorState| {
@@ -47,7 +47,7 @@ fn sidebar_button_enters_and_leaves_framing_without_changing_the_page() {
     click("Framing 9:16", &mut state);
     assert!(state.framing_requested);
     state.framing = Some(crate::framing::Session::new(None, true));
-    click("Normal view", &mut state);
+    click("Edit", &mut state);
     assert!(state.framing.as_ref().unwrap().closed);
     assert_eq!(serde_json::to_vec(&state.doc).unwrap(), original);
 }

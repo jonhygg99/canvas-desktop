@@ -89,13 +89,22 @@ impl AppInner {
                     Err(e) => {
                         ws.view = View::Welcome {
                             error: Some(format!("Could not open \"{}\": {e}", path.display())),
+                            failed_path: Some(path),
+                            failed_kind: None,
                         };
                     }
                 }
             }
             Err(e) => {
+                let kind = canvas_io::classify(&path);
                 ws.view = View::Welcome {
-                    error: Some(format!("Could not open \"{}\": {e}", path.display())),
+                    error: Some(format!(
+                        "Could not open \"{}\": {}",
+                        path.display(),
+                        crate::deck::failure_notice(Some(kind), &e.to_string())
+                    )),
+                    failed_path: Some(path),
+                    failed_kind: Some(kind),
                 };
             }
         }
@@ -153,6 +162,7 @@ impl AppInner {
         generation: u64,
         path: PathBuf,
         result: Result<Box<deck::SlotDoc>, canvas_io::IoError>,
+        ctx: &egui::Context,
     ) {
         if ws.deck.accepts_response(&folder, generation) {
             ws.deck.loading_finished();
@@ -164,13 +174,24 @@ impl AppInner {
                     .is_some_and(|slot| matches!(slot.content, deck::SlotContent::Loading));
                 if still_loading {
                     // `SlotContent::Failed` guarda el mensaje listo para la
-                    // UI: se aplana el error tipado aquí.
+                    // UI más el tipo clasificado (una lectura de
+                    // cabecera/CRC en el hilo de UI: solo llega aquí una vez
+                    // por archivo fallido). Se aplana el error tipado aquí.
+                    let kind = result.as_ref().err().map(|_| canvas_io::classify(&path));
                     let content = result.map_or_else(
-                        |e| deck::SlotContent::Failed(e.to_string()),
+                        |e| deck::SlotContent::Failed {
+                            message: e.to_string(),
+                            kind,
+                        },
                         deck::SlotContent::Ready,
                     );
                     if let Some(slot) = ws.deck.slots.get_mut(idx) {
                         slot.content = content;
+                    }
+                    if let Some(kind) = kind {
+                        if canvas_io::is_image_file(&path) {
+                            super::repair::maybe_auto_handle(ws, &self.settings, &path, kind, ctx);
+                        }
                     }
                 }
             }

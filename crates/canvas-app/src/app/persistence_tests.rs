@@ -5,6 +5,32 @@
 
 use std::path::{Path, PathBuf};
 
+#[test]
+fn save_all_keeps_all_edited_new_design_canvases_in_the_queue() {
+    let mut deck = Deck::new_design((100.0, 100.0));
+    let mut state = EditorState::new_blank(100.0, 100.0);
+    state.add_image_layer(
+        "Photo",
+        None,
+        canvas_io::LoadedImage {
+            rgba: vec![255; 20 * 20 * 4],
+            width: 20,
+            height: 20,
+        },
+    );
+    let copy = deck
+        .duplicate_placeholder(deck.slots[0].id, &state, "canvas")
+        .unwrap();
+    deck.push_placeholder((100.0, 100.0), "canvas").unwrap();
+    let mut save = super::super::SaveFlow::default();
+    super::start_save_all_flow(&mut state, &mut deck, &mut save);
+    assert_eq!(
+        save.save_all_queue,
+        vec![deck.slots[0].id, deck.slots[copy].id]
+    );
+    assert_eq!(super::save_all_doc_count(&deck, &state), 2);
+}
+
 use canvas_core::{Document, History, ImageContent, LayerContent, LayerId, Selection, Transform};
 use canvas_render::ImageMap;
 

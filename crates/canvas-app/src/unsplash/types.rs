@@ -29,12 +29,12 @@ impl Orientation {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Any => "Any",
             Self::Landscape => "Landscape",
             Self::Portrait => "Portrait",
             Self::Squarish => "Square",
-        }
+        })
     }
 }
 
@@ -92,7 +92,7 @@ impl ColorFilter {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Any => "Any color",
             Self::BlackAndWhite => "B&W",
             Self::Black => "Black",
@@ -105,7 +105,7 @@ impl ColorFilter {
             Self::Green => "Green",
             Self::Teal => "Teal",
             Self::Blue => "Blue",
-        }
+        })
     }
 
     /// Color aproximado para el punto de la UI; `None` para «sin filtro».
@@ -146,10 +146,10 @@ impl OrderBy {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Relevant => "Relevant",
             Self::Latest => "Latest",
-        }
+        })
     }
 }
 

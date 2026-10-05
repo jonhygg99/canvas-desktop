@@ -4,12 +4,12 @@ use eframe::egui;
 
 pub const PANEL_PAD: f32 = 8.0;
 pub fn compact(ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
-    ui.spacing_mut().button_padding = egui::vec2(5.0, 2.0);
-    ui.spacing_mut().interact_size.y = 22.0;
+    // Conserva las métricas de densidad elegidas, también en el inspector.
+    ui.spacing_mut().item_spacing.x = 6.0;
 }
 
 pub fn title(ui: &mut egui::Ui, text: &str) {
+    let text = crate::i18n::tr(text);
     let width = ui.available_width().max(1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::hover());
     let painter = ui.painter();
@@ -40,6 +40,8 @@ pub fn section<R>(
     // `App::new` (egui 0.35 no trae negrita y `RichText::strong()` solo
     // cambia el color). En contextos sin registrar (tests, previews) cae a la
     // fuente proporcional por defecto.
+    let stable_id = egui::Id::new(text);
+    let text = crate::i18n::tr(text);
     let bold_family = egui::FontFamily::Name("Ubuntu-Bold".into());
     let families = ui.ctx().fonts(|f| f.families());
     let title = if families.contains(&bold_family) {
@@ -48,6 +50,7 @@ pub fn section<R>(
         egui::RichText::new(text).size(15.0)
     };
     egui::CollapsingHeader::new(title)
+        .id_salt(stable_id)
         .default_open(default_open)
         .show_unindented(ui, add_contents)
 }
@@ -65,9 +68,71 @@ pub fn stretch_slider(ui: &mut egui::Ui) {
     ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(60.0);
 }
 
+/// El contenido puede desbordar su layout, pero nunca redimensionar el panel.
+/// El borde lo gestiona Panel; el hijo conserva su recorte e interacciones.
+pub fn fixed_width_ui<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let rect = ui.available_rect_before_wrap();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(ui.clip_rect().intersect(rect));
+    let result = contents(&mut child);
+    ui.allocate_rect(rect, egui::Sense::hover());
+    result
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PANEL_PAD;
+    use super::{fixed_width_ui, PANEL_PAD};
+    use eframe::egui;
+
+    #[test]
+    fn panel_width_ignores_content_and_can_be_resized() {
+        let ctx = egui::Context::default();
+        let mut widths = Vec::new();
+        let pointer = |pressed, x| egui::Event::PointerButton {
+            pos: egui::pos2(x, 100.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let frames = [
+            vec![],
+            vec![
+                egui::Event::PointerMoved(egui::pos2(220.0, 100.0)),
+                pointer(true, 220.0),
+            ],
+            vec![egui::Event::PointerMoved(egui::pos2(320.0, 100.0))],
+            vec![pointer(false, 320.0)],
+            vec![],
+        ];
+        for events in frames {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = egui::Panel::left("test-sidebar")
+                        .frame(egui::Frame::NONE)
+                        .default_size(220.0)
+                        .size_range(180.0..=420.0)
+                        .resizable(true)
+                        .show(ui, |ui| {
+                            fixed_width_ui(ui, |ui| {
+                                // Simula una pestaña que pide más ancho que el disponible.
+                                ui.allocate_space(egui::vec2(700.0, 40.0));
+                            })
+                        });
+                    widths.push(response.response.rect.width());
+                },
+            );
+        }
+        assert_eq!(widths[0], 220.0);
+        assert_eq!(*widths.last().unwrap(), 320.0);
+    }
 
     #[test]
     fn sidebar_padding_is_compact_but_positive() {

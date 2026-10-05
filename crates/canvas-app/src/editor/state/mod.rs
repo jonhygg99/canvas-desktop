@@ -24,6 +24,7 @@ use super::Viewport;
 mod background;
 mod constructors;
 mod history;
+mod history_navigation;
 mod layer_factory;
 mod shortcuts;
 mod sidecar;
@@ -50,6 +51,10 @@ pub struct EditorState {
     /// Proporción bloqueada al redimensionar (por defecto sí; `Shift` la libera).
     pub aspect_lock: bool,
     pub(super) gesture: Gesture,
+    pub(super) context_point: Option<(f64, f64)>,
+    pub(super) inline_text: Option<super::inline_text::InlineText>,
+    pub(crate) insert_tool: Option<super::insert_tool::InsertTool>,
+    pub(crate) repeat_offset: Option<(f64, f64)>,
     /// Edición en curso desde el panel (campos numéricos): capa y transform
     /// original, para consolidar en un solo comando al terminar.
     pub(super) panel_edit: Option<(LayerId, Transform)>,
@@ -236,7 +241,7 @@ impl EditorState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.history.is_dirty()
+        self.history.is_dirty() || super::inline_text::pending_changes(self)
     }
 
     /// ¿Hay algún gesto o edición de panel a medias, o un guardado/
@@ -251,6 +256,11 @@ impl EditorState {
     /// guardado el documento EQUIVOCADO.
     pub(crate) fn is_idle(&self) -> bool {
         matches!(self.gesture, Gesture::None)
+            && self.inline_text.is_none()
+            && self
+                .insert_tool
+                .as_ref()
+                .is_none_or(|tool| !tool.dragging())
             && self.panel_edit.is_none()
             && self.page_edit.is_none()
             && self.opacity_edit.is_none()

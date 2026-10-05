@@ -102,12 +102,17 @@ pub(super) fn live_textures(edit: &mut VideoEdit, ctx: &egui::Context) -> Option
         }
     }
     if finished || error.is_some() {
-        edit.playing = false;
+        let looping = error.is_none() && edit.loop_selection;
+        edit.playing = looping;
         edit.last_tick = None;
         edit.playback.stop();
         crate::audio::pause_for(&edit.path);
         if let Some(error) = error {
             edit.set_frames_error(error);
+        } else if looping {
+            edit.playhead = edit.trim_start;
+            edit.last_tick = Some(Instant::now());
+            ctx.request_repaint();
         } else {
             edit.playhead = edit.trim_end;
             edit.playback.shown_time = Some(edit.playhead);
@@ -117,6 +122,11 @@ pub(super) fn live_textures(edit: &mut VideoEdit, ctx: &egui::Context) -> Option
 }
 
 impl LivePreview {
+    #[cfg(test)]
+    pub(super) fn has_frame(&self) -> bool {
+        self.sharp.is_some()
+    }
+
     pub(super) fn is_running(&self) -> bool {
         self.worker.is_some()
     }
@@ -294,7 +304,7 @@ fn prepare_frame(image: canvas_io::LoadedImage, time: f64, step: u8) -> StreamFr
     }
 }
 
-fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorImage {
+pub(super) fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorImage {
     let pixels = image::RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
         .expect("frame RGBA completo");
     // El fondo desenfocado necesita pocos píxeles: nunca frena el foreground.
@@ -307,7 +317,7 @@ fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorIm
     )
 }
 
-fn update_texture(
+pub(super) fn update_texture(
     texture: &mut Option<egui::TextureHandle>,
     image: egui::ColorImage,
     name: &str,

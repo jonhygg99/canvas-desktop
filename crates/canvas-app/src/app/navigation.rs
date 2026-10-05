@@ -54,6 +54,8 @@ impl AppInner {
                     "\"{}\" is not a supported image or video format.",
                     path.display()
                 )),
+                failed_path: Some(path),
+                failed_kind: Some(canvas_io::CorruptionKind::Unsupported),
             };
         }
         self.sync_title(ctx, ws);
@@ -62,13 +64,8 @@ impl AppInner {
     /// Documento nuevo en blanco en un workspace.
     pub(crate) fn new_design(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
         let (w, h) = DEFAULT_NEW_CANVAS_SIZE;
-        ws.deck = deck::Deck::single(PathBuf::new());
+        ws.deck = deck::Deck::new_design((w, h));
         self.apply_deck_prefs(ws);
-        if let Some(slot) = ws.deck.slots.first_mut() {
-            slot.page = Some((w, h));
-            slot.is_placeholder = true;
-            slot.name = "Untitled".to_owned();
-        }
         let state = if self.settings.new_canvas_format == settings::NewCanvasFormat::Canvas {
             let mut state = editor::EditorState::new_blank(w, h);
             state.sidecar_enabled = self.settings.sidecar_default;
@@ -255,7 +252,11 @@ impl AppInner {
                 ws.deck = deck::Deck::default();
                 ws.deck_ops.pending_deck = None;
                 ws.watcher = None;
-                ws.view = View::Welcome { error: None };
+                ws.view = View::Welcome {
+                    error: None,
+                    failed_path: None,
+                    failed_kind: None,
+                };
                 self.sync_title(ctx, ws);
             }
             Nav::NewDesign => self.new_design(ws, ctx),
@@ -344,7 +345,8 @@ impl AppInner {
             trim_start: accept.trim_start,
             trim_end: accept.trim_end,
         };
-        let transform = crate::ytdlp::edit::zoom_transform(vw, vh, pw, ph, accept.zoom);
+        let transform =
+            crate::ytdlp::edit::positioned_transform(vw, vh, pw, ph, accept.zoom, accept.position);
         let id =
             match state
                 .doc

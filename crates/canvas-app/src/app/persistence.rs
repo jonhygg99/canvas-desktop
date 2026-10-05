@@ -69,6 +69,11 @@ pub(super) fn start_save_all_flow(
     deck: &mut deck::Deck,
     save: &mut SaveFlow,
 ) {
+    if deck.unsaved_session {
+        save.save_all_queue = session_dirty_ids(deck, state);
+        save.save_all_attempted = false;
+        return;
+    }
     if state.is_dirty()
         && state
             .doc
@@ -95,6 +100,9 @@ pub(super) fn start_save_all_flow(
 /// sobrescribible, más las ranuras de fondo sucias) — para el aviso de
 /// poca RAM. Pura: se prueba con barajas construidas a mano.
 fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
+    if deck.unsaved_session {
+        return session_dirty_ids(deck, state).len();
+    }
     let active = state.is_dirty()
         && state
             .doc
@@ -111,6 +119,25 @@ fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
         })
         .count();
     background + usize::from(active)
+}
+
+/// Incluye las provisionales editadas; cada una pedirá su ruta al guardar.
+fn session_dirty_ids(deck: &deck::Deck, state: &editor::EditorState) -> Vec<u64> {
+    let mut ids: Vec<_> = deck
+        .slots
+        .iter()
+        .filter_map(|slot| {
+            let dirty = match &slot.content {
+                deck::SlotContent::Active => state.is_dirty(),
+                deck::SlotContent::Ready(doc) => doc.history.is_dirty(),
+                _ => false,
+            };
+            dirty.then_some(slot.id)
+        })
+        .collect();
+    let active = deck.slots.get(deck.active).map(|slot| slot.id);
+    ids.sort_by_key(|id| Some(*id) != active);
+    ids
 }
 
 /// ¿Conviene avisar de poca RAM antes de «Save all»? Pura para poder
