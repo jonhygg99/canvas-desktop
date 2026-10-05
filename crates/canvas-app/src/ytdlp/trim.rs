@@ -26,6 +26,16 @@ pub(super) fn timecode(seconds: f64) -> String {
 }
 
 impl VideoEdit {
+    pub(super) fn prepare_playback_start(&mut self) {
+        if self.playhead < self.trim_start
+            || self.playhead + 1.0 / self.source_fps >= self.trim_end - 1e-9
+        {
+            self.playhead = self.trim_start;
+        }
+    }
+    pub(super) fn set_trim_duration(&mut self, seconds: f64) {
+        self.set_trim_edge(TrimEdge::End, self.trim_start + seconds);
+    }
     pub(super) fn seek(&mut self, time: f64) {
         self.playing = false;
         self.playback.stop();

@@ -1,22 +1,33 @@
-//! Campos de tiempo y comandos de trim; todas las acciones son pulsables.
+//! Ajustes de trim junto al vídeo: extremos, duración y accesos rápidos.
 use super::{timecode, TrimEdge, VideoEdit};
 use eframe::egui;
 
 pub(super) fn trim_controls(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    ui.strong("Trim");
     let Some(duration) = edit.duration else {
+        ui.weak("Reading video duration…");
         return;
     };
+    edge_field(edit, ui, TrimEdge::Start, duration);
+    edge_field(edit, ui, TrimEdge::End, duration);
+    duration_field(edit, ui, duration);
     ui.horizontal_wrapped(|ui| {
-        edge_field(edit, ui, TrimEdge::Start, duration);
-        edge_field(edit, ui, TrimEdge::End, duration);
-    });
-    ui.horizontal_wrapped(|ui| {
-        if ui.button("Set start here (I)").clicked() {
+        if ui
+            .button("Start at playhead")
+            .on_hover_text("Set start here (I)")
+            .clicked()
+        {
             edit.set_trim_edge(TrimEdge::Start, edit.playhead);
         }
-        if ui.button("Set end here (O)").clicked() {
+        if ui
+            .button("End at playhead")
+            .on_hover_text("Set end here (O)")
+            .clicked()
+        {
             edit.set_trim_edge(TrimEdge::End, edit.playhead + 1.0 / edit.source_fps);
         }
+    });
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(
                 !edit.trim_history.undo.is_empty(),
@@ -39,35 +50,88 @@ pub(super) fn trim_controls(edit: &mut VideoEdit, ui: &mut egui::Ui) {
             edit.reset_trim();
         }
     });
-    ui.label(format!(
-        "Start {}  ·  End {}  ·  Duration {}",
-        timecode(edit.trim_start),
-        timecode(edit.trim_end),
-        timecode(edit.trim_end - edit.trim_start)
-    ));
 }
 
 fn edge_field(edit: &mut VideoEdit, ui: &mut egui::Ui, edge: TrimEdge, duration: f64) {
     let start = edge == TrimEdge::Start;
-    ui.label(if start { "Start" } else { "End" });
     let mut value = if start {
         edit.trim_start
     } else {
         edit.trim_end
     };
+    let response = ui
+        .horizontal(|ui| {
+            ui.label(if start { "Start" } else { "End" });
+            ui.add(
+                egui::DragValue::new(&mut value)
+                    .range(0.0..=duration)
+                    .speed(0.05)
+                    .custom_formatter(|value, _| timecode(value))
+                    .custom_parser(|text| {
+                        crate::ytdlp::api::parse_time(text).filter(|v| v.is_finite())
+                    }),
+            )
+        })
+        .inner;
+    update_edge(edit, edge, value, &response);
+    response.on_hover_text("Drag to adjust, or type HH:MM:SS.mmm or seconds");
+    let range = if start {
+        0.0..=(edit.trim_end - 0.1).max(0.0)
+    } else {
+        (edit.trim_start + 0.1).min(duration)..=duration
+    };
     let response = ui.add(
-        egui::DragValue::new(&mut value)
-            .range(0.0..=duration)
-            .speed(0.001)
-            .custom_formatter(|value, _| timecode(value))
-            .custom_parser(|text| crate::ytdlp::api::parse_time(text).filter(|v| v.is_finite())),
+        egui::Slider::new(&mut value, range)
+            .step_by(0.01)
+            .show_value(false),
     );
+    update_edge(edit, edge, value, &response);
+}
+
+fn update_edge(edit: &mut VideoEdit, edge: TrimEdge, value: f64, response: &egui::Response) {
     if response.changed() {
         edit.begin_trim_gesture();
         edit.set_trim_edge(edge, value);
     }
+    if response.drag_stopped() || response.lost_focus() || response.clicked() {
+        edit.finish_trim_gesture();
+    }
+}
+
+fn duration_field(edit: &mut VideoEdit, ui: &mut egui::Ui, duration: f64) {
+    let mut seconds = edit.trim_end - edit.trim_start;
+    let remaining = duration - edit.trim_start;
+    let response = ui
+        .horizontal(|ui| {
+            ui.label("Duration");
+            ui.add(
+                egui::DragValue::new(&mut seconds)
+                    .range(0.1_f64.min(remaining)..=remaining)
+                    .speed(0.1)
+                    .suffix(" s")
+                    .max_decimals(3),
+            )
+        })
+        .inner;
+    if response.changed() {
+        edit.begin_trim_gesture();
+        edit.set_trim_duration(seconds);
+    }
     if response.drag_stopped() || response.lost_focus() {
         edit.finish_trim_gesture();
     }
-    response.on_hover_text("Type HH:MM:SS.mmm or seconds; drag for a fine adjustment");
+    ui.horizontal_wrapped(|ui| {
+        for seconds in [5.0, 7.0, 10.0, 15.0] {
+            if ui
+                .add_enabled(
+                    seconds <= remaining,
+                    egui::Button::new(format!("{seconds} s")),
+                )
+                .clicked()
+            {
+                edit.finish_trim_gesture();
+                edit.set_trim_duration(seconds);
+            }
+        }
+    });
 }

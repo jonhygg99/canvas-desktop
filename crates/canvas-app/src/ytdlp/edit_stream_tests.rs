@@ -161,7 +161,9 @@ fn start_and_wait_for_foreground(edit: &mut VideoEdit, ctx: &egui::Context) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let output = render_preview(edit, ctx);
-        if foreground_updated(&output) {
+        // El póster permanece visible durante el arranque del decoder;
+        // medimos la reproducción desde su primer fotograma real.
+        if edit.playback.has_frame() && foreground_updated(&output) {
             return;
         }
         assert!(

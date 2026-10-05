@@ -168,9 +168,7 @@ pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     let (vw, vh) = edit.video_size.unwrap_or((16.0, 9.0));
     let was_playing = edit.playing;
     let tex = live_textures(edit, ui.ctx()).or_else(|| {
-        if was_playing {
-            return None;
-        }
+        // Conserva la imagen preparada mientras arranca el primer decode.
         let step = edit.blur.round().clamp(0.0, 100.0) as u8;
         edit.exact
             .textures(&edit.path, step, ui.ctx())

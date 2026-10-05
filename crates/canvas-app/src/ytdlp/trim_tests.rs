@@ -12,6 +12,63 @@ fn edit() -> VideoEdit {
 }
 
 #[test]
+fn duration_control_makes_a_seven_second_clip_and_is_undoable() {
+    let mut edit = edit();
+    edit.set_trim_edge(TrimEdge::Start, 12.0);
+    edit.set_trim_duration(7.0);
+    assert_eq!((edit.trim_start, edit.trim_end), (12.0, 19.0));
+    edit.undo_trim();
+    assert_eq!((edit.trim_start, edit.trim_end), (12.0, 60.0));
+}
+
+#[test]
+fn seven_second_preset_works_without_typing_a_time() {
+    let mut edit = edit();
+    edit.set_trim_edge(TrimEdge::Start, 12.0);
+    let ctx = egui::Context::default();
+    let render = |edit: &mut VideoEdit, events| {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(320.0, 700.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| super::trim_controls::trim_controls(edit, ui),
+        )
+    };
+    let output = render(&mut edit, vec![]);
+    let pos = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                (text.galley.job.text == "7 s").then(|| text.pos + text.galley.size() / 2.0)
+            } else {
+                None
+            }
+        })
+        .expect("visible 7 s preset");
+    for pressed in [true, false] {
+        render(
+            &mut edit,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    assert_eq!((edit.trim_start, edit.trim_end), (12.0, 19.0));
+}
+
+#[test]
 fn trim_handles_keep_their_identity_and_preview_the_changed_edge() {
     let mut edit = edit();
     edit.set_trim_edge(TrimEdge::End, 20.0);

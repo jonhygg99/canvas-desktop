@@ -46,6 +46,8 @@ mod timeline;
 mod timeline_thumbnails;
 #[path = "timeline_view.rs"]
 mod timeline_view;
+#[path = "transport_icons.rs"]
+mod transport_icons;
 #[path = "trim.rs"]
 mod trim;
 #[path = "trim_controls.rs"]

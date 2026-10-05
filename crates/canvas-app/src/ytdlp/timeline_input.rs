@@ -87,9 +87,7 @@ fn keyboard(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         if edit.playing {
             edit.seek(edit.playhead);
         } else {
-            if edit.playhead < edit.trim_start || edit.playhead >= edit.trim_end {
-                edit.playhead = edit.trim_start;
-            }
+            edit.prepare_playback_start();
             edit.playing = true;
             edit.last_tick = Some(std::time::Instant::now());
             ui.ctx().request_repaint();

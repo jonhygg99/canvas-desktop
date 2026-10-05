@@ -11,9 +11,11 @@ pub fn edit_window_ui(
     let mut close = false;
     let mut accept = None;
     egui::Window::new(title)
+        .id(egui::Id::new("video-editor"))
+        .order(egui::Order::Foreground)
         .open(&mut open)
         .resizable(true)
-        .default_size(egui::vec2(940.0, 720.0))
+        .default_size(egui::vec2(1040.0, 760.0))
         .min_size(egui::vec2(320.0, 380.0))
         .show(ui.ctx(), |ui| {
             let edit = video.edit.as_mut().expect("checked above");
@@ -61,8 +63,8 @@ fn stop_preview_audio(video: &Panel) {
 }
 
 fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
-    if ui.available_width() >= 700.0 {
-        let width = ui.available_width() - 280.0;
+    if ui.available_width() >= 760.0 {
+        let width = ui.available_width() - 340.0;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 420.0),
@@ -74,10 +76,10 @@ fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
                 },
             );
             ui.allocate_ui_with_layout(
-                egui::vec2(260.0, 180.0),
+                egui::vec2(320.0, 440.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    ui.set_width(260.0);
+                    ui.set_width(320.0);
                     params_ui(edit, ui, settings);
                 },
             );
@@ -94,6 +96,70 @@ fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_play_click_keeps_the_video_editor_open_without_creating_a_canvas() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = dir.path().join("frame.png");
+        image::RgbaImage::new(16, 9).save(&frame).unwrap();
+        let ctx = egui::Context::default();
+        let mut video = Panel::default();
+        let mut edit = VideoEdit::open(
+            "clip",
+            "Clip".into(),
+            dir.path().join("clip.mp4"),
+            Some(30.0),
+            (1920.0, 1080.0),
+            &Document::new(1920.0, 1080.0),
+        );
+        edit.set_frames(vec![frame], 1.0, 30.0, Some((16.0, 9.0)));
+        video.edit = Some(edit);
+        let mut settings = AppSettings::default();
+        let render = |video: &mut Panel, settings: &mut AppSettings, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    assert!(edit_window_ui(video, settings, ui).is_none());
+                },
+            )
+        };
+        render(&mut video, &mut settings, vec![]);
+        let output = render(&mut video, &mut settings, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    (text.galley.job.text == "Play").then(|| text.pos + text.galley.size() / 2.0)
+                } else {
+                    None
+                }
+            })
+            .expect("visible Play button");
+        for pressed in [true, false] {
+            render(
+                &mut video,
+                &mut settings,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(video.edit.as_ref().unwrap().playing);
+    }
 
     #[test]
     fn editor_content_fits_narrow_and_wide_windows() {

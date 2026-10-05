@@ -368,6 +368,17 @@ fn click_transport(ctx: &egui::Context, edit: &mut VideoEdit, label: &str) {
 }
 
 #[test]
+fn play_after_adjusting_end_previews_the_whole_trim() {
+    let mut edit = editor(Some(30.0));
+    edit.set_frames(frame_paths(30), 1.0, 30.0, Some((16.0, 9.0)));
+    edit.set_trim_edge(TrimEdge::Start, 2.0);
+    edit.set_trim_duration(7.0);
+    click_transport(&egui::Context::default(), &mut edit, "Play");
+    assert!(edit.playing);
+    assert_eq!(edit.playhead, 2.0);
+}
+
+#[test]
 fn real_play_pause_and_restart_buttons_work_between_frequent_repaints() {
     let mut edit = editor(Some(10.0));
     edit.set_frames(frame_paths(20), 2.0, 10.0, Some((16.0, 9.0)));

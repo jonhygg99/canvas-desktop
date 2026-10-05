@@ -122,6 +122,11 @@ pub(super) fn live_textures(edit: &mut VideoEdit, ctx: &egui::Context) -> Option
 }
 
 impl LivePreview {
+    #[cfg(test)]
+    pub(super) fn has_frame(&self) -> bool {
+        self.sharp.is_some()
+    }
+
     pub(super) fn is_running(&self) -> bool {
         self.worker.is_some()
     }
