@@ -7,11 +7,15 @@ use super::{
     viewport::{layer_corners_screen, rotation_handle_screen, screen_to_page},
     EditorState, HANDLE_SIZE,
 };
-use canvas_core::{Command, Composite, Corner, LayerContent, LayerId, SetTransform, Transform};
+use canvas_core::{
+    Command, Composite, Corner, LayerContent, LayerId, SetContent, SetTransform, TextContent,
+    Transform,
+};
 use eframe::egui;
 
 pub(super) struct SelectionGesture {
     items: Vec<(LayerId, Transform)>,
+    texts: Vec<(LayerId, TextContent)>,
     from: Transform,
     pub(super) to: Transform,
     origin: egui::Pos2,
@@ -100,8 +104,17 @@ fn begin(state: &mut EditorState, ui: &egui::Ui, r: &egui::Response, rect: egui:
                 Kind::Move
             };
             state.crop_mode = false;
+            let items = selection_transforms(state);
+            let texts = items
+                .iter()
+                .filter_map(|(id, _)| match &state.doc.layer(*id).ok()?.content {
+                    LayerContent::Text(text) => Some((*id, text.clone())),
+                    _ => None,
+                })
+                .collect();
             let mut gesture = SelectionGesture {
-                items: selection_transforms(state),
+                items,
+                texts,
                 from,
                 to: from,
                 origin: pos,
@@ -230,10 +243,21 @@ impl SelectionGesture {
                 layer.transform = transform_item(t, self.from, self.to);
             }
         }
+        // Escalar la caja de texto también escala la tipografía, desde la
+        // instantánea inicial para evitar acumular errores entre fotogramas.
+        let scale = (self.to.width / self.from.width) as f32;
+        for (id, before) in &self.texts {
+            if let Ok(layer) = state.doc.layer_mut(*id) {
+                let mut text = before.clone();
+                text.size *= scale;
+                text.letter_spacing *= scale;
+                layer.content = LayerContent::Text(text);
+            }
+        }
     }
     fn finish(self, state: &mut EditorState) {
         state.snap_guides = (Vec::new(), Vec::new());
-        let cmds: Vec<Box<dyn Command>> = self
+        let mut cmds: Vec<Box<dyn Command>> = self
             .items
             .into_iter()
             .filter_map(|(layer, before)| {
@@ -247,6 +271,18 @@ impl SelectionGesture {
                 })
             })
             .collect();
+        for (layer, before) in self.texts {
+            let before = LayerContent::Text(before);
+            if let Ok(current) = state.doc.layer(layer) {
+                if current.content != before {
+                    cmds.push(Box::new(SetContent {
+                        layer,
+                        before,
+                        after: current.content.clone(),
+                    }));
+                }
+            }
+        }
         if !cmds.is_empty() {
             state.push_undo_step(Box::new(Composite::new("Transformar selección", cmds)));
         }

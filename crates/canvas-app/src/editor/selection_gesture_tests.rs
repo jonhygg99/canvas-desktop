@@ -120,6 +120,60 @@ fn corner_resizes_the_whole_selection_proportionally() {
 }
 
 #[test]
+fn common_resize_scales_text_and_undo_restores_typography() {
+    let (ctx, mut state, _, b) = fixture();
+    state.doc.layer_mut(b).unwrap().content = LayerContent::Text(canvas_core::TextContent {
+        size: 64.0,
+        letter_spacing: 2.0,
+        ..Default::default()
+    });
+    frame(&ctx, &mut state, pointer(140.0, 60.0, Some(true)));
+    frame(&ctx, &mut state, pointer(200.0, 80.0, None));
+    frame(&ctx, &mut state, pointer(200.0, 80.0, Some(false)));
+    let LayerContent::Text(text) = &state.doc.layer(b).unwrap().content else {
+        panic!()
+    };
+    assert_eq!((text.size, text.letter_spacing), (96.0, 3.0));
+    assert_eq!(state.history.undo_depth(), 1);
+    state.undo();
+    let LayerContent::Text(text) = &state.doc.layer(b).unwrap().content else {
+        panic!()
+    };
+    assert_eq!((text.size, text.letter_spacing), (64.0, 2.0));
+    assert_eq!(state.doc.layer(b).unwrap().transform.width, 40.0);
+    state.redo();
+    let LayerContent::Text(text) = &state.doc.layer(b).unwrap().content else {
+        panic!()
+    };
+    assert_eq!((text.size, text.letter_spacing), (96.0, 3.0));
+}
+
+#[test]
+fn cancelling_common_resize_restores_text_without_history() {
+    let (ctx, mut state, _, b) = fixture();
+    let before = LayerContent::Text(canvas_core::TextContent::default());
+    state.doc.layer_mut(b).unwrap().content = before.clone();
+    frame(&ctx, &mut state, pointer(140.0, 60.0, Some(true)));
+    frame(&ctx, &mut state, pointer(200.0, 80.0, None));
+    assert_ne!(state.doc.layer(b).unwrap().content, before);
+    frame(
+        &ctx,
+        &mut state,
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    frame(&ctx, &mut state, pointer(200.0, 80.0, Some(false)));
+    assert_eq!(state.doc.layer(b).unwrap().content, before);
+    assert_eq!(state.doc.layer(b).unwrap().transform.width, 40.0);
+    assert_eq!(state.history.undo_depth(), 0);
+}
+
+#[test]
 fn rotation_handle_rotates_both_layers_around_selection_center() {
     let (ctx, mut state, a, b) = fixture();
     for id in [a, b] {
