@@ -22,6 +22,17 @@ pub(super) fn show_panels(
 ) {
     let mut strip_action = None;
     let mut canvas_action = None;
+    if state.framing.is_some() {
+        egui::Panel::right("properties")
+            .default_size(260.0)
+            .show(ui, |ui| editor::properties_ui(state, ui));
+        egui::CentralPanel::default().show(ui, |ui| {
+            if let Some(session) = &mut state.framing {
+                session.canvas(ui);
+            }
+        });
+        return (None, None);
+    }
     // Barra de estado, PRIMERA de los paneles inferiores: se queda pegada al
     // borde inferior de la ventana y la tira de la baraja (si cae en el
     // borde inferior) queda encima, sin robarle ni un píxel al lienzo.

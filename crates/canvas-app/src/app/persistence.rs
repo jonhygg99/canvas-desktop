@@ -522,7 +522,11 @@ pub(super) fn has_raster_layers(doc: &Document) -> bool {
 /// rechaza antes de sobrescribir. Un diseño vectorial legítimamente
 /// monocromo, o una foto realmente uniforme, no tienen capas pendientes ni
 /// omitidas: siguen permitidos.
-fn bake_came_out_blank_or_incomplete(doc: &Document, rgba: &[u8], skipped: usize) -> bool {
+pub(super) fn bake_came_out_blank_or_incomplete(
+    doc: &Document,
+    rgba: &[u8],
+    skipped: usize,
+) -> bool {
     // Una capa omitida es un bake incompleto SIEMPRE, aunque el resultado no
     // sea uniforme (la única señal que distinguiría el chequeo de abajo).
     if skipped > 0 {

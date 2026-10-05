@@ -21,6 +21,9 @@ pub(in crate::app) fn gallery_view_ui(
 ) -> Option<Nav> {
     let mut open_next = None;
     match gallery::show(g, ui) {
+        Some(gallery::GalleryAction::EditFraming(path)) => {
+            g.framings.session = Some(crate::framing::Session::open(path, ctx));
+        }
         Some(gallery::GalleryAction::CycleFolderPanelSide) => {
             g.folder_panel_side = gallery::next_folder_panel_side(g.folder_panel_side);
             settings.gallery_folder_panel_side = g.folder_panel_side;

@@ -8,7 +8,7 @@ use eframe::egui;
 
 use super::shell::reveal_in_explorer;
 
-use super::super::{copy_to_slot, GalleryAction, GalleryItem, ItemKind};
+use super::super::{copy_to_slot, GalleryAction, GalleryItem};
 use crate::app_icons::draw_plus_icon;
 
 pub(super) const CELL_GAP: f32 = 8.0;
@@ -115,6 +115,7 @@ fn begin_rename(
     });
 }
 
+#[cfg(test)]
 pub(in crate::gallery) fn gallery_cell(
     ui: &mut egui::Ui,
     item: &GalleryItem,
@@ -127,7 +128,21 @@ pub(in crate::gallery) fn gallery_cell(
     // secuencia entre el frame del press y el del release y egui atribuye el
     // `clicked()` a otra celda (salto de varias filas, intermitente).
     ui.push_id(egui::Id::new(("gallery_cell", &item.path)), |ui| {
-        gallery_cell_inner(ui, item, cell_size, selected, rename_edit)
+        gallery_cell_inner(ui, item, cell_size, selected, rename_edit, None)
+    })
+    .inner
+}
+
+pub(in crate::gallery) fn gallery_cell_with_framing(
+    ui: &mut egui::Ui,
+    item: &GalleryItem,
+    cell_size: egui::Vec2,
+    selected: &mut Option<PathBuf>,
+    rename_edit: &mut Option<(PathBuf, String)>,
+    framings: &mut super::super::framing::GalleryFramings,
+) -> Option<GalleryAction> {
+    ui.push_id(egui::Id::new(("gallery_cell", &item.path)), |ui| {
+        gallery_cell_inner(ui, item, cell_size, selected, rename_edit, Some(framings))
     })
     .inner
 }
@@ -138,6 +153,7 @@ fn gallery_cell_inner(
     cell_size: egui::Vec2,
     selected: &mut Option<PathBuf>,
     rename_edit: &mut Option<(PathBuf, String)>,
+    mut framings: Option<&mut super::super::framing::GalleryFramings>,
 ) -> Option<GalleryAction> {
     let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
     // Fuera del viewport no hay click posible: solo se reservó espacio para
@@ -165,6 +181,11 @@ fn gallery_cell_inner(
 
     // Aquí la celda es visible seguro (corte al inicio): se pinta siempre.
     let painter = ui.painter();
+    let vertical = framings.as_ref().is_some_and(|state| state.vertical);
+    let card = framings
+        .as_mut()
+        .and_then(|state| state.card(&item.path, ui.ctx(), vertical));
+    let saved = card.is_some_and(|card| card.saved.is_some());
     if response.hovered() {
         painter.rect_filled(rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
@@ -178,96 +199,41 @@ fn gallery_cell_inner(
     }
 
     let thumbnail_width = rect.width() - THUMB_INSET * 2.0;
-    let thumbnail_height = thumbnail_width / THUMB_ASPECT_RATIO;
+    let thumbnail_height = if vertical {
+        thumbnail_width * 16.0 / 9.0
+    } else {
+        thumbnail_width / THUMB_ASPECT_RATIO
+    };
     let thumb_rect = egui::Rect::from_min_size(
         rect.left_top() + egui::vec2(THUMB_INSET, TITLE_HEIGHT + TITLE_TO_THUMB_GAP),
         egui::vec2(thumbnail_width, thumbnail_height),
     );
-    match (&item.tex, item.failed) {
-        (Some(tex), _) => {
-            let size = tex.size_vec2();
-            let scale = (thumbnail_width / size.x).max(thumbnail_height / size.y);
-            let fitted = egui::Rect::from_center_size(thumb_rect.center(), size * scale);
-            // Clip the cover thumbnail to the thumb rect: without
-            // this, tall/panoramic photos bleed over neighbour cells.
-            painter.rect_filled(thumb_rect, 2.0, ui.visuals().extreme_bg_color);
-            painter.with_clip_rect(thumb_rect).image(
-                tex.id(),
-                fitted,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
-        }
-        (None, _) if item.kind == ItemKind::Design => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "Document",
-                egui::FontId::proportional(14.0),
-                ui.visuals().weak_text_color(),
-            );
-        }
-        (None, true) => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "Failed to load",
-                egui::FontId::proportional(14.0),
-                ui.visuals().error_fg_color,
-            );
-        }
-        (None, false) => {
-            painter.text(
-                thumb_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "Loading",
-                egui::FontId::proportional(14.0),
-                ui.visuals().weak_text_color(),
-            );
-        }
-    }
-
-    if item.kind == ItemKind::Design {
-        painter.text(
-            thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
-            egui::Align2::RIGHT_TOP,
-            "Design",
-            egui::FontId::proportional(11.0),
-            ui.visuals().weak_text_color(),
-        );
-    }
-    if item.kind == ItemKind::Video {
-        painter.text(
-            thumb_rect.right_top() + egui::vec2(-2.0, 2.0),
-            egui::Align2::RIGHT_TOP,
-            "Video",
-            egui::FontId::proportional(11.0),
-            ui.visuals().weak_text_color(),
-        );
-        // Triángulo de play sutil en el centro para distinguir video de imagen
-        let play_sz = 22.0;
-        let play_rect =
-            egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(play_sz, play_sz));
-        let center = play_rect.center();
-        let r = play_sz * 0.42;
-        let p1 = egui::pos2(center.x - r * 0.45, center.y - r);
-        let p2 = egui::pos2(center.x - r * 0.45, center.y + r);
-        let p3 = egui::pos2(center.x + r * 0.75, center.y);
-        painter.circle_filled(center, r + 9.0, egui::Color32::from_black_alpha(110));
-        painter.add(egui::Shape::convex_polygon(
-            vec![p1, p2, p3],
-            egui::Color32::WHITE,
-            egui::Stroke::NONE,
-        ));
-    }
+    super::thumbnail::paint(painter, item, thumb_rect, card, vertical, ui.visuals());
 
     if !renaming {
+        let mut name_pos = name_rect.left_center();
+        if saved {
+            let icon_rect = egui::Rect::from_center_size(
+                name_pos + egui::vec2(5.0, 0.0),
+                egui::vec2(10.0, 16.0),
+            );
+            crate::framing::portrait_icon(painter, icon_rect, ui.visuals().selection.stroke.color);
+            name_pos.x += 16.0;
+            painter.text(
+                name_pos,
+                egui::Align2::LEFT_CENTER,
+                "9:16",
+                egui::FontId::proportional(10.0),
+                ui.visuals().weak_text_color(),
+            );
+            name_pos.x += 30.0;
+        }
         let mut name = item.name.clone();
         if name.chars().count() > 30 {
             name = format!("{}...", name.chars().take(27).collect::<String>());
         }
         painter.text(
-            name_rect.left_center(),
+            name_pos,
             egui::Align2::LEFT_CENTER,
             name,
             egui::FontId::proportional(12.5),
@@ -326,6 +292,21 @@ fn gallery_cell_inner(
             *selected = Some(item.path.clone());
         }
         response.context_menu(|ui| {
+            if ui
+                .button(if saved {
+                    "Edit framing 9:16"
+                } else {
+                    "Create framing 9:16"
+                })
+                .clicked()
+            {
+                action = Some(GalleryAction::EditFraming(item.path.clone()));
+                ui.close();
+            }
+            if let Some(error) = card.and_then(|card| card.error.as_ref()) {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+            }
+            ui.separator();
             if ui.button("Open").clicked() {
                 action = Some(GalleryAction::Open(item.path.clone()));
                 ui.close();

@@ -39,6 +39,9 @@ mod sidecar_tests;
 pub(crate) use history::{DeleteRecord, GlobalStep};
 
 pub struct EditorState {
+    pub(crate) framing: Option<crate::framing::Session>,
+    pub(crate) framing_requested: bool,
+    pub(crate) saved_framing: Option<canvas_core::framing::Framing>,
     pub doc: Document,
     pub history: History,
     pub images: ImageMap,
@@ -259,12 +262,14 @@ impl EditorState {
             && self.file_rename_edit.is_none()
             && !self.saving
             && !self.exporting
+            && self.framing.as_ref().is_none_or(|session| !session.busy())
     }
 
     /// Extrae el lienzo activo a un `SlotDoc` para guardarlo en su ranura de
     /// la baraja, dejando `self` con un documento de relleno. Solo se llama
     /// con `is_idle() == true` (comprobado por el llamador, `deck::apply_jump`).
     pub(crate) fn take_slot(&mut self) -> crate::deck::SlotDoc {
+        self.framing = None;
         self.pause_video();
         let bytes = self
             .images
@@ -294,6 +299,11 @@ impl EditorState {
     pub(crate) fn put_slot(&mut self, slot: crate::deck::SlotDoc) {
         self.pause_video();
         self.doc = slot.doc;
+        self.saved_framing = self
+            .doc
+            .source_path
+            .as_deref()
+            .and_then(|path| canvas_io::read_framing(path).ok().flatten());
         self.history = slot.history;
         self.images = slot.images;
         self.selection = slot.selection;

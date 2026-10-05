@@ -21,6 +21,8 @@ mod opacity_tests;
 pub(crate) mod page;
 
 #[cfg(test)]
+mod framing_tests;
+#[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
 use eframe::egui;
@@ -40,7 +42,7 @@ use layer_common::layer_properties_ui;
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     sidebar::compact(ui);
-    sidebar::title(ui, "Properties");
+    framing_header_ui(state, ui);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -183,6 +185,10 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         state.return_requested = true;
     }
     file_name_ui(state, ui);
+    if let Some(session) = &mut state.framing {
+        session.controls(ui);
+        return;
+    }
     let page_dims = match state.doc.page() {
         Ok(p) => (p.width, p.height),
         Err(_) => (0.0, 0.0),
@@ -240,6 +246,38 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
 /// cuando el documento ya tiene archivo en disco. Un diseño nuevo sin
 /// guardar (`source_path` en `None`) no ofrece el lápiz: no hay nada que
 /// renombrar todavía.
+fn framing_header_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    let origin = ui.available_rect_before_wrap().min;
+    let width = ui.available_width();
+    sidebar::title(ui, "Properties");
+    let rect = egui::Rect::from_min_size(
+        origin + egui::vec2((width - 116.0).max(0.0), 1.0),
+        egui::vec2(112.0, 22.0),
+    );
+    let busy = state.framing.as_ref().is_some_and(|session| session.busy());
+    let label = if state.framing.is_some() {
+        "Normal view"
+    } else {
+        "Framing 9:16"
+    };
+    let sense = if busy {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    if ui
+        .put(rect, egui::Button::new(label).sense(sense))
+        .on_hover_text("Frame the whole composition for Shorts")
+        .clicked()
+    {
+        if let Some(session) = &mut state.framing {
+            session.closed = true;
+        } else {
+            state.framing_requested = true;
+        }
+    }
+}
+
 fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let id = egui::Id::new("editor_file_rename");
     if state.file_rename_edit.is_some() {
@@ -275,6 +313,16 @@ fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         }
     } else {
         ui.horizontal(|ui| {
+            if state.saved_framing.is_some() {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 20.0), egui::Sense::hover());
+                crate::framing::portrait_icon(
+                    ui.painter(),
+                    rect,
+                    ui.visuals().selection.stroke.color,
+                );
+                ui.small("9:16");
+            }
             ui.heading(state.file_name());
             if state.doc.source_path.is_some()
                 && icon_button_ui(ui, 16.0, true, draw_pencil_icon).clicked()

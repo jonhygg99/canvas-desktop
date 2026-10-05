@@ -17,6 +17,7 @@ use super::super::Nav;
 
 mod deck_nav;
 mod file_ops;
+mod framing_flow;
 mod modals;
 mod panels;
 mod save_flow;
@@ -53,7 +54,9 @@ pub(in crate::app) fn editor_view_ui(
     // muta `state.doc` sin pasos de deshacer, así que no marca nada sucio.
     simulate_edits(state, f, ctx);
     state.tick_video(ctx);
-    state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
+    if state.framing.is_none() {
+        state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
+    }
 
     // Recarga pedida desde el banner de «cambió en disco».
     if std::mem::take(&mut state.reload_requested) {
@@ -77,7 +80,10 @@ pub(in crate::app) fn editor_view_ui(
     }
 
     file_ops::handle_file_ops(state, ctx, f);
-    save_flow::handle_save(state, ctx, rs, f, &mut open_next);
+    framing_flow::update(state, ctx, rs, f);
+    if state.framing.is_none() {
+        save_flow::handle_save(state, ctx, rs, f, &mut open_next);
+    }
     modals::show_modals(state, ctx, rs, f);
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
     deck_nav::resolve(

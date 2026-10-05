@@ -17,6 +17,7 @@ mod central;
 mod folder_panel;
 mod shell;
 mod shortcuts;
+mod thumbnail;
 
 pub use folder_panel::next_folder_panel_side;
 
@@ -28,6 +29,7 @@ pub(super) use cell::{gallery_cell, gallery_cell_size};
 use folder_panel::show_folder_panel;
 
 pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction> {
+    state.framings.poll(ui.ctx());
     let mut action = shortcuts::handle(state, ui);
 
     if let Some(panel_action) = show_folder_panel(state, ui) {
@@ -38,5 +40,6 @@ pub fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<GalleryAction
         action = Some(central_action);
     }
 
+    state.framings.modal(ui.ctx());
     action
 }

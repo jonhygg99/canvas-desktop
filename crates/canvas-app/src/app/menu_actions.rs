@@ -17,6 +17,53 @@ impl AppInner {
         ctx: &egui::Context,
     ) {
         use menus::MenuAction as A;
+        if let View::Gallery(gallery) = &mut ws.view {
+            if let Some(session) = &mut gallery.framings.session {
+                match action {
+                    A::Undo => {
+                        if !session.busy() {
+                            session.undo();
+                        }
+                        return;
+                    }
+                    A::Redo => {
+                        if !session.busy() {
+                            session.redo();
+                        }
+                        return;
+                    }
+                    A::Save => {
+                        session.save(ctx);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let View::Editor(state) = &mut ws.view {
+            if let Some(session) = &mut state.framing {
+                match action {
+                    A::Undo => {
+                        if !session.busy() {
+                            session.undo();
+                        }
+                        return;
+                    }
+                    A::Redo => {
+                        if !session.busy() {
+                            session.redo();
+                        }
+                        return;
+                    }
+                    A::Save => {
+                        session.save(ctx);
+                        return;
+                    }
+                    A::Cut | A::Paste | A::Duplicate | A::Delete | A::Group | A::Ungroup => return,
+                    _ => {}
+                }
+            }
+        }
         match action {
             // Ventana nueva (workspace) con la bienvenida, desde cualquier
             // ventana — el conmutador (Ctrl+Tab) salta entre ellas.
