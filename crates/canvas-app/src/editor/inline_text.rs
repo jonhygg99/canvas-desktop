@@ -98,13 +98,6 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
         state.inline_text = Some(edit);
         return;
     };
-    let style = text.clone();
-    let zoom = state.viewport.zoom as f32;
-    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| {
-        let job =
-            super::inline_typography::job(buffer.as_str(), &style, family.clone(), zoom, width);
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
-    };
     let corners = layer_corners_screen(&state.viewport, coord, &layer.transform);
     let bounds = egui::Rect::from_points(&corners);
     let mut done = ui.input_mut(|i| {
@@ -119,37 +112,17 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
         .fixed_pos(bounds.min)
         .constrain_to(clip)
         .show(ui.ctx(), |ui| {
-            let fill = if style.color[..3].iter().map(|c| u32::from(*c)).sum::<u32>() > 384 {
-                egui::Color32::from_gray(24)
-            } else {
-                egui::Color32::WHITE
-            };
-            egui::Frame::popup(ui.style()).fill(fill).show(ui, |ui| {
-                let width = bounds.width().clamp(80.0, (clip.width() - 16.0).max(80.0));
-                let r = ui.add(
-                    egui::TextEdit::multiline(&mut text.text)
-                        .id(egui::Id::new(("inline_text", edit.layer.raw())))
-                        .background_color(fill)
-                        .text_color(egui::Color32::from_rgba_unmultiplied(
-                            style.color[0],
-                            style.color[1],
-                            style.color[2],
-                            style.color[3],
-                        ))
-                        .layouter(&mut layouter)
-                        .desired_width(width)
-                        .desired_rows(2),
-                );
-                if edit.focus {
-                    r.request_focus();
-                    edit.focus = false;
-                }
-                done |= r.lost_focus();
-                ui.horizontal(|ui| {
-                    done |= ui.button(crate::i18n::tr("Done")).clicked();
-                    cancel |= ui.button(crate::i18n::tr("Cancel")).clicked();
-                });
-            });
+            let (accept, discard) = field(
+                ui,
+                &mut text,
+                &mut edit,
+                bounds,
+                clip,
+                state.viewport.zoom as f32,
+                family.clone(),
+            );
+            done |= accept;
+            cancel |= discard;
         });
     if let Ok(layer) = state.doc.layer_mut(edit.layer) {
         layer.content = LayerContent::Text(text);
@@ -158,4 +131,59 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
     if cancel || done {
         finish(state, cancel);
     }
+}
+
+fn field(
+    ui: &mut egui::Ui,
+    text: &mut canvas_core::TextContent,
+    edit: &mut InlineText,
+    bounds: egui::Rect,
+    clip: egui::Rect,
+    zoom: f32,
+    family: egui::FontFamily,
+) -> (bool, bool) {
+    let style = text.clone();
+    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| {
+        let job =
+            super::inline_typography::job(buffer.as_str(), &style, family.clone(), zoom, width);
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+    let (mut done, mut cancel) = (false, false);
+    let fill = if style.color[..3].iter().map(|c| u32::from(*c)).sum::<u32>() > 384 {
+        egui::Color32::from_gray(24)
+    } else {
+        egui::Color32::WHITE
+    };
+    egui::Frame::popup(ui.style()).fill(fill).show(ui, |ui| {
+        let width = bounds.width().clamp(80.0, (clip.width() - 16.0).max(80.0));
+        let r = ui.add(
+            egui::TextEdit::multiline(&mut text.text)
+                .id(egui::Id::new(("inline_text", edit.layer.raw())))
+                .background_color(fill)
+                .text_color(egui::Color32::from_rgba_unmultiplied(
+                    style.color[0],
+                    style.color[1],
+                    style.color[2],
+                    style.color[3],
+                ))
+                .layouter(&mut layouter)
+                .horizontal_align(match style.align {
+                    canvas_core::TextAlign::Left => egui::Align::LEFT,
+                    canvas_core::TextAlign::Center => egui::Align::Center,
+                    canvas_core::TextAlign::Right => egui::Align::RIGHT,
+                })
+                .desired_width(width)
+                .desired_rows(2),
+        );
+        if edit.focus {
+            r.request_focus();
+            edit.focus = false;
+        }
+        done |= r.lost_focus();
+        ui.horizontal(|ui| {
+            done |= ui.button(crate::i18n::tr("Done")).clicked();
+            cancel |= ui.button(crate::i18n::tr("Cancel")).clicked();
+        });
+    });
+    (done, cancel)
 }
