@@ -168,7 +168,10 @@ pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         if was_playing {
             return None;
         }
-        frame_index(edit).and_then(|i| frame_textures(edit, ui.ctx(), i))
+        let step = edit.blur.round().clamp(0.0, 100.0) as u8;
+        edit.exact
+            .textures(&edit.path, step, ui.ctx())
+            .or_else(|| frame_index(edit).and_then(|i| frame_textures(edit, ui.ctx(), i)))
     });
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     // Fondo de página por defecto (blanco): la ventana no conoce el del doc.

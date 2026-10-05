@@ -5,7 +5,7 @@ comentarios y documentación en español. Rust/egui nativo.
 
 - [x] Timeline con miniaturas, tramo conservado y tiradores de inicio/fin.
 - [x] Tiempos con milisegundos, marcar inicio/fin y controles de fotograma.
-- [ ] Vista previa exacta del extremo ajustado y FPS del archivo.
+- [x] Vista previa exacta del extremo ajustado y FPS del archivo.
 - [x] Zoom de timeline, bucle, Undo/Redo y Reset trim independiente del aspecto.
 - [ ] Ventana adaptable con preview grande y acción Create canvas explícita.
 - [ ] Progreso de descarga, cancelación, reintento por vídeo y tarjetas de clips.

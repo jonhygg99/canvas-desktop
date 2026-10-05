@@ -16,7 +16,9 @@ mod svg;
 mod thumbs;
 mod verify;
 mod video;
+mod video_rate;
 mod video_stream;
+pub use video_rate::probe_video_fps;
 
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,

@@ -86,6 +86,7 @@ impl super::AppInner {
         if let View::Editor(state) = &mut ws.view {
             if let Some(edit) = state.ytdlp.edit.as_mut() {
                 if edit.matches(&done.clip_id) {
+                    edit.set_source_fps(done.source_fps);
                     edit.set_frames(done.files, done.fps, done.duration, done.video_size);
                 }
             }

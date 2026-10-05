@@ -32,6 +32,7 @@ impl VideoEdit {
         self.last_tick = None;
         crate::audio::pause_for(&self.path);
         self.playhead = time.clamp(0.0, self.duration.unwrap_or(time).max(0.0));
+        self.exact.seek(self.playhead);
     }
 
     pub(super) fn set_trim_edge(&mut self, edge: TrimEdge, time: f64) {

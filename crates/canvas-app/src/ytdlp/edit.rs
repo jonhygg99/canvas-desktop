@@ -60,6 +60,8 @@ use controls::{advance_playhead, params_ui, timeline_ui, transport_ui};
 #[path = "edit_playback.rs"]
 mod playback;
 use playback::LivePreview;
+#[path = "edit_exact.rs"]
+mod exact;
 
 /// Tamaños de lienzo ofrecidos (nombre, ancho, alto).
 pub const CANVAS_SIZES: [(&str, f64, f64); 3] = [
@@ -114,6 +116,7 @@ pub struct VideoEdit {
     frames_error: Option<String>,
     preview: PreviewCache,
     playback: LivePreview,
+    exact: exact::ExactPreview,
 }
 
 impl VideoEdit {
@@ -157,6 +160,7 @@ impl VideoEdit {
             frames_error: None,
             preview: PreviewCache::default(),
             playback: LivePreview::default(),
+            exact: exact::ExactPreview::default(),
         };
         if let Some(id) = target_layer {
             edit.restore_from_layer(doc, id);
@@ -218,11 +222,18 @@ impl VideoEdit {
         self.preview = PreviewCache::default();
         self.thumbnails = timeline_thumbnails::Thumbnails::default();
         self.playback = LivePreview::default();
+        self.exact = exact::ExactPreview::default();
         self.loading_frames = false;
         self.frames_error = None;
     }
 
     /// La vista previa falló: queda la guía visible (el trim espera).
+    pub(crate) fn set_source_fps(&mut self, fps: f64) {
+        if fps.is_finite() && fps > 0.0 {
+            self.source_fps = fps;
+        }
+    }
+
     pub(crate) fn set_frames_error(&mut self, error: String) {
         self.loading_frames = false;
         self.frames_error = Some(error);

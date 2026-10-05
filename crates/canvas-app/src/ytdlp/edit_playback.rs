@@ -299,7 +299,7 @@ fn prepare_frame(image: canvas_io::LoadedImage, time: f64, step: u8) -> StreamFr
     }
 }
 
-fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorImage {
+pub(super) fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorImage {
     let pixels = image::RgbaImage::from_raw(image.width, image.height, image.rgba.clone())
         .expect("frame RGBA completo");
     // El fondo desenfocado necesita pocos píxeles: nunca frena el foreground.
@@ -312,7 +312,7 @@ fn prepare_background(image: &canvas_io::LoadedImage, step: u8) -> egui::ColorIm
     )
 }
 
-fn update_texture(
+pub(super) fn update_texture(
     texture: &mut Option<egui::TextureHandle>,
     image: egui::ColorImage,
     name: &str,

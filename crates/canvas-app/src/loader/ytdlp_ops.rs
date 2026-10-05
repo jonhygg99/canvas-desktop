@@ -114,6 +114,7 @@ pub struct YtdlpFramesOutcome {
     pub clip_id: String,
     pub files: Vec<PathBuf>,
     pub fps: f64,
+    pub source_fps: f64,
     pub duration: f64,
     /// Dims reales del vídeo (para el contain).
     pub video_size: Option<(f64, f64)>,
@@ -207,6 +208,7 @@ fn run_frames(
         clip_id: clip_id.to_owned(),
         files,
         fps,
+        source_fps: canvas_io::probe_video_fps(path).unwrap_or(30.0),
         duration,
         video_size,
     }));
