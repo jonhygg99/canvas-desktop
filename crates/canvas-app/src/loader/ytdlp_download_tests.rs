@@ -36,16 +36,23 @@ fn a_real_local_download_reports_progress_and_returns_a_playable_clip() {
     let server_stop = stop.clone();
     let server = std::thread::spawn(move || {
         while !server_stop.load(Ordering::Relaxed) {
-            let Ok((mut client, _)) = listener.accept() else {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-                continue;
+            let (mut client, _) = match listener.accept() {
+                Ok(client) => client,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("local video accept: {error}"),
             };
+            // En Windows el socket aceptado hereda el modo del listener.
+            client.set_nonblocking(false).unwrap();
             client
                 .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                 .unwrap();
             let mut reader = BufReader::new(client.try_clone().unwrap());
             let mut request = String::new();
-            if reader.read_line(&mut request).is_err() {
+            if let Err(error) = reader.read_line(&mut request) {
+                eprintln!("local video read: {error}");
                 continue;
             }
             loop {
@@ -59,6 +66,7 @@ fn a_real_local_download_reports_progress_and_returns_a_playable_clip() {
             if !request.starts_with("HEAD ") {
                 let _ = client.write_all(&data);
             }
+            let _ = client.shutdown(std::net::Shutdown::Write);
         }
     });
     let url = format!("http://{address}/sample.mp4");

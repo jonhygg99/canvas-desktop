@@ -9,19 +9,7 @@ use super::super::{View, Workspace};
 impl super::AppInner {
     pub(super) fn on_ytdlp_item(&mut self, ws: &mut Workspace, outcome: loader::YtdlpItemOutcome) {
         if let View::Editor(state) = &mut ws.view {
-            let panel = &mut state.ytdlp;
-            panel.failed.retain(|(url, _)| *url != outcome.url);
-            if let Some(error) = outcome.error {
-                if let Some(request) = panel.retry_requests.get_mut(&outcome.url) {
-                    request.target = outcome.target;
-                }
-                panel.failed.push((outcome.url, error));
-            } else {
-                panel.retry_requests.remove(&outcome.url);
-            }
-            for clip in outcome.clips {
-                panel.clip_info.insert(clip.path.clone(), clip);
-            }
+            state.ytdlp.finish_download_item(outcome);
         }
     }
 

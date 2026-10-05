@@ -19,6 +19,7 @@ pub struct Panel {
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub failed: Vec<(String, String)>,
     pub retry_requests: std::collections::HashMap<String, crate::loader::YtdlpDownloadRequest>,
+    pub(crate) clip_previews: super::clip_preview::ClipPreviews,
     pub clip_info: std::collections::HashMap<PathBuf, crate::loader::DownloadedClip>,
     /// Último error visible.
     pub error: Option<String>,
@@ -38,5 +39,75 @@ impl Drop for Panel {
         if let Some(cancel) = &self.cancel {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
+    }
+}
+
+impl Panel {
+    pub(crate) fn finish_download_item(&mut self, outcome: crate::loader::YtdlpItemOutcome) {
+        self.failed.retain(|(url, _)| *url != outcome.url);
+        if let Some(error) = outcome.error {
+            if let Some(target) = outcome.target {
+                if let Some(request) = self.retry_requests.get_mut(&outcome.url) {
+                    request.target = Some(target);
+                }
+            }
+            self.failed.push((outcome.url, error));
+        } else {
+            self.retry_requests.remove(&outcome.url);
+        }
+        for clip in outcome.clips {
+            // Cada clip aparece al terminar, sin esperar al resto de la tanda.
+            if !self.done.contains(&clip.path) {
+                self.done.push(clip.path.clone());
+            }
+            self.clip_info.insert(clip.path.clone(), clip);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{DownloadedClip, YtdlpDownloadRequest, YtdlpItemOutcome};
+    #[test]
+    fn clips_are_visible_before_the_batch_finishes_and_cancel_preserves_retry_target() {
+        let mut panel = Panel::default();
+        let url = "https://example.test/video".to_owned();
+        let target = PathBuf::from("clip.mp4");
+        panel.retry_requests.insert(
+            url.clone(),
+            YtdlpDownloadRequest {
+                urls: vec![url.clone()],
+                start: Some(2.125),
+                end: Some(4.0),
+                mute: true,
+                dest: PathBuf::new(),
+                cancel: Default::default(),
+                target: Some(target.clone()),
+            },
+        );
+        panel.finish_download_item(YtdlpItemOutcome {
+            url: url.clone(),
+            target: None,
+            clips: vec![],
+            error: Some("Cancelled".into()),
+        });
+        let retry = &panel.retry_requests[&url];
+        assert_eq!(retry.target, Some(target.clone()));
+        assert_eq!(retry.start, Some(2.125));
+        assert!(retry.mute);
+        panel.finish_download_item(YtdlpItemOutcome {
+            url: url.clone(),
+            target: Some(target.clone()),
+            clips: vec![DownloadedClip {
+                path: target.clone(),
+                title: "Original title".into(),
+            }],
+            error: None,
+        });
+        assert_eq!(panel.done, vec![target.clone()]);
+        assert_eq!(panel.clip_info[&target].title, "Original title");
+        assert!(panel.failed.is_empty());
+        assert!(!panel.retry_requests.contains_key(&url));
     }
 }

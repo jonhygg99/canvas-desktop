@@ -38,6 +38,18 @@ pub fn panel_ui(
     };
     let _ = ytdlp;
 
+    download_form(panel, settings, dest, ui, tx);
+    jobs::show(panel, ui, tx);
+    downloaded_results(panel, ui, tx);
+}
+
+fn download_form(
+    panel: &mut Panel,
+    settings: &mut AppSettings,
+    dest: Option<PathBuf>,
+    ui: &mut egui::Ui,
+    tx: &Sender<loader::AppMsg>,
+) {
     ui.add_space(6.0);
     ui.label(crate::i18n::tr(
         "Video URL (one per line, playlist allowed):",
@@ -94,123 +106,31 @@ pub fn panel_ui(
     if !has_urls && !panel.urls.trim().is_empty() {
         ui.weak(crate::i18n::tr("Paste an http(s):// URL first."));
     }
+}
 
-    jobs::show(panel, ui, tx);
+fn downloaded_results(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
     if let Some(err) = &panel.error {
         ui.add_space(4.0);
         ui.colored_label(ui.visuals().error_fg_color, err);
     }
     if !panel.done.is_empty() {
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(crate::i18n::tr("Downloaded:"));
             // Limpieza total a la derecha del título.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clear = ui.add_enabled(
-                    !panel.downloading,
-                    egui::Button::new(crate::i18n::tr("Clear")),
-                );
+                let clear =
+                    ui.add_enabled(!panel.downloading, egui::Button::new("Move all to trash"));
                 if clear.clicked() {
                     loader::spawn_ytdlp_delete(panel.done.clone(), tx.clone(), ui.ctx().clone());
                 }
                 clear.on_hover_text(crate::i18n::tr("Move every downloaded file to the trash"));
             });
         });
-        clips_ui(panel, ui, tx);
+        super::clip_cards::show(panel, ui, tx);
     }
     ui.add_space(4.0);
     ui.weak(crate::i18n::tr(
         "Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.",
     ));
-}
-
-/// Una fila por clip descargado: papelera roja a la izquierda, nombre y
-/// botones Insertar/Editar a la derecha. Con descarga en curso los borrados
-/// esperan (el fichero se está escribiendo).
-fn clips_ui(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
-    let busy = panel.downloading;
-    let mut delete: Option<PathBuf> = None;
-    let mut insert: Option<PathBuf> = None;
-    let mut edit: Option<PathBuf> = None;
-    for path in &panel.done {
-        ui.horizontal(|ui| {
-            let trash = trash_button(ui, !busy);
-            if trash.clicked() {
-                delete = Some(path.clone());
-            }
-            trash.on_hover_text(crate::i18n::tr("Move to trash"));
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            ui.label(name);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button(crate::i18n::tr("Edit")).clicked() {
-                    edit = Some(path.clone());
-                }
-                if ui
-                    .small_button(crate::i18n::tr("Insert on canvas"))
-                    .clicked()
-                {
-                    insert = Some(path.clone());
-                }
-            });
-        });
-    }
-    if let Some(path) = delete {
-        loader::spawn_ytdlp_delete(vec![path], tx.clone(), ui.ctx().clone());
-    }
-    if let Some(path) = insert {
-        panel.pending_insert = Some(path);
-    }
-    if let Some(path) = edit {
-        panel.pending_edit = Some(path);
-    }
-}
-
-/// Botón papelera rojo dibujado a mano (sin depender de glifos Unicode).
-/// Apagado: gris y sin clic (p. ej. durante una descarga).
-fn trash_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
-    let size = 22.0;
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), sense);
-    if resp.hovered() && enabled {
-        ui.painter()
-            .rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
-    }
-    let red = if enabled {
-        egui::Color32::from_rgb(210, 40, 40)
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let p = ui.painter();
-    let body = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 6.0, rect.top() + 8.0),
-        egui::vec2(10.0, 10.0),
-    );
-    p.rect_stroke(
-        body,
-        1.5,
-        egui::Stroke::new(1.3, red),
-        egui::StrokeKind::Inside,
-    );
-    p.line_segment(
-        [
-            egui::pos2(rect.left() + 4.0, rect.top() + 5.5),
-            egui::pos2(rect.right() - 4.0, rect.top() + 5.5),
-        ],
-        egui::Stroke::new(1.3, red),
-    );
-    p.line_segment(
-        [
-            egui::pos2(rect.center().x - 3.0, rect.top() + 3.0),
-            egui::pos2(rect.center().x + 3.0, rect.top() + 3.0),
-        ],
-        egui::Stroke::new(1.3, red),
-    );
-    resp
 }

@@ -97,6 +97,31 @@ fn download_one(
         }
     };
     outcome.target = Some(target.clone());
+    let mut command = download_command(ytdlp, url, request, &target)?;
+    let result = ytdlp_process::run(&mut command, &request.cancel, |line| {
+        if let Some(text) = ytdlp_process::progress(line) {
+            progress(text);
+        }
+        if let Some(clip) = parse_clip(line) {
+            if clip.path.is_file() && !outcome.clips.iter().any(|item| item.path == clip.path) {
+                outcome.clips.push(clip);
+            }
+        }
+    });
+    result?;
+    if outcome.clips.is_empty() {
+        return Err("Download finished but no video file was found.".into());
+    }
+    progress("Ready".into());
+    Ok(())
+}
+
+fn download_command(
+    ytdlp: &Path,
+    url: &str,
+    request: &YtdlpDownloadRequest,
+    target: &Path,
+) -> Result<std::process::Command, String> {
     let stem = target
         .file_stem()
         .ok_or("Invalid download filename")?
@@ -145,22 +170,7 @@ fn download_one(
         command.args(["--download-sections", &section, "--force-keyframes-at-cuts"]);
     }
     command.arg("-o").arg(template).arg(url);
-    let result = ytdlp_process::run(&mut command, &request.cancel, |line| {
-        if let Some(text) = ytdlp_process::progress(line) {
-            progress(text);
-        }
-        if let Some(clip) = parse_clip(line) {
-            if clip.path.is_file() && !outcome.clips.iter().any(|item| item.path == clip.path) {
-                outcome.clips.push(clip);
-            }
-        }
-    });
-    result?;
-    if outcome.clips.is_empty() {
-        return Err("Download finished but no video file was found.".into());
-    }
-    progress("Ready".into());
-    Ok(())
+    Ok(command)
 }
 
 fn parse_clip(line: &str) -> Option<DownloadedClip> {

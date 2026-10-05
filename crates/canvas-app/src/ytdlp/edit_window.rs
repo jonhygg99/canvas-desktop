@@ -19,7 +19,11 @@ pub fn edit_window_ui(
             let edit = video.edit.as_mut().expect("checked above");
             advance_playhead(edit, &ui.ctx().clone());
             egui::ScrollArea::vertical()
-                .max_height((ui.ctx().content_rect().height() - 170.0).max(160.0))
+                .max_height(
+                    (ui.available_height() - 55.0)
+                        .min(ui.ctx().content_rect().height() - 170.0)
+                        .max(160.0),
+                )
                 .show(ui, |ui| body(edit, settings, ui));
             ui.separator();
             ui.horizontal(|ui| {
