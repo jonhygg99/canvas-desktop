@@ -37,32 +37,7 @@ pub(super) fn show(state: &EditorState, ui: &mut egui::Ui, id: LayerId) {
         );
     } else if let Ok(layer) = state.doc.layer(id) {
         match &layer.content {
-            LayerContent::Shape(shape) => {
-                let fill = egui::Color32::from_rgba_unmultiplied(
-                    shape.fill[0],
-                    shape.fill[1],
-                    shape.fill[2],
-                    shape.fill[3],
-                );
-                let color = egui::Color32::from_rgba_unmultiplied(
-                    shape.stroke[0],
-                    shape.stroke[1],
-                    shape.stroke[2],
-                    shape.stroke[3],
-                );
-                let stroke = egui::Stroke::new(shape.stroke_width.min(2.0), color);
-                if shape.kind == ShapeKind::Ellipse {
-                    ui.painter().circle(rect.center(), 9.0, fill, stroke);
-                } else {
-                    ui.painter().rect(
-                        rect.shrink(3.0),
-                        2.0,
-                        fill,
-                        stroke,
-                        egui::StrokeKind::Inside,
-                    );
-                }
-            }
+            LayerContent::Shape(shape) => shape_preview(ui.painter(), rect.shrink(3.0), shape),
             LayerContent::Text(_) => {
                 ui.painter().text(
                     rect.center(),
@@ -101,6 +76,86 @@ fn thumbnail(image: &vello::peniko::ImageData) -> Option<egui::ColorImage> {
     }
     Some(egui::ColorImage::from_rgba_unmultiplied([48, 48], &rgba))
 }
+
+fn shape_preview(painter: &egui::Painter, rect: egui::Rect, shape: &canvas_core::ShapeContent) {
+    let color =
+        |rgba: [u8; 4]| egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let fill = color(shape.fill);
+    let stroke = egui::Stroke::new(shape.stroke_width.clamp(0.0, 2.0), color(shape.stroke));
+    match shape.kind {
+        ShapeKind::Rect => {
+            painter.rect(
+                rect,
+                if shape.corner_radius > 0.0 { 2.0 } else { 0.0 },
+                fill,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        ShapeKind::Ellipse => {
+            painter.circle(rect.center(), rect.width() / 2.0, fill, stroke);
+        }
+        ShapeKind::Line => {
+            painter.line_segment([rect.left_center(), rect.right_center()], stroke);
+        }
+        ShapeKind::Arrow => {
+            let shaft_end = egui::pos2(
+                rect.left() + canvas_core::arrow_shaft_end_x(f64::from(rect.width())) as f32,
+                rect.center().y,
+            );
+            painter.line_segment(
+                [rect.left_center(), shaft_end],
+                egui::Stroke::new(3.0, fill),
+            );
+            let points =
+                canvas_core::arrow_head_points(f64::from(rect.width()), f64::from(rect.height()));
+            painter.add(egui::Shape::convex_polygon(
+                points
+                    .into_iter()
+                    .map(|(x, y)| rect.min + egui::vec2(x as f32, y as f32))
+                    .collect(),
+                fill,
+                stroke,
+            ));
+        }
+        kind => polygon_preview(painter, rect, kind, fill, stroke),
+    }
+}
+fn polygon_preview(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    kind: ShapeKind,
+    fill: egui::Color32,
+    stroke: egui::Stroke,
+) {
+    let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+    let points = match kind {
+        ShapeKind::Triangle => canvas_core::triangle_points(w, h).to_vec(),
+        ShapeKind::Star => canvas_core::star_points(w, h, 5, 0.45),
+        ShapeKind::Pentagon => canvas_core::regular_polygon_points(w, h, 5),
+        ShapeKind::Hexagon => canvas_core::regular_polygon_points(w, h, 6),
+        ShapeKind::Diamond => canvas_core::diamond_points(w, h).to_vec(),
+        ShapeKind::Cross => canvas_core::cross_points(w, h).to_vec(),
+        ShapeKind::Heart => canvas_core::heart_points(w, h, 32),
+        _ => unreachable!(),
+    };
+    let points: Vec<_> = points
+        .into_iter()
+        .map(|(x, y)| rect.min + egui::vec2(x as f32, y as f32))
+        .collect();
+    // Estas siluetas admiten un abanico desde su centro, incluso las cóncavas.
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.center(), fill);
+    for point in &points {
+        mesh.colored_vertex(*point, fill);
+    }
+    for i in 0..points.len() as u32 {
+        mesh.add_triangle(0, i + 1, (i + 1) % points.len() as u32 + 1);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    painter.add(egui::Shape::closed_line(points, stroke));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
