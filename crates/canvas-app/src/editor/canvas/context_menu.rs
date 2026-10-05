@@ -25,6 +25,7 @@ pub(super) fn canvas_context_menu(
 ) {
     use crate::menus::MenuAction;
     super::super::layer_picking::menu(state, ui);
+    super::super::selection_layout::controls(state, ui);
     // Clic derecho sobre una ranura fallida: reparar o apartar sin tener
     // que hacer zoom hasta que los botones del lienzo sean legibles.
     if let Some((id, name)) = failed_slot_under_cursor(ui, deck, viewport, canvas_rect) {

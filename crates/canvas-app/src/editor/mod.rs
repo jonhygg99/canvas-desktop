@@ -24,6 +24,7 @@ mod selection_geometry;
 mod selection_gesture;
 #[cfg(test)]
 mod selection_gesture_tests;
+mod selection_layout;
 
 #[cfg(test)]
 #[path = "layer_ops_tests.rs"]

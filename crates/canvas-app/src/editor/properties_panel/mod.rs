@@ -182,6 +182,15 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     ));
 
     // Capa seleccionada: cada propiedad en su propio desplegable.
+    if state.selection.len() > 1 {
+        ui.label(format!(
+            "{}: {}",
+            crate::i18n::tr("Selected layers"),
+            state.selection.len()
+        ));
+        super::selection_layout::controls(state, ui);
+        return;
+    }
     if let Some(sel) = state.selection.primary() {
         if state.doc.layer(sel).is_ok() {
             layer_properties_ui(state, ui, sel, page_dims);

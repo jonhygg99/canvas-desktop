@@ -1,4 +1,9 @@
 {
+  "Align selection": "Alinear selección",
+  "Distribute": "Distribuir",
+  "Horizontal spacing": "Separación horizontal",
+  "Vertical spacing": "Separación vertical",
+  "Selected layers": "Capas seleccionadas",
   "Editing text on canvas": "Editando texto en el lienzo",
   "Select layer": "Seleccionar capa",
   "A native canvas editor that saves straight to your image files.": "Un editor de lienzos nativo que guarda directamente en tus imágenes.",
