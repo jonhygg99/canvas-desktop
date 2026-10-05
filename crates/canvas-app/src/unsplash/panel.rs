@@ -39,17 +39,21 @@ pub fn panel_ui(
 
     ui.add_space(6.0);
     let mut do_search = false;
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 58.0).max(110.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut panel.query)
-                .hint_text(crate::i18n::tr("Search Unsplash…"))
-                .desired_width(width),
-        );
-        let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = ui.button(crate::i18n::tr("Search")).clicked();
-        do_search = (submit || clicked) && !panel.query.trim().is_empty();
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            let clicked = ui.button(crate::i18n::tr("Search")).clicked();
+            let width = (ui.available_width() - 8.0).max(1.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut panel.query)
+                    .hint_text(crate::i18n::tr("Search Unsplash…"))
+                    .desired_width(width),
+            );
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            do_search = (submit || clicked) && !panel.query.trim().is_empty();
+        },
+    );
     // Cambiar un filtro relanza la búsqueda (si ya hay una consulta).
     if filters_ui(panel, ui) && !panel.query.trim().is_empty() {
         do_search = true;
@@ -194,7 +198,7 @@ fn filters_ui(panel: &mut Panel, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
 
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for o in Orientation::ALL {
             if ui
                 .selectable_label(panel.filters.orientation == o, o.label())
@@ -300,4 +304,25 @@ fn load_more_button_ui(ui: &mut egui::Ui, w: f32) -> egui::Response {
         color,
     );
     resp.on_hover_text(crate::i18n::tr("Load the next page of photos"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_filters_wrap_inside_a_compact_sidebar() {
+        for width in [140.0, 180.0, 320.0] {
+            let ctx = egui::Context::default();
+            let mut panel = Panel::default();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0)),
+                ));
+                assert!(!filters_ui(&mut panel, &mut child));
+                assert!(child.min_rect().width() <= width + 0.5);
+                assert!(child.min_rect().height() < 220.0);
+            });
+        }
+    }
 }
