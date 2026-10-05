@@ -52,6 +52,10 @@ pub(super) fn handle(
         }
         return true;
     }
+    begin(state, ui, r, rect)
+}
+
+fn begin(state: &mut EditorState, ui: &egui::Ui, r: &egui::Response, rect: egui::Rect) -> bool {
     let is_group = state.selection.primary().is_some_and(|id| {
         state
             .doc
@@ -119,57 +123,13 @@ impl SelectionGesture {
         rect: egui::Rect,
         pos: egui::Pos2,
     ) {
-        let (mut dx, mut dy) = (
+        let (dx, dy) = (
             f64::from(pos.x - self.origin.x) / state.viewport.zoom,
             f64::from(pos.y - self.origin.y) / state.viewport.zoom,
         );
         let mods = ui.input(|i| i.modifiers);
         self.to = match self.kind {
-            Kind::Move => {
-                if mods.shift {
-                    if dx.abs() >= dy.abs() {
-                        dy = 0.0;
-                    } else {
-                        dx = 0.0;
-                    }
-                }
-                let mut t = Transform {
-                    x: self.from.x + dx,
-                    y: self.from.y + dy,
-                    ..self.from
-                };
-                state.snap_guides = (Vec::new(), Vec::new());
-                if !mods.alt {
-                    if let Ok(page) = state.doc.page() {
-                        let others: Vec<_> = page
-                            .layers
-                            .iter()
-                            .filter(|l| {
-                                !self.items.iter().any(|(id, _)| *id == l.id)
-                                    && !matches!(l.content, LayerContent::Group(_))
-                                    && page.effective_visible(l.id)
-                            })
-                            .map(|l| l.transform)
-                            .collect();
-                        let snap = canvas_core::snap_translation(
-                            &t,
-                            &others,
-                            page.width,
-                            page.height,
-                            6.0 / state.viewport.zoom,
-                        );
-                        if !mods.shift || dy == 0.0 {
-                            t.x += snap.dx;
-                            state.snap_guides.0 = snap.v_guides;
-                        }
-                        if !mods.shift || dx == 0.0 {
-                            t.y += snap.dy;
-                            state.snap_guides.1 = snap.h_guides;
-                        }
-                    }
-                }
-                t
-            }
+            Kind::Move => self.move_box(state, ui, dx, dy),
             Kind::Resize(corner) => {
                 // Escala uniforme: el modelo no representa cizalla de capas rotadas.
                 let min = self
@@ -210,6 +170,59 @@ impl SelectionGesture {
                 format_dims(&self.to)
             },
         );
+    }
+    fn move_box(
+        &self,
+        state: &mut EditorState,
+        ui: &egui::Ui,
+        mut dx: f64,
+        mut dy: f64,
+    ) -> Transform {
+        let mods = ui.input(|i| i.modifiers);
+
+        if mods.shift {
+            if dx.abs() >= dy.abs() {
+                dy = 0.0;
+            } else {
+                dx = 0.0;
+            }
+        }
+        let mut t = Transform {
+            x: self.from.x + dx,
+            y: self.from.y + dy,
+            ..self.from
+        };
+        state.snap_guides = (Vec::new(), Vec::new());
+        if !mods.alt {
+            if let Ok(page) = state.doc.page() {
+                let others: Vec<_> = page
+                    .layers
+                    .iter()
+                    .filter(|l| {
+                        !self.items.iter().any(|(id, _)| *id == l.id)
+                            && !matches!(l.content, LayerContent::Group(_))
+                            && page.effective_visible(l.id)
+                    })
+                    .map(|l| l.transform)
+                    .collect();
+                let snap = canvas_core::snap_translation(
+                    &t,
+                    &others,
+                    page.width,
+                    page.height,
+                    6.0 / state.viewport.zoom,
+                );
+                if !mods.shift || dy == 0.0 {
+                    t.x += snap.dx;
+                    state.snap_guides.0 = snap.v_guides;
+                }
+                if !mods.shift || dx == 0.0 {
+                    t.y += snap.dy;
+                    state.snap_guides.1 = snap.h_guides;
+                }
+            }
+        }
+        t
     }
     fn apply(&self, state: &mut EditorState) {
         for &(id, t) in &self.items {
