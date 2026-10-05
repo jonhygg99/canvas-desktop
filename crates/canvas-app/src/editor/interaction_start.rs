@@ -24,7 +24,7 @@ pub(super) fn begin(
             // ¿Sobre un manejador de la selección actual?
             start_handle(state, rect, pos);
             // Si no, ¿sobre una capa? (selecciona y empieza a mover)
-            start_move(state, ui, rect, pos);
+            start_move(state, rect, pos);
         }
     }
 }
@@ -87,26 +87,16 @@ fn start_handle(state: &mut EditorState, rect: egui::Rect, pos: egui::Pos2) {
     }
 }
 
-fn start_move(state: &mut EditorState, ui: &egui::Ui, rect: egui::Rect, pos: egui::Pos2) {
+fn start_move(state: &mut EditorState, rect: egui::Rect, pos: egui::Pos2) {
     if matches!(state.gesture, Gesture::None) {
         let (px, py) = screen_to_page(&state.viewport, rect, pos);
         let hit = state.doc.page().ok().and_then(|p| p.layer_at(px, py));
         if hit != state.selection.primary() {
             state.crop_mode = false;
         }
-        // Ctrl añade/quita de la selección, Shift extiende el tramo
-        // de pila hasta la capa tocada; sin modificadores, la
-        // selección se reemplaza entera (como un clic normal).
-        let mods = ui.input(|i| i.modifiers);
-        if mods.command {
-            if let Some(id) = hit {
-                state.selection.toggle(id);
-            }
-        } else if mods.shift {
-            if let (Some(id), Ok(page)) = (hit, state.doc.page()) {
-                state.selection.extend_range(page, id);
-            }
-        } else {
+        // Los modificadores de selección pertenecen al clic. Durante un
+        // arrastre Shift restringe el eje sin extender el tramo de capas.
+        if hit != state.selection.primary() {
             state.selection.set(hit);
         }
         if let Some(id) = hit.filter(|&id| state.doc.page().is_ok_and(|p| !p.effective_locked(id)))

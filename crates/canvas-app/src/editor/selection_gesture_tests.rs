@@ -207,6 +207,7 @@ fn shift_locks_the_drag_to_its_dominant_axis() {
     );
     assert_eq!(state.doc.layer(a).unwrap().transform.y, 20.0);
     assert_eq!(state.doc.layer(a).unwrap().transform.x, 60.0);
+    assert_eq!(state.selection.ids(), &[a]);
 }
 
 #[test]
