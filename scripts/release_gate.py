@@ -67,6 +67,8 @@ def main():
     tag_sha = command("git", "rev-parse", f"refs/tags/{tag}^{{commit}}")
     if tag_sha != sha:
         raise ValueError("El checkout no coincide con el commit del tag")
+    if os.environ.get("GITHUB_SHA", sha) != sha:
+        raise ValueError("Ejecuta el workflow manual sobre el tag, no sobre main")
     repo = os.environ["GITHUB_REPOSITORY"]
     ci_run = wait_for_ci(repo, sha)
     prepared = prepared_run(repo, sha)

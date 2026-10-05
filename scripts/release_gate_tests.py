@@ -1,4 +1,5 @@
 import unittest
+import os
 from unittest.mock import patch
 import release_gate as gate
 
@@ -24,6 +25,13 @@ class ReleaseGateTests(unittest.TestCase):
         with patch.object(gate, "api", return_value={"workflow_runs": [run]}):
             with self.assertRaisesRegex(ValueError, "CI no aprobada"):
                 gate.wait_for_ci("owner/repo", "abc")
+
+    def test_manual_workflow_on_main_cannot_publish_a_different_tag_commit(self):
+        environment = dict(RELEASE_TAG="v0.7.0", GITHUB_SHA="different")
+        with patch.dict(os.environ, environment), patch.object(gate.Path, "read_text", return_value='[workspace.package]\nversion="0.7.0"'), patch.object(gate, "command", side_effect=["abc", "", "abc"]), patch.object(gate.subprocess, "run"), patch.object(gate, "api") as api:
+            with self.assertRaisesRegex(ValueError, "sobre el tag"):
+                gate.main()
+            api.assert_not_called()
 
     def test_pending_ci_waits_then_accepts_success(self):
         run = dict(id=1, head_sha="abc", head_branch="main", event="push")

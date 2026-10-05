@@ -1,4 +1,4 @@
-# Ejecutar solo en el runner desechable de CI: registra/desregistra asociaciones.
+﻿# Ejecutar solo en el runner desechable de CI: registra/desregistra asociaciones.
 param([Parameter(Mandatory)][string]$Installer,
       [Parameter(Mandatory)][string]$Version)
 $ErrorActionPreference = 'Stop'
@@ -19,7 +19,7 @@ function Run-Checked([string]$File, [string[]]$Arguments) {
 
 try {
     # /D debe ser el último argumento y NSIS lo interpreta sin comillas.
-    Run-Checked (Resolve-Path -LiteralPath $Installer).Path @('/S', '/NS', "/D=$installRoot")
+    Run-Checked -File (Resolve-Path -LiteralPath $Installer).Path -Arguments @('/S', '/NS', "/D=$installRoot")
     $binary = Join-Path $installRoot 'canvas-desktop.exe'
     $uninstaller = Join-Path $installRoot 'uninstall.exe'
     if (-not (Test-Path -LiteralPath $binary) -or -not (Test-Path -LiteralPath $uninstaller)) {
@@ -29,7 +29,7 @@ try {
     if ($actual -ne $Version) { throw "Versión instalada $actual; esperada $Version" }
     $association = Get-Item -LiteralPath 'HKCU:\Software\Classes\CanvasDesktop.Image\shell\open\command'
     if (-not $association.GetValue('').Contains($binary)) { throw 'Asociación Abrir con incorrecta.' }
-    Run-Checked $uninstaller @('/S', "_?=$installRoot")
+    Run-Checked -File $uninstaller -Arguments @('/S', "_?=$installRoot")
     if (Test-Path -LiteralPath $binary) { throw 'La desinstalación dejó el ejecutable instalado.' }
     if (Test-Path -LiteralPath 'HKCU:\Software\Classes\CanvasDesktop.Image') {
         throw 'La desinstalación dejó el ProgID registrado.'
@@ -39,6 +39,6 @@ try {
     # No borra directorios: si falla, conserva la evidencia en el runner.
     $uninstaller = Join-Path $installRoot 'uninstall.exe'
     if (Test-Path -LiteralPath $uninstaller) {
-        Run-Checked $uninstaller @('/S', "_?=$installRoot")
+        Run-Checked -File $uninstaller -Arguments @('/S', "_?=$installRoot")
     }
 }
