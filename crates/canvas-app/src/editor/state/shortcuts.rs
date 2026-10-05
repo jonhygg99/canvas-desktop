@@ -125,9 +125,17 @@ impl EditorState {
                 self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
             }
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
+        if ctx.input_mut(|i| {
+            i.consume_shortcut(&KeyboardShortcut::new(
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                Key::D,
+            ))
+        }) {
+            super::super::duplicate_gesture::duplicate(self, true);
+        } else if ctx
+            .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::D)))
         {
-            crate::clipboard::duplicate(self);
+            super::super::duplicate_gesture::duplicate(self, false);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::A)))
         {

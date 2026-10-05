@@ -53,6 +53,7 @@ pub struct EditorState {
     pub(super) context_point: Option<(f64, f64)>,
     pub(super) inline_text: Option<super::inline_text::InlineText>,
     pub(crate) insert_tool: Option<super::insert_tool::InsertTool>,
+    pub(crate) repeat_offset: Option<(f64, f64)>,
     /// Edición en curso desde el panel (campos numéricos): capa y transform
     /// original, para consolidar en un solo comando al terminar.
     pub(super) panel_edit: Option<(LayerId, Transform)>,

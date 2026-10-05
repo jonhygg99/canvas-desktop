@@ -25,6 +25,7 @@ pub(super) enum Gesture {
     None,
     Selection(super::selection_gesture::SelectionGesture),
     Marquee(super::marquee::Marquee),
+    Duplicate(super::duplicate_gesture::Draft),
     Move {
         layer: LayerId,
         start: Transform,
@@ -81,6 +82,9 @@ pub(super) fn layer_interaction(
         return;
     }
     if state.inline_text.is_some() {
+        return;
+    }
+    if super::duplicate_gesture::handle(state, ui, response, rect) {
         return;
     }
     if response.double_clicked_by(egui::PointerButton::Primary) {

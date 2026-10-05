@@ -55,7 +55,8 @@ pub(super) fn commit(state: &mut EditorState, response: &egui::Response) {
                     }
                 }
             }
-            Gesture::None | Gesture::Selection(_) | Gesture::Marquee(_) => {}
+            Gesture::None | Gesture::Selection(_) | Gesture::Marquee(_) | Gesture::Duplicate(_) => {
+            }
         }
     }
 }

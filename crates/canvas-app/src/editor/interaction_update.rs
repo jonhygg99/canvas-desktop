@@ -26,7 +26,10 @@ pub(super) fn apply(
                 Gesture::Resize { .. } => resize_layer(state, ui, pos),
                 Gesture::Rotate { .. } => rotate_layer(state, ui, pos, rect),
                 Gesture::Crop { .. } => crop_layer(state, ui, pos),
-                Gesture::None | Gesture::Selection(_) | Gesture::Marquee(_) => {}
+                Gesture::None
+                | Gesture::Selection(_)
+                | Gesture::Marquee(_)
+                | Gesture::Duplicate(_) => {}
             }
         }
     }

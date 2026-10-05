@@ -46,6 +46,7 @@ impl EditorState {
             context_point: None,
             inline_text: None,
             insert_tool: None,
+            repeat_offset: None,
             panel_edit: None,
             page_edit: None,
             size_popup: None,
