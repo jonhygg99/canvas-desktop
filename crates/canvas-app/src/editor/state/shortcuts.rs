@@ -140,9 +140,36 @@ impl EditorState {
             crate::editor::delete_selected(self);
         }
 
-        // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un
-        // alias (memoria muscular de pestañas de navegador); las flechas se
-        // dejan libres a propósito para el futuro «mover capa con teclado».
+        // Flechas: píxeles del documento, independientes del zoom. No se
+        // ejecutan mientras un gesto está mutando geometría en directo.
+        if matches!(self.gesture, super::super::interaction::Gesture::None) {
+            let (dx, dy) = ctx.input_mut(|i| {
+                let mut delta = (0.0, 0.0);
+                for (key, x, y) in [
+                    (Key::ArrowLeft, -1.0, 0.0),
+                    (Key::ArrowRight, 1.0, 0.0),
+                    (Key::ArrowUp, 0.0, -1.0),
+                    (Key::ArrowDown, 0.0, 1.0),
+                ] {
+                    let step = if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::SHIFT, key))
+                    {
+                        10.0
+                    } else if i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, key)) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    delta.0 += x * step;
+                    delta.1 += y * step;
+                }
+                delta
+            });
+            if dx != 0.0 || dy != 0.0 {
+                super::super::layer_ops::nudge_selection(self, dx, dy);
+            }
+        }
+
+        // Navegación entre lienzos de la baraja. `Ctrl+PageUp/Down` es un alias.
         if ctx.input_mut(|i| {
             i.consume_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::PageDown))
                 || i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::PageDown))

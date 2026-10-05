@@ -5,6 +5,47 @@ use canvas_core::{Command, Composite, LayerId, RemoveLayer, Reorder, SetTransfor
 
 use super::EditorState;
 
+/// Geometría editable de la selección: expande grupos sin duplicar hijos
+/// seleccionados y respeta el bloqueo heredado.
+pub(super) fn selection_transforms(state: &EditorState) -> Vec<(LayerId, Transform)> {
+    let Ok(page) = state.doc.page() else {
+        return Vec::new();
+    };
+    let roots = state.selection.roots(page);
+    page.layers
+        .iter()
+        .filter(|layer| {
+            !matches!(layer.content, canvas_core::LayerContent::Group(_))
+                && !page.effective_locked(layer.id)
+                && roots
+                    .iter()
+                    .any(|&root| root == layer.id || page.is_ancestor(root, layer.id))
+        })
+        .map(|layer| (layer.id, layer.transform))
+        .collect()
+}
+
+/// Un desplazamiento de toda la selección equivale a un único deshacer.
+pub(super) fn nudge_selection(state: &mut EditorState, dx: f64, dy: f64) {
+    let cmds: Vec<Box<dyn Command>> = selection_transforms(state)
+        .into_iter()
+        .map(|(layer, before)| {
+            Box::new(SetTransform {
+                layer,
+                before,
+                after: Transform {
+                    x: before.x + dx,
+                    y: before.y + dy,
+                    ..before
+                },
+            }) as Box<dyn Command>
+        })
+        .collect();
+    if !cmds.is_empty() {
+        let _ = state.apply_undo_step(Box::new(Composite::new("Mover selección", cmds)));
+    }
+}
+
 /// Destino de `reorder_layer` — el submenú "Layers" del menú contextual.
 pub(super) enum ZOrder {
     Front,
