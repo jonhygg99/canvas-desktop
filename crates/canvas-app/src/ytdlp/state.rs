@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-#[derive(Default)]
 pub struct Panel {
     /// URLs pegadas (una por línea o separadas por espacios).
     pub urls: String,
@@ -32,6 +31,30 @@ pub struct Panel {
     pub pending_edit: Option<PathBuf>,
     /// Sesión de edición abierta (`None` = ventana cerrada).
     pub edit: Option<super::edit::VideoEdit>,
+}
+
+impl Default for Panel {
+    fn default() -> Self {
+        Self {
+            urls: String::new(),
+            start: String::new(),
+            end: String::new(),
+            download_segment: false,
+            mute: true,
+            downloading: false,
+            progress: String::new(),
+            cancel: None,
+            failed: Vec::new(),
+            retry_requests: std::collections::HashMap::new(),
+            clip_previews: Default::default(),
+            clip_info: std::collections::HashMap::new(),
+            error: None,
+            done: Vec::new(),
+            pending_insert: None,
+            pending_edit: None,
+            edit: None,
+        }
+    }
 }
 
 impl Drop for Panel {
