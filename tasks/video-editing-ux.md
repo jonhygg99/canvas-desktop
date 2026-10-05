@@ -17,7 +17,7 @@ Las interacciones de timeline se prueban con eventos reales de egui; los
 tests de reproducción usan vídeos generados con FFmpeg. La automatización
 de ventanas nativas no está disponible en esta sesión.
 
-Verificación final: 761 tests pasan, 22 ignorados habituales; formato y
+Verificación final: 762 tests pasan, 22 ignorados habituales; formato y
 Clippy sin incidencias. La integración descarga un vídeo real desde un
 servidor local con yt-dlp y verifica progreso y archivo reproducible. Las
 pruebas de cancelación ejecutan un proceso real. `cargo run -p canvas-app`
@@ -36,3 +36,16 @@ Regresiones verificadas con clics de egui: primer Play sin cerrar el editor,
 clic sin activar el canvas de detrás y preset 7 s sin introducir texto.
 Las pruebas con FFmpeg mantienen la exigencia de fluidez, textura estable,
 reloj sincronizado y pausa sin actualizaciones.
+
+Ajustes de distribución y sliders:
+- [x] Sliders de Start/End con escala fija y redondeo solo al interactuar.
+- [x] Regresión: cruzar Start con End y alternar presets no detiene Play ni cambia el trim durante un repintado.
+- [x] Columna derecha en orden Zoom, Background blur y Trim.
+- [x] Canvas size junto al transporte, después del control de audio.
+- [x] Transporte con iconos vectoriales, nombres accesibles y tooltips.
+- [x] Acciones inferiores a la derecha; Create canvas en el extremo derecho.
+
+El último intento de `cargo run -p canvas-app` no pudo sustituir el
+ejecutable: Windows devuelve Access is denied mientras la app permanece
+abierta. Hace falta cerrarla y ejecutar el comando para revisar visualmente
+esta actualización; no se ha cerrado el diseño abierto del usuario.

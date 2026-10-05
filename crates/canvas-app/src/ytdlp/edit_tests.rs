@@ -320,8 +320,10 @@ fn transport_frame(
     ctx: &egui::Context,
     edit: &mut VideoEdit,
     events: Vec<egui::Event>,
-) -> egui::FullOutput {
-    ctx.run_ui(
+) -> (egui::FullOutput, [egui::Rect; 2]) {
+    let mut rects = [egui::Rect::NOTHING; 2];
+    let mut settings = AppSettings::default();
+    let output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -332,24 +334,15 @@ fn transport_frame(
         },
         |ui| {
             advance_playhead(edit, ui.ctx());
-            transport_ui(edit, ui);
+            rects = transport_ui(edit, ui, &mut settings).map(|response| response.rect);
         },
-    )
+    );
+    (output, rects)
 }
 
 fn click_transport(ctx: &egui::Context, edit: &mut VideoEdit, label: &str) {
-    let output = transport_frame(ctx, edit, Vec::new());
-    let pos = output
-        .shapes
-        .iter()
-        .find_map(|shape| {
-            if let egui::epaint::Shape::Text(text) = &shape.shape {
-                (text.galley.job.text == label).then(|| text.pos + text.galley.size() / 2.0)
-            } else {
-                None
-            }
-        })
-        .expect("botón de transporte visible");
+    let (_, rects) = transport_frame(ctx, edit, Vec::new());
+    let pos = rects[usize::from(label == "Restart")].center();
     for pressed in [true, false] {
         transport_frame(
             ctx,

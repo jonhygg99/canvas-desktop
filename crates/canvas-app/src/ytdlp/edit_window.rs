@@ -28,7 +28,7 @@ pub fn edit_window_ui(
                 )
                 .show(ui, |ui| body(edit, settings, ui));
             ui.separator();
-            ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let ready =
                     !edit.loading_frames && edit.frames_error.is_none() && !edit.frames.is_empty();
                 let btn = ui.add_enabled(ready, egui::Button::new("Create canvas"));
@@ -72,7 +72,7 @@ fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
                 |ui| {
                     ui.set_width(width);
                     preview_ui(edit, ui);
-                    transport_ui(edit, ui);
+                    transport_ui(edit, ui, settings);
                 },
             );
             ui.allocate_ui_with_layout(
@@ -80,14 +80,14 @@ fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_width(320.0);
-                    params_ui(edit, ui, settings);
+                    params_ui(edit, ui);
                 },
             );
         });
     } else {
         preview_ui(edit, ui);
-        transport_ui(edit, ui);
-        params_ui(edit, ui, settings);
+        transport_ui(edit, ui, settings);
+        params_ui(edit, ui);
     }
     ui.separator();
     timeline_ui(edit, ui);
@@ -132,12 +132,30 @@ mod tests {
         };
         render(&mut video, &mut settings, vec![]);
         let output = render(&mut video, &mut settings, vec![]);
+        let text_pos = |label| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        (text.galley.job.text == label).then_some(text.pos)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap()
+        };
+        assert!(text_pos("Create canvas").x > text_pos("Cancel").x);
         let pos = output
             .shapes
             .iter()
             .find_map(|shape| {
-                if let egui::Shape::Text(text) = &shape.shape {
-                    (text.galley.job.text == "Play").then(|| text.pos + text.galley.size() / 2.0)
+                if let egui::Shape::Path(path) = &shape.shape {
+                    let rect = egui::Rect::from_points(&path.points);
+                    (path.points.len() == 3
+                        && (rect.width() - 14.0).abs() < 0.01
+                        && (rect.height() - 16.0).abs() < 0.01)
+                        .then(|| rect.center())
                 } else {
                     None
                 }
@@ -175,7 +193,7 @@ mod tests {
             );
             let mut settings = AppSettings::default();
             let mut measured = 0.0;
-            let _ = ctx.run_ui(
+            let output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -192,6 +210,21 @@ mod tests {
                 measured <= width,
                 "content {measured} exceeds window {width}"
             );
+            let label_y = |label| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape {
+                            (text.galley.job.text == label).then_some(text.pos.y)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap()
+            };
+            assert!(label_y("Zoom") < label_y("Background blur"));
+            assert!(label_y("Background blur") < label_y("Trim"));
         }
     }
 }
