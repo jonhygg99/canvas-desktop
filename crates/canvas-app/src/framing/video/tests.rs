@@ -147,6 +147,12 @@ fn transport_controls_are_available_without_starting_a_decoder() {
 }
 
 #[test]
+fn video_session_remains_sendable_for_gallery_loading() {
+    fn assert_send<T: Send>() {}
+    assert_send::<Video>();
+}
+
+#[test]
 #[ignore = "requires FFmpeg and ffprobe"]
 fn original_video_trim_saves_reopens_and_limits_playback() {
     let (_dir, path) = clip();
