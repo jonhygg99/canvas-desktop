@@ -56,6 +56,7 @@ pub(in crate::app) fn editor_view_ui(
     simulate_edits(state, f, ctx);
     state.tick_video(ctx);
     if state.framing.is_none() {
+        editor::inline_text::prepare(state, ctx);
         state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
     }
 

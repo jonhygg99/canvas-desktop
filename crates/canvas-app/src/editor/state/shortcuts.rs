@@ -32,6 +32,7 @@ impl EditorState {
         // aquí se miran las banderas propias del editor en vez de esa guarda
         // global.
         let editing_own_text = self.rename_edit.is_some()
+            || self.inline_text.is_some()
             || self.file_rename_edit.is_some()
             || self.content_edit.is_some()
             || deck_renaming;

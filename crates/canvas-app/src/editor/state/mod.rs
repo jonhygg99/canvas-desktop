@@ -51,6 +51,7 @@ pub struct EditorState {
     pub aspect_lock: bool,
     pub(super) gesture: Gesture,
     pub(super) context_point: Option<(f64, f64)>,
+    pub(super) inline_text: Option<super::inline_text::InlineText>,
     /// Edición en curso desde el panel (campos numéricos): capa y transform
     /// original, para consolidar en un solo comando al terminar.
     pub(super) panel_edit: Option<(LayerId, Transform)>,
@@ -237,7 +238,7 @@ impl EditorState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.history.is_dirty()
+        self.history.is_dirty() || super::inline_text::pending_changes(self)
     }
 
     /// ¿Hay algún gesto o edición de panel a medias, o un guardado/
@@ -252,6 +253,7 @@ impl EditorState {
     /// guardado el documento EQUIVOCADO.
     pub(crate) fn is_idle(&self) -> bool {
         matches!(self.gesture, Gesture::None)
+            && self.inline_text.is_none()
             && self.panel_edit.is_none()
             && self.page_edit.is_none()
             && self.opacity_edit.is_none()

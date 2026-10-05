@@ -71,6 +71,20 @@ pub(super) fn layer_interaction(
     response: &egui::Response,
     rect: egui::Rect,
 ) {
+    if state.inline_text.is_some() {
+        return;
+    }
+    if response.double_clicked_by(egui::PointerButton::Primary) {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let (x, y) = screen_to_page(&state.viewport, rect, pos);
+            if let Some(id) = state.doc.page().ok().and_then(|p| p.layer_at(x, y)) {
+                super::inline_text::begin(state, id);
+                if state.inline_text.is_some() {
+                    return;
+                }
+            }
+        }
+    }
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) && cancel_single_gesture(state) {
         return;
     }

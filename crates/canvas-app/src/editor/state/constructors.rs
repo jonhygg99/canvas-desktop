@@ -44,6 +44,7 @@ impl EditorState {
             aspect_lock: true,
             gesture: Gesture::None,
             context_point: None,
+            inline_text: None,
             panel_edit: None,
             page_edit: None,
             size_popup: None,
