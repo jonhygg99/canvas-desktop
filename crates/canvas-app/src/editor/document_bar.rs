@@ -10,7 +10,7 @@ pub(crate) fn mode_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         .clicked()
     {
         if let Some(session) = &mut state.framing {
-            session.closed = true;
+            session.request_close();
         }
     }
     if ui

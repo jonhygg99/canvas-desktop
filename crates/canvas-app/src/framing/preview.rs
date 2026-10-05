@@ -63,6 +63,22 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
         session.background.as_ref(),
         session.value,
     );
+    if session.show_guides {
+        let safe = guide_rect(rect);
+        ui.painter().rect_stroke(
+            safe,
+            0.0,
+            egui::Stroke::new(1.5, egui::Color32::WHITE),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().line_segment(
+            [
+                egui::pos2(rect.center().x, safe.top()),
+                egui::pos2(rect.center().x, safe.bottom()),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::WHITE),
+        );
+    }
     ui.painter().rect_stroke(
         rect,
         0.0,
@@ -104,5 +120,22 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
         if let Some(before) = session.gesture.take() {
             session.commit(before);
         }
+    }
+}
+
+fn guide_rect(rect: egui::Rect) -> egui::Rect {
+    rect.shrink2(rect.size() * 0.1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn guides_preserve_center_and_inset_each_edge() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 400.0));
+        let guide = guide_rect(rect);
+        assert_eq!(guide.center(), rect.center());
+        assert_eq!(guide.min, egui::pos2(20.0, 40.0));
+        assert_eq!(guide.max, egui::pos2(180.0, 360.0));
     }
 }

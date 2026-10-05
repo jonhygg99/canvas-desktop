@@ -77,6 +77,15 @@ pub(super) fn show(
 }
 
 fn save_status(state: &editor::EditorState) -> &'static str {
+    if let Some(session) = &state.framing {
+        return if session.busy() {
+            "Processing framing…"
+        } else if session.is_dirty() {
+            "Framing not saved"
+        } else {
+            "Framing saved"
+        };
+    }
     if state.saving {
         "Saving…"
     } else if state.exporting {

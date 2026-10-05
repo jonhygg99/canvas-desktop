@@ -20,6 +20,9 @@ pub(crate) struct Session {
     pub status: Option<String>,
     pub closed: bool,
     pub exportable: bool,
+    show_guides: bool,
+    close_requested: bool,
+    close_after_save: bool,
     video: Option<video::Video>,
     source: Option<canvas_io::LoadedImage>,
     texture: Option<egui::TextureHandle>,
@@ -40,6 +43,9 @@ impl Session {
             status: None,
             closed: false,
             exportable,
+            show_guides: false,
+            close_requested: false,
+            close_after_save: false,
             video: None,
             source: None,
             texture: None,
@@ -105,6 +111,10 @@ impl Session {
                 }) => {
                     if sidecar_only {
                         self.saved = Some(value);
+                        if self.close_after_save {
+                            self.closed = true;
+                            self.close_after_save = false;
+                        }
                         if let (Some(video), Some(trim)) = (&mut self.video, trim) {
                             video.saved_trim = trim;
                         }
@@ -152,6 +162,25 @@ impl Session {
 
     pub fn busy(&self) -> bool {
         self.receiver.is_some()
+    }
+    pub fn request_close(&mut self) {
+        if self.busy() {
+            return;
+        }
+        if self.value != self.saved.unwrap_or_default()
+            || self.video.as_ref().is_some_and(|video| video.trim != video.saved_trim)
+        {
+            self.close_requested = true;
+        } else {
+            self.closed = true;
+        }
+    }
+    pub fn is_dirty(&self) -> bool {
+        self.saved != Some(self.value)
+            || self
+                .video
+                .as_ref()
+                .is_some_and(|video| video.trim != video.saved_trim)
     }
     pub fn ready(&self) -> bool {
         self.texture.is_some()

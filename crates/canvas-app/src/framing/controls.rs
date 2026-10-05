@@ -6,6 +6,10 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
     session.poll(ui.ctx());
     ui.heading("Framing 9:16");
     ui.weak("Drag the composition to frame it.");
+    ui.weak("Framing changes position and scale without changing the original design or its dimensions.");
+    if session.exportable {
+        ui.weak("This preview is a snapshot. Return to Edit to change layers, then enter framing again.");
+    }
     if let Some(error) = &session.error {
         ui.colored_label(ui.visuals().error_fg_color, error);
     }
@@ -18,6 +22,13 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
             video.controls(ui);
         }
         adjustments(session, ui);
+        ui.checkbox(&mut session.show_guides, "Composition guides (10% inset)");
+        if ui.button("Center composition").clicked() {
+            let before = session.value;
+            session.value.x_pct = 0.0;
+            session.value.y_pct = 0.0;
+            session.commit(before);
+        }
         if ui
             .push_id("framing-save", |ui| {
                 ui.add_enabled(session.path.is_some(), egui::Button::new("Save framing"))
@@ -41,18 +52,11 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
                 ));
             }
         }
-        ui.weak(
-            if session.saved == Some(session.value)
-                && session
-                    .video
-                    .as_ref()
-                    .is_none_or(|v| v.trim == v.saved_trim)
-            {
-                "Framing saved"
-            } else {
-                "Framing not saved"
-            },
-        );
+        ui.weak(if !session.is_dirty() {
+            "Framing saved"
+        } else {
+            "Framing not saved"
+        });
     });
     if session.busy() {
         ui.spinner();
@@ -61,7 +65,7 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
         .add_enabled(!session.busy(), egui::Button::new("Back to normal view"))
         .clicked()
     {
-        session.closed = true;
+        session.request_close();
     }
     if enabled {
         if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
@@ -74,6 +78,31 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
             session.redo();
         }
     }
+    close_dialog(session, ui.ctx());
+}
+
+fn close_dialog(session: &mut Session, ctx: &egui::Context) {
+    if !session.close_requested {
+        return;
+    }
+    egui::Modal::new(egui::Id::new("framing-unsaved")).show(ctx, |ui| {
+        ui.heading("Unsaved framing changes");
+        ui.label("Save your framing before returning to Edit?");
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(session.path.is_some() && !session.busy(), egui::Button::new("Save and return")).clicked() {
+                session.close_after_save = true;
+                session.save(ctx);
+                session.close_requested = false;
+            }
+            if ui.button("Discard framing changes").clicked() {
+                session.closed = true;
+                session.close_requested = false;
+            }
+            if ui.button("Keep editing").clicked() {
+                session.close_requested = false;
+            }
+        });
+    });
 }
 
 fn adjustments(session: &mut Session, ui: &mut egui::Ui) {
