@@ -101,6 +101,32 @@ fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
 }
 
 #[test]
+fn clicking_add_zone_in_a_new_design_creates_a_canvas() {
+    let (mut state, _) = scene(0);
+    state.crop_mode = false;
+    let mut deck = Deck::new_design((200.0, 180.0));
+    deck.axis = crate::deck::DeckAxis::Horizontal;
+    deck.relayout();
+    let zone = deck.add_zone;
+    let pos = page_to_screen(
+        &state.viewport,
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 400.0)),
+        zone.x + zone.w / 2.0,
+        zone.y + zone.h / 2.0,
+    );
+    let ctx = egui::Context::default();
+    frame(
+        &ctx,
+        &mut state,
+        &mut deck,
+        vec![egui::Event::PointerMoved(pos)],
+    );
+    frame(&ctx, &mut state, &mut deck, vec![button(pos, true)]);
+    assert_eq!(deck.slots.len(), 2);
+    assert_eq!(deck.jump_to, Some(1));
+}
+
+#[test]
 fn crop_corner_over_neighbor_drags_image_without_switching_canvas() {
     for (active, margin) in [(0, false), (1, false), (0, true), (1, true)] {
         let (mut state, mut deck) = scene(active);

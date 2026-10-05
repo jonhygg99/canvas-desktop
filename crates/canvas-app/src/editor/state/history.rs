@@ -57,6 +57,11 @@ impl GlobalStep {
 }
 
 impl EditorState {
+    pub(crate) fn record_creation(&mut self, slot_id: u64) {
+        self.global_undo.push(GlobalStep::Create(slot_id));
+        self.global_redo.clear();
+    }
+
     /// Aplica `cmd` al documento y lo apila como paso de deshacer del diseño
     /// activo — igual que `History::apply`, pero además registra el paso en
     /// la pila GLOBAL cruzada entre diseños (`global_undo`). Todo comando

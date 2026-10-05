@@ -208,11 +208,10 @@ pub(super) fn draw_rename_overlay(
 /// Zona "+" al final de la baraja, en el área central: mismo estilo que
 /// `deck_strip::strip_add_cell` (borde discontinuo, glifo "✚", etiqueta) pero
 /// en coordenadas de pantalla del propio lienzo, no de celda de tira. Solo
-/// se pinta si hay una carpeta detrás de la baraja (un archivo suelto no
-/// tiene dónde materializar el nuevo diseño) y si `deck.add_zone` cae dentro
-/// de lo visible.
+/// se pinta si la baraja admite nuevos lienzos (carpeta o New design)
+/// y si `deck.add_zone` cae dentro de lo visible.
 pub(super) fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rect: egui::Rect) {
-    if deck.folder.is_none() {
+    if !deck.can_add_canvas() {
         return;
     }
     let tl = page_to_screen(&state.viewport, rect, deck.add_zone.x, deck.add_zone.y);

@@ -171,7 +171,7 @@ pub(super) fn handle_press(
                         deck.jump_reframe = true;
                         state.press_on_other_slot = true;
                     }
-                } else if deck.folder.is_some()
+                } else if deck.can_add_canvas()
                     && dx >= deck.add_zone.x
                     && dx <= deck.add_zone.x + deck.add_zone.w
                     && dy >= deck.add_zone.y

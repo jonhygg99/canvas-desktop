@@ -162,6 +162,11 @@ impl History {
         self.saved_depth = Some(self.undo.len());
     }
 
+    /// Documento copiado en memoria que aún no tiene versión guardada.
+    pub fn mark_unsaved(&mut self) {
+        self.saved_depth = None;
+    }
+
     /// Revisión actual del historial (ver campo `revision`).
     pub fn revision(&self) -> u64 {
         self.revision

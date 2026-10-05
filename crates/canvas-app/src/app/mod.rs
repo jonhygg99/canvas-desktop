@@ -170,6 +170,8 @@ pub(crate) struct AppInner {
 pub(super) struct SaveFlow {
     /// «Guardar como…» elegido, pendiente de hornear (necesita la GPU).
     pub(super) pending_save_as: Option<PathBuf>,
+    /// El diálogo de ruta pertenece al canvas activo; impide cambiarlo.
+    pub(super) save_path_dialog_open: bool,
     /// Guardar solicitado desde el diálogo de cierre.
     pub(super) save_requested: bool,
     /// Cerrar la ventana en cuanto termine el guardado en curso.

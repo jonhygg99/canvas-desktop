@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::settings::GallerySort;
 
 mod cache;
+mod duplicate;
 mod geometry;
 mod layout;
 mod loading;
@@ -38,9 +39,11 @@ pub(crate) use system::{
 
 /// La baraja del editor: todos los archivos de `folder`, con el activo
 /// marcado por índice. `folder` es `None` para un archivo abierto suelto
-/// (arrastrar y soltar, CLI, recientes): baraja degenerada de una ranura.
+/// o una sesión New design cuyos documentos se mantienen en memoria.
 pub struct Deck {
     pub folder: Option<PathBuf>,
+    /// New design mantiene varios documentos en memoria antes de guardarlos.
+    pub unsaved_session: bool,
     /// Identifica la instancia de baraja a la que pertenecen las cargas.
     /// Los resultados de generaciones anteriores se descartan.
     pub generation: u64,
@@ -102,6 +105,7 @@ impl Default for Deck {
     fn default() -> Self {
         Self {
             folder: None,
+            unsaved_session: false,
             generation: 0,
             slots: Vec::new(),
             active: 0,
@@ -128,6 +132,20 @@ impl Default for Deck {
 }
 
 impl Deck {
+    pub fn new_design(page: (f64, f64)) -> Self {
+        let mut deck = Self::single(PathBuf::new());
+        deck.unsaved_session = true;
+        deck.strip_visible = true;
+        deck.slots[0].page = Some(page);
+        deck.slots[0].is_placeholder = true;
+        deck.slots[0].name = "Untitled".to_owned();
+        deck
+    }
+
+    pub fn can_add_canvas(&self) -> bool {
+        self.folder.is_some() || self.unsaved_session
+    }
+
     /// Baraja degenerada de una ranura: archivo abierto suelto (CLI,
     /// arrastrar y soltar, recientes, segunda instancia). La única ranura
     /// es la activa desde el principio.

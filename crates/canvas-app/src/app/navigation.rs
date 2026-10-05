@@ -64,13 +64,8 @@ impl AppInner {
     /// Documento nuevo en blanco en un workspace.
     pub(crate) fn new_design(&mut self, ws: &mut Workspace, ctx: &egui::Context) {
         let (w, h) = DEFAULT_NEW_CANVAS_SIZE;
-        ws.deck = deck::Deck::single(PathBuf::new());
+        ws.deck = deck::Deck::new_design((w, h));
         self.apply_deck_prefs(ws);
-        if let Some(slot) = ws.deck.slots.first_mut() {
-            slot.page = Some((w, h));
-            slot.is_placeholder = true;
-            slot.name = "Untitled".to_owned();
-        }
         let state = if self.settings.new_canvas_format == settings::NewCanvasFormat::Canvas {
             let mut state = editor::EditorState::new_blank(w, h);
             state.sidecar_enabled = self.settings.sidecar_default;

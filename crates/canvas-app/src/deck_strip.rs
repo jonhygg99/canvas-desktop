@@ -145,7 +145,7 @@ pub fn deck_strip_ui(
         }
     };
     let vertical_flow = side.is_vertical_flow();
-    let can_add = deck.folder.is_some();
+    let can_add = deck.can_add_canvas();
     if vertical_flow {
         // `auto_shrink([false, false])`: sin esto, la `ScrollArea` se
         // encoge al tamaño de su CONTENIDO en el eje transversal (el ancho,

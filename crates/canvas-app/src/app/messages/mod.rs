@@ -105,7 +105,10 @@ impl AppInner {
                 *open_after = Some(Nav::Open(path));
             }
             AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
-            AppMsg::SaveAsPicked(path) => ws.save.pending_save_as = path,
+            AppMsg::SaveAsPicked(path) => {
+                ws.save.save_path_dialog_open = false;
+                ws.save.pending_save_as = path;
+            }
             AppMsg::Saved {
                 path,
                 result,

@@ -671,6 +671,66 @@ fn push_placeholder_needs_a_folder() {
     assert_eq!(deck.slots.len(), 1);
 }
 
+#[test]
+fn new_design_can_add_canvases_without_a_folder() {
+    let mut deck = Deck::new_design((800.0, 600.0));
+    let index = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
+    assert_eq!(index, 1);
+    assert!(matches!(deck.slots[index].content, SlotContent::Ready(_)));
+    assert!(deck.folder.is_none());
+    assert!(deck.is_visible());
+    let second = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
+    assert_ne!(deck.slots[index].path, deck.slots[second].path);
+}
+
+#[test]
+fn duplicating_a_new_design_copies_content_and_preserves_the_original() {
+    let mut deck = Deck::new_design((800.0, 600.0));
+    let mut state = crate::editor::EditorState::new_blank_image(800.0, 600.0);
+    state.add_image_layer(
+        "Photo",
+        None,
+        canvas_io::LoadedImage {
+            rgba: vec![255; 40 * 80 * 4],
+            width: 40,
+            height: 80,
+        },
+    );
+    let original = state.doc.page().unwrap().layers.clone();
+    let source_id = deck.slots[0].id;
+    let copy = deck
+        .duplicate_placeholder(source_id, &state, "png")
+        .unwrap();
+    deck.jump_to = Some(copy);
+    assert!(matches!(
+        apply_jump(&mut deck, &mut state),
+        JumpOutcome::Applied
+    ));
+    assert_eq!(state.doc.page().unwrap().layers, original);
+    assert_eq!(state.images.len(), 2);
+    assert_eq!(state.background_layer, Some(original[0].id));
+    assert!(state.doc.source_path.is_none());
+    assert!(state.is_dirty());
+    assert!(!state.is_design);
+    assert!(
+        !state.history.can_undo(),
+        "el duplicado no hereda el historial"
+    );
+    crate::clipboard::select_all(&mut state);
+    crate::editor::delete_selected(&mut state);
+    let SlotContent::Ready(source) = &deck.slots[0].content else {
+        panic!("original cargado")
+    };
+    assert_eq!(source.doc.page().unwrap().layers, original);
+    let copy_from_background = deck
+        .duplicate_placeholder(source_id, &state, "png")
+        .unwrap();
+    let SlotContent::Ready(other) = &deck.slots[copy_from_background].content else {
+        panic!("copia cargada")
+    };
+    assert_eq!(other.doc.page().unwrap().layers, original);
+}
+
 /// Regresión del bug «los lienzos se quedan en blanco tras añadir uno»: al
 /// materializar una provisional (la respuesta de `reserve_numbered_path`
 /// llegando a `on_canvas_path_reserved`), la ranura se convierte en real
