@@ -12,6 +12,32 @@ fn edit() -> VideoEdit {
 }
 
 #[test]
+fn trim_sliders_do_not_seek_or_round_after_crossing_end_and_using_presets() {
+    let mut edit = edit();
+    edit.set_trim_edge(TrimEdge::End, 30.0);
+    edit.set_trim_edge(TrimEdge::Start, 40.0);
+    let start = edit.trim_start;
+    let ctx = egui::Context::default();
+    for seconds in [5.0, 7.0, 10.0, 15.0] {
+        edit.set_trim_duration(seconds);
+        edit.playing = true;
+        edit.playhead = start + 1.0;
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                super::trim_controls::trim_controls(&mut edit, ui);
+            });
+            assert!(
+                edit.playing,
+                "idle slider stopped playback after {seconds} s"
+            );
+            assert_eq!(edit.trim_start, start);
+            assert_eq!(edit.trim_end, start + seconds);
+            assert_eq!(edit.playhead, start + 1.0);
+        }
+    }
+}
+
+#[test]
 fn duration_control_makes_a_seven_second_clip_and_is_undoable() {
     let mut edit = edit();
     edit.set_trim_edge(TrimEdge::Start, 12.0);

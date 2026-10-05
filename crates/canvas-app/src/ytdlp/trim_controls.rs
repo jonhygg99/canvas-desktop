@@ -75,13 +75,15 @@ fn edge_field(edit: &mut VideoEdit, ui: &mut egui::Ui, edge: TrimEdge, duration:
         .inner;
     update_edge(edit, edge, value, &response);
     response.on_hover_text("Drag to adjust, or type HH:MM:SS.mmm or seconds");
-    let range = if start {
-        0.0..=(edit.trim_end - 0.1).max(0.0)
+    // El campo puede haber cruzado el otro extremo: usa el valor validado.
+    value = if start {
+        edit.trim_start
     } else {
-        (edit.trim_start + 0.1).min(duration)..=duration
+        edit.trim_end
     };
     let response = ui.add(
-        egui::Slider::new(&mut value, range)
+        egui::Slider::new(&mut value, 0.0..=duration)
+            .clamping(egui::SliderClamping::Edits)
             .step_by(0.01)
             .show_value(false),
     );
