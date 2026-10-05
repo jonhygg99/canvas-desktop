@@ -47,6 +47,21 @@ pub(crate) fn zoom_transform(vw: f64, vh: f64, pw: f64, ph: f64, zoom: f32) -> T
     Transform::new((pw - vw * z) / 2.0, (ph - vh * z) / 2.0, vw * z, vh * z)
 }
 
+/// Mantiene el zoom centrado y aplica el desplazamiento del vídeo nítido.
+pub(crate) fn positioned_transform(
+    vw: f64,
+    vh: f64,
+    pw: f64,
+    ph: f64,
+    zoom: f32,
+    position: (f64, f64),
+) -> Transform {
+    let mut transform = zoom_transform(vw, vh, pw, ph, zoom);
+    transform.x += position.0;
+    transform.y += position.1;
+    transform
+}
+
 /// Ancho actual → zoom contra la base contain (restaura al abrir). Libre
 /// hasta 10× (el slider solo llega a 3, el campo manual más).
 pub(crate) fn zoom_for_transform(layer_w: f64, vw: f64, vh: f64, pw: f64, ph: f64) -> f32 {

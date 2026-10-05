@@ -176,9 +176,33 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         );
     });
     edit.zoom = edit.zoom.clamp(1.0, 10.0);
+    position_ui(edit, ui);
     ui.label("Background blur");
     ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0));
     ui.separator();
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).min(300.0);
     super::trim_controls::trim_controls(edit, ui);
+}
+
+fn position_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    ui.label("Position (px)")
+        .on_hover_text("Offset from center: positive X moves right, positive Y moves down");
+    for (label, value, limit) in [
+        ("X", &mut edit.position.0, edit.size.0),
+        ("Y", &mut edit.position.1, edit.size.1),
+    ] {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(60.0);
+            ui.add(
+                egui::Slider::new(value, -limit..=limit)
+                    .clamping(egui::SliderClamping::Edits)
+                    .show_value(false),
+            );
+            ui.add(egui::DragValue::new(value).speed(1.0).suffix(" px"));
+        });
+    }
+    if ui.button("Center video").clicked() {
+        edit.position = (0.0, 0.0);
+    }
 }

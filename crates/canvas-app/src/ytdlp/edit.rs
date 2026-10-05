@@ -86,6 +86,8 @@ pub struct VideoAccept {
     pub trim_end: Option<f64>,
     pub blur_radius: f32,
     pub zoom: f32,
+    /// Desplazamiento desde el centro, en píxeles del lienzo.
+    pub position: (f64, f64),
     pub poster: PathBuf,
 }
 
@@ -99,6 +101,7 @@ pub struct VideoEdit {
     pub(crate) trim_end: f64,
     pub(crate) blur: f32,
     pub(crate) zoom: f32,
+    position: (f64, f64),
     pub(crate) size: (f64, f64),
     pub(crate) video_size: Option<(f64, f64)>,
     playing: bool,
@@ -145,6 +148,7 @@ impl VideoEdit {
             // Fondo con blur 50 por defecto (receta imágenes); 0 = sin fondo.
             blur: 100.0,
             zoom: 1.0,
+            position: (0.0, 0.0),
             size,
             video_size: None,
             playing: false,
@@ -191,6 +195,10 @@ impl VideoEdit {
                 page.height,
             );
             self.trim_start = link.trim_start.max(0.0);
+            self.position = (
+                layer.transform.x - (page.width - layer.transform.width) / 2.0,
+                layer.transform.y - (page.height - layer.transform.height) / 2.0,
+            );
             if let Some(end) = link.trim_end {
                 self.trim_end = end;
             }
@@ -284,6 +292,7 @@ pub(crate) fn default_accept(path: PathBuf, title: String, size: (f64, f64)) -> 
         trim_end: None,
         blur_radius: 50.0,
         zoom: 1.0,
+        position: (0.0, 0.0),
         poster: PathBuf::new(),
     }
 }
@@ -357,6 +366,7 @@ fn build_accept(edit: &VideoEdit) -> VideoAccept {
         trim_end: Some(edit.trim_end),
         blur_radius: blur_radius_for_slider(edit.blur),
         zoom: edit.zoom,
+        position: edit.position,
         poster: frame_index_at(edit, edit.trim_start)
             .and_then(|i| edit.frames.get(i))
             .cloned()
@@ -393,7 +403,9 @@ pub fn retry_pending_frames(video: &mut Panel, tx: &Sender<AppMsg>, ctx: &egui::
 
 #[path = "edit_geometry.rs"]
 mod geometry;
+#[cfg(test)]
+use geometry::zoom_transform;
 pub(crate) use geometry::{
-    blur_radius_for_slider, contain_rect, grown_rect, quantize_playhead, slider_for_radius,
-    zoom_for_transform, zoom_transform,
+    blur_radius_for_slider, contain_rect, grown_rect, positioned_transform, quantize_playhead,
+    slider_for_radius, zoom_for_transform,
 };

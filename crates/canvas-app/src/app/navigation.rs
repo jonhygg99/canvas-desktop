@@ -345,7 +345,8 @@ impl AppInner {
             trim_start: accept.trim_start,
             trim_end: accept.trim_end,
         };
-        let transform = crate::ytdlp::edit::zoom_transform(vw, vh, pw, ph, accept.zoom);
+        let transform =
+            crate::ytdlp::edit::positioned_transform(vw, vh, pw, ph, accept.zoom, accept.position);
         let id =
             match state
                 .doc

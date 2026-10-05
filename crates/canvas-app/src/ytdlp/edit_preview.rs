@@ -207,7 +207,10 @@ pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     // de preview la recorta; UV completo siempre.
     let (zx, zy, zw, zh) = grown_rect(x, y, w, h, edit.zoom);
     let sharp_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + zx, rect.top() + zy),
+        egui::pos2(
+            rect.left() + zx + edit.position.0 as f32 * scale,
+            rect.top() + zy + edit.position.1 as f32 * scale,
+        ),
         egui::vec2(zw, zh),
     );
     ui.painter().with_clip_rect(rect).image(

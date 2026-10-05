@@ -17,7 +17,7 @@ Las interacciones de timeline se prueban con eventos reales de egui; los
 tests de reproducción usan vídeos generados con FFmpeg. La automatización
 de ventanas nativas no está disponible en esta sesión.
 
-Verificación final: 762 tests pasan, 22 ignorados habituales; formato y
+Verificación final: 764 tests pasan, 22 ignorados habituales; formato y
 Clippy sin incidencias. La integración descarga un vídeo real desde un
 servidor local con yt-dlp y verifica progreso y archivo reproducible. Las
 pruebas de cancelación ejecutan un proceso real. `cargo run -p canvas-app`
@@ -45,7 +45,8 @@ Ajustes de distribución y sliders:
 - [x] Transporte con iconos vectoriales, nombres accesibles y tooltips.
 - [x] Acciones inferiores a la derecha; Create canvas en el extremo derecho.
 
-El último intento de `cargo run -p canvas-app` no pudo sustituir el
-ejecutable: Windows devuelve Access is denied mientras la app permanece
-abierta. Hace falta cerrarla y ejecutar el comando para revisar visualmente
-esta actualización; no se ha cerrado el diseño abierto del usuario.
+- [x] Posición X/Y debajo de Zoom: sliders, campos en píxeles y Center video.
+- [x] Preview y canvas conservan el desplazamiento; el fondo permanece fijo.
+- [x] Reabrir Edit video restaura la posición desde la capa existente.
+
+En Windows hay que cerrar la app antes de recompilar el ejecutable.

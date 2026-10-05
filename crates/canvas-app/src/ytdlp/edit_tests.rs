@@ -247,6 +247,79 @@ fn layer_for_clip_matches_by_file_name() {
 }
 
 #[test]
+fn position_moves_only_the_sharp_video_in_preview() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("preview.png");
+    image::RgbaImage::new(16, 9).save(&path).unwrap();
+    let mut edit = editor(Some(10.0));
+    edit.frames = vec![path];
+    let ctx = egui::Context::default();
+    let (sharp, background) = wait_for_textures(&mut edit, &ctx, 0);
+    let render = |edit: &mut VideoEdit| {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 500.0),
+                )),
+                ..Default::default()
+            },
+            |ui| preview_ui(edit, ui),
+        )
+    };
+    let bounds = |output: &egui::FullOutput, id| {
+        output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Mesh(mesh) = &shape.shape {
+                    (mesh.texture_id == id).then(|| {
+                        egui::Rect::from_points(
+                            &mesh
+                                .vertices
+                                .iter()
+                                .map(|vertex| vertex.pos)
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    };
+    let before = render(&mut edit);
+    edit.position = (120.0, -45.0);
+    let after = render(&mut edit);
+    let original = bounds(&before, sharp);
+    let moved = bounds(&after, sharp);
+    let scale = original.width() / 1920.0;
+    assert!((moved.left() - original.left() - 120.0 * scale).abs() < 0.001);
+    assert!((moved.top() - original.top() + 45.0 * scale).abs() < 0.001);
+    assert_eq!(
+        bounds(&before, background.unwrap()),
+        bounds(&after, background.unwrap())
+    );
+}
+
+#[test]
+fn video_position_is_preserved_in_accept_and_canvas_geometry() {
+    let mut edit = editor(Some(10.0));
+    edit.position = (120.0, -45.0);
+    edit.zoom = 2.0;
+    let accept = build_accept(&edit);
+    assert_eq!(accept.position, (120.0, -45.0));
+    let base = zoom_transform(1920.0, 1080.0, 1920.0, 1080.0, 2.0);
+    let moved = positioned_transform(1920.0, 1080.0, 1920.0, 1080.0, 2.0, accept.position);
+    assert_eq!((moved.x, moved.y), (base.x + 120.0, base.y - 45.0));
+    assert_eq!((moved.width, moved.height), (base.width, base.height));
+    assert_eq!(
+        default_accept(PathBuf::new(), "Clip".into(), accept.size).position,
+        (0.0, 0.0)
+    );
+}
+
+#[test]
 fn open_restores_sliders_from_layers() {
     use canvas_core::{ImageContent, LayerContent, Transform, VideoContent};
     let mut doc = Document::new(1920.0, 1080.0);
@@ -266,7 +339,7 @@ fn open_restores_sliders_from_layers() {
     doc.layer_mut(bg).unwrap().effects.blur_radius = 20.0;
     doc.add_layer(
         "Clip",
-        Transform::new(480.0, 0.0, 960.0, 1080.0),
+        Transform::new(600.0, -30.0, 960.0, 1080.0),
         LayerContent::Video(VideoContent {
             source_path: Some(PathBuf::from("C:/v/clip.mp4")),
             natural_width: 32,
@@ -293,6 +366,7 @@ fn open_restores_sliders_from_layers() {
     // Blur del fondo (20→40), zoom 1 contra la base contain 960.
     assert_eq!(edit.blur, 40.0);
     assert_eq!(edit.zoom, 1.0);
+    assert_eq!(edit.position, (120.0, -30.0));
 }
 
 #[test]

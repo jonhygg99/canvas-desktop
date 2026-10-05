@@ -192,6 +192,7 @@ mod tests {
                 &Document::new(1920.0, 1080.0),
             );
             let mut settings = AppSettings::default();
+            edit.position = (1234.0, -567.0);
             let mut measured = 0.0;
             let output = ctx.run_ui(
                 egui::RawInput {
