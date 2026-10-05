@@ -164,3 +164,47 @@ fn escape_cancels_marquee_and_restores_prior_selection() {
     );
     assert!(state.selection.contains(a) && state.selection.contains(b));
 }
+
+#[test]
+fn single_layer_move_can_be_cancelled_without_undo() {
+    let (ctx, mut state, a, _) = fixture();
+    state.selection.set(Some(a));
+    frame(&ctx, &mut state, pointer(35.0, 35.0, Some(true)));
+    frame(&ctx, &mut state, pointer(80.0, 75.0, None));
+    assert_eq!(state.doc.layer(a).unwrap().transform.x, 60.0);
+    frame(
+        &ctx,
+        &mut state,
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    frame(&ctx, &mut state, pointer(80.0, 75.0, Some(false)));
+    assert_eq!(state.doc.layer(a).unwrap().transform.x, 20.0);
+    assert_eq!(state.history.undo_depth(), 0);
+}
+
+#[test]
+fn shift_locks_the_drag_to_its_dominant_axis() {
+    let (ctx, mut state, a, _) = fixture();
+    state.selection.set(Some(a));
+    frame(&ctx, &mut state, pointer(35.0, 35.0, Some(true)));
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            modifiers: egui::Modifiers::SHIFT,
+            events: pointer(80.0, 65.0, None),
+            ..Default::default()
+        },
+        |ui| {
+            let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 500.0));
+            let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+            layer_interaction(&mut state, ui, &response, rect);
+        },
+    );
+    assert_eq!(state.doc.layer(a).unwrap().transform.y, 20.0);
+    assert_eq!(state.doc.layer(a).unwrap().transform.x, 60.0);
+}

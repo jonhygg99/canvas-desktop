@@ -9,6 +9,7 @@ use canvas_core::{
 };
 use eframe::egui;
 
+use super::gesture_cancel::cancel_single_gesture;
 use super::overlay::{format_dims, show_drag_tag};
 use super::viewport::{layer_corners_screen, rotation_handle_screen, screen_to_page};
 use super::{EditorState, HANDLE_SIZE};
@@ -56,7 +57,7 @@ pub(super) fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Cor
         Corner::BottomLeft,
         Corner::BottomRight,
     ];
-    let reach = HANDLE_SIZE / 2.0 + 3.0;
+    let reach = HANDLE_SIZE / 2.0 + 6.0;
     ORDER
         .into_iter()
         .zip(corners)
@@ -70,6 +71,9 @@ pub(super) fn layer_interaction(
     response: &egui::Response,
     rect: egui::Rect,
 ) {
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) && cancel_single_gesture(state) {
+        return;
+    }
     if super::selection_gesture::handle(state, ui, response, rect) {
         return;
     }
@@ -81,7 +85,11 @@ pub(super) fn layer_interaction(
         .or_else(|| response.hover_pos());
 
     // Cursor según lo que hay debajo.
-    if let (Some(pos), Some(sel)) = (pointer, state.selection.primary()) {
+    let editable_primary = state
+        .selection
+        .primary()
+        .filter(|&id| state.doc.page().is_ok_and(|p| !p.effective_locked(id)));
+    if let (Some(pos), Some(sel)) = (pointer, editable_primary) {
         if let Ok(layer) = state.doc.layer(sel) {
             let corners = layer_corners_screen(&state.viewport, rect, &layer.transform);
             let on_rotate = rotation_handle_screen(&state.viewport, rect, &layer.transform)
@@ -113,7 +121,7 @@ pub(super) fn layer_interaction(
         {
             state.gesture = Gesture::None;
             // ¿Sobre un manejador de la selección actual?
-            if let Some(sel) = state.selection.primary() {
+            if let Some(sel) = editable_primary {
                 if let Ok(layer) = state.doc.layer(sel) {
                     let t = layer.transform;
                     let corners = layer_corners_screen(&state.viewport, rect, &t);
@@ -175,7 +183,9 @@ pub(super) fn layer_interaction(
                 } else {
                     state.selection.set(hit);
                 }
-                if let Some(id) = hit {
+                if let Some(id) =
+                    hit.filter(|&id| state.doc.page().is_ok_and(|p| !p.effective_locked(id)))
+                {
                     if let Ok(layer) = state.doc.layer(id) {
                         state.gesture = Gesture::Move {
                             layer: id,
@@ -199,10 +209,18 @@ pub(super) fn layer_interaction(
                     start,
                     origin,
                 } => {
-                    let (dx, dy) = (
+                    let (mut dx, mut dy) = (
                         f64::from(pos.x - origin.x) / state.viewport.zoom,
                         f64::from(pos.y - origin.y) / state.viewport.zoom,
                     );
+                    let shift = ui.input(|i| i.modifiers.shift);
+                    if shift {
+                        if dx.abs() >= dy.abs() {
+                            dy = 0.0;
+                        } else {
+                            dx = 0.0;
+                        }
+                    }
                     let mut moved = Transform {
                         x: start.x + dx,
                         y: start.y + dy,
@@ -236,9 +254,14 @@ pub(super) fn layer_interaction(
                                 page.height,
                                 threshold,
                             );
-                            moved.x += snap.dx;
-                            moved.y += snap.dy;
-                            state.snap_guides = (snap.v_guides, snap.h_guides);
+                            if !shift || dy == 0.0 {
+                                moved.x += snap.dx;
+                                state.snap_guides.0 = snap.v_guides;
+                            }
+                            if !shift || dx == 0.0 {
+                                moved.y += snap.dy;
+                                state.snap_guides.1 = snap.h_guides;
+                            }
                         }
                     }
                     if let Ok(l) = state.doc.layer_mut(layer) {

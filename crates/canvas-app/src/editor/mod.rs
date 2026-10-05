@@ -12,6 +12,7 @@ pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 
 pub(crate) mod canvas;
 pub(crate) mod document_bar;
+mod gesture_cancel;
 mod interaction;
 mod layer_ops;
 mod marquee;
