@@ -46,3 +46,32 @@ fn a_trim_gesture_is_one_undo_step_and_reset_preserves_appearance() {
 fn timecodes_show_hours_and_milliseconds() {
     assert_eq!(timecode(3723.456), "01:02:03.456");
 }
+
+#[test]
+fn timeline_zoom_keeps_the_trim_intact_and_focuses_the_selection() {
+    let mut edit = edit();
+    edit.set_trim_edge(TrimEdge::Start, 20.0);
+    edit.set_trim_edge(TrimEdge::End, 25.0);
+    edit.fit_timeline_selection();
+    let (start, end) = edit.timeline_view();
+    assert!(start <= 20.0 && end >= 25.0 && end - start < 7.0);
+    edit.zoom_timeline(0.5);
+    assert_eq!((edit.trim_start, edit.trim_end), (20.0, 25.0));
+    assert!(edit.timeline_view().1 - edit.timeline_view().0 < 4.0);
+    edit.timeline_range = None;
+    assert_eq!(edit.timeline_view(), (0.0, 60.0));
+}
+
+#[test]
+fn loop_selection_restarts_at_the_trim_start() {
+    let mut edit = edit();
+    edit.trim_start = 10.0;
+    edit.trim_end = 11.0;
+    edit.playhead = 10.99;
+    edit.playing = true;
+    edit.loop_selection = true;
+    edit.last_tick = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+    advance_playhead(&mut edit, &egui::Context::default());
+    assert!(edit.playing);
+    assert_eq!(edit.playhead, 10.0);
+}

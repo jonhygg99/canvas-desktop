@@ -38,11 +38,20 @@ use preview::{frame_index_at, preview_ui, PreviewCache};
 
 #[path = "edit_controls.rs"]
 mod controls;
+#[path = "timeline.rs"]
+mod timeline;
+#[path = "timeline_thumbnails.rs"]
+mod timeline_thumbnails;
+#[path = "timeline_view.rs"]
+mod timeline_view;
 #[path = "trim.rs"]
 mod trim;
 #[path = "trim_controls.rs"]
 mod trim_controls;
 use trim::{timecode, TrimEdge, TrimHistory};
+#[path = "timeline_tests.rs"]
+#[cfg(test)]
+mod timeline_tests;
 #[path = "trim_tests.rs"]
 #[cfg(test)]
 mod trim_tests;
@@ -90,6 +99,10 @@ pub struct VideoEdit {
     playhead: f64,
     source_fps: f64,
     trim_history: TrimHistory,
+    timeline_range: Option<(f64, f64)>,
+    thumbnails: timeline_thumbnails::Thumbnails,
+    timeline_gesture: Option<timeline::Gesture>,
+    loop_selection: bool,
     /// Pide re-extraer los fotogramas (lo sirve `layers_panel`).
     pub(crate) retry_frames: bool,
     /// Vista previa muda por defecto (se puede quitar).
@@ -131,6 +144,10 @@ impl VideoEdit {
             playhead: 0.0,
             source_fps: 30.0,
             trim_history: TrimHistory::default(),
+            timeline_range: None,
+            thumbnails: timeline_thumbnails::Thumbnails::default(),
+            timeline_gesture: None,
+            loop_selection: false,
             retry_frames: false,
             mute: true,
             last_tick: None,
@@ -199,6 +216,7 @@ impl VideoEdit {
         (self.trim_start, self.trim_end) = clamp_trim(self.trim_start, end, duration);
         self.playhead = self.trim_start;
         self.preview = PreviewCache::default();
+        self.thumbnails = timeline_thumbnails::Thumbnails::default();
         self.playback = LivePreview::default();
         self.loading_frames = false;
         self.frames_error = None;

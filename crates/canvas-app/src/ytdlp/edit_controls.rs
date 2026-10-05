@@ -23,8 +23,12 @@ pub(super) fn advance_playhead(edit: &mut VideoEdit, ctx: &egui::Context) {
     }
     edit.last_tick = Some(now);
     if edit.playhead >= edit.trim_end {
-        edit.playhead = edit.trim_end;
-        edit.playing = false;
+        edit.playhead = if edit.loop_selection {
+            edit.trim_start
+        } else {
+            edit.trim_end
+        };
+        edit.playing = edit.loop_selection;
         crate::audio::pause_for(&edit.path);
     }
     if edit.playing {
@@ -78,6 +82,12 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
                 ui.ctx().request_repaint();
             }
         }
+        if ui.button("← Frame").clicked() {
+            edit.seek(edit.playhead - 1.0 / edit.source_fps);
+        }
+        if ui.button("Frame →").clicked() {
+            edit.seek(edit.playhead + 1.0 / edit.source_fps);
+        }
         if ui
             .checkbox(&mut edit.mute, crate::i18n::tr("Mute preview"))
             .changed()
@@ -100,29 +110,11 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
 
 /// Timeline clicable (el Slider de egui salta al pulsar en cualquier punto).
 pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
-    let Some(duration) = edit.duration else {
+    if edit.duration.is_none() {
         ui.weak(crate::i18n::tr("Duration unknown yet."));
         return;
-    };
-    let (start, end) = (edit.trim_start, edit.trim_end);
-    // Al mover a mano se pausa (como el panel de propiedades): el audio no
-    // persigue el scrub.
-    if ui
-        .add(
-            egui::Slider::new(&mut edit.playhead, 0.0..=duration)
-                .text(crate::i18n::tr("Timeline"))
-                .show_value(false),
-        )
-        .changed()
-    {
-        edit.seek(edit.playhead);
     }
-    ui.weak(format!(
-        "Trim {} – {}  ·  full {}",
-        timecode(start),
-        timecode(end),
-        timecode(duration)
-    ));
+    super::timeline::show(edit, ui);
     super::trim_controls::trim_controls(edit, ui);
 }
 

@@ -102,12 +102,17 @@ pub(super) fn live_textures(edit: &mut VideoEdit, ctx: &egui::Context) -> Option
         }
     }
     if finished || error.is_some() {
-        edit.playing = false;
+        let looping = error.is_none() && edit.loop_selection;
+        edit.playing = looping;
         edit.last_tick = None;
         edit.playback.stop();
         crate::audio::pause_for(&edit.path);
         if let Some(error) = error {
             edit.set_frames_error(error);
+        } else if looping {
+            edit.playhead = edit.trim_start;
+            edit.last_tick = Some(Instant::now());
+            ctx.request_repaint();
         } else {
             edit.playhead = edit.trim_end;
             edit.playback.shown_time = Some(edit.playhead);
