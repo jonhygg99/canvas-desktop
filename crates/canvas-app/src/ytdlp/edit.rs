@@ -14,7 +14,9 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use canvas_core::{Document, LayerContent, LayerId, Transform};
+#[cfg(test)]
+use canvas_core::Transform;
+use canvas_core::{Document, LayerContent, LayerId};
 use eframe::egui;
 
 use super::api::clamp_trim;
@@ -334,60 +336,9 @@ pub fn open_pending_edit(
 
 /// Ventana de edición. Devuelve el `VideoAccept` si se pulsó Aceptar (el
 /// llamador crea el lienzo); cerrar/X/Cancelar devuelve `None`.
-pub fn edit_window_ui(
-    video: &mut Panel,
-    settings: &mut AppSettings,
-    ui: &mut egui::Ui,
-) -> Option<VideoAccept> {
-    let title = format!("Edit video — {}", video.edit.as_ref()?.title);
-    let mut open = true;
-    let mut close = false;
-    let mut accept = None;
-    egui::Window::new(title)
-        .open(&mut open)
-        .resizable(true)
-        .default_size(egui::vec2(430.0, 600.0))
-        .show(ui.ctx(), |ui| {
-            let edit = video.edit.as_mut().expect("checked above");
-            advance_playhead(edit, &ui.ctx().clone());
-            preview_ui(edit, ui);
-            transport_ui(edit, ui);
-            timeline_ui(edit, ui);
-            params_ui(edit, ui, settings);
-            ui.separator();
-            ui.horizontal(|ui| {
-                let ready =
-                    !edit.loading_frames && edit.frames_error.is_none() && !edit.frames.is_empty();
-                let btn = ui.add_enabled(ready, egui::Button::new(crate::i18n::tr("Aceptar")));
-                if btn.clicked() {
-                    accept = Some(build_accept(edit));
-                }
-                if !ready {
-                    btn.on_hover_text(crate::i18n::tr("Waiting for preview frames"));
-                }
-                if ui.button(crate::i18n::tr("Atrás")).clicked() {
-                    close = true;
-                }
-            });
-        });
-    if !open || close {
-        stop_preview_audio(video);
-        video.edit = None;
-        return None;
-    }
-    if accept.is_some() {
-        stop_preview_audio(video);
-        video.edit = None;
-    }
-    accept
-}
-
-/// Corta el audio de la preview al cerrar/aceptar (el lienzo no autoplayea).
-fn stop_preview_audio(video: &Panel) {
-    if let Some(edit) = video.edit.as_ref() {
-        crate::audio::pause_for(&edit.path);
-    }
-}
+#[path = "edit_window.rs"]
+mod window;
+pub use window::edit_window_ui;
 
 /// Construye el accept (siempre con algo válido: el botón lo exige).
 fn build_accept(edit: &VideoEdit) -> VideoAccept {
@@ -405,34 +356,6 @@ fn build_accept(edit: &VideoEdit) -> VideoAccept {
             .cloned()
             .unwrap_or_default(),
     }
-}
-
-/// Fija el playhead al fotograma anterior o igual (rejilla `fps`).
-pub(crate) fn quantize_playhead(playhead: f64, trim_start: f64, fps: f64) -> f64 {
-    if fps <= 0.0 {
-        return playhead;
-    }
-    let k = ((playhead - trim_start) * fps).floor().max(0.0);
-    trim_start + k / fps
-}
-
-/// Rect contain (x, y, w, h) del vídeo dentro de la caja: crece solo hasta
-/// que un lado toca el borde, proporción intacta (como al pegar imágenes).
-pub(crate) fn contain_rect(box_w: f32, box_h: f32, vw: f64, vh: f64) -> (f32, f32, f32, f32) {
-    if vw <= 0.0 || vh <= 0.0 {
-        return (0.0, 0.0, box_w, box_h);
-    }
-    let scale = (f64::from(box_w) / vw).min(f64::from(box_h) / vh) as f32;
-    let (w, h) = (vw as f32 * scale, vh as f32 * scale);
-    ((box_w - w) / 2.0, (box_h - h) / 2.0, w, h)
-}
-
-/// Rect contain crecido por el zoom alrededor de su centro (como el
-/// Transform en el lienzo): la caja de preview lo recorta.
-pub(crate) fn grown_rect(x: f32, y: f32, w: f32, h: f32, zoom: f32) -> (f32, f32, f32, f32) {
-    let z = zoom.max(1.0);
-    let (nw, nh) = (w * z, h * z);
-    (x + (w - nw) / 2.0, y + (h - nh) / 2.0, nw, nh)
 }
 
 /// Reintento pedido desde la ventana (lo sirve `layers_panel`, que tiene
@@ -462,39 +385,9 @@ pub fn retry_pending_frames(video: &mut Panel, tx: &Sender<AppMsg>, ctx: &egui::
     );
 }
 
-/// Encaja la vista previa en 380×300 manteniendo el aspecto elegido.
-fn fit_preview(pw: f64, ph: f64) -> egui::Vec2 {
-    const MAX_W: f32 = 380.0;
-    const MAX_H: f32 = 300.0;
-    let scale = (MAX_W / pw as f32).min(MAX_H / ph as f32).max(0.01);
-    egui::vec2(pw as f32 * scale, ph as f32 * scale)
-}
-
-/// Slider 0..=100 → radio de blur de la capa (el fondo de referencia usa 50).
-pub(crate) fn blur_radius_for_slider(v: f32) -> f32 {
-    v.clamp(0.0, 100.0) / 2.0
-}
-
-/// Radio de la capa → slider (restaura al abrir).
-pub(crate) fn slider_for_radius(r: f32) -> f32 {
-    (r * 2.0).clamp(0.0, 100.0)
-}
-
-/// Transform contain escalado `zoom` desde el centro: base encajada (crece
-/// solo hasta tocar el borde), la página recorta lo que sobresale.
-pub(crate) fn zoom_transform(vw: f64, vh: f64, pw: f64, ph: f64, zoom: f32) -> Transform {
-    let base = (pw / vw.max(1.0)).min(ph / vh.max(1.0));
-    let z = zoom.max(1.0) as f64 * base;
-    Transform::new((pw - vw * z) / 2.0, (ph - vh * z) / 2.0, vw * z, vh * z)
-}
-
-/// Ancho actual → zoom contra la base contain (restaura al abrir). Libre
-/// hasta 10× (el slider solo llega a 3, el campo manual más).
-pub(crate) fn zoom_for_transform(layer_w: f64, vw: f64, vh: f64, pw: f64, ph: f64) -> f32 {
-    let base = (pw / vw.max(1.0)).min(ph / vh.max(1.0));
-    if base > 0.0 {
-        (layer_w / (vw * base)).clamp(1.0, 10.0) as f32
-    } else {
-        1.0
-    }
-}
+#[path = "edit_geometry.rs"]
+mod geometry;
+pub(crate) use geometry::{
+    blur_radius_for_slider, contain_rect, grown_rect, quantize_playhead, slider_for_radius,
+    zoom_for_transform, zoom_transform,
+};

@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc};
 use eframe::egui;
 
 use super::playback::live_textures;
-use super::{contain_rect, fit_preview, grown_rect, quantize_playhead, VideoEdit};
+use super::{contain_rect, grown_rect, quantize_playhead, VideoEdit};
 
 #[derive(Default)]
 pub(super) struct PreviewCache {
@@ -161,7 +161,10 @@ fn blurred_rgba(img: &canvas_io::LoadedImage, blur: f32) -> Vec<u8> {
 
 /// Vista previa con vídeo en contain y fondo; espera al worker sin bloquear.
 pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
-    let size = fit_preview(edit.size.0, edit.size.1);
+    let width = ui.available_width().clamp(1.0, 960.0);
+    let height = (ui.ctx().content_rect().height() * 0.5).clamp(120.0, 420.0);
+    let scale = (width / edit.size.0 as f32).min(height / edit.size.1 as f32);
+    let size = egui::vec2(edit.size.0 as f32 * scale, edit.size.1 as f32 * scale);
     let (vw, vh) = edit.video_size.unwrap_or((16.0, 9.0));
     let was_playing = edit.playing;
     let tex = live_textures(edit, ui.ctx()).or_else(|| {

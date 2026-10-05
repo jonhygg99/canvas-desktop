@@ -40,7 +40,7 @@ pub(super) fn advance_playhead(edit: &mut VideoEdit, ctx: &egui::Context) {
 /// Play/Pause y Restart sobre el trim, con audio salvo mute.
 /// Sin fotogramas el Play se apaga explicando por qué, con reintento.
 pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if edit.frames.is_empty() || edit.frames_error.is_some() || edit.loading_frames {
             let btn = ui.add_enabled(false, egui::Button::new(crate::i18n::tr("Play")));
             btn.on_hover_text(edit.frames_error.as_deref().unwrap_or({
@@ -121,21 +121,29 @@ pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
 /// Tamaño de lienzo + trim + background blur + zoom. Sin duración, el trim
 /// y el timeline esperan.
 pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut AppSettings) {
-    ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr("Canvas:"));
-        for (label, w, h) in CANVAS_SIZES {
-            if ui
-                .selectable_label(settings.ytdlp_canvas_size == (w, h), label)
-                .clicked()
-            {
-                settings.ytdlp_canvas_size = (w, h);
-                settings.save_in_background();
+    ui.label("Canvas size");
+    let before = settings.ytdlp_canvas_size;
+    let selected = CANVAS_SIZES
+        .iter()
+        .find(|(_, w, h)| (*w, *h) == before)
+        .map(|(label, _, _)| *label)
+        .unwrap_or("Custom");
+    egui::ComboBox::from_id_salt("video-canvas-size")
+        .selected_text(selected)
+        .width(ui.available_width().min(240.0))
+        .show_ui(ui, |ui| {
+            for (label, w, h) in CANVAS_SIZES {
+                ui.selectable_value(&mut settings.ytdlp_canvas_size, (w, h), label);
             }
-        }
-    });
+        });
+    if before != settings.ytdlp_canvas_size {
+        settings.save_in_background();
+    }
+    ui.add_space(8.0);
+    ui.spacing_mut().slider_width = (ui.available_width() * 0.45).min(160.0);
     edit.size = settings.ytdlp_canvas_size;
     ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0).text(crate::i18n::tr("Background blur")));
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(crate::i18n::tr("Zoom"));
         // Slider capado para ajuste rápido + campo manual hasta 10×.
         ui.add(egui::Slider::new(&mut edit.zoom, 1.0..=3.0).show_value(false));

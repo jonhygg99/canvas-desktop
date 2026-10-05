@@ -7,7 +7,7 @@ comentarios y documentación en español. Rust/egui nativo.
 - [x] Tiempos con milisegundos, marcar inicio/fin y controles de fotograma.
 - [x] Vista previa exacta del extremo ajustado y FPS del archivo.
 - [x] Zoom de timeline, bucle, Undo/Redo y Reset trim independiente del aspecto.
-- [ ] Ventana adaptable con preview grande y acción Create canvas explícita.
+- [x] Ventana adaptable con preview grande y acción Create canvas explícita.
 - [ ] Progreso de descarga, cancelación, reintento por vídeo y tarjetas de clips.
 - [ ] Recorte de descarga opcional, validado y diferenciado del trim de edición.
 - [x] Etiqueta Mute preview; pendiente Download without audio.
