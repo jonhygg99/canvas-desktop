@@ -405,17 +405,17 @@ pub(super) fn layer_properties_ui(
     }
 
     // --- Desenfoque (no destructivo, vista previa en vivo) ---
-    sidebar::section(ui, "Blur", true, |ui| {
+    sidebar::section(ui, "Blur", false, |ui| {
         blur_control(state, ui, sel);
     });
 
     // --- Ajustes de color (GPU, no destructivos, vista previa en vivo) ---
-    sidebar::section(ui, "Color", true, |ui| {
+    sidebar::section(ui, "Color", false, |ui| {
         color_adjustments_ui(state, ui, sel);
     });
 
     // --- Sombra proyectada ---
-    sidebar::section(ui, "Shadow", true, |ui| {
+    sidebar::section(ui, "Shadow", false, |ui| {
         shadow_ui(state, ui, sel);
     });
 

@@ -45,11 +45,15 @@ pub fn export_modal(
     dialog: &mut ExportDialog,
     ctx: &egui::Context,
     page_size: (f64, f64),
+    has_video: bool,
 ) -> ExportChoice {
     let mut choice = ExportChoice::None;
     let modal = egui::Modal::new(egui::Id::new("export_dialog")).show(ctx, |ui| {
         ui.set_max_width(320.0);
         ui.heading("Export");
+        if has_video {
+            ui.label("Video layers are exported as the visible frame. This does not create an MP4 video.");
+        }
         ui.add_space(6.0);
 
         ui.label("Format");

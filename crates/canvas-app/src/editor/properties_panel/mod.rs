@@ -27,10 +27,7 @@ mod framing_tests;
 mod tests;
 use eframe::egui;
 
-use crate::app_icons::{
-    draw_gear_icon, draw_pencil_icon, draw_triangle_icon, icon_button_ui, icon_text_button_ui,
-    IconDir,
-};
+use crate::app_icons::{draw_pencil_icon, icon_button_ui};
 
 use super::EditorState;
 use crate::sidebar;
@@ -42,7 +39,7 @@ use layer_common::layer_properties_ui;
 /// Panel derecho: propiedades de la capa seleccionada.
 pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     sidebar::compact(ui);
-    framing_header_ui(state, ui);
+    sidebar::title(ui, "Properties");
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -171,20 +168,6 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         video::video_controls_ui(state, ui, video);
     }
 
-    if state.from_gallery.is_some()
-        && icon_text_button_ui(
-            ui,
-            true,
-            |p, r, c| draw_triangle_icon(p, r, IconDir::Left, c),
-            "Back to gallery",
-            None,
-            egui::Vec2::ZERO,
-        )
-        .clicked()
-    {
-        state.return_requested = true;
-    }
-    file_name_ui(state, ui);
     if let Some(session) = &mut state.framing {
         session.controls(ui);
         return;
@@ -203,16 +186,15 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
         if state.doc.layer(sel).is_ok() {
             layer_properties_ui(state, ui, sel, page_dims);
         } else {
-            ui.weak("No layer selected.");
-            ui.weak("Click the image to select it.");
+            page::page_ui(state, ui);
         }
     } else {
-        ui.weak("No layer selected.");
-        ui.weak("Click the image to select it.");
+        sidebar::section(ui, "Page", true, |ui| page::page_ui(state, ui));
+        ui.weak("Select a layer to edit its properties.");
     }
 
     // Fondo desenfocado: copia «cover» de la imagen, con blur 50 por defecto.
-    sidebar::section(ui, "Blurred background", true, |ui| {
+    sidebar::section(ui, "Blurred background", false, |ui| {
         let active = state.background_active();
         let can_toggle = active || state.background_source().is_some();
         let mut bg_on = active;
@@ -229,15 +211,6 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
             }
         }
     });
-    ui.label(format!("Zoom: {:.0} %", state.viewport.zoom * 100.0));
-    ui.weak("Wheel: pan · Shift+wheel: pan the other axis · Ctrl+wheel: zoom");
-    ui.weak("Space/middle button: pan · Ctrl+0: fit");
-    ui.weak("Ctrl+S: save · Ctrl+Shift+S: save as");
-    ui.weak("Ctrl+C / Ctrl+V: copy layers, even between designs");
-    ui.add_space(4.0);
-    if icon_text_button_ui(ui, true, draw_gear_icon, "Settings", None, egui::Vec2::ZERO).clicked() {
-        state.settings_clicked = true;
-    }
 }
 
 /// Nombre del archivo abierto, arriba del panel: un lápiz lo vuelve editable
@@ -246,39 +219,7 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
 /// cuando el documento ya tiene archivo en disco. Un diseño nuevo sin
 /// guardar (`source_path` en `None`) no ofrece el lápiz: no hay nada que
 /// renombrar todavía.
-fn framing_header_ui(state: &mut EditorState, ui: &mut egui::Ui) {
-    let origin = ui.available_rect_before_wrap().min;
-    let width = ui.available_width();
-    sidebar::title(ui, "Properties");
-    let rect = egui::Rect::from_min_size(
-        origin + egui::vec2((width - 116.0).max(0.0), 1.0),
-        egui::vec2(112.0, 22.0),
-    );
-    let busy = state.framing.as_ref().is_some_and(|session| session.busy());
-    let label = if state.framing.is_some() {
-        "Normal view"
-    } else {
-        "Framing 9:16"
-    };
-    let sense = if busy {
-        egui::Sense::hover()
-    } else {
-        egui::Sense::click()
-    };
-    if ui
-        .put(rect, egui::Button::new(label).sense(sense))
-        .on_hover_text("Frame the whole composition for Shorts")
-        .clicked()
-    {
-        if let Some(session) = &mut state.framing {
-            session.closed = true;
-        } else {
-            state.framing_requested = true;
-        }
-    }
-}
-
-fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+pub(crate) fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let id = egui::Id::new("editor_file_rename");
     if state.file_rename_edit.is_some() {
         // Mismo patrón que `gallery::gallery_cell`: Escape cancela, perder

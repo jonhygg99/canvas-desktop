@@ -385,7 +385,12 @@ pub(super) fn export_flow_ui(
             .page()
             .map(|p| (p.width, p.height))
             .unwrap_or((0.0, 0.0));
-        match export::export_modal(dialog, sctx.ctx, page_size) {
+        let has_video = state.doc.page().is_ok_and(|page| {
+            page.layers
+                .iter()
+                .any(|layer| matches!(layer.content, canvas_core::LayerContent::Video(_)))
+        });
+        match export::export_modal(dialog, sctx.ctx, page_size, has_video) {
             export::ExportChoice::None => {}
             export::ExportChoice::Cancel => {
                 export.export_dialog = None;
