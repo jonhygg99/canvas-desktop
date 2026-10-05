@@ -9,8 +9,8 @@ comentarios y documentación en español. Rust/egui nativo.
 - [x] Zoom de timeline, bucle, Undo/Redo y Reset trim independiente del aspecto.
 - [x] Ventana adaptable con preview grande y acción Create canvas explícita.
 - [ ] Progreso de descarga, cancelación, reintento por vídeo y tarjetas de clips.
-- [ ] Recorte de descarga opcional, validado y diferenciado del trim de edición.
-- [x] Etiqueta Mute preview; pendiente Download without audio.
+- [x] Recorte de descarga opcional, validado y diferenciado del trim de edición.
+- [x] Etiquetas Mute preview y Download without audio diferenciadas.
 
 Cada incremento se verifica con tests de comportamiento, formato y Clippy.
 Las interacciones de timeline se prueban con eventos reales de egui; los

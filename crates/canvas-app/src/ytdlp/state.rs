@@ -9,6 +9,7 @@ pub struct Panel {
     /// Trim por tiempos: inicio/fin en `HH:MM:SS`, `MM:SS` o segundos.
     pub start: String,
     pub end: String,
+    pub download_segment: bool,
     /// Descargar sin audio (solo video).
     pub mute: bool,
     /// Descarga en curso en un hilo de trabajo.

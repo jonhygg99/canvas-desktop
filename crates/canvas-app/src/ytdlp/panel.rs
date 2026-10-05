@@ -11,6 +11,8 @@ use crate::settings::AppSettings;
 
 use super::api;
 use super::state::Panel;
+#[path = "download_options.rs"]
+mod options;
 
 /// Contenido de la pestaña «Download» del panel lateral izquierdo.
 /// `dest` es la carpeta donde se guardará el clip (baraja/archivo/galería,
@@ -46,23 +48,7 @@ pub fn panel_ui(
     );
 
     ui.add_space(6.0);
-    ui.label(crate::i18n::tr("Trim (optional, HH:MM:SS):"));
-    ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr("From"));
-        ui.add(
-            egui::TextEdit::singleline(&mut panel.start)
-                .hint_text(crate::i18n::tr("0:00"))
-                .desired_width(70.0),
-        );
-        ui.label(crate::i18n::tr("To"));
-        ui.add(
-            egui::TextEdit::singleline(&mut panel.end)
-                .hint_text(crate::i18n::tr("end"))
-                .desired_width(70.0),
-        );
-    });
-    ui.add_space(2.0);
-    ui.checkbox(&mut panel.mute, crate::i18n::tr("Mute (no audio)"));
+    let section = options::show(panel, ui);
 
     ui.add_space(4.0);
     match &dest {
@@ -79,7 +65,7 @@ pub fn panel_ui(
     ui.add_space(6.0);
     let urls = api::split_urls(&panel.urls);
     let has_urls = !urls.is_empty();
-    let can_download = !panel.downloading && has_urls && dest.is_some();
+    let can_download = !panel.downloading && has_urls && dest.is_some() && section.is_ok();
     if ui
         .add_enabled(can_download, egui::Button::new(crate::i18n::tr("Download")))
         .clicked()
@@ -94,8 +80,8 @@ pub fn panel_ui(
         settings.save_in_background();
         let request = loader::YtdlpDownloadRequest {
             urls,
-            start: api::parse_time(&panel.start),
-            end: api::parse_time(&panel.end),
+            start: section.expect("validated section").0,
+            end: section.expect("validated section").1,
             mute: panel.mute,
             dest: dest.clone().expect("destino comprobado"),
         };
