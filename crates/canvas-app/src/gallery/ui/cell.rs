@@ -99,7 +99,7 @@ pub(in crate::gallery) fn gallery_cell_size(available_width: f32, columns: usize
     )
 }
 
-fn begin_rename(
+pub(super) fn begin_rename(
     item: &GalleryItem,
     rename_edit: &mut Option<(PathBuf, String)>,
     ctx: &egui::Context,
@@ -169,16 +169,6 @@ fn gallery_cell_inner(
         rect.left_top() + egui::vec2(8.0, 4.0),
         egui::vec2(rect.width() - 16.0, TITLE_HEIGHT - 4.0),
     );
-    // Check hover/click on the name area via pointer position instead of a
-    // separate `ui.interact()`. A second interact registered *after* the
-    // main `response` steals events (including secondary clicks) within the
-    // overlapping rect — which breaks the context menu on right-click.
-    let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-    let hovering_name = (!renaming)
-        && pointer_pos
-            .map(|pos| name_rect.contains(pos))
-            .unwrap_or(false);
-
     // Aquí la celda es visible seguro (corte al inicio): se pinta siempre.
     let painter = ui.painter();
     let vertical = framings.as_ref().is_some_and(|state| state.vertical);
@@ -242,14 +232,6 @@ fn gallery_cell_inner(
     }
 
     let mut action = None;
-    let name_clicked = hovering_name;
-    if hovering_name {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-    }
-    if name_clicked && response.clicked() {
-        begin_rename(item, rename_edit, ui.ctx());
-    }
-
     if renaming {
         let text_id = egui::Id::new(("gallery_rename", item.path.clone()));
         let mut cancel = false;
@@ -284,13 +266,27 @@ fn gallery_cell_inner(
     } else {
         // `!dragged()`: un press que termina en scroll/drag no es un click,
         // aunque el release caiga sobre otra celda varias filas más abajo.
-        if !name_clicked && response.clicked() && !response.dragged() {
+        if response.clicked() && !response.dragged() {
+            *selected = Some(item.path.clone());
+        }
+        if response.double_clicked() && !response.dragged() {
             tracing::debug!(path = %item.path.display(), "gallery open click");
             action = Some(GalleryAction::Open(item.path.clone()));
         }
         if response.secondary_clicked() {
             *selected = Some(item.path.clone());
         }
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                is_selected,
+                &item.name,
+            )
+        });
         response.context_menu(|ui| {
             if ui
                 .button(if saved {

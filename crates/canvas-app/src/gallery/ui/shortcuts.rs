@@ -34,6 +34,17 @@ pub(super) fn handle(state: &mut GalleryState, ui: &egui::Ui) -> Option<GalleryA
     if let Some(clip_action) = clipboard_shortcuts(state, ui) {
         action = Some(clip_action);
     }
+    if !ui.ctx().text_edit_focused() {
+        if let Some(path) = state.selected.clone() {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                action = Some(GalleryAction::Open(path));
+            } else if ui.input(|i| i.key_pressed(egui::Key::F2)) {
+                if let Some(item) = state.items.iter().find(|item| item.path == path) {
+                    super::cell::begin_rename(item, &mut state.rename_edit, ui.ctx());
+                }
+            }
+        }
+    }
 
     action
 }

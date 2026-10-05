@@ -62,7 +62,7 @@ fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Ga
             });
         if ui
             .add_enabled(state.selected.is_some(), egui::Button::new("Framing 9:16"))
-            .on_hover_text("Select an item with right-click, then create or edit its framing")
+            .on_hover_text("Select an item, then create or edit its framing")
             .clicked()
         {
             if let Some(path) = &state.selected {

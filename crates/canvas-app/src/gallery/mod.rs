@@ -441,4 +441,6 @@ fn slot_contents() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+mod interaction_tests;
+#[cfg(test)]
 mod tests;
