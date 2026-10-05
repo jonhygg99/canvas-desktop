@@ -124,6 +124,12 @@ pub(super) fn row_ui(
         drop_result
     });
 
+    if ui.data(|d| d.get_temp::<LayerId>(egui::Id::new("reveal_layer"))) == Some(row.id) {
+        drag_response
+            .response
+            .scroll_to_me(Some(egui::Align::Center));
+        ui.data_mut(|d| d.remove::<LayerId>(egui::Id::new("reveal_layer")));
+    }
     drag_response.inner.map(|(payload, drop)| (payload.0, drop))
 }
 
@@ -196,6 +202,7 @@ fn row_prefix_buttons(
 /// Etiqueta del nombre (o el `TextEdit` de renombrado). Renderizada dentro
 /// del `dnd_drag_source`, que solo cubre esta zona.
 fn row_label_ui(state: &mut EditorState, ui: &mut egui::Ui, row: &Row, name: &str, renaming: bool) {
+    super::preview::show(state, ui, row.id);
     if renaming {
         rename_edit_ui(state, ui, row.id);
     } else {

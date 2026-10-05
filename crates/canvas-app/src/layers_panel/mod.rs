@@ -19,8 +19,10 @@ use crate::editor::EditorState;
 use crate::settings::LayersTabOrder;
 use crate::sidebar;
 
+mod browser;
 mod insert;
 mod ops;
+mod preview;
 mod row;
 mod tab_draw;
 mod tab_strip;
@@ -197,13 +199,12 @@ pub fn left_panel_ui(
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);
                         ui.separator();
+                        let rows = browser::rows(state, ui);
                         let Ok(page) = state.doc.page() else {
                             ui.weak(crate::i18n::tr("No document."));
                             return;
                         };
-                        let mut rows = Vec::new();
-                        push_rows(page, None, 0, &mut rows);
-                        let is_empty = rows.is_empty();
+                        let is_empty = page.layers.is_empty();
                         let mut pending_drop: Option<(Vec<LayerId>, Drop)> = None;
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             for row in &rows {
@@ -213,6 +214,8 @@ pub fn left_panel_ui(
                             }
                             if is_empty {
                                 ui.weak(crate::i18n::tr("No layers yet."));
+                            } else if rows.is_empty() {
+                                ui.weak(crate::i18n::tr("No matching layers"));
                             }
                         });
                         if let Some((ids, drop)) = pending_drop {

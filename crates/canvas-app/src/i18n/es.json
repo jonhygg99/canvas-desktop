@@ -404,5 +404,8 @@
   "Zoom out": "Alejar",
   "Zoom in": "Acercar",
   "Fit page": "Ajustar página",
-  "View selection": "Ver selección"
+  "View selection": "Ver selección",
+  "Search layers": "Buscar capas",
+  "All layers": "Todas las capas",
+  "No matching layers": "No hay capas que coincidan"
 }
