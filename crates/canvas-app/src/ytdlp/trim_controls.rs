@@ -62,7 +62,7 @@ fn edge_field(edit: &mut VideoEdit, ui: &mut egui::Ui, edge: TrimEdge, duration:
     let response = ui
         .horizontal(|ui| {
             ui.label(if start { "Start" } else { "End" });
-            ui.add(
+            let response = ui.add(
                 egui::DragValue::new(&mut value)
                     .range(0.0..=duration)
                     .speed(0.05)
@@ -70,7 +70,23 @@ fn edge_field(edit: &mut VideoEdit, ui: &mut egui::Ui, edge: TrimEdge, duration:
                     .custom_parser(|text| {
                         crate::ytdlp::api::parse_time(text).filter(|v| v.is_finite())
                     }),
+            );
+            if super::transport_icons::restart_button(
+                ui,
+                true,
+                if start { "Reset start" } else { "Reset end" },
             )
+            .clicked()
+            {
+                edit.finish_trim_gesture();
+                edit.set_trim_edge(edge, if start { 0.0 } else { duration });
+                value = if start {
+                    edit.trim_start
+                } else {
+                    edit.trim_end
+                };
+            }
+            response
         })
         .inner;
     update_edge(edit, edge, value, &response);
@@ -106,13 +122,19 @@ fn duration_field(edit: &mut VideoEdit, ui: &mut egui::Ui, duration: f64) {
     let response = ui
         .horizontal(|ui| {
             ui.label("Duration");
-            ui.add(
+            let response = ui.add(
                 egui::DragValue::new(&mut seconds)
                     .range(0.1_f64.min(remaining)..=remaining)
                     .speed(0.1)
                     .suffix(" s")
                     .max_decimals(3),
-            )
+            );
+            if super::transport_icons::restart_button(ui, true, "Reset duration").clicked() {
+                edit.finish_trim_gesture();
+                edit.set_trim_duration(remaining);
+                seconds = edit.trim_end - edit.trim_start;
+            }
+            response
         })
         .inner;
     if response.changed() {

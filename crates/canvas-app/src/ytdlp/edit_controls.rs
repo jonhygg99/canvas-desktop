@@ -44,38 +44,52 @@ pub(super) fn transport_ui(
     ui: &mut egui::Ui,
     settings: &mut AppSettings,
 ) -> [egui::Response; 2] {
+    let row_width = ui.available_width().min(403.0);
     let buttons = ui
-        .horizontal_wrapped(|ui| {
-            let ready =
-                !edit.frames.is_empty() && edit.frames_error.is_none() && !edit.loading_frames;
-            let buttons = playback_buttons(edit, ui, ready);
-            ui.add_enabled_ui(ready, |ui| {
-                if super::transport_icons::frame_button(ui, false).clicked() {
-                    edit.seek(edit.playhead - 1.0 / edit.source_fps);
-                }
-                if super::transport_icons::frame_button(ui, true).clicked() {
-                    edit.seek(edit.playhead + 1.0 / edit.source_fps);
-                }
-            });
-            if super::transport_icons::mute_button(ui, edit.mute, ready).clicked() {
-                edit.mute = !edit.mute;
-                if edit.mute {
-                    crate::audio::pause_for(&edit.path);
-                } else if edit.playing {
-                    let _ = crate::audio::play(&edit.path, edit.playhead);
-                }
-            }
-            canvas_size_ui(edit, settings, ui);
-            buttons
+        .vertical_centered(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(row_width, 0.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let ready = !edit.frames.is_empty()
+                            && edit.frames_error.is_none()
+                            && !edit.loading_frames;
+                        let buttons = playback_buttons(edit, ui, ready);
+                        ui.add_enabled_ui(ready, |ui| {
+                            if super::transport_icons::frame_button(ui, false).clicked() {
+                                edit.seek(edit.playhead - 1.0 / edit.source_fps);
+                            }
+                            if super::transport_icons::frame_button(ui, true).clicked() {
+                                edit.seek(edit.playhead + 1.0 / edit.source_fps);
+                            }
+                        });
+                        if super::transport_icons::mute_button(ui, edit.mute, ready).clicked() {
+                            edit.mute = !edit.mute;
+                            if edit.mute {
+                                crate::audio::pause_for(&edit.path);
+                            } else if edit.playing {
+                                let _ = crate::audio::play(&edit.path, edit.playhead);
+                            }
+                        }
+                        canvas_size_ui(edit, settings, ui);
+                        buttons
+                    })
+                    .inner
+                },
+            )
+            .inner
         })
         .inner;
-    ui.weak(format!(
-        "{} / {}",
-        timecode(edit.playhead),
-        edit.duration
-            .map(timecode)
-            .unwrap_or_else(|| "--:--".to_owned())
-    ));
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.weak(format!(
+            "{} / {}",
+            timecode(edit.playhead),
+            edit.duration
+                .map(timecode)
+                .unwrap_or_else(|| "--:--".to_owned())
+        ))
+    });
     buttons
 }
 
@@ -144,6 +158,9 @@ fn canvas_size_ui(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egu
                 .on_hover_text(format!("Canvas size: {selected}"));
         },
     );
+    if super::transport_icons::restart_button(ui, true, "Reset canvas size").clicked() {
+        settings.ytdlp_canvas_size = (1920.0, 1080.0);
+    }
     if before != settings.ytdlp_canvas_size {
         settings.save_in_background();
     }
@@ -162,7 +179,12 @@ pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
 /// Zoom, background blur y trim; el tamaño se ajusta junto al transporte.
 pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
-    ui.label("Zoom");
+    ui.horizontal(|ui| {
+        ui.label("Zoom");
+        if super::transport_icons::restart_button(ui, true, "Reset zoom").clicked() {
+            edit.zoom = 1.0;
+        }
+    });
     ui.horizontal_wrapped(|ui| {
         ui.add(
             egui::Slider::new(&mut edit.zoom, 1.0..=3.0)
@@ -177,7 +199,12 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     });
     edit.zoom = edit.zoom.clamp(1.0, 10.0);
     position_ui(edit, ui);
-    ui.label("Background blur");
+    ui.horizontal(|ui| {
+        ui.label("Background blur");
+        if super::transport_icons::restart_button(ui, true, "Reset background blur").clicked() {
+            edit.blur = 100.0;
+        }
+    });
     ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0));
     ui.separator();
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).min(300.0);
@@ -193,13 +220,17 @@ fn position_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     ] {
         ui.horizontal(|ui| {
             ui.label(label);
-            ui.spacing_mut().slider_width = (ui.available_width() - 100.0).max(60.0);
+            ui.spacing_mut().slider_width = (ui.available_width() - 138.0).max(60.0);
             ui.add(
                 egui::Slider::new(value, -limit..=limit)
                     .clamping(egui::SliderClamping::Edits)
                     .show_value(false),
             );
             ui.add(egui::DragValue::new(value).speed(1.0).suffix(" px"));
+            if super::transport_icons::restart_button(ui, true, &format!("Reset {label}")).clicked()
+            {
+                *value = 0.0;
+            }
         });
     }
     if ui.button("Center video").clicked() {

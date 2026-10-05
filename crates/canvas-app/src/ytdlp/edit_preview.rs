@@ -159,12 +159,18 @@ fn blurred_rgba(img: &canvas_io::LoadedImage, blur: f32) -> Vec<u8> {
         .unwrap_or_else(|| img.rgba.clone())
 }
 
-/// Vista previa con vídeo en contain y fondo; espera al worker sin bloquear.
-pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+/// Tamaño visible compartido con la altura del panel de ajustes.
+pub(super) fn preview_size(edit: &VideoEdit, ui: &egui::Ui) -> egui::Vec2 {
     let width = ui.available_width().clamp(1.0, 960.0);
     let height = (ui.ctx().content_rect().height() * 0.5).clamp(120.0, 420.0);
     let scale = (width / edit.size.0 as f32).min(height / edit.size.1 as f32);
-    let size = egui::vec2(edit.size.0 as f32 * scale, edit.size.1 as f32 * scale);
+    egui::vec2(edit.size.0 as f32 * scale, edit.size.1 as f32 * scale)
+}
+
+/// Vista previa con vídeo en contain y fondo; espera al worker sin bloquear.
+pub(super) fn preview_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    let size = preview_size(edit, ui);
+    let scale = size.x / edit.size.0 as f32;
     let (vw, vh) = edit.video_size.unwrap_or((16.0, 9.0));
     let was_playing = edit.playing;
     let tex = live_textures(edit, ui.ctx()).or_else(|| {

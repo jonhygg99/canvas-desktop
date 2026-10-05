@@ -65,27 +65,35 @@ fn stop_preview_audio(video: &Panel) {
 fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
     if ui.available_width() >= 760.0 {
         let width = ui.available_width() - 340.0;
+        let mut image_height = 0.0;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(
-                egui::vec2(width, 420.0),
-                egui::Layout::top_down(egui::Align::Min),
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     ui.set_width(width);
+                    image_height = preview::preview_size(edit, ui).y;
                     preview_ui(edit, ui);
                     transport_ui(edit, ui, settings);
                 },
             );
             ui.allocate_ui_with_layout(
-                egui::vec2(320.0, 440.0),
+                egui::vec2(320.0, image_height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_width(320.0);
-                    params_ui(edit, ui);
+                    egui::ScrollArea::vertical()
+                        .id_salt("video-settings-scroll")
+                        .max_height(image_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| params_ui(edit, ui));
                 },
             );
         });
     } else {
-        preview_ui(edit, ui);
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            preview_ui(edit, ui)
+        });
         transport_ui(edit, ui, settings);
         params_ui(edit, ui);
     }
@@ -96,6 +104,126 @@ fn body(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn individual_reset_icons_restore_appearance_and_trim() {
+        let mut edit = VideoEdit::open(
+            "clip",
+            "Clip".into(),
+            PathBuf::new(),
+            Some(30.0),
+            (1920.0, 1080.0),
+            &Document::new(1920.0, 1080.0),
+        );
+        edit.zoom = 2.0;
+        edit.position = (120.0, -45.0);
+        edit.blur = 40.0;
+        edit.trim_start = 2.0;
+        edit.trim_end = 9.0;
+        let ctx = egui::Context::default();
+        let render = |edit: &mut VideoEdit, events| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| params_ui(edit, ui),
+            )
+        };
+        for index in 0..7 {
+            if index == 6 {
+                edit.trim_start = 2.0;
+                edit.trim_end = 9.0;
+            }
+            let output = render(&mut edit, vec![]);
+            let icons: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Path(path) = &shape.shape {
+                        (path.points.len() == 25)
+                            .then(|| egui::Rect::from_points(&path.points).center())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(icons.len(), 7);
+            let pos = icons[index];
+            for pressed in [true, false] {
+                render(
+                    &mut edit,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            pressed,
+                            button: egui::PointerButton::Primary,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            match index {
+                0 => assert_eq!(edit.zoom, 1.0),
+                1 => assert_eq!(edit.position.0, 0.0),
+                2 => assert_eq!(edit.position.1, 0.0),
+                3 => assert_eq!(edit.blur, 100.0),
+                4 => assert_eq!((edit.trim_start, edit.trim_end), (0.0, 9.0)),
+                5 => assert_eq!(edit.trim_end, 30.0),
+                6 => assert_eq!((edit.trim_start, edit.trim_end), (2.0, 30.0)),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn vertical_canvas_is_centered_in_the_preview_column() {
+        let mut edit = VideoEdit::open(
+            "clip",
+            "Clip".into(),
+            PathBuf::new(),
+            Some(30.0),
+            (1080.0, 1920.0),
+            &Document::new(1080.0, 1920.0),
+        );
+        let mut settings = AppSettings {
+            ytdlp_canvas_size: (1080.0, 1920.0),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut expected_center = 0.0;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1040.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                expected_center = ui.max_rect().left() + (ui.available_width() - 340.0) / 2.0;
+                body(&mut edit, &mut settings, ui);
+            },
+        );
+        let preview = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Rect(rect) = &shape.shape {
+                    (rect.fill == egui::Color32::WHITE && rect.rect.height() > rect.rect.width())
+                        .then_some(rect.rect)
+                } else {
+                    None
+                }
+            })
+            .expect("vertical preview");
+        assert!((preview.center().x - expected_center).abs() < 0.01);
+    }
 
     #[test]
     fn first_play_click_keeps_the_video_editor_open_without_creating_a_canvas() {

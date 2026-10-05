@@ -17,7 +17,7 @@ Las interacciones de timeline se prueban con eventos reales de egui; los
 tests de reproducción usan vídeos generados con FFmpeg. La automatización
 de ventanas nativas no está disponible en esta sesión.
 
-Verificación final: 764 tests pasan, 22 ignorados habituales; formato y
+Verificación final: 766 tests pasan, 22 ignorados habituales; formato y
 Clippy sin incidencias. La integración descarga un vídeo real desde un
 servidor local con yt-dlp y verifica progreso y archivo reproducible. Las
 pruebas de cancelación ejecutan un proceso real. `cargo run -p canvas-app`
@@ -48,5 +48,9 @@ Ajustes de distribución y sliders:
 - [x] Posición X/Y debajo de Zoom: sliders, campos en píxeles y Center video.
 - [x] Preview y canvas conservan el desplazamiento; el fondo permanece fijo.
 - [x] Reabrir Edit video restaura la posición desde la capa existente.
+- [x] Reset individual de Zoom, X, Y, Background blur, Start, End, Duration y Canvas size.
+- [x] Scroll propio del panel derecho con la altura de la preview izquierda.
+- [x] Preview vertical y controles de transporte centrados en su columna.
+- [x] Download without audio activado al inicializar el panel.
 
 En Windows hay que cerrar la app antes de recompilar el ejecutable.
