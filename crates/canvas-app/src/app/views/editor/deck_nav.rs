@@ -21,6 +21,9 @@ pub(super) fn resolve(
     canvas_action: Option<editor::CanvasAction>,
     pending_menu_action: &mut Option<menus::MenuAction>,
 ) {
+    if state.ytdlp.edit.is_some() {
+        return;
+    }
     let mut deck_target = state.deck_nav.take().and_then(|nav| match nav {
         editor::DeckNav::Next => f.deck.next_path(),
         editor::DeckNav::Prev => f.deck.prev_path(),

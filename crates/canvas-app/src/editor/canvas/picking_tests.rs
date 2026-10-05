@@ -101,6 +101,30 @@ fn button(pos: egui::Pos2, pressed: bool) -> egui::Event {
 }
 
 #[test]
+fn video_editor_clicks_cannot_activate_the_canvas_behind_it() {
+    let (mut state, mut deck) = scene(0);
+    state.crop_mode = false;
+    state.ytdlp.edit = Some(crate::ytdlp::edit::VideoEdit::open(
+        "clip",
+        "Clip".into(),
+        PathBuf::from("clip.mp4"),
+        Some(30.0),
+        (1920.0, 1080.0),
+        &state.doc,
+    ));
+    let ctx = egui::Context::default();
+    let pos = egui::pos2(360.0, 80.0);
+    frame(
+        &ctx,
+        &mut state,
+        &mut deck,
+        vec![egui::Event::PointerMoved(pos)],
+    );
+    frame(&ctx, &mut state, &mut deck, vec![button(pos, true)]);
+    assert_eq!(deck.jump_to, None);
+}
+
+#[test]
 fn clicking_add_zone_in_a_new_design_creates_a_canvas() {
     let (mut state, _) = scene(0);
     state.crop_mode = false;

@@ -55,7 +55,7 @@ pub(in crate::app) fn editor_view_ui(
     // muta `state.doc` sin pasos de deshacer, así que no marca nada sucio.
     simulate_edits(state, f, ctx);
     state.tick_video(ctx);
-    if state.framing.is_none() {
+    if state.framing.is_none() && state.ytdlp.edit.is_none() {
         editor::inline_text::prepare(state, ctx);
         state.handle_shortcuts(ctx, paste_requested, f.deck.rename_edit.is_some());
     }
@@ -91,6 +91,10 @@ pub(in crate::app) fn editor_view_ui(
         pending_menu_action = Some(action);
     }
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
+    crate::ytdlp::retry_pending_frames(&mut state.ytdlp, f.tx, ctx);
+    if let Some(accept) = crate::ytdlp::edit_window_ui(&mut state.ytdlp, f.settings, ui) {
+        let _ = f.tx.send(loader::AppMsg::YtdlpEditAccepted(accept));
+    }
     deck_nav::resolve(
         state,
         ctx,

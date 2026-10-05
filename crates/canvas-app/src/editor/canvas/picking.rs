@@ -34,6 +34,9 @@ pub(super) fn handle_press(
     new_canvas_ext: &str,
     action: &mut Option<CanvasAction>,
 ) {
+    if state.ytdlp.edit.is_some() {
+        return;
+    }
     // Pulsación sobre un lienzo que no es el activo: lo activa (el
     // intercambio en sí lo aplica `deck::apply_jump`, fuera de este módulo,
     // para no mutar el documento activo a mitad de este mismo frame). Se

@@ -189,12 +189,6 @@ pub fn left_panel_ui(
                             tx,
                             &ui.ctx().clone(),
                         );
-                        crate::ytdlp::retry_pending_frames(&mut state.ytdlp, tx, &ui.ctx().clone());
-                        if let Some(accept) =
-                            crate::ytdlp::edit_window_ui(&mut state.ytdlp, settings, ui)
-                        {
-                            let _ = tx.send(crate::loader::AppMsg::YtdlpEditAccepted(accept));
-                        }
                     }
                     LeftTab::Layers => {
                         toolbar_ui(state, ui);

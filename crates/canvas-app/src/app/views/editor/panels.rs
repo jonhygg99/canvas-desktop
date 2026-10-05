@@ -87,7 +87,8 @@ pub(super) fn show_panels(
             }
         }
     }
-    let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
+    let locked =
+        state.ytdlp.edit.is_some() || f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
     let layers_collapsed_before = f.settings.layers_collapsed;
     let narrow_id = egui::Id::new(("narrow-tools-collapsed", ui.ctx().viewport_id()));
     let mut layers_collapsed = if narrow {
@@ -232,7 +233,9 @@ pub(super) fn show_panels(
                 new_canvas_ext: f.settings.new_canvas_format.extension(),
                 sidecar_default: f.settings.sidecar_default,
             };
-            canvas_action = editor::canvas_ui(state, f.deck, ui, &mut ctx);
+            ui.add_enabled_ui(state.ytdlp.edit.is_none(), |ui| {
+                canvas_action = editor::canvas_ui(state, f.deck, ui, &mut ctx);
+            });
         });
 
     (strip_action, canvas_action)

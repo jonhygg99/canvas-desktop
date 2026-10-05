@@ -104,6 +104,9 @@ pub(super) fn layer_interaction(
     response: &egui::Response,
     rect: egui::Rect,
 ) {
+    if state.ytdlp.edit.is_some() {
+        return;
+    }
     if super::insert_tool::handle(state, ui, response, rect) {
         return;
     }

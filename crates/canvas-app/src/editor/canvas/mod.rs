@@ -127,7 +127,9 @@ pub fn canvas_ui(
         &mut state.viewport.pan,
     );
 
-    navigation::show(state, deck, ui, rect);
+    if state.ytdlp.edit.is_none() {
+        navigation::show(state, deck, ui, rect);
+    }
     let Camera {
         panning,
         space_down,
@@ -182,7 +184,12 @@ pub fn canvas_ui(
     // gesto en curso no pertenece a la baraja, y el diseño activo no está
     // bloqueado — `Slot::locked`, cabecera del lienzo).
     let active_locked = deck.slots.get(deck.active).is_some_and(|s| s.locked);
-    if !panning && !space_down && !state.press_on_other_slot && !active_locked {
+    if state.ytdlp.edit.is_none()
+        && !panning
+        && !space_down
+        && !state.press_on_other_slot
+        && !active_locked
+    {
         layer_interaction(state, ui, &response, slot_rect);
     }
 
