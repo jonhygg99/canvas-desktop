@@ -11,6 +11,7 @@ pub(super) const HANDLE_SIZE: f32 = 9.0;
 pub(super) const ACCENT: egui::Color32 = egui::Color32::from_rgb(0, 122, 255);
 
 pub(crate) mod canvas;
+mod context_toolbar;
 pub(crate) mod document_bar;
 mod gesture_cancel;
 pub(crate) mod inline_text;

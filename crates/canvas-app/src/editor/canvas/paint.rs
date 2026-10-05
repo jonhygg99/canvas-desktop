@@ -117,6 +117,9 @@ pub(super) fn paint(
     }
     draw_selection_overlay(state, ui, geo.slot_rect, geo.rect);
     super::super::inline_text::show(state, ui, geo.slot_rect, geo.rect);
+    if let Some(id) = super::super::context_toolbar::show(state, ui, geo.slot_rect, geo.rect) {
+        *action = Some(CanvasAction::ReplaceFromLocal(id));
+    }
     if state.show_rulers {
         draw_rulers(state, ui, geo.slot_rect, geo.rect);
     }
