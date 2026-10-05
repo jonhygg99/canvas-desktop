@@ -1,0 +1,24 @@
+name: Prepare release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+# Cada SHA conserva su artefacto; un nuevo merge no cancela el anterior.
+concurrency:
+  group: prepare-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ref: ${{ github.sha }}
