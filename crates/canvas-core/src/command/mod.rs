@@ -7,6 +7,7 @@ use crate::document::Document;
 use crate::error::CoreError;
 
 mod appearance;
+mod guides;
 mod history;
 mod structure;
 mod transform;
@@ -17,6 +18,7 @@ mod tests;
 pub use appearance::{
     Rename, SetBlur, SetContent, SetEffects, SetLocked, SetOpacity, SetShadow, SetVisible,
 };
+pub use guides::SetGuides;
 pub use history::{Composite, History};
 pub use structure::{Group, InsertLayer, RemoveLayer, Reorder, Ungroup};
 pub use transform::{SetCrop, SetPageSize, SetTransform};

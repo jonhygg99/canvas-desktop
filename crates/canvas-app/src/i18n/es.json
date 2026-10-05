@@ -407,5 +407,15 @@
   "View selection": "Ver selección",
   "Search layers": "Buscar capas",
   "All layers": "Todas las capas",
-  "No matching layers": "No hay capas que coincidan"
+  "No matching layers": "No hay capas que coincidan",
+  "Guides": "Guías",
+  "Show rulers": "Mostrar reglas",
+  "Edit guides…": "Editar guías…",
+  "Edit guides": "Editar guías",
+  "Add vertical guide": "Añadir guía vertical",
+  "Add horizontal guide": "Añadir guía horizontal",
+  "No guides yet": "Todavía no hay guías",
+  "Locked": "Bloqueada",
+  "Remove": "Eliminar",
+  "Duplicate selection": "Duplicar selección"
 }

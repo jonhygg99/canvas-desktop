@@ -13,7 +13,7 @@ mod tree;
 #[cfg(test)]
 mod tests;
 
-pub use page::Page;
+pub use page::{Guide, Page};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {

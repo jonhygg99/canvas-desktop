@@ -16,6 +16,7 @@ pub(crate) mod document_bar;
 pub(crate) mod duplicate_gesture;
 mod edge_handles;
 mod gesture_cancel;
+mod guides;
 pub(crate) mod inline_text;
 #[cfg(test)]
 mod inline_text_tests;

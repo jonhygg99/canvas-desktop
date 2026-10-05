@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::layer::{Layer, LayerContent, LayerId, Transform};
 
+/// Guía de maquetación persistente en píxeles de página.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Guide {
+    pub vertical: bool,
+    pub position: f64,
+    pub locked: bool,
+}
+
 /// Una página del documento: un lienzo con su pila de capas, de abajo arriba.
 ///
 /// **Invariante de preorden.** `layers` es un recorrido en preorden del
@@ -23,6 +31,8 @@ pub struct Page {
     pub background: Option<[u8; 4]>,
     /// De abajo (índice 0) hacia arriba.
     pub layers: Vec<Layer>,
+    #[serde(default)]
+    pub guides: Vec<Guide>,
 }
 
 impl Page {
@@ -32,6 +42,7 @@ impl Page {
             height,
             background: None,
             layers: Vec::new(),
+            guides: Vec::new(),
         }
     }
 

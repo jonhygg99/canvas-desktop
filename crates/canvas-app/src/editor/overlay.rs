@@ -43,6 +43,7 @@ pub(super) fn draw_selection_overlay(
     clip: egui::Rect,
 ) {
     let painter = ui.painter_at(clip);
+    super::guides::draw(state, ui, coord, clip);
     super::insert_tool::draw(state, ui, coord, clip);
     super::marquee::draw(state, ui, coord, clip);
     super::layer_picking::draw(state, ui, coord, clip);

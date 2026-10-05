@@ -11,6 +11,7 @@ pub(super) fn show(state: &mut EditorState, deck: &Deck, ui: &egui::Ui, rect: eg
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    super::super::guides::controls(state, ui);
                     if ui
                         .button("−")
                         .on_hover_text(crate::i18n::tr("Zoom out"))
@@ -58,6 +59,7 @@ pub(super) fn show(state: &mut EditorState, deck: &Deck, ui: &egui::Ui, rect: eg
                 });
             });
         });
+    super::super::guides::window(state, ui.ctx());
 }
 
 fn selection_target(state: &EditorState, origin: (f64, f64)) -> Option<DeckRect> {
