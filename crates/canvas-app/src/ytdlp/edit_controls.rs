@@ -158,9 +158,6 @@ fn canvas_size_ui(edit: &mut VideoEdit, settings: &mut AppSettings, ui: &mut egu
                 .on_hover_text(format!("Canvas size: {selected}"));
         },
     );
-    if super::transport_icons::restart_button(ui, true, "Reset canvas size").clicked() {
-        settings.ytdlp_canvas_size = (1920.0, 1080.0);
-    }
     if before != settings.ytdlp_canvas_size {
         settings.save_in_background();
     }
