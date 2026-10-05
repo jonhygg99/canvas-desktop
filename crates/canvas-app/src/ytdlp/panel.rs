@@ -11,6 +11,8 @@ use crate::settings::AppSettings;
 
 use super::api;
 use super::state::Panel;
+#[path = "download_jobs.rs"]
+mod jobs;
 #[path = "download_options.rs"]
 mod options;
 
@@ -84,20 +86,16 @@ pub fn panel_ui(
             end: section.expect("validated section").1,
             mute: panel.mute,
             dest: dest.clone().expect("destino comprobado"),
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            target: None,
         };
-        loader::spawn_ytdlp_download(request, tx.clone(), ui.ctx().clone());
+        jobs::start(panel, request, tx, ui.ctx());
     }
     if !has_urls && !panel.urls.trim().is_empty() {
         ui.weak(crate::i18n::tr("Paste an http(s):// URL first."));
     }
 
-    if panel.downloading {
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.weak(&panel.progress);
-        });
-    }
+    jobs::show(panel, ui, tx);
     if let Some(err) = &panel.error {
         ui.add_space(4.0);
         ui.colored_label(ui.visuals().error_fg_color, err);

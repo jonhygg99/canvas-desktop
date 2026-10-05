@@ -16,6 +16,10 @@ pub struct Panel {
     pub downloading: bool,
     /// Progreso textual (`[2/5] 42% …`) para la UI.
     pub progress: String,
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub failed: Vec<(String, String)>,
+    pub retry_requests: std::collections::HashMap<String, crate::loader::YtdlpDownloadRequest>,
+    pub clip_info: std::collections::HashMap<PathBuf, crate::loader::DownloadedClip>,
     /// Último error visible.
     pub error: Option<String>,
     /// Rutas descargadas en la última tanda (para mostrarlas).
@@ -27,4 +31,12 @@ pub struct Panel {
     pub pending_edit: Option<PathBuf>,
     /// Sesión de edición abierta (`None` = ventana cerrada).
     pub edit: Option<super::edit::VideoEdit>,
+}
+
+impl Drop for Panel {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }

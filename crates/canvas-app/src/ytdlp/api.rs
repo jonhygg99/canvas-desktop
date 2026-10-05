@@ -205,6 +205,20 @@ pub fn reserve_clip_path(folder: &Path, stem: &str) -> Result<PathBuf, std::io::
             format!("{stem} ({}).mp4", n + 1)
         };
         let candidate = folder.join(&name);
+        let prefix = format!(
+            "{}.",
+            candidate.file_stem().unwrap_or_default().to_string_lossy()
+        );
+        // Un parcial pertenece a su URL: otra descarga no debe ocuparlo.
+        let partial = std::fs::read_dir(folder).ok().is_some_and(|entries| {
+            entries.flatten().any(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with(&prefix) && (name.ends_with(".part") || name.ends_with(".ytdl"))
+            })
+        });
+        if partial {
+            continue;
+        }
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

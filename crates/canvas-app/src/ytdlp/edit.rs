@@ -320,7 +320,11 @@ pub fn open_pending_edit(
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let title = clip_title(&file_name);
+    let title = video
+        .clip_info
+        .get(&path)
+        .map(|clip| clip.title.clone())
+        .unwrap_or_else(|| clip_title(&file_name));
     // La duración la sondea el worker (ffprobe); hasta entonces el trim
     // espera. El tamaño, el recordado en ajustes.
     video.edit = Some(VideoEdit::open(

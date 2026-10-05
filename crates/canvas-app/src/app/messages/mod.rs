@@ -233,6 +233,7 @@ impl AppInner {
                 result,
                 metadata,
             } => self.on_image_loaded(ws, path, result, metadata, ctx),
+            AppMsg::YtdlpItemFinished(outcome) => self.on_ytdlp_item(ws, outcome),
             AppMsg::YtdlpDownloadProgress { index, total, text } => {
                 self.on_ytdlp_progress(ws, index, total, text, ctx)
             }

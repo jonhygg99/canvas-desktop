@@ -7,6 +7,24 @@ use crate::loader;
 use super::super::{View, Workspace};
 
 impl super::AppInner {
+    pub(super) fn on_ytdlp_item(&mut self, ws: &mut Workspace, outcome: loader::YtdlpItemOutcome) {
+        if let View::Editor(state) = &mut ws.view {
+            let panel = &mut state.ytdlp;
+            panel.failed.retain(|(url, _)| *url != outcome.url);
+            if let Some(error) = outcome.error {
+                if let Some(request) = panel.retry_requests.get_mut(&outcome.url) {
+                    request.target = outcome.target;
+                }
+                panel.failed.push((outcome.url, error));
+            } else {
+                panel.retry_requests.remove(&outcome.url);
+            }
+            for clip in outcome.clips {
+                panel.clip_info.insert(clip.path.clone(), clip);
+            }
+        }
+    }
+
     pub(super) fn on_ytdlp_progress(
         &mut self,
         ws: &mut Workspace,
@@ -32,6 +50,7 @@ impl super::AppInner {
     ) {
         if let View::Editor(state) = &mut ws.view {
             state.ytdlp.downloading = false;
+            state.ytdlp.cancel = None;
             // La lista acumula: lo descargado se queda hasta que se borre
             // (los que ya no existen en disco se podan).
             state.ytdlp.done = merge_done(&state.ytdlp.done, paths.clone());
