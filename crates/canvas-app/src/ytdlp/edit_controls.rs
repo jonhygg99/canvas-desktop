@@ -1,7 +1,7 @@
 //! Transporte, timeline y parámetros de la ventana de vídeo.
 
 use super::playback::PLAYBACK_FPS;
-use super::{clamp_trim, mmss, VideoEdit, CANVAS_SIZES};
+use super::{timecode, VideoEdit, CANVAS_SIZES};
 use crate::settings::AppSettings;
 use eframe::egui;
 
@@ -53,7 +53,8 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         }
         let label = if edit.playing { "Pause" } else { "Play" };
         if ui.button(label).clicked() && !edit.frames.is_empty() {
-            if !edit.playing && edit.playhead >= edit.trim_end {
+            if !edit.playing && (edit.playhead >= edit.trim_end || edit.playhead < edit.trim_start)
+            {
                 edit.playhead = edit.trim_start;
             }
             edit.playing = !edit.playing;
@@ -78,7 +79,7 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
             }
         }
         if ui
-            .checkbox(&mut edit.mute, crate::i18n::tr("Mute"))
+            .checkbox(&mut edit.mute, crate::i18n::tr("Mute preview"))
             .changed()
         {
             if edit.mute {
@@ -89,9 +90,9 @@ pub(super) fn transport_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         }
         ui.weak(format!(
             "{} / {}",
-            mmss(edit.playhead),
+            timecode(edit.playhead),
             edit.duration
-                .map(mmss)
+                .map(timecode)
                 .unwrap_or_else(|| "--:--".to_owned())
         ));
     });
@@ -108,24 +109,21 @@ pub(super) fn timeline_ui(edit: &mut VideoEdit, ui: &mut egui::Ui) {
     // persigue el scrub.
     if ui
         .add(
-            egui::Slider::new(&mut edit.playhead, start..=end)
+            egui::Slider::new(&mut edit.playhead, 0.0..=duration)
                 .text(crate::i18n::tr("Timeline"))
                 .show_value(false),
         )
         .changed()
     {
-        edit.playing = false;
-        edit.playback.stop();
-        edit.last_tick = None;
-        crate::audio::pause_for(&edit.path);
+        edit.seek(edit.playhead);
     }
     ui.weak(format!(
         "Trim {} – {}  ·  full {}",
-        mmss(start),
-        mmss(end),
-        mmss(duration)
+        timecode(start),
+        timecode(end),
+        timecode(duration)
     ));
-    edit.playhead = edit.playhead.clamp(start, end);
+    super::trim_controls::trim_controls(edit, ui);
 }
 
 /// Tamaño de lienzo + trim + background blur + zoom. Sin duración, el trim
@@ -144,29 +142,6 @@ pub(super) fn params_ui(edit: &mut VideoEdit, ui: &mut egui::Ui, settings: &mut 
         }
     });
     edit.size = settings.ytdlp_canvas_size;
-    if let Some(duration) = edit.duration {
-        let mut start = edit.trim_start;
-        let mut end = edit.trim_end;
-        let start_changed = ui
-            .add(egui::Slider::new(&mut start, 0.0..=duration).text(crate::i18n::tr("Trim start")))
-            .changed();
-        let end_changed = ui
-            .add(egui::Slider::new(&mut end, 0.0..=duration).text(crate::i18n::tr("Trim end")))
-            .changed();
-        (edit.trim_start, edit.trim_end) = clamp_trim(start, end, duration);
-        if start_changed || end_changed {
-            edit.playing = false;
-            edit.playback.stop();
-            edit.last_tick = None;
-            crate::audio::pause_for(&edit.path);
-            if start_changed {
-                edit.playhead = edit.trim_start;
-            }
-        }
-        edit.playhead = edit.playhead.clamp(edit.trim_start, edit.trim_end);
-    } else {
-        ui.weak(crate::i18n::tr("Trim waits for duration."));
-    }
     ui.add(egui::Slider::new(&mut edit.blur, 0.0..=100.0).text(crate::i18n::tr("Background blur")));
     ui.horizontal(|ui| {
         ui.label(crate::i18n::tr("Zoom"));

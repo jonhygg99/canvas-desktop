@@ -38,6 +38,14 @@ use preview::{frame_index_at, preview_ui, PreviewCache};
 
 #[path = "edit_controls.rs"]
 mod controls;
+#[path = "trim.rs"]
+mod trim;
+#[path = "trim_controls.rs"]
+mod trim_controls;
+use trim::{timecode, TrimEdge, TrimHistory};
+#[path = "trim_tests.rs"]
+#[cfg(test)]
+mod trim_tests;
 use controls::{advance_playhead, params_ui, timeline_ui, transport_ui};
 
 #[path = "edit_playback.rs"]
@@ -80,6 +88,8 @@ pub struct VideoEdit {
     pub(crate) video_size: Option<(f64, f64)>,
     playing: bool,
     playhead: f64,
+    source_fps: f64,
+    trim_history: TrimHistory,
     /// Pide re-extraer los fotogramas (lo sirve `layers_panel`).
     pub(crate) retry_frames: bool,
     /// Vista previa muda por defecto (se puede quitar).
@@ -119,6 +129,8 @@ impl VideoEdit {
             video_size: None,
             playing: false,
             playhead: 0.0,
+            source_fps: 30.0,
+            trim_history: TrimHistory::default(),
             retry_frames: false,
             mute: true,
             last_tick: None,
@@ -427,10 +439,6 @@ fn fit_preview(pw: f64, ph: f64) -> egui::Vec2 {
     const MAX_H: f32 = 300.0;
     let scale = (MAX_W / pw as f32).min(MAX_H / ph as f32).max(0.01);
     egui::vec2(pw as f32 * scale, ph as f32 * scale)
-}
-
-fn mmss(s: f64) -> String {
-    format!("{:02}:{:02}", (s / 60.0) as u32, (s % 60.0) as u32)
 }
 
 /// Slider 0..=100 → radio de blur de la capa (el fondo de referencia usa 50).
