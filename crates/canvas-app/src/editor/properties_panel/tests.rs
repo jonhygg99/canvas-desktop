@@ -114,6 +114,29 @@ fn pasting_a_square_image_into_a_matching_square_canvas_skips_the_background() {
 }
 
 #[test]
+fn clearing_the_foreground_resets_the_next_image_paste_and_is_undoable() {
+    let mut state = EditorState::new_blank_image(1000.0, 1000.0);
+    state.add_image_layer("Original", None, loaded_image(500, 250));
+    let original = state.doc.page().unwrap().layers.clone();
+    crate::clipboard::select_all(&mut state);
+    crate::editor::layer_ops::delete_selected(&mut state);
+    assert_eq!(state.doc.page().unwrap().layers, original[..1]);
+
+    state.add_image_layer("Pasted Image", None, loaded_image(250, 500));
+    let page = state.doc.page().unwrap();
+    assert_eq!(page.layers.len(), 2);
+    assert_eq!(page.layers[0].effects.blur_radius, 50.0);
+    assert_eq!(
+        page.layers[1].transform,
+        Transform::new(250.0, 0.0, 500.0, 1000.0)
+    );
+    state.undo();
+    assert_eq!(state.doc.page().unwrap().layers, original[..1]);
+    state.undo();
+    assert_eq!(state.doc.page().unwrap().layers, original);
+}
+
+#[test]
 fn replacing_image_preserves_transform_and_undo_restores_the_old_layer() {
     let mut state = EditorState::new_blank(1000.0, 1000.0);
     state.add_image_layer("Original", None, loaded_image(500, 500));

@@ -9,6 +9,15 @@ use canvas_core::{
 use super::EditorState;
 
 impl EditorState {
+    /// Sin contenido principal; el fondo automático residual no cuenta.
+    pub(crate) fn is_empty_canvas(&self) -> bool {
+        self.doc.page().is_ok_and(|page| {
+            page.layers
+                .iter()
+                .all(|layer| Some(layer.id) == self.background_layer)
+        })
+    }
+
     /// ¿Está activa (y viva, tras posibles deshacer) la capa de fondo?
     pub(in crate::editor) fn background_active(&self) -> bool {
         self.background_layer
