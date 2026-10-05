@@ -314,6 +314,16 @@ plantilla NSIS con los hooks de registro del Explorador está en
 `packaging/windows/installer.nsi` (ver comentarios «CANVAS DESKTOP» ahí para
 las diferencias respecto a la plantilla original de cargo-packager).
 
+## Edición sobre el lienzo
+
+- **Insertar:** elige texto o una forma en Insert y haz clic sobre el lienzo para colocarla, o arrastra para dibujar su tamaño. La caja previa muestra posición y dimensiones. «Place centered» conserva la inserción centrada; Esc cancela la herramienta.
+- **Texto:** doble clic sobre una capa de texto, o «Edit text» en su barra contextual, abre el campo superpuesto. «Done», Ctrl/Cmd+Enter o perder el foco confirma; Esc restaura el contenido anterior. Los controles de fuente, tamaño y color afectan al texto completo.
+- **Selección:** Ctrl/Cmd+clic añade o quita capas; Shift+clic extiende un tramo de la pila. Arrastrar desde espacio vacío selecciona los objetos completos dentro del rectángulo; Shift añade a la selección existente. Las capas bloqueadas quedan excluidas del rectángulo y de las transformaciones.
+- **Transformación:** varias capas y grupos comparten una caja para mover, escalar proporcionalmente y rotar. Los manejadores laterales de una capa cambian solo ancho o alto; las esquinas siguen el candado de proporción. Esc cancela el gesto y cada gesto confirmado ocupa un único paso de deshacer.
+- **Precisión:** las flechas desplazan 1 píxel del documento; Shift+flechas, 10. Shift durante el movimiento restringe el eje; Shift al rotar ajusta a pasos de 15°. Alt desactiva las guías magnéticas. Las distancias a los vecinos aparecen durante las transformaciones.
+- **Superposición:** Alt+clic recorre las capas visibles de ese punto; «Select layer» en el menú contextual permite elegir por nombre.
+- **Composición:** la barra contextual y el inspector permiten alinear con la caja de la selección, o con la página si hay una sola raíz seleccionada. La distribución iguala las separaciones entre bordes con al menos tres raíces, conservando los extremos.
+
 ## Verificación
 
 ```sh
