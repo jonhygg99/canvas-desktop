@@ -7,8 +7,8 @@
 //! limitada. Las miniaturas (`preview_fps`, tope 120) sirven para scrub y
 //! póster; no fijan la cadencia de reproducción.
 //!
-//! Aceptar no toca el documento actual: devuelve `VideoAccept` y cierra; el
-//! llamador crea el lienzo nuevo (con guard de cambios sin guardar).
+//! Aceptar devuelve un `VideoAccept` por recorte y cierra; el llamador crea
+//! todos los lienzos con un único guard de cambios sin guardar.
 //! Cancelar/X deja todo intacto.
 
 use std::path::PathBuf;
@@ -59,6 +59,16 @@ mod timeline_tests;
 #[path = "transport_layout_tests.rs"]
 #[cfg(test)]
 mod transport_layout_tests;
+#[path = "trim_collection.rs"]
+mod trim_collection;
+#[cfg(test)]
+use trim_collection::build_accept;
+#[path = "trim_collection_tests.rs"]
+#[cfg(test)]
+mod trim_collection_tests;
+#[path = "trim_collection_ui_tests.rs"]
+#[cfg(test)]
+mod trim_collection_ui_tests;
 #[path = "trim_tests.rs"]
 #[cfg(test)]
 mod trim_tests;
@@ -111,6 +121,8 @@ pub struct VideoEdit {
     playhead: f64,
     source_fps: f64,
     trim_history: TrimHistory,
+    trims: Vec<trim_collection::TrimSegment>,
+    active_trim: usize,
     timeline_range: Option<(f64, f64)>,
     thumbnails: timeline_thumbnails::Thumbnails,
     timeline_gesture: Option<timeline::Gesture>,
@@ -158,6 +170,8 @@ impl VideoEdit {
             playhead: 0.0,
             source_fps: 30.0,
             trim_history: TrimHistory::default(),
+            trims: Vec::new(),
+            active_trim: 0,
             timeline_range: None,
             thumbnails: timeline_thumbnails::Thumbnails::default(),
             timeline_gesture: None,
@@ -352,30 +366,11 @@ pub fn open_pending_edit(
     loader::spawn_ytdlp_frames(file_name, path, None, tx.clone(), ctx.clone());
 }
 
-/// Ventana de edición. Devuelve el `VideoAccept` si se pulsó Aceptar (el
-/// llamador crea el lienzo); cerrar/X/Cancelar devuelve `None`.
+/// Ventana de edición. Devuelve los recortes aceptados; cerrar/X/Cancelar
+/// devuelve `None` sin crear lienzos.
 #[path = "edit_window.rs"]
 mod window;
 pub use window::edit_window_ui;
-
-/// Construye el accept (siempre con algo válido: el botón lo exige).
-fn build_accept(edit: &VideoEdit) -> VideoAccept {
-    VideoAccept {
-        path: edit.path.clone(),
-        title: edit.title.clone(),
-        size: edit.size,
-        video_size: edit.video_size,
-        trim_start: edit.trim_start,
-        trim_end: Some(edit.trim_end),
-        blur_radius: blur_radius_for_slider(edit.blur),
-        zoom: edit.zoom,
-        position: edit.position,
-        poster: frame_index_at(edit, edit.trim_start)
-            .and_then(|i| edit.frames.get(i))
-            .cloned()
-            .unwrap_or_default(),
-    }
-}
 
 /// Reintento pedido desde la ventana (lo sirve `layers_panel`, que tiene
 /// canal y contexto).

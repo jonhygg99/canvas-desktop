@@ -44,6 +44,7 @@ pub(crate) mod persistence;
 mod switcher;
 mod ui_menu;
 mod ui_modals;
+mod video_canvases;
 mod views;
 mod window;
 mod workspace;
@@ -86,6 +87,10 @@ pub(crate) enum Nav {
     /// con trim/blur/zoom aplicados.
     OpenVideo {
         accept: crate::ytdlp::VideoAccept,
+    },
+    /// Un canvas independiente por cada recorte de la edición.
+    OpenVideos {
+        accepts: Vec<crate::ytdlp::VideoAccept>,
     },
 }
 

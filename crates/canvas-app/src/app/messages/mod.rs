@@ -250,6 +250,9 @@ impl AppInner {
                 self.on_ytdlp_frames_failed(ws, clip_id, error)
             }
             AppMsg::YtdlpEditAccepted(accept) => self.on_ytdlp_edit_accepted(ws, accept, ctx),
+            AppMsg::YtdlpEditsAccepted(accepts) => {
+                self.request_nav(ws, Nav::OpenVideos { accepts }, ctx);
+            }
             AppMsg::PngRepaired { original, repaired } => {
                 self.on_png_repaired(ws, original, repaired, ctx)
             }

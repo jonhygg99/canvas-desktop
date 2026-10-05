@@ -352,6 +352,7 @@ pub enum AppMsg {
     },
     /// Aceptar de la ventana Editar: crear el lienzo nuevo con estos params.
     YtdlpEditAccepted(crate::ytdlp::VideoAccept),
+    YtdlpEditsAccepted(Vec<crate::ytdlp::VideoAccept>),
     /// Un PNG con checksum roto se reparó en su mismo nombre: la corrupta
     /// está en la papelera del sistema y `repaired` (== `original`) ya
     /// trae los píxeles sanos.

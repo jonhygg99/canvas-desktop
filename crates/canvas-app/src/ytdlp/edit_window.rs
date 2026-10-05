@@ -5,7 +5,7 @@ pub fn edit_window_ui(
     video: &mut Panel,
     settings: &mut AppSettings,
     ui: &mut egui::Ui,
-) -> Option<VideoAccept> {
+) -> Option<Vec<VideoAccept>> {
     let title = format!("Edit video — {}", video.edit.as_ref()?.title);
     let mut open = true;
     let mut close = false;
@@ -31,9 +31,15 @@ pub fn edit_window_ui(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let ready =
                     !edit.loading_frames && edit.frames_error.is_none() && !edit.frames.is_empty();
-                let btn = ui.add_enabled(ready, egui::Button::new("Create canvas"));
+                let count = edit.trim_ranges().len();
+                let label = if count == 1 {
+                    "Create canvas".to_owned()
+                } else {
+                    format!("Create {count} canvases")
+                };
+                let btn = ui.add_enabled(ready, egui::Button::new(label));
                 if btn.clicked() {
-                    accept = Some(build_accept(edit));
+                    accept = Some(edit.build_accepts());
                 }
                 if !ready {
                     btn.on_hover_text(crate::i18n::tr("Waiting for preview frames"));

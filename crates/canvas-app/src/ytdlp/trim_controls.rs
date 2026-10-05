@@ -8,6 +8,13 @@ pub(super) fn trim_controls(edit: &mut VideoEdit, ui: &mut egui::Ui) {
         ui.weak("Reading video duration…");
         return;
     };
+    trim_list(edit, ui);
+    ui.push_id(("active-trim", edit.active_trim), |ui| {
+        active_trim_controls(edit, ui, duration);
+    });
+}
+
+fn active_trim_controls(edit: &mut VideoEdit, ui: &mut egui::Ui, duration: f64) {
     edge_field(edit, ui, TrimEdge::Start, duration);
     edge_field(edit, ui, TrimEdge::End, duration);
     duration_field(edit, ui, duration);
@@ -50,6 +57,68 @@ pub(super) fn trim_controls(edit: &mut VideoEdit, ui: &mut egui::Ui) {
             edit.reset_trim();
         }
     });
+}
+
+fn trim_list(edit: &mut VideoEdit, ui: &mut egui::Ui) {
+    let ranges = edit.trim_ranges();
+    for (index, (start, end)) in ranges.iter().copied().enumerate() {
+        let mut remove = false;
+        ui.push_id(("trim", index), |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(
+                        edit.active_trim == index,
+                        format!("Trim {} · {start:.2}–{end:.2} s", index + 1),
+                    )
+                    .on_hover_text(format!(
+                        "{} – {} · {:.3} s",
+                        timecode(start),
+                        timecode(end),
+                        end - start
+                    ))
+                    .clicked()
+                {
+                    edit.select_trim(index);
+                }
+                remove = crate::app_icons::icon_button_ui(
+                    ui,
+                    24.0,
+                    ranges.len() > 1,
+                    "Remove trim",
+                    |p, rect, color| {
+                        let c = rect.center();
+                        for direction in [-1.0, 1.0] {
+                            p.line_segment(
+                                [
+                                    c + egui::vec2(-4.0, direction * 4.0),
+                                    c + egui::vec2(4.0, -direction * 4.0),
+                                ],
+                                egui::Stroke::new(1.5, color),
+                            );
+                        }
+                    },
+                )
+                .on_hover_text("Remove trim")
+                .clicked();
+            });
+        });
+        if remove {
+            edit.remove_trim(index);
+            break;
+        }
+    }
+    if ui
+        .button("Add trim")
+        .on_hover_text("Add another canvas from this clip")
+        .clicked()
+    {
+        edit.add_trim();
+    }
+    if ranges.len() > 1 {
+        let total: f64 = ranges.iter().map(|(start, end)| end - start).sum();
+        ui.weak(format!("{} canvases · {total:.2} s total", ranges.len()));
+    }
+    ui.separator();
 }
 
 fn edge_field(edit: &mut VideoEdit, ui: &mut egui::Ui, edge: TrimEdge, duration: f64) {
