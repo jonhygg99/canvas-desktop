@@ -37,6 +37,7 @@ use super::EditorState;
 
 mod camera;
 mod layout;
+mod navigation;
 
 #[cfg(test)]
 #[path = "camera_tests.rs"]
@@ -126,6 +127,7 @@ pub fn canvas_ui(
         &mut state.viewport.pan,
     );
 
+    navigation::show(state, deck, ui, rect);
     let Camera {
         panning,
         space_down,

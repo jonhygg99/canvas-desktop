@@ -400,5 +400,9 @@
   "New folder": "Nueva carpeta",
   "items": "elementos",
   "Page": "Página",
-  "Add canvas": "Añadir lienzo"
+  "Add canvas": "Añadir lienzo",
+  "Zoom out": "Alejar",
+  "Zoom in": "Acercar",
+  "Fit page": "Ajustar página",
+  "View selection": "Ver selección"
 }
