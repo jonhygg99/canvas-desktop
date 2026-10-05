@@ -1,6 +1,6 @@
 //! Pestaña Insert del panel lateral: cuadrícula de cajas visuales con la
 //! silueta de cada elemento a insertar (texto y formas). Los clics llaman a
-//! las mismas `insert_layer_centered` que los antiguos botones de texto.
+//! la herramienta de colocación; «Colocar en el centro» confirma directamente.
 
 use eframe::egui;
 
@@ -90,20 +90,33 @@ pub(super) const INSERT_ITEMS: [InsertItem; 12] = [
 
 /// Inserta una capa centrada según la etiqueta del ítem del panel Insert.
 pub(super) fn insert_item(state: &mut EditorState, label: &str) {
+    arm_insert_item(state, label);
+    if let Some(tool) = state.insert_tool.take() {
+        state.insert_layer_centered(&tool.name, tool.width, tool.height, tool.content);
+    }
+}
+
+fn arm_insert_item(state: &mut EditorState, label: &str) {
+    crate::editor::inline_text::finish(state, false);
+    let mut insert = |name: &str, w, h, content| {
+        state.insert_tool = Some(crate::editor::insert_tool::InsertTool::new(
+            name, w, h, content,
+        ));
+    };
     match label {
-        "Text" => state.insert_layer_centered(
+        "Text" => insert(
             "Text",
             500.0,
             120.0,
             LayerContent::Text(canvas_core::TextContent::default()),
         ),
-        "Rect" => state.insert_layer_centered(
+        "Rect" => insert(
             "Rectangle",
             320.0,
             220.0,
             LayerContent::Shape(canvas_core::ShapeContent::default()),
         ),
-        "Ellipse" => state.insert_layer_centered(
+        "Ellipse" => insert(
             "Ellipse",
             280.0,
             280.0,
@@ -112,7 +125,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Line" => state.insert_layer_centered(
+        "Line" => insert(
             "Line",
             400.0,
             48.0,
@@ -124,7 +137,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Triangle" => state.insert_layer_centered(
+        "Triangle" => insert(
             "Triangle",
             320.0,
             280.0,
@@ -133,7 +146,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Star" => state.insert_layer_centered(
+        "Star" => insert(
             "Star",
             320.0,
             300.0,
@@ -142,7 +155,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Pentagon" => state.insert_layer_centered(
+        "Pentagon" => insert(
             "Pentagon",
             320.0,
             300.0,
@@ -151,7 +164,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Hexagon" => state.insert_layer_centered(
+        "Hexagon" => insert(
             "Hexagon",
             320.0,
             280.0,
@@ -160,7 +173,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Diamond" => state.insert_layer_centered(
+        "Diamond" => insert(
             "Diamond",
             280.0,
             280.0,
@@ -169,7 +182,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Cross" => state.insert_layer_centered(
+        "Cross" => insert(
             "Cross",
             300.0,
             300.0,
@@ -178,7 +191,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        "Heart" => state.insert_layer_centered(
+        "Heart" => insert(
             "Heart",
             300.0,
             280.0,
@@ -187,7 +200,7 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
                 ..Default::default()
             }),
         ),
-        _ => state.insert_layer_centered(
+        _ => insert(
             "Arrow",
             400.0,
             200.0,
@@ -202,9 +215,32 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
 }
 
 /// Pestaña Insert: cuadrícula de cajas visuales con la silueta de cada
-/// elemento a insertar (texto y formas). Los clics llaman a las mismas
-/// `insert_layer_centered` que los antiguos botones de texto.
+/// elemento a insertar (texto y formas). Los clics activan su herramienta.
 pub(super) fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    ui.weak(crate::i18n::tr(
+        "Choose a tool, then click or drag on the canvas. Esc cancels.",
+    ));
+    if state.insert_tool.is_some() {
+        ui.horizontal(|ui| {
+            if ui.button(crate::i18n::tr("Place centered")).clicked() {
+                let label = state
+                    .insert_tool
+                    .as_ref()
+                    .and_then(|tool| {
+                        INSERT_ITEMS
+                            .iter()
+                            .find(|item| item.tip == tool.name || item.label == tool.name)
+                    })
+                    .map(|item| item.label);
+                if let Some(label) = label {
+                    insert_item(state, label);
+                }
+            }
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
+                state.insert_tool = None;
+            }
+        });
+    }
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| insert_grid_ui(state, ui));
@@ -274,7 +310,13 @@ fn paint_insert_tile(
     if resp.has_focus() {
         ui.scroll_to_rect(rect, None);
     }
-    let bg = if resp.hovered() {
+    let active = state
+        .insert_tool
+        .as_ref()
+        .is_some_and(|tool| tool.name == item.tip || tool.name == item.label);
+    let bg = if active {
+        visuals.selection.bg_fill
+    } else if resp.hovered() {
         visuals.widgets.hovered.bg_fill
     } else {
         visuals.widgets.inactive.bg_fill
@@ -310,6 +352,6 @@ fn paint_insert_tile(
     let clicked = resp.clicked();
     resp.on_hover_text(crate::i18n::tr(item.tip));
     if clicked {
-        insert_item(state, item.label);
+        arm_insert_item(state, item.label);
     }
 }

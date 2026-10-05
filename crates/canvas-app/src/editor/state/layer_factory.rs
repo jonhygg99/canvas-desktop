@@ -270,14 +270,23 @@ impl EditorState {
     pub fn insert_layer_centered(&mut self, name: &str, w: f64, h: f64, content: LayerContent) {
         let Ok(page) = self.doc.page() else { return };
         let (pw, ph) = (page.width, page.height);
-        let index = page.layers.len();
-        let id = self.doc.allocate_layer_id();
-        let layer = Layer::new(
-            id,
+        self.insert_layer_at(
             name,
             Transform::new((pw - w) / 2.0, (ph - h) / 2.0, w, h),
             content,
         );
+    }
+
+    pub(crate) fn insert_layer_at(
+        &mut self,
+        name: &str,
+        transform: Transform,
+        content: LayerContent,
+    ) {
+        let Ok(page) = self.doc.page() else { return };
+        let index = page.layers.len();
+        let id = self.doc.allocate_layer_id();
+        let layer = Layer::new(id, name, transform, content);
         if let Err(e) = self.apply_undo_step(Box::new(InsertLayer { index, layer })) {
             tracing::error!("insertar capa falló: {e}");
             return;

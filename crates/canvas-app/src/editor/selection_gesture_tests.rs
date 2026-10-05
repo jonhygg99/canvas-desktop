@@ -3,7 +3,7 @@ use super::{interaction::layer_interaction, EditorState};
 use canvas_core::{LayerContent, ShapeContent, Transform};
 use eframe::egui;
 
-fn frame(ctx: &egui::Context, state: &mut EditorState, events: Vec<egui::Event>) {
+pub(super) fn frame(ctx: &egui::Context, state: &mut EditorState, events: Vec<egui::Event>) {
     let _ = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -20,7 +20,7 @@ fn frame(ctx: &egui::Context, state: &mut EditorState, events: Vec<egui::Event>)
         },
     );
 }
-fn pointer(x: f32, y: f32, pressed: Option<bool>) -> Vec<egui::Event> {
+pub(super) fn pointer(x: f32, y: f32, pressed: Option<bool>) -> Vec<egui::Event> {
     let pos = egui::pos2(x, y);
     let mut events = vec![egui::Event::PointerMoved(pos)];
     if let Some(pressed) = pressed {
@@ -33,7 +33,7 @@ fn pointer(x: f32, y: f32, pressed: Option<bool>) -> Vec<egui::Event> {
     }
     events
 }
-fn fixture() -> (
+pub(super) fn fixture() -> (
     egui::Context,
     EditorState,
     canvas_core::LayerId,

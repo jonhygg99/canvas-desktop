@@ -1180,18 +1180,11 @@ fn click_insert_tile(ctx: &egui::Context, state: &mut EditorState, width: f32, p
     );
 }
 
-/// Un clic sobre cada tile de la cuadrícula Insert inserta la capa de la
-/// etiqueta de ESE tile (el clic llama a `insert_item` con su label).
+/// Cada tile elige su herramienta sin modificar aún el documento.
 #[test]
-fn clicking_each_insert_tile_inserts_the_matching_layer() {
+fn clicking_each_insert_tile_arms_the_matching_tool_without_inserting() {
     let width = 400.0;
-    // El mismo layout que `insert_tab_ui`: dos columnas de tiles.
-    let pad = sidebar::PANEL_PAD * 2.0;
-    let gap = 8.0;
-    let tile_w = ((width - pad - gap) * 0.5).max(1.0);
-    let x0 = pad / 2.0;
-
-    for (i, item) in INSERT_ITEMS.iter().enumerate() {
+    for item in &INSERT_ITEMS {
         let expected = INSERT_CASES
             .iter()
             .find(|c| c.label == item.label)
@@ -1199,34 +1192,23 @@ fn clicking_each_insert_tile_inserts_the_matching_layer() {
         let mut state = EditorState::new_blank(800.0, 600.0);
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
-        // Centro del tile: fila = i/2, columna = i%2.
-        let center = egui::pos2(
-            x0 + (i % 2) as f32 * (tile_w + gap) + tile_w / 2.0,
-            (i / 2) as f32 * (INSERT_TILE_H + 10.0) + INSERT_TILE_H / 2.0,
-        );
+        run_insert_frame(&ctx, &mut state, width, vec![]);
+        let center = ctx
+            .read_response(egui::Id::new(("ins_tile", item.label)))
+            .unwrap()
+            .rect
+            .center();
         click_insert_tile(&ctx, &mut state, width, center);
 
         let page = state
             .doc
             .page()
             .expect("un documento en blanco tiene página");
-        assert_eq!(
-            page.layers.len(),
-            1,
-            "{}: el clic inserta exactamente una capa",
-            item.label
-        );
-        assert_eq!(
-            page.layers[0].name, expected.name,
-            "{}: el clic inserta la capa de la etiqueta del tile",
-            item.label
-        );
-        assert_eq!(page.layers[0].transform.width, expected.w, "{}", item.label);
-        assert_eq!(
-            page.layers[0].transform.height, expected.h,
-            "{}",
-            item.label
-        );
+        assert!(page.layers.is_empty(), "el clic solo elige herramienta");
+        let tool = state.insert_tool.as_ref().expect("herramienta activa");
+        assert_eq!(tool.name, expected.name, "{}", item.label);
+        assert_eq!(tool.width, expected.w, "{}", item.label);
+        assert_eq!(tool.height, expected.h, "{}", item.label);
     }
 }
 

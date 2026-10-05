@@ -34,7 +34,7 @@ pub(crate) use tab_strip::vertical_tab_strip_ui;
 
 // Nombres que solo usan los tests (glob `use super::*` en `tests.rs`).
 #[cfg(test)]
-use insert::{insert_item, INSERT_ITEMS, INSERT_TILE_H};
+use insert::{insert_item, INSERT_ITEMS};
 #[cfg(test)]
 use tab_strip::ordered_tabs;
 

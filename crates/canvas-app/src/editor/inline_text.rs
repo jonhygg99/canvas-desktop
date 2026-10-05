@@ -37,7 +37,7 @@ pub(super) fn begin(state: &mut EditorState, id: LayerId) {
         }
     }
 }
-pub(super) fn finish(state: &mut EditorState, cancel: bool) {
+pub(crate) fn finish(state: &mut EditorState, cancel: bool) {
     let Some(edit) = state.inline_text.take() else {
         return;
     };

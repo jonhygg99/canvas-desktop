@@ -17,6 +17,9 @@ mod gesture_cancel;
 pub(crate) mod inline_text;
 #[cfg(test)]
 mod inline_text_tests;
+pub(crate) mod insert_tool;
+#[cfg(test)]
+mod insert_tool_tests;
 mod interaction;
 mod layer_ops;
 mod layer_picking;

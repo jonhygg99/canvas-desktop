@@ -45,6 +45,7 @@ impl EditorState {
             gesture: Gesture::None,
             context_point: None,
             inline_text: None,
+            insert_tool: None,
             panel_edit: None,
             page_edit: None,
             size_popup: None,

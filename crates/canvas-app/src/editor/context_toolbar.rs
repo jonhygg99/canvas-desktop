@@ -12,7 +12,10 @@ pub(super) fn show(
     coord: egui::Rect,
     clip: egui::Rect,
 ) -> Option<LayerId> {
-    if state.inline_text.is_some() || !matches!(state.gesture, Gesture::None) {
+    if state.inline_text.is_some()
+        || state.insert_tool.is_some()
+        || !matches!(state.gesture, Gesture::None)
+    {
         return None;
     }
     let t = selection_box(state)?;

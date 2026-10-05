@@ -71,6 +71,9 @@ pub(super) fn layer_interaction(
     response: &egui::Response,
     rect: egui::Rect,
 ) {
+    if super::insert_tool::handle(state, ui, response, rect) {
+        return;
+    }
     if state.inline_text.is_some() {
         return;
     }
