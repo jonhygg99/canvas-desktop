@@ -12,6 +12,7 @@ pub(super) fn rows(state: &mut EditorState, ui: &mut egui::Ui) -> Vec<Row> {
     });
     ui.add(
         egui::TextEdit::singleline(&mut query)
+            .id(egui::Id::new("layer_search"))
             .hint_text(crate::i18n::tr("Search layers"))
             .desired_width(ui.available_width()),
     );

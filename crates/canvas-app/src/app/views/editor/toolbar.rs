@@ -28,6 +28,7 @@ pub(super) fn show(
             ui.separator();
             action = actions(state, ui, f);
             editor::history_panel::show(state, ui);
+            editor::palette::button(state, ui);
             if ui.button(crate::i18n::tr("Help")).clicked() {
                 ui.data_mut(|d| {
                     let id = egui::Id::new("editor-help");
@@ -36,8 +37,9 @@ pub(super) fn show(
                 });
             }
         });
-        help(ui);
+        help(state, ui);
     });
+    editor::palette::show(state, ui.ctx());
     action
 }
 
@@ -86,7 +88,7 @@ fn actions(
     action
 }
 
-fn help(ui: &mut egui::Ui) {
+fn help(state: &editor::EditorState, ui: &mut egui::Ui) {
     // Ayuda progresiva: no ocupa permanentemente el inspector.
     let help = egui::Id::new("editor-help");
     if ui.data(|d| d.get_temp::<bool>(help).unwrap_or(false)) {
@@ -104,6 +106,7 @@ fn help(ui: &mut egui::Ui) {
             crate::i18n::tr("Copy"),
             crate::i18n::tr("Paste")
         ));
+        ui.weak(editor::palette::context_help(state));
     }
 }
 

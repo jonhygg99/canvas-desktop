@@ -429,5 +429,16 @@
   "Reorder layers": "Reordenar capas",
   "Page size": "Tamaño de página",
   "Align selection": "Alinear selección",
-  "Distribute selection": "Distribuir selección"
+  "Distribute selection": "Distribuir selección",
+  "Commands": "Comandos",
+  "Search commands": "Buscar comandos",
+  "No matching commands": "No hay comandos que coincidan",
+  "Repeat duplication": "Repetir duplicación",
+  "Actual size": "Tamaño real",
+  "↑/↓: choose · Enter: run · Esc: close": "↑/↓: elegir · Intro: ejecutar · Esc: cerrar",
+  "Confirm text": "Confirmar texto",
+  "Click to place · Drag to choose size · Esc: cancel": "Clic para colocar · Arrastra para definir el tamaño · Esc: cancelar",
+  "Drag empty space to select · Alt+click: overlapping layers": "Arrastra en espacio vacío para seleccionar · Alt+clic: capas superpuestas",
+  "Arrows: 1 px · Shift+arrows: 10 px · Shift+drag: constrain": "Flechas: 1 px · Mayús+flechas: 10 px · Mayús+arrastrar: restringir",
+  "drag: duplicate": "arrastrar: duplicar"
 }

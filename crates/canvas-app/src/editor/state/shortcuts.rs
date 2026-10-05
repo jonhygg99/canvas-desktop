@@ -21,6 +21,20 @@ impl EditorState {
         deck_renaming: bool,
     ) {
         use egui::{Event, Key, KeyboardShortcut, Modifiers};
+        if super::super::palette::is_open(ctx) {
+            return;
+        }
+        if self.is_idle()
+            && ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(
+                    Modifiers::COMMAND | Modifiers::SHIFT,
+                    Key::P,
+                ))
+            })
+        {
+            super::super::palette::open(ctx);
+            return;
+        }
         // Deshacer/rehacer se evalúan primero y con su propia guarda: un
         // `TextEdit` con foco propio (renombrar una capa, editar su texto, o
         // renombrar una ranura de la baraja) debe quedarse con Ctrl+Z para su
@@ -35,7 +49,8 @@ impl EditorState {
             || self.inline_text.is_some()
             || self.file_rename_edit.is_some()
             || self.content_edit.is_some()
-            || deck_renaming;
+            || deck_renaming
+            || ctx.memory(|m| m.has_focus(egui::Id::new("layer_search")));
         if !editing_own_text {
             // El orden importa: Ctrl+Shift+Z debe consumirse antes que Ctrl+Z.
             let redo = ctx.input_mut(|i| {
