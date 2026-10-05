@@ -49,6 +49,13 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
                     Err(e) => (folder, None, Err(e)),
                 }
             }
+            GalleryOp::Quarantine { path } => {
+                let folder = path.parent().map(PathBuf::from).unwrap_or_default();
+                match canvas_io::move_to_quarantine(&path) {
+                    Ok(_) => (folder, None, Ok(())),
+                    Err(e) => (folder, None, Err(e)),
+                }
+            }
             GalleryOp::CreateFolder { parent, name } => {
                 let path = parent.join(&name);
                 match std::fs::create_dir(&path) {

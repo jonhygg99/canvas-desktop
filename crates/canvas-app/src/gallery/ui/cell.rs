@@ -50,7 +50,7 @@ pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool
     painter.text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        "New design",
+        crate::i18n::tr("New design"),
         egui::FontId::proportional(12.5),
         ui.visuals().text_color(),
     );
@@ -83,7 +83,7 @@ pub(super) fn gallery_add_cell(ui: &mut egui::Ui, cell_size: egui::Vec2) -> bool
         ui.visuals().weak_text_color(),
     );
     response
-        .on_hover_text("Create a new blank canvas in this folder")
+        .on_hover_text(crate::i18n::tr("Create a new blank canvas in this folder"))
         .clicked()
 }
 
@@ -99,7 +99,7 @@ pub(in crate::gallery) fn gallery_cell_size(available_width: f32, columns: usize
     )
 }
 
-fn begin_rename(
+pub(super) fn begin_rename(
     item: &GalleryItem,
     rename_edit: &mut Option<(PathBuf, String)>,
     ctx: &egui::Context,
@@ -155,7 +155,19 @@ fn gallery_cell_inner(
     rename_edit: &mut Option<(PathBuf, String)>,
     mut framings: Option<&mut super::super::framing::GalleryFramings>,
 ) -> Option<GalleryAction> {
+    let viewport = ui.ctx().viewport_id();
     let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+    if selected.as_deref() == Some(item.path.as_path())
+        && ui.data(|d| {
+            d.get_temp::<bool>(egui::Id::new(("gallery-scroll-selection", viewport)))
+                .unwrap_or(false)
+        })
+    {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        ui.data_mut(|d| {
+            d.insert_temp(egui::Id::new(("gallery-scroll-selection", viewport)), false)
+        });
+    }
     // Fuera del viewport no hay click posible: solo se reservó espacio para
     // el scroll. Sin este corte, una celda invisible podía emitir `Open`.
     if !ui.is_rect_visible(rect) {
@@ -169,16 +181,6 @@ fn gallery_cell_inner(
         rect.left_top() + egui::vec2(8.0, 4.0),
         egui::vec2(rect.width() - 16.0, TITLE_HEIGHT - 4.0),
     );
-    // Check hover/click on the name area via pointer position instead of a
-    // separate `ui.interact()`. A second interact registered *after* the
-    // main `response` steals events (including secondary clicks) within the
-    // overlapping rect — which breaks the context menu on right-click.
-    let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-    let hovering_name = (!renaming)
-        && pointer_pos
-            .map(|pos| name_rect.contains(pos))
-            .unwrap_or(false);
-
     // Aquí la celda es visible seguro (corte al inicio): se pinta siempre.
     let painter = ui.painter();
     let vertical = framings.as_ref().is_some_and(|state| state.vertical);
@@ -189,11 +191,11 @@ fn gallery_cell_inner(
     if response.hovered() {
         painter.rect_filled(rect, 6.0, ui.visuals().widgets.hovered.weak_bg_fill);
     }
-    if is_selected {
+    if is_selected || response.has_focus() {
         painter.rect_stroke(
             rect,
             6.0,
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 122, 255)),
+            egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
             egui::StrokeKind::Inside,
         );
     }
@@ -242,14 +244,6 @@ fn gallery_cell_inner(
     }
 
     let mut action = None;
-    let name_clicked = hovering_name;
-    if hovering_name {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-    }
-    if name_clicked && response.clicked() {
-        begin_rename(item, rename_edit, ui.ctx());
-    }
-
     if renaming {
         let text_id = egui::Id::new(("gallery_rename", item.path.clone()));
         let mut cancel = false;
@@ -284,13 +278,27 @@ fn gallery_cell_inner(
     } else {
         // `!dragged()`: un press que termina en scroll/drag no es un click,
         // aunque el release caiga sobre otra celda varias filas más abajo.
-        if !name_clicked && response.clicked() && !response.dragged() {
+        if response.clicked() && !response.dragged() {
+            *selected = Some(item.path.clone());
+        }
+        if response.double_clicked() && !response.dragged() {
             tracing::debug!(path = %item.path.display(), "gallery open click");
             action = Some(GalleryAction::Open(item.path.clone()));
         }
         if response.secondary_clicked() {
             *selected = Some(item.path.clone());
         }
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                is_selected,
+                &item.name,
+            )
+        });
         response.context_menu(|ui| {
             if ui
                 .button(if saved {
@@ -307,31 +315,36 @@ fn gallery_cell_inner(
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
             ui.separator();
-            if ui.button("Open").clicked() {
+            if ui.button(crate::i18n::tr("Open")).clicked() {
                 action = Some(GalleryAction::Open(item.path.clone()));
                 ui.close();
             }
-            if ui.button("Rename").clicked() {
+            if ui.button(crate::i18n::tr("Rename")).clicked() {
                 begin_rename(item, rename_edit, ui.ctx());
                 ui.close();
             }
-            if ui.button("Duplicate").clicked() {
+            if ui.button(crate::i18n::tr("Duplicate")).clicked() {
                 action = Some(GalleryAction::Duplicate(item.path.clone()));
                 ui.close();
             }
-            if ui.button("Copy").clicked() {
+            if ui.button(crate::i18n::tr("Copy")).clicked() {
                 *selected = Some(item.path.clone());
                 copy_to_slot(item.path.clone());
                 ui.close();
             }
-            if ui.button("Reveal in Explorer").clicked() {
+            if ui.button(crate::i18n::tr("Reveal in Explorer")).clicked() {
                 reveal_in_explorer(&item.path);
                 ui.close();
             }
             ui.separator();
-            let delete_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+            let delete_label =
+                egui::RichText::new(crate::i18n::tr("Delete")).color(ui.visuals().warn_fg_color);
             if ui.button(delete_label).clicked() {
                 action = Some(GalleryAction::Delete(item.path.clone()));
+                ui.close();
+            }
+            if item.failed && ui.button(crate::i18n::tr("Try repair")).clicked() {
+                action = Some(GalleryAction::Repair(item.path.clone()));
                 ui.close();
             }
         });

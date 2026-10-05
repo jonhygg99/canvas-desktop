@@ -34,6 +34,7 @@ mod container;
 mod io;
 mod paths;
 mod payload;
+mod quarantine;
 mod trash;
 
 use std::path::{Path, PathBuf};
@@ -51,6 +52,7 @@ pub use payload::{
     blank_design, fnv1a64, make_preview, preview_scale, CanvasPayload, LayerPixels,
     RestoredDocument,
 };
+pub use quarantine::{move_to_quarantine, quarantine_dir, restore_from_quarantine};
 pub use trash::{
     local_trash_path, move_to_local_trash, purge_local_trash, restore_from_local_trash, trash_dir,
 };

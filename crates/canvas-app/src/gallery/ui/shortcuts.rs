@@ -34,6 +34,43 @@ pub(super) fn handle(state: &mut GalleryState, ui: &egui::Ui) -> Option<GalleryA
     if let Some(clip_action) = clipboard_shortcuts(state, ui) {
         action = Some(clip_action);
     }
+    if !ui.ctx().text_edit_focused() {
+        let viewport = ui.ctx().viewport_id();
+        let columns = ui
+            .data(|d| d.get_temp::<usize>(egui::Id::new(("gallery-visible-columns", viewport))))
+            .unwrap_or(state.gallery_columns);
+        let offset = ui.input(|i| {
+            if i.modifiers.alt {
+                return 0;
+            }
+            if i.key_pressed(egui::Key::ArrowRight) {
+                1
+            } else if i.key_pressed(egui::Key::ArrowLeft) {
+                -1
+            } else if i.key_pressed(egui::Key::ArrowDown) {
+                columns as isize
+            } else if i.key_pressed(egui::Key::ArrowUp) {
+                -(columns as isize)
+            } else {
+                0
+            }
+        });
+        if offset != 0 {
+            state.move_selection(offset);
+            ui.data_mut(|d| {
+                d.insert_temp(egui::Id::new(("gallery-scroll-selection", viewport)), true)
+            });
+        }
+        if let Some(path) = state.selected.clone() {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                action = Some(GalleryAction::Open(path));
+            } else if ui.input(|i| i.key_pressed(egui::Key::F2)) {
+                if let Some(item) = state.items.iter().find(|item| item.path == path) {
+                    super::cell::begin_rename(item, &mut state.rename_edit, ui.ctx());
+                }
+            }
+        }
+    }
 
     action
 }

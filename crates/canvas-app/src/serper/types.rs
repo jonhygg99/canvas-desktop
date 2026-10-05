@@ -53,11 +53,11 @@ impl TokenBudget {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::One => "1 token",
             Self::Two => "2 tokens",
             Self::Three => "3 tokens",
-        }
+        })
     }
 
     /// Detalle para el selector: imágenes y créditos de un vistazo.
@@ -79,10 +79,10 @@ impl SearchMode {
     pub const ALL: [Self; 2] = [Self::Web, Self::Social];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Web => "Web Images",
             Self::Social => "Instagram/Facebook",
-        }
+        })
     }
 
     /// En modo social se perdona el bloqueo de CDNs sociales (sus URLs

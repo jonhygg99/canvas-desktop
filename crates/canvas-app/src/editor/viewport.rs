@@ -21,6 +21,7 @@ pub(super) enum AutoFit {
     All,
 }
 
+#[derive(Clone)]
 pub struct Viewport {
     /// Factor página → puntos de pantalla.
     pub zoom: f64,

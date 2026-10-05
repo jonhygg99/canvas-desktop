@@ -62,12 +62,12 @@ impl StripSide {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             StripSide::Left => "Left",
             StripSide::Top => "Top",
             StripSide::Right => "Right",
             StripSide::Bottom => "Bottom",
-        }
+        })
     }
 }
 

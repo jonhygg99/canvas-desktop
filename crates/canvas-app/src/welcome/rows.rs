@@ -109,7 +109,7 @@ pub(super) fn recent_folder_ui(
         );
     }
     if over_trash {
-        row_resp.clone().on_hover_text("Remove");
+        row_resp.clone().on_hover_text(crate::i18n::tr("Remove"));
     } else if over_pin {
         row_resp
             .clone()
@@ -144,7 +144,7 @@ pub(super) fn recent_folder_ui(
                 });
                 ui.close();
             }
-            if ui.button("Remove").clicked() {
+            if ui.button(crate::i18n::tr("Remove")).clicked() {
                 *context_action.borrow_mut() =
                     Some(WelcomeAction::RemoveRecent(path_clone.clone()));
                 ui.close();

@@ -32,7 +32,7 @@ pub fn panel_ui(
         ui.add_space(8.0);
         ui.label(format!("{ACCESS_KEY_ENV} is not set"));
         ui.add_space(4.0);
-        ui.weak("Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app.");
+        ui.weak(crate::i18n::tr("Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app."));
         return;
     }
     let panel = &mut state.unsplash;
@@ -43,11 +43,11 @@ pub fn panel_ui(
         let width = (ui.available_width() - 58.0).max(110.0);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut panel.query)
-                .hint_text("Search Unsplash…")
+                .hint_text(crate::i18n::tr("Search Unsplash…"))
                 .desired_width(width),
         );
         let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = ui.button("Search").clicked();
+        let clicked = ui.button(crate::i18n::tr("Search")).clicked();
         do_search = (submit || clicked) && !panel.query.trim().is_empty();
     });
     // Cambiar un filtro relanza la búsqueda (si ya hay una consulta).
@@ -65,7 +65,7 @@ pub fn panel_ui(
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak("Searching…");
+            ui.weak(crate::i18n::tr("Searching…"));
         });
         return;
     }
@@ -75,7 +75,9 @@ pub fn panel_ui(
             ui.colored_label(ui.visuals().error_fg_color, err);
         } else {
             ui.add_space(8.0);
-            ui.weak("Search for photos and click one\nto add it to the canvas.");
+            ui.weak(crate::i18n::tr(
+                "Search for photos and click one\nto add it to the canvas.",
+            ));
         }
         return;
     }
@@ -126,11 +128,11 @@ pub fn panel_ui(
                     ui.add(egui::Spinner::new().size(26.0));
                 } else if let Some(err) = &panel.error {
                     ui.colored_label(ui.visuals().error_fg_color, err);
-                    if ui.button("Try again").clicked() {
+                    if ui.button(crate::i18n::tr("Try again")).clicked() {
                         load_more(panel, tx, ui.ctx());
                     }
                 } else if panel.reached_end {
-                    ui.weak("No more results for this search.");
+                    ui.weak(crate::i18n::tr("No more results for this search."));
                 } else if load_more_button_ui(ui, row_w).clicked() {
                     load_more(panel, tx, ui.ctx());
                 }
@@ -140,7 +142,9 @@ pub fn panel_ui(
             });
         });
     ui.add_space(4.0);
-    ui.weak("Photos from Unsplash — unsplash.com/license");
+    ui.weak(crate::i18n::tr(
+        "Photos from Unsplash — unsplash.com/license",
+    ));
 }
 
 /// Lanza una búsqueda nueva (página 1) con la consulta y filtros actuales.
@@ -295,5 +299,5 @@ fn load_more_button_ui(ui: &mut egui::Ui, w: f32) -> egui::Response {
         galley,
         color,
     );
-    resp.on_hover_text("Load the next page of photos")
+    resp.on_hover_text(crate::i18n::tr("Load the next page of photos"))
 }

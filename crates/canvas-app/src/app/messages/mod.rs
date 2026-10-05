@@ -22,6 +22,7 @@ mod document;
 mod export;
 mod gallery;
 mod load;
+mod repair;
 mod save;
 mod serper;
 mod shell;
@@ -204,7 +205,7 @@ impl AppInner {
                 generation,
                 path,
                 result,
-            } => self.on_slot_prepared(ws, folder, generation, path, result),
+            } => self.on_slot_prepared(ws, folder, generation, path, result, ctx),
             AppMsg::CanvasPathReserved {
                 folder,
                 slot,
@@ -245,6 +246,14 @@ impl AppInner {
                 self.on_ytdlp_frames_failed(ws, clip_id, error)
             }
             AppMsg::YtdlpEditAccepted(accept) => self.on_ytdlp_edit_accepted(ws, accept, ctx),
+            AppMsg::PngRepaired { original, repaired } => {
+                self.on_png_repaired(ws, original, repaired, ctx)
+            }
+            AppMsg::RepairFailed {
+                original,
+                kind,
+                message,
+            } => self.on_repair_failed(ws, original, kind, message),
         }
     }
 

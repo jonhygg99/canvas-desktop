@@ -53,8 +53,17 @@ mod ws_frame;
 pub(crate) use workspace::Workspace;
 
 pub(crate) enum View {
-    Welcome { error: Option<String> },
-    Loading { path: PathBuf },
+    /// Pantalla inicial o callejón tras una apertura fallida: `failed_*`
+    /// guardan QUÉ archivo falló y su tipo clasificado para ofrecer
+    /// reparación/cuarentena en vez de un texto muerto.
+    Welcome {
+        error: Option<String>,
+        failed_path: Option<PathBuf>,
+        failed_kind: Option<canvas_io::CorruptionKind>,
+    },
+    Loading {
+        path: PathBuf,
+    },
     Gallery(Box<gallery::GalleryState>),
     Editor(Box<editor::EditorState>),
 }
@@ -272,6 +281,7 @@ impl App {
         let Some(menus) = menus.as_mut() else {
             return;
         };
+        menus.set_language(inner.settings.language);
         let Some(ws0) = inner.workspaces.first().cloned() else {
             return;
         };

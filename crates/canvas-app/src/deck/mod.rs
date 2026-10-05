@@ -22,8 +22,8 @@ mod system;
 mod tests;
 
 pub use geometry::{DeckAxis, DeckRect, MoveDir, StripSide};
-pub use model::{DeckSeed, SeedItem, Slot, SlotContent, SlotDoc};
-pub use nav::apply_jump;
+pub use model::{failure_notice, DeckSeed, SeedItem, Slot, SlotContent, SlotDoc};
+pub use nav::{apply_jump, JumpOutcome};
 
 use loading::{next_generation, next_scope};
 use model::idle_slot;

@@ -61,6 +61,11 @@ pub enum CanvasAction {
     Rename(u64, String),
     Duplicate(u64),
     Delete(u64),
+    /// Intentar reparar la ranura fallida (su archivo en disco).
+    Repair(u64),
+    /// Apartar el archivo a la cuarentena del proyecto (reversible a mano
+    /// desde `.canvas/quarantine`, sin deshacer integrado como el borrado).
+    Quarantine(u64),
     ReplaceFromLocal(LayerId),
     ReplaceFromUrl(LayerId, String),
     /// Elegido en el menú contextual (clic derecho) del propio lienzo —
@@ -89,8 +94,11 @@ pub fn canvas_ui(
     // Menú contextual (clic derecho): antes no había ninguno en el área de
     // edición. Solo las acciones que de verdad se usan desde un clic
     // derecho — no una copia entera del menú Edit (eso ya está a un atajo
-    // de teclado o al menú superior de distancia).
-    response.context_menu(|ui| canvas_context_menu(ui, state, &mut action));
+    // de teclado o al menú superior de distancia). El viewport se clona
+    // para el hit-test de ranuras fallidas: no puede prestarse de `state`
+    // a la vez que el menú lo usa mutablemente.
+    let viewport = state.viewport.clone();
+    response.context_menu(|ui| canvas_context_menu(ui, state, deck, &viewport, rect, &mut action));
 
     if action.is_none() {
         action = replace_url_popup_ui(state, ui.ctx());

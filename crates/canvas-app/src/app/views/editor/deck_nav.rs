@@ -133,6 +133,34 @@ pub(super) fn resolve(
         Some(editor::CanvasAction::Menu(action)) => {
             *pending_menu_action = Some(action);
         }
+        Some(editor::CanvasAction::Repair(id)) => {
+            if let Some(path) = f
+                .deck
+                .find_by_id(id)
+                .and_then(|i| f.deck.slots.get(i))
+                .map(|s| s.path.clone())
+            {
+                loader::spawn_repair_png(path, f.tx.clone(), ctx.clone());
+            }
+        }
+        Some(editor::CanvasAction::Quarantine(id)) => {
+            if let Some(path) = f
+                .deck
+                .find_by_id(id)
+                .and_then(|i| f.deck.slots.get(i))
+                .map(|s| s.path.clone())
+            {
+                *f.ignore_fs_events_until =
+                    Some(Instant::now() + std::time::Duration::from_secs(2));
+                *f.watcher = None;
+                loader::spawn_gallery_op(
+                    loader::GalleryOp::Quarantine { path },
+                    false,
+                    f.tx.clone(),
+                    ctx.clone(),
+                );
+            }
+        }
         None => {}
     }
     // Si ya hay un salto pendiente (`jump_to` — zona «+» de la baraja,
@@ -196,11 +224,16 @@ pub(super) fn resolve(
         || f.save.readonly_prompt.is_some()
         || f.save.low_memory_prompt.is_some()
         || f.deck_ops.materializing.is_some();
-    if !save_modal_pending
-        && deck::apply_jump(f.deck, state)
-        && std::mem::take(&mut f.deck.jump_reframe)
-    {
-        state.viewport.request_fit();
+    if !save_modal_pending {
+        match deck::apply_jump(f.deck, state) {
+            deck::JumpOutcome::Applied if std::mem::take(&mut f.deck.jump_reframe) => {
+                state.viewport.request_fit();
+            }
+            deck::JumpOutcome::DroppedFailed { name, kind } => {
+                state.save_error = Some(format!("\"{name}\": {}", deck::failure_notice(kind, "")));
+            }
+            _ => {}
+        }
     }
     if let Some(&next_id) = f.save.save_all_queue.first() {
         if f.deck.slots.get(f.deck.active).map(|s| s.id) == Some(next_id) {

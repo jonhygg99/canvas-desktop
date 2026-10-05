@@ -22,13 +22,13 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
         return;
     };
     if vid.source_path.is_none() {
-        ui.weak("Video without a source file");
+        ui.weak(crate::i18n::tr("Video without a source file"));
         return;
     }
     let (start, end) = vid.playback_range();
     let max = end.unwrap_or(vid.poster_time.max(start) + 60.0);
     let is_playing = state.video_playing_layer == Some(sel);
-    ui.strong("Video");
+    ui.strong(crate::i18n::tr("Video"));
     ui.horizontal(|ui| {
         if ui
             .button(if is_playing { "Pause" } else { "Play" })
@@ -45,7 +45,7 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
                 state.seek_video(sel, current, true, ui.ctx());
             }
         }
-        if ui.button("Restart").clicked() {
+        if ui.button(crate::i18n::tr("Restart")).clicked() {
             state.seek_video(sel, start, is_playing, ui.ctx());
         }
         ui.label(format!(
@@ -57,7 +57,7 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
     let mut current = vid.poster_time.clamp(start, max);
     let timeline = ui
         .add(egui::Slider::new(&mut current, start..=max).show_value(false))
-        .on_hover_text("Seek within the trimmed clip");
+        .on_hover_text(crate::i18n::tr("Seek within the trimmed clip"));
     if timeline.changed() {
         state.pause_video();
         if let Ok(layer) = state.doc.layer_mut(sel) {
@@ -72,14 +72,14 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
         state.seek_video(sel, current, false, ui.ctx());
     }
 
-    egui::CollapsingHeader::new("Trim clip")
+    egui::CollapsingHeader::new(crate::i18n::tr("Trim clip"))
         .id_salt((sel.raw(), "trim"))
         .show(ui, |ui| {
             let mut edited = vid.clone();
             let mut changed = false;
             let mut commit = false;
             ui.horizontal(|ui| {
-                ui.label("In");
+                ui.label(crate::i18n::tr("In"));
                 let response = ui.add(
                     egui::DragValue::new(&mut edited.trim_start)
                         .speed(0.1)
@@ -88,7 +88,7 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
                 );
                 changed |= response.changed();
                 commit |= response.drag_stopped() || response.lost_focus();
-                ui.label("Out");
+                ui.label(crate::i18n::tr("Out"));
                 let mut out = max;
                 let response = ui.add(
                     egui::DragValue::new(&mut out)
@@ -102,7 +102,7 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
                     changed = true;
                 }
             });
-            if ui.button("Reset trim").clicked() {
+            if ui.button(crate::i18n::tr("Reset trim")).clicked() {
                 edited.trim_start = 0.0;
                 edited.trim_end = None;
                 changed = true;
@@ -140,6 +140,8 @@ pub(super) fn video_controls_ui(state: &mut EditorState, ui: &mut egui::Ui, sel:
                 }
             }
         });
-    ui.weak("Crop: drag the corners · Size / Zoom: enlarge the video");
+    ui.weak(crate::i18n::tr(
+        "Crop: drag the corners · Size / Zoom: enlarge the video",
+    ));
     ui.separator();
 }

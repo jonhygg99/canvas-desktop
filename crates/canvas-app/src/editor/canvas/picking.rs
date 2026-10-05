@@ -6,9 +6,9 @@
 
 use eframe::egui;
 
-use crate::deck::{Deck, MoveDir};
+use crate::deck::{Deck, MoveDir, SlotContent};
 
-use super::super::slot_chrome::slot_header_layout;
+use super::super::slot_chrome::{failed_action_rects, slot_header_layout};
 use super::super::viewport::{page_to_screen, screen_to_page};
 use super::super::EditorState;
 use super::{CanvasAction, CanvasContext};
@@ -59,11 +59,14 @@ pub(super) fn handle_press(
                 if header_hit {
                     break;
                 }
-                let Some((id, is_placeholder, s_rect)) = deck
-                    .slots
-                    .get(idx)
-                    .map(|s| (s.id, s.is_placeholder, s.rect))
-                else {
+                let Some((id, is_placeholder, failed, s_rect)) = deck.slots.get(idx).map(|s| {
+                    (
+                        s.id,
+                        s.is_placeholder,
+                        matches!(s.content, SlotContent::Failed { .. }),
+                        s.rect,
+                    )
+                }) else {
                     continue;
                 };
                 let top_left = page_to_screen(&state.viewport, geo.rect, s_rect.x, s_rect.y);
@@ -112,6 +115,29 @@ pub(super) fn handle_press(
                 } else if header.del.contains(pos) {
                     *action = Some(CanvasAction::Delete(id));
                     header_hit = true;
+                } else if failed {
+                    // Botones bajo el aviso de la ranura fallida (mismos
+                    // rects que pinta `draw_slot_chrome`): se comprueban
+                    // aquí porque la cabecera ya falló el hit-test.
+                    let top = page_to_screen(&state.viewport, geo.rect, s_rect.x, s_rect.y);
+                    let bottom = page_to_screen(
+                        &state.viewport,
+                        geo.rect,
+                        s_rect.x + s_rect.w,
+                        s_rect.y + s_rect.h,
+                    );
+                    let screen_rect = egui::Rect::from_min_max(top, bottom);
+                    if let Some((repair_rect, quar_rect)) =
+                        failed_action_rects(screen_rect.center(), screen_rect.height())
+                    {
+                        if repair_rect.contains(pos) {
+                            *action = Some(CanvasAction::Repair(id));
+                            header_hit = true;
+                        } else if quar_rect.contains(pos) {
+                            *action = Some(CanvasAction::Quarantine(id));
+                            header_hit = true;
+                        }
+                    }
                 }
             }
             if header_hit {

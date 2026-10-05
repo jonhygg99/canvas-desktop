@@ -14,7 +14,7 @@ pub(super) fn replace_url_popup_ui(
     let mut open = true;
     let mut replace = false;
     let mut cancel = false;
-    egui::Window::new("Replace from URL")
+    egui::Window::new(crate::i18n::tr("Replace from URL"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -22,18 +22,21 @@ pub(super) fn replace_url_popup_ui(
         .show(ctx, |ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut url)
-                    .hint_text("https://example.com/image.jpg")
+                    .hint_text(crate::i18n::tr("https://example.com/image.jpg"))
                     .desired_width(360.0),
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(!url.trim().is_empty(), egui::Button::new("Replace"))
+                    .add_enabled(
+                        !url.trim().is_empty(),
+                        egui::Button::new(crate::i18n::tr("Replace")),
+                    )
                     .clicked()
                 {
                     replace = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(crate::i18n::tr("Cancel")).clicked() {
                     cancel = true;
                 }
             });

@@ -54,25 +54,47 @@ pub(super) fn draw_slot_chrome(
         } else {
             painter.rect_filled(screen_rect, 0.0, ui.visuals().extreme_bg_color);
         }
-        if let SlotContent::Failed(message) = &slot.content {
+        if let SlotContent::Failed { message, kind } = &slot.content {
             // Un fallo de carga de fondo SÍ se explica, aunque haya
             // miniatura: es la única pista de por qué este lienzo no abre.
+            // El texto depende del tipo clasificado, no del error crudo.
+            let short = crate::deck::failure_notice(*kind, message);
+            let center = screen_rect.center();
             draw_warning_icon(
                 ui.painter(),
-                egui::Rect::from_center_size(screen_rect.center(), egui::vec2(40.0, 40.0)),
+                egui::Rect::from_center_size(center, egui::vec2(40.0, 40.0)),
                 ui.visuals().error_fg_color,
             );
-            let mut short = message.clone();
-            if short.chars().count() > 60 {
-                short = format!("{}…", short.chars().take(59).collect::<String>());
-            }
             painter.text(
-                screen_rect.center() + egui::vec2(0.0, 22.0),
+                center + egui::vec2(0.0, 22.0),
                 egui::Align2::CENTER_TOP,
                 short,
                 egui::FontId::proportional(10.0),
                 ui.visuals().error_fg_color,
             );
+            // Botones pintados a mano (como la cabecera): el hit-test vive
+            // en `picking::handle_press`, sobre los MISMOS rects que calcula
+            // `failed_action_rects` — nunca pueden desalinearse.
+            if let Some((repair_rect, quar_rect)) =
+                failed_action_rects(center, screen_rect.height())
+            {
+                for (rect, label) in [(repair_rect, "Try repair"), (quar_rect, "Quarantine")] {
+                    painter.rect_filled(rect, 4.0, ui.visuals().widgets.inactive.bg_fill);
+                    painter.rect_stroke(
+                        rect,
+                        4.0,
+                        egui::Stroke::new(1.0, ui.visuals().weak_text_color().gamma_multiply(0.6)),
+                        egui::StrokeKind::Outside,
+                    );
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        egui::FontId::proportional(11.0),
+                        ui.visuals().text_color(),
+                    );
+                }
+            }
         } else if slot.thumb.is_none() {
             let glyph_rect =
                 egui::Rect::from_center_size(screen_rect.center(), egui::vec2(40.0, 40.0));
@@ -95,6 +117,25 @@ pub(super) fn draw_slot_chrome(
     painter.rect_stroke(screen_rect, 0.0, stroke, egui::StrokeKind::Outside);
 
     draw_slot_header(deck, slot, ui, screen_rect);
+}
+
+/// Rects de los botones «Try repair»/«Quarantine» bajo el aviso de una
+/// ranura fallida, en coordenadas de PANTALLA y centrados en `center`. Una
+/// sola fuente de verdad para pintado (`draw_slot_chrome`) y pulsación
+/// (`picking::handle_press`): ambos la llaman con el mismo centro y
+/// ninguno hardcodea offsets. `None` si el lienzo se ve demasiado pequeño
+/// para pulsarlos con sentido.
+pub(in crate::editor) fn failed_action_rects(
+    center: egui::Pos2,
+    screen_h: f32,
+) -> Option<(egui::Rect, egui::Rect)> {
+    if screen_h <= 110.0 {
+        return None;
+    }
+    Some((
+        egui::Rect::from_center_size(center + egui::vec2(-52.0, 52.0), egui::vec2(96.0, 22.0)),
+        egui::Rect::from_center_size(center + egui::vec2(52.0, 52.0), egui::vec2(96.0, 22.0)),
+    ))
 }
 
 /// Si hay un renombrado en curso (`deck.rename_edit`, pulsado desde la
@@ -204,7 +245,7 @@ pub(super) fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rec
     painter.text(
         screen_rect.center() + egui::vec2(0.0, glyph_size * 0.6),
         egui::Align2::CENTER_CENTER,
-        "Add canvas",
+        crate::i18n::tr("Add canvas"),
         egui::FontId::proportional(13.0),
         ui.visuals().weak_text_color(),
     );

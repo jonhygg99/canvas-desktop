@@ -54,6 +54,8 @@ impl AppInner {
                     "\"{}\" is not a supported image or video format.",
                     path.display()
                 )),
+                failed_path: Some(path),
+                failed_kind: Some(canvas_io::CorruptionKind::Unsupported),
             };
         }
         self.sync_title(ctx, ws);
@@ -255,7 +257,11 @@ impl AppInner {
                 ws.deck = deck::Deck::default();
                 ws.deck_ops.pending_deck = None;
                 ws.watcher = None;
-                ws.view = View::Welcome { error: None };
+                ws.view = View::Welcome {
+                    error: None,
+                    failed_path: None,
+                    failed_kind: None,
+                };
                 self.sync_title(ctx, ws);
             }
             Nav::NewDesign => self.new_design(ws, ctx),

@@ -112,7 +112,7 @@ pub fn deck_strip_ui(
             DeckAxis::Vertical => (true, "Switch to horizontal layout"),
             DeckAxis::Horizontal => (false, "Switch to vertical layout"),
         };
-        if icon_button_ui(ui, 16.0, true, move |p, r, c| {
+        if icon_button_ui(ui, 16.0, true, hover, move |p, r, c| {
             draw_double_arrow_icon(p, r, !vertical, false, c)
         })
         .on_hover_text(hover)
@@ -126,7 +126,7 @@ pub fn deck_strip_ui(
             StripSide::Right => IconDir::Right,
             StripSide::Bottom => IconDir::Down,
         };
-        if icon_button_ui(ui, 16.0, true, move |p, r, c| {
+        if icon_button_ui(ui, 16.0, true, "Move canvases panel", move |p, r, c| {
             draw_triangle_icon(p, r, side_dir, c)
         })
         .on_hover_text(format!("Canvases panel: {} (click to move)", side.label()))
@@ -218,7 +218,7 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
     painter.text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        "Add canvas",
+        crate::i18n::tr("Add canvas"),
         egui::FontId::proportional(12.5),
         ui.visuals().text_color(),
     );
@@ -240,7 +240,7 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
         egui::Rect::from_center_size(thumb_rect.center(), egui::vec2(plus_size, plus_size));
     draw_plus_icon(painter, plus_rect, ui.visuals().weak_text_color());
     response
-        .on_hover_text("Add a blank canvas to this folder")
+        .on_hover_text(crate::i18n::tr("Add a blank canvas to this folder"))
         .clicked()
 }
 

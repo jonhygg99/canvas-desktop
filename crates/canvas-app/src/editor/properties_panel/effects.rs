@@ -26,7 +26,7 @@ pub(super) fn opacity_control(state: &mut EditorState, ui: &mut egui::Ui, target
     let mut pct = current * 100.0;
 
     crate::sidebar::stretch_slider(ui);
-    ui.label("Opacity");
+    ui.label(crate::i18n::tr("Opacity"));
     let r = ui.add(
         egui::Slider::new(&mut pct, 0.0..=100.0)
             .suffix(" %")
@@ -120,7 +120,7 @@ pub(super) fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: L
             }
         }
     }
-    if current_blur > 0.0 && ui.button("Remove").clicked() {
+    if current_blur > 0.0 && ui.button(crate::i18n::tr("Remove")).clicked() {
         if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetBlur {
             layer: target,
             before: current_blur,
@@ -169,7 +169,11 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
     slider(ui, "Temperature", &mut fx.temperature, -1.0..=1.0);
     slider(ui, "Grayscale", &mut fx.grayscale, 0.0..=1.0);
     slider(ui, "Sepia", &mut fx.sepia, 0.0..=1.0);
-    if original.has_color_adjustments() && ui.small_button("Reset adjustments").clicked() {
+    if original.has_color_adjustments()
+        && ui
+            .small_button(crate::i18n::tr("Reset adjustments"))
+            .clicked()
+    {
         reset = true;
     }
 
@@ -219,7 +223,10 @@ pub(super) fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
     let current = state.doc.layer(sel).ok().and_then(|l| l.effects.shadow);
 
     let mut enabled = current.is_some();
-    if ui.checkbox(&mut enabled, "Shadow").changed() {
+    if ui
+        .checkbox(&mut enabled, crate::i18n::tr("Shadow"))
+        .changed()
+    {
         let after = enabled.then(canvas_core::Shadow::default);
         if let Err(e) = state.apply_undo_step(Box::new(canvas_core::SetShadow {
             layer: sel,
@@ -245,7 +252,7 @@ pub(super) fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
     };
 
     ui.horizontal(|ui| {
-        ui.label("Offset");
+        ui.label(crate::i18n::tr("Offset"));
         track(
             ui.add(
                 egui::DragValue::new(&mut sh.offset_x)
@@ -266,7 +273,7 @@ pub(super) fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Softness");
+        ui.label(crate::i18n::tr("Softness"));
         crate::sidebar::stretch_slider(ui);
         track(
             ui.add(
@@ -277,7 +284,7 @@ pub(super) fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
         );
     });
     ui.horizontal(|ui| {
-        ui.label("Opacity");
+        ui.label(crate::i18n::tr("Opacity"));
         crate::sidebar::stretch_slider(ui);
         let mut pct = sh.opacity * 100.0;
         track(

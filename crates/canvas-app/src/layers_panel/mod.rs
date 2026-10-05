@@ -94,6 +94,7 @@ pub fn left_panel_ui(
     deck_folder: Option<std::path::PathBuf>,
     insert_dest: crate::loader::ImageInsertDest,
     tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
+    collapsed: &mut bool,
 ) -> Option<LayersTabOrder> {
     sidebar::compact(ui);
     let mut new_order = None;
@@ -110,7 +111,7 @@ pub fn left_panel_ui(
             new_order = vertical_tab_strip_ui(
                 ui,
                 &mut state.active_left_tab,
-                &mut settings.layers_collapsed,
+                collapsed,
                 settings.layers_tab_order,
                 false,
             );
@@ -197,7 +198,7 @@ pub fn left_panel_ui(
                         toolbar_ui(state, ui);
                         ui.separator();
                         let Ok(page) = state.doc.page() else {
-                            ui.weak("No document.");
+                            ui.weak(crate::i18n::tr("No document."));
                             return;
                         };
                         let mut rows = Vec::new();
@@ -211,7 +212,7 @@ pub fn left_panel_ui(
                                 }
                             }
                             if is_empty {
-                                ui.weak("No layers yet.");
+                                ui.weak(crate::i18n::tr("No layers yet."));
                             }
                         });
                         if let Some((ids, drop)) = pending_drop {

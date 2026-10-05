@@ -4,14 +4,15 @@
 
 use std::path::PathBuf;
 
-use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 use crate::deck::{DeckAxis, StripSide};
 
+mod appearance;
 mod choices;
 mod sort;
 mod writer;
+pub use appearance::Density;
 
 pub use choices::{BulkCanvasSize, GallerySort, NewCanvasFormat, ThemeChoice};
 pub use sort::natural_cmp;
@@ -30,11 +31,11 @@ pub enum MediaFilter {
 
 impl MediaFilter {
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             MediaFilter::All => "All",
             MediaFilter::ImagesOnly => "Images",
             MediaFilter::VideosOnly => "Videos",
-        }
+        })
     }
 }
 
@@ -74,6 +75,12 @@ pub struct AppSettings {
     pub skip_overwrite_warning: bool,
     /// Valor por defecto del checkbox «Editable sidecar (.canvas)».
     pub sidecar_default: bool,
+    /// Reparar solo PNG con checksum roto al detectarlos (escribe un
+    /// hermano `*-reparado`, nunca sobrescribe el original).
+    pub auto_repair_png: bool,
+    /// Apartar a `.canvas/quarantine` los archivos vacíos o truncados al
+    /// detectarlos.
+    pub quarantine_unreadable: bool,
     /// Orden de la galería de carpetas.
     pub gallery_sort: GallerySort,
     /// Lado donde se ancla el navegador de carpetas de Gallery.
@@ -85,6 +92,10 @@ pub struct AppSettings {
     pub pinned_folders: Vec<PathBuf>,
     /// Tema de la interfaz.
     pub theme: ThemeChoice,
+    pub density: Density,
+    pub ui_scale: f32,
+    pub reduced_motion: bool,
+    pub language: crate::i18n::Language,
     /// Tamaño de página del último documento abierto o creado: lo hereda el
     /// siguiente diseño nuevo (galería, Ctrl+N o bienvenida).
     pub last_page_size: (f64, f64),
@@ -151,11 +162,17 @@ impl Default for AppSettings {
             jpeg_quality: 92,
             skip_overwrite_warning: false,
             sidecar_default: true,
+            auto_repair_png: false,
+            quarantine_unreadable: false,
             gallery_sort: GallerySort::default(),
             gallery_folder_panel_side: StripSide::default(),
             recent_files: Vec::new(),
             pinned_folders: Vec::new(),
             theme: ThemeChoice::default(),
+            density: Density::default(),
+            ui_scale: 1.0,
+            reduced_motion: false,
+            language: crate::i18n::Language::default(),
             last_page_size: (1920.0, 1080.0),
             deck_axis: DeckAxis::default(),
             deck_strip_visible: true,
@@ -178,6 +195,10 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub(super) fn settings_path() -> Option<PathBuf> {
+        #[cfg(debug_assertions)]
+        if let Some(path) = std::env::var_os("CANVAS_SETTINGS_PATH") {
+            return Some(PathBuf::from(path));
+        }
         let dirs = directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")?;
         Some(dirs.config_dir().join("settings.json"))
     }
@@ -217,109 +238,5 @@ pub enum SettingsAction {
     UnregisterShell,
 }
 
-/// Ventana flotante de ajustes. El llamador detecta cambios comparando el
-/// estado antes/después y persiste si procede. `shell_status` es el resultado
-/// del último registro/desregistro, para mostrarlo.
-pub fn settings_window(
-    ctx: &egui::Context,
-    settings: &mut AppSettings,
-    open: &mut bool,
-    shell_status: &str,
-) -> Option<SettingsAction> {
-    let mut action = None;
-    egui::Window::new("Settings")
-        .open(open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.label("Theme");
-            ui.horizontal(|ui| {
-                for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
-                    ui.selectable_value(&mut settings.theme, choice, choice.label());
-                }
-            });
-            ui.add_space(10.0);
-
-            ui.label("New canvas format");
-            egui::ComboBox::from_id_salt("new_canvas_format")
-                .selected_text(settings.new_canvas_format.label())
-                .show_ui(ui, |ui| {
-                    for choice in [
-                        NewCanvasFormat::Png,
-                        NewCanvasFormat::Jpeg,
-                        NewCanvasFormat::WebP,
-                        NewCanvasFormat::Canvas,
-                    ] {
-                        ui.selectable_value(
-                            &mut settings.new_canvas_format,
-                            choice,
-                            choice.label(),
-                        );
-                    }
-                });
-            ui.weak(
-                "What \"New design\" and the \"+\" canvas create: a real image file \
-                 (with its layers kept editable in a sidecar) or a standalone .canvas design.",
-            );
-            ui.add_space(10.0);
-
-            ui.label("Web bulk canvas size");
-            egui::ComboBox::from_id_salt("serper_bulk_size")
-                .selected_text(settings.serper_bulk_size.label())
-                .show_ui(ui, |ui| {
-                    for choice in BulkCanvasSize::ALL {
-                        ui.selectable_value(&mut settings.serper_bulk_size, choice, choice.label());
-                    }
-                });
-            ui.weak(
-                "Page size of every canvas created by \"Add\" in Select web images: \
-                 all canvases in the batch measure the same.",
-            );
-            ui.add_space(10.0);
-
-            ui.label("JPEG quality when saving");
-            ui.add(egui::Slider::new(&mut settings.jpeg_quality, 1..=100).show_value(true));
-            ui.weak("Overwriting a JPEG re-encodes it; higher quality = larger file.");
-            ui.add_space(10.0);
-
-            let mut ask = !settings.skip_overwrite_warning;
-            if ui
-                .checkbox(&mut ask, "Ask before overwriting the original file")
-                .on_hover_text(
-                    "Shows a warning the first time you save over the original \
-                     image in each session.",
-                )
-                .changed()
-            {
-                settings.skip_overwrite_warning = !ask;
-            }
-
-            explorer_section(ui, shell_status, &mut action);
-        });
-    action
-}
-
-/// Sección «File Explorer integration» de la ventana de ajustes: registro y
-/// limpieza de las asociaciones «Open with» (en plataformas sin shell
-/// integration el botón reporta el error por `shell_status`).
-fn explorer_section(ui: &mut egui::Ui, shell_status: &str, action: &mut Option<SettingsAction>) {
-    ui.add_space(12.0);
-    ui.separator();
-    ui.label("File Explorer integration");
-    ui.weak(
-        "Adds Canvas Desktop to \"Open with\" for images and to the \
-         right-click menu of folders.",
-    );
-    ui.horizontal(|ui| {
-        if ui.button("Register").clicked() {
-            *action = Some(SettingsAction::RegisterShell);
-        }
-        if ui.button("Unregister").clicked() {
-            *action = Some(SettingsAction::UnregisterShell);
-        }
-    });
-    if !shell_status.is_empty() {
-        ui.weak(shell_status);
-    }
-}
+mod ui;
+pub use ui::settings_window;

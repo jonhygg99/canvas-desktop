@@ -89,10 +89,10 @@ pub(super) fn tab_tip(tab: LeftTab) -> &'static str {
     match tab {
         LeftTab::Page => "Page settings",
         LeftTab::Layers => "Layers",
-        LeftTab::Insert => "Insert",
-        LeftTab::Web => "Web images (Google)",
-        LeftTab::Images => "Images (Unsplash)",
-        LeftTab::Download => "Download video (yt-dlp)",
+        LeftTab::Insert => crate::i18n::tr("Insert"),
+        LeftTab::Web => crate::i18n::tr("Web images (Google)"),
+        LeftTab::Images => crate::i18n::tr("Images (Unsplash)"),
+        LeftTab::Download => crate::i18n::tr("Download video (yt-dlp)"),
     }
 }
 
@@ -178,7 +178,7 @@ pub(super) fn paint_tabs(ui: &mut egui::Ui, p: PaintPass) {
             );
         }
         if p.drag.is_none() {
-            let _ = resp.on_hover_text(tab_tip(*tab));
+            let _ = resp.on_hover_text(crate::i18n::tr(tab_tip(*tab)));
         }
     }
 

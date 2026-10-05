@@ -205,6 +205,12 @@ pub(super) fn insert_item(state: &mut EditorState, label: &str) {
 /// elemento a insertar (texto y formas). Los clics llaman a las mismas
 /// `insert_layer_centered` que los antiguos botones de texto.
 pub(super) fn insert_tab_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| insert_grid_ui(state, ui));
+}
+
+fn insert_grid_ui(state: &mut EditorState, ui: &mut egui::Ui) {
     let visuals = ui.visuals().clone();
     // Ancho exacto de cada tile: mitad del panel menos el padding lateral
     // y el espacio entre columnas. El tile se pinta con el painter sobre
@@ -258,6 +264,16 @@ fn paint_insert_tile(
         egui::Id::new(("ins_tile", item.label)),
         egui::Sense::click(),
     );
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            crate::i18n::tr(item.tip),
+        )
+    });
+    if resp.has_focus() {
+        ui.scroll_to_rect(rect, None);
+    }
     let bg = if resp.hovered() {
         visuals.widgets.hovered.bg_fill
     } else {
@@ -267,7 +283,11 @@ fn paint_insert_tile(
         rect,
         8.0,
         bg,
-        visuals.widgets.inactive.bg_stroke,
+        if resp.has_focus() {
+            visuals.selection.stroke
+        } else {
+            visuals.widgets.inactive.bg_stroke
+        },
         egui::StrokeKind::Inside,
     );
     let icon_rect = egui::Rect::from_center_size(
@@ -283,12 +303,12 @@ fn paint_insert_tile(
     ui.painter().text(
         egui::pos2(rect.center().x, rect.bottom() - 8.0),
         egui::Align2::CENTER_CENTER,
-        item.label,
+        crate::i18n::tr(item.label),
         egui::FontId::proportional(11.0),
         color,
     );
     let clicked = resp.clicked();
-    resp.on_hover_text(item.tip);
+    resp.on_hover_text(crate::i18n::tr(item.tip));
     if clicked {
         insert_item(state, item.label);
     }

@@ -124,7 +124,11 @@ impl AppInner {
             }
         }
         if go_to_welcome {
-            ws.view = View::Welcome { error: None };
+            ws.view = View::Welcome {
+                error: None,
+                failed_path: None,
+                failed_kind: None,
+            };
         }
     }
 

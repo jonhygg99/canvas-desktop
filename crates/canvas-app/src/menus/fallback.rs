@@ -26,6 +26,7 @@ impl AppMenus {
     pub fn set_editor_enabled(&mut self, _enabled: bool) {}
     pub fn set_undo_redo(&mut self, _can_undo: bool, _can_redo: bool) {}
     pub fn set_recents(&mut self, _recents: &[PathBuf]) {}
+    pub fn set_language(&mut self, _language: crate::i18n::Language) {}
 }
 
 /// Menú File: proyecto/archivo + guardar/exportar + salir.
@@ -36,20 +37,20 @@ fn file_menu_ui(
     action: &mut Option<MenuAction>,
 ) {
     use eframe::egui;
-    ui.menu_button("File", |ui| {
-        if ui.button("New Window").clicked() {
+    ui.menu_button(crate::i18n::tr("File"), |ui| {
+        if ui.button(crate::i18n::tr("New Window")).clicked() {
             *action = Some(MenuAction::NewWindow);
         }
-        if ui.button("New Design").clicked() {
+        if ui.button(crate::i18n::tr("New Design")).clicked() {
             *action = Some(MenuAction::NewDesign);
         }
-        if ui.button("Open…").clicked() {
+        if ui.button(crate::i18n::tr("Open…")).clicked() {
             *action = Some(MenuAction::OpenFile);
         }
-        if ui.button("Open Folder…").clicked() {
+        if ui.button(crate::i18n::tr("Open Folder…")).clicked() {
             *action = Some(MenuAction::OpenFolder);
         }
-        ui.menu_button("Open Recent", |ui| {
+        ui.menu_button(crate::i18n::tr("Open Recent"), |ui| {
             let mut shown = false;
             for path in recents {
                 if !path.is_dir() {
@@ -65,39 +66,42 @@ fn file_menu_ui(
                 }
             }
             if !shown {
-                ui.add_enabled(false, egui::Button::new("No recent folders"));
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(crate::i18n::tr("No recent folders")),
+                );
             }
         });
-        if ui.button("Close Project").clicked() {
+        if ui.button(crate::i18n::tr("Close Project")).clicked() {
             *action = Some(MenuAction::CloseProject);
         }
         ui.separator();
         if ui
-            .add_enabled(editor_open, egui::Button::new("Save"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Save")))
             .clicked()
         {
             *action = Some(MenuAction::Save);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Save As…"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Save As…")))
             .clicked()
         {
             *action = Some(MenuAction::SaveAs);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Save All"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Save All")))
             .clicked()
         {
             *action = Some(MenuAction::SaveAll);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Export…"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Export…")))
             .clicked()
         {
             *action = Some(MenuAction::Export);
         }
         ui.separator();
-        if ui.button("Quit").clicked() {
+        if ui.button(crate::i18n::tr("Quit")).clicked() {
             *action = Some(MenuAction::Quit);
         }
     });
@@ -112,66 +116,75 @@ fn edit_menu_ui(
     action: &mut Option<MenuAction>,
 ) {
     use eframe::egui;
-    ui.menu_button("Edit", |ui| {
+    ui.menu_button(crate::i18n::tr("Edit"), |ui| {
         if ui
-            .add_enabled(editor_open && can_undo, egui::Button::new("Undo"))
+            .add_enabled(
+                editor_open && can_undo,
+                egui::Button::new(crate::i18n::tr("Undo")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::Undo);
         }
         if ui
-            .add_enabled(editor_open && can_redo, egui::Button::new("Redo"))
+            .add_enabled(
+                editor_open && can_redo,
+                egui::Button::new(crate::i18n::tr("Redo")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::Redo);
         }
         ui.separator();
         if ui
-            .add_enabled(editor_open, egui::Button::new("Cut"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Cut")))
             .clicked()
         {
             *action = Some(MenuAction::Cut);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Copy"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Copy")))
             .clicked()
         {
             *action = Some(MenuAction::Copy);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Paste"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Paste")))
             .clicked()
         {
             *action = Some(MenuAction::Paste);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Duplicate"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Duplicate")))
             .clicked()
         {
             *action = Some(MenuAction::Duplicate);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Delete"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Delete")))
             .clicked()
         {
             *action = Some(MenuAction::Delete);
         }
         ui.separator();
         if ui
-            .add_enabled(editor_open, egui::Button::new("Select All"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Select All")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::SelectAll);
         }
         ui.separator();
         if ui
-            .add_enabled(editor_open, egui::Button::new("Group"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Group")))
             .clicked()
         {
             *action = Some(MenuAction::Group);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Ungroup"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Ungroup")))
             .clicked()
         {
             *action = Some(MenuAction::Ungroup);
@@ -182,82 +195,106 @@ fn edit_menu_ui(
 /// Menú View: zoom, ajuste, cuadrícula/reglas, navegación de lienzos y paneles.
 fn view_menu_ui(ui: &mut eframe::egui::Ui, editor_open: bool, action: &mut Option<MenuAction>) {
     use eframe::egui;
-    ui.menu_button("View", |ui| {
+    ui.menu_button(crate::i18n::tr("View"), |ui| {
         if ui
-            .add_enabled(editor_open, egui::Button::new("Zoom In"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Zoom In")))
             .clicked()
         {
             *action = Some(MenuAction::ZoomIn);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Zoom Out"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Zoom Out")))
             .clicked()
         {
             *action = Some(MenuAction::ZoomOut);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Fit to Window"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Fit to Window")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::FitToWindow);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Grid"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Grid")))
             .clicked()
         {
             *action = Some(MenuAction::ToggleGrid);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Rulers"))
+            .add_enabled(editor_open, egui::Button::new(crate::i18n::tr("Rulers")))
             .clicked()
         {
             *action = Some(MenuAction::ToggleRulers);
         }
         ui.separator();
         if ui
-            .add_enabled(editor_open, egui::Button::new("Previous Canvas"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Previous Canvas")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::PrevCanvas);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Next Canvas"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Next Canvas")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::NextCanvas);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Canvases Panel"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Canvases Panel")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::ToggleCanvasesPanel);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Canvases Axis"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Canvases Axis")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::ToggleCanvasesAxis);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Canvases Panel Side"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Canvases Panel Side")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::CycleCanvasesSide);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Layers Panel"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Layers Panel")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::ToggleLayersPanel);
         }
         if ui
-            .add_enabled(editor_open, egui::Button::new("Add Canvas"))
+            .add_enabled(
+                editor_open,
+                egui::Button::new(crate::i18n::tr("Add Canvas")),
+            )
             .clicked()
         {
             *action = Some(MenuAction::AddCanvas);
         }
         ui.separator();
-        if ui.button("Full Screen").clicked() {
+        if ui.button(crate::i18n::tr("Full Screen")).clicked() {
             *action = Some(MenuAction::FullScreen);
         }
     });
@@ -265,11 +302,11 @@ fn view_menu_ui(ui: &mut eframe::egui::Ui, editor_open: bool, action: &mut Optio
 
 /// Menú Help: ajustes y acerca de.
 fn help_menu_ui(ui: &mut eframe::egui::Ui, action: &mut Option<MenuAction>) {
-    ui.menu_button("Help", |ui| {
-        if ui.button("Settings…").clicked() {
+    ui.menu_button(crate::i18n::tr("Help"), |ui| {
+        if ui.button(crate::i18n::tr("Settings…")).clicked() {
             *action = Some(MenuAction::Settings);
         }
-        if ui.button("About Canvas Desktop").clicked() {
+        if ui.button(crate::i18n::tr("About Canvas Desktop")).clicked() {
             *action = Some(MenuAction::About);
         }
     });

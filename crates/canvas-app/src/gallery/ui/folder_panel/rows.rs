@@ -91,12 +91,13 @@ fn gallery_folder_row_ui(
     {
         let context_action = context_action.clone();
         row_resp.context_menu(move |ui| {
-            if ui.button("Rename").clicked() {
+            if ui.button(crate::i18n::tr("Rename")).clicked() {
                 let stem = folder_name(&path_clone);
                 *context_action.borrow_mut() = Some((path_clone.clone(), stem));
                 ui.close();
             }
-            let del_label = egui::RichText::new("Delete").color(ui.visuals().warn_fg_color);
+            let del_label =
+                egui::RichText::new(crate::i18n::tr("Delete")).color(ui.visuals().warn_fg_color);
             if ui.button(del_label).clicked() {
                 *context_action.borrow_mut() = Some((path_clone.clone(), "__DELETE__".to_owned()));
                 ui.close();

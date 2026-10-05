@@ -257,6 +257,19 @@ impl Deck {
         for (path, mtime) in files {
             match old.remove(&path) {
                 Some(mut existing) => {
+                    // El archivo cambió en disco desde que se vio: lo que se
+                    // sabía de él (fallo de carga, miniatura fallida, tamaño
+                    // sondeado) puede estar obsoleto. Una ranura `Failed`
+                    // vuelve a `Idle` para que `request_loads` la reintente —
+                    // sin esto, un PNG re-descargado sano seguiría fallando
+                    // toda la sesión.
+                    if existing.mtime != mtime {
+                        if matches!(existing.content, SlotContent::Failed { .. }) {
+                            existing.content = SlotContent::Idle;
+                        }
+                        existing.thumb_failed = false;
+                        existing.page = None;
+                    }
                     existing.mtime = mtime;
                     slots.push(existing);
                 }
@@ -298,7 +311,10 @@ impl Deck {
     pub fn set_thumb(&mut self, path: &Path, tex: Option<egui::TextureHandle>) {
         if let Some(slot) = self.slots.iter_mut().find(|s| s.path == path) {
             match tex {
-                Some(tex) => slot.thumb = Some(tex),
+                Some(tex) => {
+                    slot.thumb = Some(tex);
+                    slot.thumb_failed = false;
+                }
                 None => slot.thumb_failed = true,
             }
         }

@@ -33,6 +33,7 @@ eframe = { version = "0.35", default-features = false, features = [
     "x11",
     "wayland",
     "persistence",
+    "accesskit",
 ] }
 vello = "0.9"
 
@@ -44,6 +45,7 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
 ] }
 kamadak-exif = "0.6"
+miniz_oxide = "0.8"
 # Preservación de bloques ICC/EXIF tal cual (JPEG APP1/APP2, PNG iCCP/eXIf,
 # WebP RIFF). lcms2 NO sirve para esto: es un motor de conversión de color.
 img-parts = "0.3"

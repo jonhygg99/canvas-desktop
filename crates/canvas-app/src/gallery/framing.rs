@@ -173,7 +173,7 @@ impl GalleryFramings {
         };
         let before = session.saved;
         let mut open = true;
-        egui::Window::new("Framing 9:16")
+        egui::Window::new(crate::i18n::tr("Framing 9:16"))
             .id(egui::Id::new("gallery-framing-editor"))
             .open(&mut open)
             .default_size(egui::vec2(680.0, 700.0))

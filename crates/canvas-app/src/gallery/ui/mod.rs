@@ -15,6 +15,7 @@ use super::{GalleryAction, GalleryState};
 mod cell;
 mod central;
 mod folder_panel;
+mod selection_bar;
 mod shell;
 mod shortcuts;
 mod thumbnail;

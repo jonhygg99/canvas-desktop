@@ -33,36 +33,50 @@ pub(super) fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<Galler
 /// Cabecera de la carpeta: título con renombrado in-place, contador de
 /// elementos y toolbar de orden/densidad/nuevo diseño — todo en una fila.
 fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut state.framings.vertical, false, "Normal");
-        ui.selectable_value(&mut state.framings.vertical, true, "Framings 9:16");
+    super::selection_bar::show(state, ui, action);
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(
+            &mut state.framings.vertical,
+            false,
+            crate::i18n::tr("Normal"),
+        );
+        ui.selectable_value(
+            &mut state.framings.vertical,
+            true,
+            crate::i18n::tr("Framings 9:16"),
+        );
         use crate::gallery::framing::StatusFilter;
         egui::ComboBox::from_id_salt("framing-status")
-            .selected_text(match state.framings.filter {
+            .selected_text(crate::i18n::tr(match state.framings.filter {
                 StatusFilter::All => "All framing states",
                 StatusFilter::Saved => "Saved framings",
                 StatusFilter::Missing => "Without framing",
-            })
+            }))
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::All,
-                    "All framing states",
+                    crate::i18n::tr("All framing states"),
                 );
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::Saved,
-                    "Saved framings",
+                    crate::i18n::tr("Saved framings"),
                 );
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::Missing,
-                    "Without framing",
+                    crate::i18n::tr("Without framing"),
                 );
             });
         if ui
-            .add_enabled(state.selected.is_some(), egui::Button::new("Framing 9:16"))
-            .on_hover_text("Select an item with right-click, then create or edit its framing")
+            .add_enabled(
+                state.selected.is_some(),
+                egui::Button::new(crate::i18n::tr("Framing 9:16")),
+            )
+            .on_hover_text(crate::i18n::tr(
+                "Select an item, then create or edit its framing",
+            ))
             .clicked()
         {
             if let Some(path) = &state.selected {
@@ -70,7 +84,7 @@ fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Ga
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         // false = rama defensiva del renombrado (estado imposible en la
         // práctica): salta la toolbar, igual que el `return` del original.
         if folder_heading_ui(state, ui, action) {
@@ -99,7 +113,11 @@ fn folder_heading_ui(
     if renaming {
         let Some((_, text)) = state.folder_rename_edit.as_mut() else {
             ui.heading(&current_name);
-            ui.weak(format!("— {} items", state.items.len()));
+            ui.weak(format!(
+                "— {} {}",
+                state.items.len(),
+                crate::i18n::tr("items")
+            ));
             return false;
         };
         let id = egui::Id::new(("gallery_folder_rename_heading", &state.folder));
@@ -131,7 +149,11 @@ fn folder_heading_ui(
             });
         }
     }
-    ui.weak(format!("— {} items", state.items.len()));
+    ui.weak(format!(
+        "— {} {}",
+        state.items.len(),
+        crate::i18n::tr("items")
+    ));
     true
 }
 
@@ -149,22 +171,26 @@ fn toolbar_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<G
                     GallerySort::DateModified.label(),
                 );
             });
-        ui.label("Sort by:");
+        ui.label(crate::i18n::tr("Sort by:"));
         if sort != state.sort {
             state.sort = sort;
             state.apply_sort();
             *action = Some(GalleryAction::SortChanged(sort));
         }
         ui.add_space(12.0);
-        if icon_button_ui(ui, 16.0, true, draw_plus_icon)
-            .on_hover_text("Show more designs per line")
+        if icon_button_ui(ui, 16.0, true, "More columns", draw_plus_icon)
+            .on_hover_text(crate::i18n::tr("Show more designs per line"))
             .clicked()
         {
             state.gallery_columns = (state.gallery_columns + 1).min(12);
         }
-        ui.label(format!("{} por línea", state.gallery_columns));
-        if icon_button_ui(ui, 16.0, true, draw_minus_icon)
-            .on_hover_text("Show fewer designs per line")
+        ui.label(format!(
+            "{} {}",
+            state.gallery_columns,
+            crate::i18n::tr("per row")
+        ));
+        if icon_button_ui(ui, 16.0, true, "Fewer columns", draw_minus_icon)
+            .on_hover_text(crate::i18n::tr("Show fewer designs per line"))
             .clicked()
         {
             state.gallery_columns = state.gallery_columns.saturating_sub(1).max(1);
@@ -208,7 +234,7 @@ fn op_error_ui(state: &mut GalleryState, ui: &mut egui::Ui) {
     if let Some(error) = state.op_error.clone() {
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(ui.visuals().error_fg_color, &error);
-            if icon_button_ui(ui, 16.0, true, draw_close_icon).clicked() {
+            if icon_button_ui(ui, 16.0, true, "Dismiss error", draw_close_icon).clicked() {
                 state.op_error = None;
             }
         });
@@ -228,7 +254,7 @@ fn scan_status_ui(
         ui.vertical_centered(|ui| {
             ui.add_space(40.0);
             ui.add(egui::Spinner::new().size(28.0));
-            ui.label("Scanning for images…");
+            ui.label(crate::i18n::tr("Scanning for images…"));
         });
         return false;
     }
@@ -241,8 +267,8 @@ fn scan_status_ui(
     if state.items.is_empty() {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label("This folder is empty.");
-            ui.weak("Create a blank canvas or open an image.");
+            ui.label(crate::i18n::tr("This folder is empty."));
+            ui.weak(crate::i18n::tr("Create a blank canvas or open an image."));
         });
     }
     true
@@ -270,8 +296,8 @@ fn scan_error_ui(
         ui.label(error.as_str());
         ui.add_space(8.0);
         if ui
-            .button("Retry")
-            .on_hover_text("Rescan this folder.")
+            .button(crate::i18n::tr("Retry"))
+            .on_hover_text(crate::i18n::tr("Rescan this folder."))
             .clicked()
         {
             retry_clicked = true;
@@ -280,11 +306,11 @@ fn scan_error_ui(
         if cloud_folder {
             ui.add_space(8.0);
             if ui
-                .button("Open Privacy & Security settings")
-                .on_hover_text(
+                .button(crate::i18n::tr("Open Privacy & Security settings"))
+                .on_hover_text(crate::i18n::tr(
                     "Opens the Full Disk Access pane: grant disk access to \
                      the app or terminal that launched Canvas Desktop.",
-                )
+                ))
                 .clicked()
             {
                 state.note_settings_opened();
@@ -306,9 +332,19 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             state.framings.card(&item.path, ui.ctx(), false);
         }
     }
+    let viewport = ui.ctx().viewport_id();
     egui::ScrollArea::vertical().show(ui, |ui| {
-        let columns = state.gallery_columns.clamp(1, 12);
+        let columns = state
+            .gallery_columns
+            .clamp(1, 12)
+            .min((ui.available_width() / 140.0).floor().max(1.0) as usize);
         let mut cell_size = gallery_cell_size(ui.available_width(), columns);
+        ui.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::new(("gallery-visible-columns", viewport)),
+                columns,
+            )
+        });
         if state.framings.vertical {
             cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
         }
@@ -316,30 +352,20 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
         let visible: Vec<_> = state
             .items
             .iter()
-            .filter(|item| state.framings.matches(&item.path))
-            .filter(|i| match state.media_filter {
-                crate::settings::MediaFilter::All => true,
-                crate::settings::MediaFilter::ImagesOnly => {
-                    matches!(
-                        i.kind,
-                        crate::gallery::ItemKind::Image | crate::gallery::ItemKind::Design
-                    )
-                }
-                crate::settings::MediaFilter::VideosOnly => {
-                    matches!(i.kind, crate::gallery::ItemKind::Video)
-                }
-            })
+            .filter(|item| state.matches_item(item))
             .collect();
         if visible.is_empty() && state.scanned && state.scan_error.is_none() {
             let label = match state.media_filter {
                 crate::settings::MediaFilter::VideosOnly => "No videos in this folder.",
                 crate::settings::MediaFilter::ImagesOnly => "No images in this folder.",
-                crate::settings::MediaFilter::All => "",
+                crate::settings::MediaFilter::All => {
+                    "No matching designs. Clear search or change the filters."
+                }
             };
             if !label.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(20.0);
-                    ui.weak(label);
+                    ui.weak(crate::i18n::tr(label));
                 });
                 return;
             }

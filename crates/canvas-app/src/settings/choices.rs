@@ -16,11 +16,11 @@ pub enum ThemeChoice {
 
 impl ThemeChoice {
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             ThemeChoice::System => "System",
             ThemeChoice::Light => "Light",
             ThemeChoice::Dark => "Dark",
-        }
+        })
     }
 
     pub fn to_egui(self) -> egui::ThemePreference {
@@ -49,12 +49,12 @@ pub enum NewCanvasFormat {
 
 impl NewCanvasFormat {
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             NewCanvasFormat::Png => "PNG image",
             NewCanvasFormat::Jpeg => "JPEG image",
             NewCanvasFormat::WebP => "WebP image",
             NewCanvasFormat::Canvas => "Canvas design (.canvas)",
-        }
+        })
     }
 
     /// Extensión de archivo (sin el punto), lista para
@@ -93,12 +93,12 @@ impl BulkCanvasSize {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             BulkCanvasSize::FullHd1920 => "1920 × 1080",
             BulkCanvasSize::Hd1280 => "1280 × 720",
             BulkCanvasSize::Square1080 => "1080 × 1080",
             BulkCanvasSize::BatchMax => "Batch max (largest photo)",
-        }
+        })
     }
 
     /// Dimensiones fijas, o `None` si las decide la tanda.
@@ -128,10 +128,10 @@ pub enum GallerySort {
 
 impl GallerySort {
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             GallerySort::Name => "Name",
             GallerySort::DateModified => "Date modified",
             GallerySort::Manual => "Manual order",
-        }
+        })
     }
 }

@@ -45,14 +45,18 @@ pub fn export_modal(
     dialog: &mut ExportDialog,
     ctx: &egui::Context,
     page_size: (f64, f64),
+    has_video: bool,
 ) -> ExportChoice {
     let mut choice = ExportChoice::None;
     let modal = egui::Modal::new(egui::Id::new("export_dialog")).show(ctx, |ui| {
         ui.set_max_width(320.0);
-        ui.heading("Export");
+        ui.heading(crate::i18n::tr("Export"));
+        if has_video {
+            ui.label(crate::i18n::tr("Video layers are exported as the visible frame. This does not create an MP4 video."));
+        }
         ui.add_space(6.0);
 
-        ui.label("Format");
+        ui.label(crate::i18n::tr("Format"));
         ui.horizontal(|ui| {
             for (fmt, label) in [
                 (ExportFormat::Png, "PNG"),
@@ -67,7 +71,7 @@ pub fn export_modal(
         });
         ui.add_space(6.0);
 
-        ui.label("Scale");
+        ui.label(crate::i18n::tr("Scale"));
         ui.horizontal(|ui| {
             for s in [1, 2, 3] {
                 if ui
@@ -92,21 +96,21 @@ pub fn export_modal(
         if dialog.format == ExportFormat::Jpeg {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.label("Quality");
+                ui.label(crate::i18n::tr("Quality"));
                 ui.add(egui::Slider::new(&mut dialog.jpeg_quality, 1..=100));
             });
         }
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("Export…").clicked() {
+            if ui.button(crate::i18n::tr("Export…")).clicked() {
                 choice = ExportChoice::Pick(ExportSettings {
                     format: dialog.format,
                     scale: dialog.scale,
                     jpeg_quality: dialog.jpeg_quality,
                 });
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr("Cancel")).clicked() {
                 choice = ExportChoice::Cancel;
             }
         });

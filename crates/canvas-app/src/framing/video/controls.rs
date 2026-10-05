@@ -11,7 +11,7 @@ fn time(value: f64) -> String {
     )
 }
 pub(super) fn show(video: &mut Video, ui: &mut egui::Ui) {
-    ui.strong("Video");
+    ui.strong(crate::i18n::tr("Video"));
     ui.horizontal(|ui| {
         if ui
             .button(if video.playing { "Pause" } else { "Play" })
@@ -28,7 +28,7 @@ pub(super) fn show(video: &mut Video, ui: &mut egui::Ui) {
                 video.seek(start, true, ui.ctx());
             }
         }
-        if ui.button("Restart").clicked() {
+        if ui.button(crate::i18n::tr("Restart")).clicked() {
             video.seek(video.trim.start_s, video.playing, ui.ctx());
         }
     });
@@ -43,7 +43,7 @@ pub(super) fn show(video: &mut Video, ui: &mut egui::Ui) {
             egui::Slider::new(&mut position, video.trim.start_s..=video.trim.end_s)
                 .show_value(false),
         )
-        .on_hover_text("Seek video");
+        .on_hover_text(crate::i18n::tr("Seek video"));
     if response.changed() {
         video.pause();
         video.position = position;
@@ -52,19 +52,24 @@ pub(super) fn show(video: &mut Video, ui: &mut egui::Ui) {
         video.seek(position, false, ui.ctx());
     }
     let mut muted = video.muted;
-    if ui.checkbox(&mut muted, "Mute preview audio").changed() {
+    if ui
+        .checkbox(&mut muted, crate::i18n::tr("Mute preview audio"))
+        .changed()
+    {
         video.set_muted(muted, ui.ctx());
     }
     if let Some(error) = &video.audio_error {
         ui.weak(format!("Preview audio unavailable: {error}"));
     }
     trim(video, ui);
-    ui.weak("The blurred background follows the same video frame.");
+    ui.weak(crate::i18n::tr(
+        "The blurred background follows the same video frame.",
+    ));
     ui.separator();
 }
 
 fn trim(video: &mut Video, ui: &mut egui::Ui) {
-    ui.strong("Trim original video");
+    ui.strong(crate::i18n::tr("Trim original video"));
     let minimum = 0.05_f64.min(video.duration);
     let mut trim = video.trim;
     let input = ui.add(
@@ -81,7 +86,7 @@ fn trim(video: &mut Video, ui: &mut egui::Ui) {
             .prefix("Out: ")
             .suffix(" s"),
     );
-    let reset = ui.button("Reset trim").clicked();
+    let reset = ui.button(crate::i18n::tr("Reset trim")).clicked();
     if reset {
         trim = canvas_io::VideoTrim {
             start_s: 0.0,

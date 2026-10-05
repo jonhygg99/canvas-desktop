@@ -82,6 +82,11 @@ pub(crate) struct Workspace {
     /// la decoración por frame — el bug de redimensionado en Windows.
     /// Ver `spawn_child_viewports`.
     pub(crate) geometry_seeded: bool,
+    /// Automáticos ya intentados por (ruta, tamaño, mtime): un archivo que
+    /// sigue fallando no debe relanzar reparación/cuarentena en cada
+    /// reescaneo. Si el archivo cambia, la clave cambia y se reintenta.
+    pub(crate) auto_handled:
+        std::collections::HashSet<(PathBuf, u64, Option<std::time::SystemTime>)>,
 }
 
 /// Etiqueta del workspace para el conmutador y la persistencia: el nombre
@@ -90,7 +95,11 @@ impl Workspace {
     pub(crate) fn new(viewport: egui::ViewportId) -> Self {
         let (tx, rx) = channel();
         Self {
-            view: View::Welcome { error: None },
+            view: View::Welcome {
+                error: None,
+                failed_path: None,
+                failed_kind: None,
+            },
             deck: deck::Deck::default(),
             watcher: None,
             ignore_fs_events_until: None,
@@ -108,6 +117,7 @@ impl Workspace {
             viewport,
             geometry: None,
             geometry_seeded: false,
+            auto_handled: std::collections::HashSet::new(),
         }
     }
 

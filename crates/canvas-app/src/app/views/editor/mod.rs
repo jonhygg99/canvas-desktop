@@ -21,6 +21,7 @@ mod framing_flow;
 mod modals;
 mod panels;
 mod save_flow;
+mod toolbar;
 
 /// Vista de editor: baraja + panel de capas/propiedades + lienzo, y toda la
 /// orquestación de guardado, exportación, navegación de la baraja y
@@ -85,6 +86,9 @@ pub(in crate::app) fn editor_view_ui(
         save_flow::handle_save(state, ctx, rs, f, &mut open_next);
     }
     modals::show_modals(state, ctx, rs, f);
+    if let Some(action) = toolbar::show(state, ui, f) {
+        pending_menu_action = Some(action);
+    }
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
     deck_nav::resolve(
         state,

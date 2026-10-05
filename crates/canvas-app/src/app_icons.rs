@@ -36,12 +36,23 @@ pub fn icon_button_ui(
     ui: &mut egui::Ui,
     size: f32,
     enabled: bool,
+    label: &str,
     draw: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+    let label = crate::i18n::tr(label);
+    let target = size.max(ui.spacing().interact_size.y);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(target, target), sense);
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label)
+    });
     let visuals = ui.visuals();
     let hovered = enabled && resp.hovered();
-    if hovered {
+    if hovered || resp.has_focus() {
         ui.painter()
             .rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
     }
@@ -52,7 +63,19 @@ pub fn icon_button_ui(
     } else {
         visuals.widgets.inactive.text_color()
     };
-    draw(ui.painter(), rect, color);
+    if resp.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            visuals.selection.stroke,
+            egui::StrokeKind::Inside,
+        );
+    }
+    draw(
+        ui.painter(),
+        egui::Rect::from_center_size(rect.center(), egui::vec2(size, size)),
+        color,
+    );
     resp
 }
 
@@ -69,8 +92,9 @@ pub fn icon_text_button_ui(
     color_override: Option<egui::Color32>,
     min_size: egui::Vec2,
 ) -> egui::Response {
+    let text = crate::i18n::tr(text);
     let visuals = ui.visuals().clone();
-    let font = egui::FontId::proportional(13.0);
+    let font = egui::TextStyle::Button.resolve(ui.style());
     let base = color_override.unwrap_or(visuals.text_color());
     let galley = ui
         .painter()
@@ -80,9 +104,17 @@ pub fn icon_text_button_ui(
     let gap = 5.0;
     let size = egui::vec2(
         (pad_x * 2.0 + icon_sz + gap + galley.size().x).max(min_size.x),
-        ((galley.size().y + 8.0).max(24.0)).max(min_size.y),
+        ((galley.size().y + 8.0).max(ui.spacing().interact_size.y)).max(min_size.y),
     );
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), text)
+    });
     let hovered = enabled && resp.hovered();
     let bg = if hovered {
         visuals.widgets.hovered.bg_fill
@@ -93,7 +125,11 @@ pub fn icon_text_button_ui(
         rect,
         6.0,
         bg,
-        visuals.widgets.inactive.bg_stroke,
+        if resp.has_focus() {
+            visuals.selection.stroke
+        } else {
+            visuals.widgets.inactive.bg_stroke
+        },
         egui::StrokeKind::Inside,
     );
     let color = if !enabled {

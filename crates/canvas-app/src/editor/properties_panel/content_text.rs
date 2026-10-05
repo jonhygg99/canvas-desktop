@@ -13,7 +13,7 @@ pub(super) fn text_content_ui(
     let mut changed = false;
     let mut commit = false;
 
-    ui.label("Text");
+    ui.label(crate::i18n::tr("Text"));
     let r = ui.add(
         egui::TextEdit::multiline(&mut text.text)
             .desired_rows(2)
@@ -23,13 +23,16 @@ pub(super) fn text_content_ui(
     commit |= r.lost_focus();
 
     ui.horizontal(|ui| {
-        ui.label("Font");
-        let r = ui.add(egui::TextEdit::singleline(&mut text.family).hint_text("System default"));
+        ui.label(crate::i18n::tr("Font"));
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut text.family)
+                .hint_text(crate::i18n::tr("System default")),
+        );
         changed |= r.changed();
         commit |= r.lost_focus();
     });
     ui.horizontal(|ui| {
-        ui.label("Size");
+        ui.label(crate::i18n::tr("Size"));
         let r = ui.add(
             egui::DragValue::new(&mut text.size)
                 .range(4.0..=800.0)
@@ -40,8 +43,8 @@ pub(super) fn text_content_ui(
 
         let bold = text.weight >= 600;
         if ui
-            .selectable_label(bold, "B")
-            .on_hover_text("Bold")
+            .selectable_label(bold, crate::i18n::tr("B"))
+            .on_hover_text(crate::i18n::tr("Bold"))
             .clicked()
         {
             text.weight = if bold { 400 } else { 700 };
@@ -49,8 +52,8 @@ pub(super) fn text_content_ui(
             commit = true;
         }
         if ui
-            .selectable_label(text.italic, "I")
-            .on_hover_text("Italic")
+            .selectable_label(text.italic, crate::i18n::tr("I"))
+            .on_hover_text(crate::i18n::tr("Italic"))
             .clicked()
         {
             text.italic = !text.italic;
@@ -70,7 +73,7 @@ pub(super) fn text_content_ui(
         }
     });
     ui.horizontal(|ui| {
-        ui.label("Spacing");
+        ui.label(crate::i18n::tr("Spacing"));
         let r = ui.add(
             egui::DragValue::new(&mut text.letter_spacing)
                 .range(-20.0..=60.0)
@@ -79,7 +82,7 @@ pub(super) fn text_content_ui(
         );
         changed |= r.changed();
         commit |= r.drag_stopped() || r.lost_focus();
-        ui.label("Line");
+        ui.label(crate::i18n::tr("Line"));
         let r = ui.add(
             egui::DragValue::new(&mut text.line_height)
                 .range(0.5..=3.0)

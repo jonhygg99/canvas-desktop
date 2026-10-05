@@ -550,14 +550,14 @@ fn drag_one(
 #[test]
 fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
     let ctx = egui::Context::default();
-    ctx.set_fonts(egui::FontDefinitions::empty());
+    ctx.set_fonts(egui::FontDefinitions::default());
     let mut state = EditorState::new_blank(400.0, 1200.0);
     let id = selected_rect(&mut state);
     let original = state.doc.layer(id).unwrap().transform;
 
     // Renderiza el panel y arrastra el campo W (fila superior de «Size»).
     let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -565,30 +565,41 @@ fn editing_the_size_in_the_panel_commits_an_undoable_transform() {
             |ui| {
                 properties_ui(state, ui);
             },
-        );
+        )
     };
     wrap(&mut state, vec![]);
-    wrap(
-        &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(40.0, 110.0))],
-    );
+    let output = wrap(&mut state, vec![]);
+    let label = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                if text.galley.text() == "W" {
+                    return Some(
+                        text.pos + egui::vec2(text.galley.size().x, text.galley.size().y * 0.5),
+                    );
+                }
+            }
+            None
+        })
+        .expect("width field label");
+    let press = label + egui::vec2(20.0, 0.0);
+    let release = press + egui::vec2(70.0, 0.0);
+    wrap(&mut state, vec![egui::Event::PointerMoved(press)]);
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(40.0, 110.0),
+            pos: press,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
         }],
     );
-    wrap(
-        &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(110.0, 110.0))],
-    );
+    wrap(&mut state, vec![egui::Event::PointerMoved(release)]);
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(110.0, 110.0),
+            pos: release,
             button: egui::PointerButton::Primary,
             pressed: false,
             modifiers: egui::Modifiers::NONE,
@@ -696,7 +707,6 @@ fn enabling_the_shadow_commits_an_undoable_set_shadow() {
 #[test]
 fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
     let ctx = egui::Context::default();
-    ctx.set_fonts(egui::FontDefinitions::empty());
     let mut state = EditorState::new_blank(400.0, 1200.0);
     let id = selected_rect(&mut state);
     state.aspect_lock = true;
@@ -707,7 +717,7 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
     // Renderiza el panel y arrastra el campo W (fila «W/H» de la sección
     // «Size») con el candado ya activado.
     let wrap = |state: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -715,17 +725,25 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
             |ui| {
                 properties_ui(state, ui);
             },
-        );
+        )
     };
     wrap(&mut state, vec![]);
-    wrap(
-        &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(40.0, 112.0))],
-    );
+    let output = wrap(&mut state, vec![]);
+    let pos = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == "W" => {
+                Some(text.pos + egui::vec2(text.galley.size().x + 20.0, text.galley.size().y / 2.0))
+            }
+            _ => None,
+        })
+        .expect("width field rendered");
+    wrap(&mut state, vec![egui::Event::PointerMoved(pos)]);
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(40.0, 112.0),
+            pos,
             button: egui::PointerButton::Primary,
             pressed: true,
             modifiers: egui::Modifiers::NONE,
@@ -733,12 +751,12 @@ fn dragging_width_with_aspect_lock_keeps_ratio_and_is_a_single_undo_step() {
     );
     wrap(
         &mut state,
-        vec![egui::Event::PointerMoved(egui::pos2(340.0, 112.0))],
+        vec![egui::Event::PointerMoved(pos + egui::vec2(300.0, 0.0))],
     );
     wrap(
         &mut state,
         vec![egui::Event::PointerButton {
-            pos: egui::pos2(340.0, 112.0),
+            pos: pos + egui::vec2(300.0, 0.0),
             button: egui::PointerButton::Primary,
             pressed: false,
             modifiers: egui::Modifiers::NONE,
@@ -848,9 +866,9 @@ fn cropped_image(state: &mut EditorState) -> canvas_core::LayerId {
 
 /// Un clic en un punto concreto dentro del panel, usando fuentes reales
 /// (los botones de texto necesitan anchos de glifo reales para pegarles).
-fn panel_click(ctx: &egui::Context, state: &mut EditorState, pos: egui::Pos2) {
+fn panel_click(ctx: &egui::Context, state: &mut EditorState, label: &str) {
     let r = |st: &mut EditorState, events: Vec<egui::Event>| {
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
@@ -858,9 +876,21 @@ fn panel_click(ctx: &egui::Context, state: &mut EditorState, pos: egui::Pos2) {
             |ui| {
                 properties_ui(st, ui);
             },
-        );
+        )
     };
     r(state, vec![]);
+    let output = r(state, vec![]);
+    let pos = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text() == label => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .next_back()
+        .expect("panel action rendered");
     r(state, vec![egui::Event::PointerMoved(pos)]);
     r(
         state,
@@ -882,11 +912,6 @@ fn panel_click(ctx: &egui::Context, state: &mut EditorState, pos: egui::Pos2) {
     );
 }
 
-/// Posiciones (con fuentes reales) de la fila «Crop»: el botón Crop/Done a la
-/// izquierda y Reset junto a él.
-const CROP_TOGGLE_POS: egui::Pos2 = egui::Pos2::new(40.0, 516.0);
-const CROP_RESET_POS: egui::Pos2 = egui::Pos2::new(100.0, 515.0);
-
 /// El botón «Crop» de una capa de imagen entra en modo recorte, y al pulsarlo
 /// de nuevo («Done») lo deja.
 #[test]
@@ -896,13 +921,15 @@ fn clicking_the_crop_button_enters_and_exits_crop_mode() {
     let _id = cropped_image(&mut state);
     assert!(!state.crop_mode);
 
-    panel_click(&ctx, &mut state, CROP_TOGGLE_POS);
+    let label = if state.crop_mode { "Done" } else { "Crop" };
+    panel_click(&ctx, &mut state, label);
     assert!(
         state.crop_mode,
         "pulsar «Crop» debe activar el modo recorte"
     );
 
-    panel_click(&ctx, &mut state, CROP_TOGGLE_POS);
+    let label = if state.crop_mode { "Done" } else { "Crop" };
+    panel_click(&ctx, &mut state, label);
     assert!(
         !state.crop_mode,
         "pulsar «Done» debe salir del modo recorte"
@@ -924,7 +951,7 @@ fn resetting_a_crop_commits_an_undoable_composite() {
     let restored_expected = canvas_core::uncrop_transform(&before.1, before.0);
     let (orig_crop, orig_transform) = before;
 
-    panel_click(&ctx, &mut state, CROP_RESET_POS);
+    panel_click(&ctx, &mut state, "Reset");
 
     let after = state.doc.layer(id).unwrap();
     assert!(

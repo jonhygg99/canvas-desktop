@@ -29,6 +29,8 @@ impl AppInner {
         is_root: bool,
         paste_requested: bool,
     ) {
+        crate::ui_style::apply(ctx, &self.settings);
+        crate::i18n::set_language(self.settings.language);
         let mut open_next: Option<Nav> = None;
         let mut pending_menu_action: Option<menus::MenuAction> = None;
 
@@ -40,13 +42,12 @@ impl AppInner {
         self.sync_and_show_menu(ui, ctx, ws, is_root);
 
         match &mut ws.view {
-            View::Welcome { error } => {
-                let error = error.clone();
+            View::Welcome { .. } => {
                 let before_recent = self.settings.recent_files.len();
                 let before_pin = self.settings.pinned_folders.len();
                 open_next = views::welcome_view_ui(
                     ui,
-                    error.as_deref(),
+                    &mut ws.view,
                     &mut self.settings.recent_files,
                     &mut self.settings.pinned_folders,
                     &mut ws.show_settings,

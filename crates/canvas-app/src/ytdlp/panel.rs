@@ -24,43 +24,45 @@ pub fn panel_ui(
 ) {
     let Some(ytdlp) = api::ytdlp_path() else {
         ui.add_space(8.0);
-        ui.label("yt-dlp.exe not found");
+        ui.label(crate::i18n::tr("yt-dlp.exe not found"));
         ui.add_space(4.0);
-        ui.weak(
+        ui.weak(crate::i18n::tr(
             "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\n\
              or set YTDLP_PATH and restart the app.",
-        );
+        ));
         return;
     };
     let _ = ytdlp;
 
     ui.add_space(6.0);
-    ui.label("Video URL (one per line, playlist allowed):");
+    ui.label(crate::i18n::tr(
+        "Video URL (one per line, playlist allowed):",
+    ));
     ui.add(
         egui::TextEdit::multiline(&mut panel.urls)
-            .hint_text("https://youtube.com/watch?v=…")
+            .hint_text(crate::i18n::tr("https://youtube.com/watch?v=…"))
             .desired_rows(3)
             .desired_width(f32::INFINITY),
     );
 
     ui.add_space(6.0);
-    ui.label("Trim (optional, HH:MM:SS):");
+    ui.label(crate::i18n::tr("Trim (optional, HH:MM:SS):"));
     ui.horizontal(|ui| {
-        ui.label("From");
+        ui.label(crate::i18n::tr("From"));
         ui.add(
             egui::TextEdit::singleline(&mut panel.start)
-                .hint_text("0:00")
+                .hint_text(crate::i18n::tr("0:00"))
                 .desired_width(70.0),
         );
-        ui.label("To");
+        ui.label(crate::i18n::tr("To"));
         ui.add(
             egui::TextEdit::singleline(&mut panel.end)
-                .hint_text("end")
+                .hint_text(crate::i18n::tr("end"))
                 .desired_width(70.0),
         );
     });
     ui.add_space(2.0);
-    ui.checkbox(&mut panel.mute, "Mute (no audio)");
+    ui.checkbox(&mut panel.mute, crate::i18n::tr("Mute (no audio)"));
 
     ui.add_space(4.0);
     match &dest {
@@ -68,7 +70,9 @@ pub fn panel_ui(
             ui.weak(format!("Save to: {}", d.display()));
         }
         None => {
-            ui.weak("Open a folder or canvas first to choose where to save.");
+            ui.weak(crate::i18n::tr(
+                "Open a folder or canvas first to choose where to save.",
+            ));
         }
     }
 
@@ -77,7 +81,7 @@ pub fn panel_ui(
     let has_urls = !urls.is_empty();
     let can_download = !panel.downloading && has_urls && dest.is_some();
     if ui
-        .add_enabled(can_download, egui::Button::new("Download"))
+        .add_enabled(can_download, egui::Button::new(crate::i18n::tr("Download")))
         .clicked()
     {
         panel.downloading = true;
@@ -98,7 +102,7 @@ pub fn panel_ui(
         loader::spawn_ytdlp_download(request, tx.clone(), ui.ctx().clone());
     }
     if !has_urls && !panel.urls.trim().is_empty() {
-        ui.weak("Paste an http(s):// URL first.");
+        ui.weak(crate::i18n::tr("Paste an http(s):// URL first."));
     }
 
     if panel.downloading {
@@ -115,20 +119,25 @@ pub fn panel_ui(
     if !panel.done.is_empty() {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label("Downloaded:");
+            ui.label(crate::i18n::tr("Downloaded:"));
             // Limpieza total a la derecha del título.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clear = ui.add_enabled(!panel.downloading, egui::Button::new("Clear"));
+                let clear = ui.add_enabled(
+                    !panel.downloading,
+                    egui::Button::new(crate::i18n::tr("Clear")),
+                );
                 if clear.clicked() {
                     loader::spawn_ytdlp_delete(panel.done.clone(), tx.clone(), ui.ctx().clone());
                 }
-                clear.on_hover_text("Move every downloaded file to the trash");
+                clear.on_hover_text(crate::i18n::tr("Move every downloaded file to the trash"));
             });
         });
         clips_ui(panel, ui, tx);
     }
     ui.add_space(4.0);
-    ui.weak("Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.");
+    ui.weak(crate::i18n::tr(
+        "Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.",
+    ));
 }
 
 /// Una fila por clip descargado: papelera roja a la izquierda, nombre y
@@ -145,17 +154,20 @@ fn clips_ui(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
             if trash.clicked() {
                 delete = Some(path.clone());
             }
-            trash.on_hover_text("Move to trash");
+            trash.on_hover_text(crate::i18n::tr("Move to trash"));
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
             ui.label(name);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("Editar").clicked() {
+                if ui.small_button(crate::i18n::tr("Edit")).clicked() {
                     edit = Some(path.clone());
                 }
-                if ui.small_button("Insertar al canvas").clicked() {
+                if ui
+                    .small_button(crate::i18n::tr("Insert on canvas"))
+                    .clicked()
+                {
                     insert = Some(path.clone());
                 }
             });

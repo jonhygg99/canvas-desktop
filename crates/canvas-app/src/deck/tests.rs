@@ -281,7 +281,10 @@ fn apply_jump_swaps_content_and_preserves_dirty_flag() {
     deck.slots[1].content = SlotContent::Ready(Box::new(blank_slot_doc(50.0, 50.0)));
     let mut state = crate::editor::EditorState::new_blank(20.0, 20.0);
     deck.jump_to = Some(1);
-    assert!(apply_jump(&mut deck, &mut state));
+    assert!(matches!(
+        apply_jump(&mut deck, &mut state),
+        JumpOutcome::Applied
+    ));
     assert_eq!(deck.active, 1);
     assert_eq!(state.doc.page().unwrap().width, 50.0);
     assert!(matches!(deck.slots[1].content, SlotContent::Active));
@@ -1108,4 +1111,109 @@ fn keep_under_critical_keeps_only_a_pending_jump() {
             "candidates={candidates:?} jump={jump:?}",
         );
     }
+}
+
+/// Saltar a una ranura fallida descarta la petición con su nombre y tipo
+/// (la UI lo convierte en banner) en vez del `false` silencioso de antes.
+#[test]
+fn jump_to_a_failed_slot_reports_it_for_the_banner() {
+    let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    deck.slots[1].content = SlotContent::Failed {
+        message: "Could not decode".to_owned(),
+        kind: Some(canvas_io::CorruptionKind::Empty),
+    };
+    let mut state = crate::editor::EditorState::new_blank(20.0, 20.0);
+    deck.jump_to = Some(1);
+    match apply_jump(&mut deck, &mut state) {
+        JumpOutcome::DroppedFailed { name, kind } => {
+            assert_eq!(name, "b.png");
+            assert_eq!(kind, Some(canvas_io::CorruptionKind::Empty));
+        }
+        other => panic!("se esperaba descarte con aviso, fue {other:?}"),
+    }
+    assert_eq!(deck.jump_to, None);
+    assert_eq!(deck.active, 0);
+}
+
+/// Tabla del mensaje por tipo: cada clase explica y orienta (reparar /
+/// re-descargar / cuarentena) en vez del error técnico crudo.
+#[test]
+fn failure_notice_explains_each_kind() {
+    use canvas_io::CorruptionKind as Kind;
+    let cases = [
+        (Some(Kind::Empty), "Empty file"),
+        (Some(Kind::Truncated), "Truncated file"),
+        (Some(Kind::ChecksumMismatch), "Try repair"),
+        (Some(Kind::Undecodable), "quarantine"),
+        (None, "Could not decode"),
+    ];
+    for (kind, hint) in cases {
+        let text = failure_notice(kind, "Could not decode \"x\": details");
+        assert!(
+            text.contains(hint),
+            "kind={kind:?} debería mencionar {hint:?}, fue {text:?}"
+        );
+    }
+}
+
+/// Una ranura `Failed` cuyo archivo cambió en disco vuelve a `Idle` (con
+/// miniatura y tamaño por re-sondear) para que la carga se reintente: un
+/// PNG re-descargado sano no debe seguir fallando toda la sesión. Sin
+/// cambio de `mtime`, el fallo se conserva (no reintentar en bucle).
+#[test]
+fn merge_scan_retries_failed_slots_whose_file_changed() {
+    use std::time::{Duration, SystemTime};
+
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    let t1 = SystemTime::UNIX_EPOCH + Duration::from_secs(2000);
+
+    // Con cambio de mtime: reintento.
+    let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    let b = deck
+        .slots
+        .iter_mut()
+        .find(|s| s.path.as_path() == Path::new("b.png"))
+        .expect("ranura b");
+    b.content = SlotContent::Failed {
+        message: "Could not decode".to_owned(),
+        kind: None,
+    };
+    b.mtime = Some(t0);
+    b.thumb_failed = true;
+    b.page = Some((10.0, 10.0));
+    deck.merge_scan(vec![
+        (PathBuf::from("a.png"), Some(t0)),
+        (PathBuf::from("b.png"), Some(t1)),
+    ]);
+    let b = deck
+        .slots
+        .iter()
+        .find(|s| s.path.as_path() == Path::new("b.png"))
+        .expect("ranura b tras el reescaneo");
+    assert!(matches!(b.content, SlotContent::Idle));
+    assert!(!b.thumb_failed);
+    assert_eq!(b.page, None);
+
+    // Sin cambio de mtime: el fallo se conserva.
+    let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    let b = deck
+        .slots
+        .iter_mut()
+        .find(|s| s.path.as_path() == Path::new("b.png"))
+        .expect("ranura b");
+    b.content = SlotContent::Failed {
+        message: "Could not decode".to_owned(),
+        kind: None,
+    };
+    b.mtime = Some(t0);
+    deck.merge_scan(vec![
+        (PathBuf::from("a.png"), Some(t0)),
+        (PathBuf::from("b.png"), Some(t0)),
+    ]);
+    let b = deck
+        .slots
+        .iter()
+        .find(|s| s.path.as_path() == Path::new("b.png"))
+        .expect("ranura b tras el reescaneo");
+    assert!(matches!(b.content, SlotContent::Failed { .. }));
 }
