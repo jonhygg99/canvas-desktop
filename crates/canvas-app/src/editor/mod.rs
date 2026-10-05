@@ -14,6 +14,7 @@ pub(crate) mod canvas;
 pub(crate) mod document_bar;
 mod interaction;
 mod layer_ops;
+mod marquee;
 mod selection_geometry;
 mod selection_gesture;
 #[cfg(test)]

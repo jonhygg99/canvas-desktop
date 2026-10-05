@@ -18,6 +18,7 @@ use super::{EditorState, HANDLE_SIZE};
 pub(super) enum Gesture {
     None,
     Selection(super::selection_gesture::SelectionGesture),
+    Marquee(super::marquee::Marquee),
     Move {
         layer: LayerId,
         start: Transform,
@@ -70,6 +71,9 @@ pub(super) fn layer_interaction(
     rect: egui::Rect,
 ) {
     if super::selection_gesture::handle(state, ui, response, rect) {
+        return;
+    }
+    if super::marquee::handle(state, ui, response, rect) {
         return;
     }
     let pointer = response
@@ -311,7 +315,7 @@ pub(super) fn layer_interaction(
                     }
                     show_drag_tag(ui, pos, format_dims(&t));
                 }
-                Gesture::None | Gesture::Selection(_) => {}
+                Gesture::None | Gesture::Selection(_) | Gesture::Marquee(_) => {}
             }
         }
     }
@@ -366,7 +370,7 @@ pub(super) fn layer_interaction(
                     }
                 }
             }
-            Gesture::None | Gesture::Selection(_) => {}
+            Gesture::None | Gesture::Selection(_) | Gesture::Marquee(_) => {}
         }
     }
 

@@ -132,3 +132,35 @@ fn rotation_handle_rotates_both_layers_around_selection_center() {
     assert!((state.doc.layer(a).unwrap().transform.rotation - 90.0).abs() < 1e-9);
     assert!((state.doc.layer(b).unwrap().transform.center().1 - 180.0).abs() < 1e-9);
 }
+
+#[test]
+fn marquee_selects_contained_layers_and_ignores_locked_ones() {
+    let (ctx, mut state, a, b) = fixture();
+    state.selection.clear();
+    state.doc.layer_mut(b).unwrap().locked = true;
+    frame(&ctx, &mut state, pointer(10.0, 10.0, Some(true)));
+    frame(&ctx, &mut state, pointer(150.0, 90.0, None));
+    frame(&ctx, &mut state, pointer(150.0, 90.0, Some(false)));
+    assert_eq!(state.selection.ids(), &[a]);
+    assert_eq!(state.history.undo_depth(), 0);
+}
+
+#[test]
+fn escape_cancels_marquee_and_restores_prior_selection() {
+    let (ctx, mut state, a, b) = fixture();
+    frame(&ctx, &mut state, pointer(150.0, 90.0, Some(true)));
+    frame(&ctx, &mut state, pointer(90.0, 10.0, None));
+    assert_eq!(state.selection.ids(), &[b]);
+    frame(
+        &ctx,
+        &mut state,
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert!(state.selection.contains(a) && state.selection.contains(b));
+}
