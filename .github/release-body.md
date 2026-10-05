@@ -1,3 +1,9 @@
+## Novedades de v0.6.0
+
+- Edición de vídeo con controles de zoom, posición, desenfoque, tamaño del canvas y recorte preciso.
+- Mejoras en reproducción, previsualización vertical y descarga; el audio se excluye por defecto.
+- Ajustes y reinicio más claros, y panel de edición desplazable junto a la previsualización.
+
 Apps de escritorio **nativas** para Windows, macOS y Linux. Elige tu sistema,
 descarga el archivo y ya está: no hace falta tener Rust instalado ni compilar
 nada.
