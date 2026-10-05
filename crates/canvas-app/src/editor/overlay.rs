@@ -45,6 +45,7 @@ pub(super) fn draw_selection_overlay(
     let painter = ui.painter_at(clip);
     super::marquee::draw(state, ui, coord, clip);
     super::layer_picking::draw(state, ui, coord, clip);
+    super::spacing_overlay::draw(state, ui, coord, clip);
 
     // Guías magnéticas activas (líneas que cruzan todo el lienzo).
     let guide_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 64, 129));
