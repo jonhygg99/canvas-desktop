@@ -8,6 +8,44 @@ use canvas_core::{LayerId, Selection, ShapeKind};
 use eframe::egui;
 
 #[test]
+fn arrow_and_diamond_previews_keep_their_aspect_when_sidebar_grows() {
+    type DrawPreview = fn(&egui::Painter, egui::Rect, egui::Color32);
+    let previews: [DrawPreview; 2] = [
+        crate::app_icons::draw_arrow_preview,
+        crate::app_icons::draw_diamond_preview,
+    ];
+    for draw in previews {
+        let mut ratios = Vec::new();
+        for width in [50.0, 90.0, 170.0] {
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                draw(
+                    ui.painter(),
+                    egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(width, 38.0)),
+                    egui::Color32::WHITE,
+                );
+            });
+            let bounds = output
+                .shapes
+                .iter()
+                .find_map(|shape| {
+                    if let egui::Shape::Path(path) = &shape.shape {
+                        Some(egui::Rect::from_points(&path.points))
+                    } else {
+                        None
+                    }
+                })
+                .expect("el preview dibuja una silueta poligonal");
+            ratios.push(bounds.width() / bounds.height());
+            assert!(bounds.width() <= width && bounds.height() <= 38.001);
+        }
+        for ratio in &ratios[1..] {
+            assert!((ratios[0] - ratio).abs() < 0.001, "{ratios:?}");
+        }
+    }
+}
+
+#[test]
 fn focused_tool_tab_opens_with_enter_without_a_mouse_gesture() {
     let ctx = egui::Context::default();
     let mut active = crate::editor::state::LeftTab::Layers;

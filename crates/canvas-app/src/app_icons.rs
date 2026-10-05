@@ -858,6 +858,7 @@ pub fn draw_star_preview(painter: &egui::Painter, rect: egui::Rect, color: egui:
 /// sobre la caja), con la cabeza redondeada: astil y triángulo comparten
 /// el estilo redondeado.
 pub fn draw_arrow_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let rect = preview_aspect_rect(rect, 2.0);
     let (w, h) = (rect.width(), rect.height());
     let y = rect.center().y;
     let shaft_end = rect.left() + w * 0.60;
@@ -914,6 +915,7 @@ pub fn draw_hexagon_preview(painter: &egui::Painter, rect: egui::Rect, color: eg
 
 /// Rombo (misma geometría que la capa).
 pub fn draw_diamond_preview(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let rect = preview_aspect_rect(rect, 1.0);
     polygon_preview(
         painter,
         rect,
@@ -921,6 +923,12 @@ pub fn draw_diamond_preview(painter: &egui::Painter, rect: egui::Rect, color: eg
         color,
         true,
     );
+}
+
+/// Ajusta el preview a su proporción de inserción, centrado en la tarjeta.
+fn preview_aspect_rect(rect: egui::Rect, aspect: f32) -> egui::Rect {
+    let width = rect.width().min(rect.height() * aspect);
+    egui::Rect::from_center_size(rect.center(), egui::vec2(width, width / aspect))
 }
 
 /// Cruz (misma geometría que la capa).
