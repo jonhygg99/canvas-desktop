@@ -63,6 +63,26 @@ fn build_layout(
     layout
 }
 
+/// Fuente resuelta por el mismo motor que pinta el documento. El editor
+/// puede reutilizar sus bytes sin enumerar otra vez las fuentes del sistema.
+pub fn text_font(content: &TextContent) -> Option<vello::peniko::FontData> {
+    let mut ctx = text_ctx().lock().ok()?;
+    let TextCtx { fonts, layouts } = &mut *ctx;
+    let probe = TextContent {
+        text: "Ag".into(),
+        ..content.clone()
+    };
+    let layout = build_layout(fonts, layouts, &probe, 1000.0);
+    for line in layout.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                return Some(run.run().font().clone());
+            }
+        }
+    }
+    None
+}
+
 /// Pinta una capa de texto: layout con parley, glifos con vello.
 pub(super) fn draw_text(
     scene: &mut Scene,

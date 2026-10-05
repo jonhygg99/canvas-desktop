@@ -18,6 +18,7 @@ mod gesture_cancel;
 pub(crate) mod inline_text;
 #[cfg(test)]
 mod inline_text_tests;
+mod inline_typography;
 pub(crate) mod insert_tool;
 #[cfg(test)]
 mod insert_tool_tests;

@@ -94,6 +94,17 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
     let LayerContent::Text(mut text) = layer.content.clone() else {
         return;
     };
+    let Some(family) = super::inline_typography::font(ui.ctx(), &text) else {
+        state.inline_text = Some(edit);
+        return;
+    };
+    let style = text.clone();
+    let zoom = state.viewport.zoom as f32;
+    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| {
+        let job =
+            super::inline_typography::job(buffer.as_str(), &style, family.clone(), zoom, width);
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
     let corners = layer_corners_screen(&state.viewport, coord, &layer.transform);
     let bounds = egui::Rect::from_points(&corners);
     let mut done = ui.input_mut(|i| {
@@ -108,14 +119,24 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
         .fixed_pos(bounds.min)
         .constrain_to(clip)
         .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
+            let fill = if style.color[..3].iter().map(|c| u32::from(*c)).sum::<u32>() > 384 {
+                egui::Color32::from_gray(24)
+            } else {
+                egui::Color32::WHITE
+            };
+            egui::Frame::popup(ui.style()).fill(fill).show(ui, |ui| {
                 let width = bounds.width().clamp(80.0, (clip.width() - 16.0).max(80.0));
                 let r = ui.add(
                     egui::TextEdit::multiline(&mut text.text)
                         .id(egui::Id::new(("inline_text", edit.layer.raw())))
-                        .font(egui::FontId::proportional(
-                            text.size * state.viewport.zoom as f32,
+                        .background_color(fill)
+                        .text_color(egui::Color32::from_rgba_unmultiplied(
+                            style.color[0],
+                            style.color[1],
+                            style.color[2],
+                            style.color[3],
                         ))
+                        .layouter(&mut layouter)
                         .desired_width(width)
                         .desired_rows(2),
                 );
