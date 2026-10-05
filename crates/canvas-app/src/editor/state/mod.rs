@@ -24,6 +24,7 @@ use super::Viewport;
 mod background;
 mod constructors;
 mod history;
+mod history_navigation;
 mod layer_factory;
 mod shortcuts;
 mod sidecar;

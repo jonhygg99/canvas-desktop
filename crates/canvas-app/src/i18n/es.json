@@ -417,5 +417,17 @@
   "No guides yet": "Todavía no hay guías",
   "Locked": "Bloqueada",
   "Remove": "Eliminar",
-  "Duplicate selection": "Duplicar selección"
+  "Duplicate selection": "Duplicar selección",
+  "History": "Historial",
+  "Earlier state": "Estado anterior",
+  "Choose a state to undo or redo": "Elige un estado para deshacer o rehacer",
+  "Earlier steps belong to another canvas": "Los pasos anteriores pertenecen a otro lienzo",
+  "Transform selection": "Transformar selección",
+  "Edit content": "Editar contenido",
+  "Insert layer": "Añadir capa",
+  "Delete layer": "Eliminar capa",
+  "Reorder layers": "Reordenar capas",
+  "Page size": "Tamaño de página",
+  "Align selection": "Alinear selección",
+  "Distribute selection": "Distribuir selección"
 }

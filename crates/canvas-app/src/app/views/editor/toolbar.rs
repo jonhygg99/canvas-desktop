@@ -27,6 +27,7 @@ pub(super) fn show(
             editor::document_bar::mode_ui(state, ui);
             ui.separator();
             action = actions(state, ui, f);
+            editor::history_panel::show(state, ui);
             if ui.button(crate::i18n::tr("Help")).clicked() {
                 ui.data_mut(|d| {
                     let id = egui::Id::new("editor-help");

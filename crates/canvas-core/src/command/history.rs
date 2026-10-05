@@ -173,6 +173,16 @@ impl History {
         self.undo.len()
     }
 
+    /// Etiquetas de más antiguo a más reciente, sin exponer comandos mutables.
+    pub fn undo_labels(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.undo.iter().map(|command| command.label())
+    }
+
+    /// Etiquetas en el orden en que se pueden rehacer.
+    pub fn redo_labels(&self) -> impl Iterator<Item = &str> {
+        self.redo.iter().rev().map(|command| command.label())
+    }
+
     /// Marca como guardado SOLO si el historial sigue en la revisión
     /// capturada al lanzar el worker (A04). Devuelve si marcó: si hubo
     /// ediciones (o deshacer/rehacer) durante el guardado, conserva dirty y
