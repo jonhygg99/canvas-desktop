@@ -74,3 +74,53 @@ fn double_click_opens_selected_design() {
         matches!(frame(&ctx, 0.22, Some(false), &mut selected), Some(GalleryAction::Open(path)) if path == std::path::Path::new("photo.png"))
     );
 }
+
+#[test]
+fn complete_gallery_renders_and_scrolls_keyboard_selection_without_locking_context() {
+    let folder = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut state =
+        super::GalleryState::new(folder.path().into(), Default::default(), Default::default());
+    state.scanned = true;
+    state.items = ["alpha.png", "beta.png"]
+        .into_iter()
+        .map(|name| GalleryItem {
+            path: folder.path().join(name),
+            name: name.into(),
+            kind: ItemKind::Image,
+            mtime: None,
+            tex: None,
+            failed: false,
+        })
+        .collect();
+    for frame in 0..3 {
+        let events = if frame == 2 {
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        } else {
+            vec![]
+        };
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::show(&mut state, ui);
+            },
+        );
+    }
+    assert_eq!(
+        state.selected.as_deref(),
+        Some(state.items[0].path.as_path())
+    );
+}

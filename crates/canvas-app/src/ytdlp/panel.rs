@@ -161,11 +161,11 @@ fn clips_ui(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
                 .unwrap_or_else(|| path.display().to_string());
             ui.label(name);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button(crate::i18n::tr("Editar")).clicked() {
+                if ui.small_button(crate::i18n::tr("Edit")).clicked() {
                     edit = Some(path.clone());
                 }
                 if ui
-                    .small_button(crate::i18n::tr("Insertar al canvas"))
+                    .small_button(crate::i18n::tr("Insert on canvas"))
                     .clicked()
                 {
                     insert = Some(path.clone());

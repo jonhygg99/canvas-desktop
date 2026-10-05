@@ -150,11 +150,13 @@ pub(super) fn layer_properties_ui(
         if natural.0 > 0.0 && natural.1 > 0.0 {
             let mut scale = t.width / natural.0 * 100.0;
             ui.horizontal(|ui| {
-                ui.label(if matches!(layer.content, LayerContent::Video(_)) {
-                    "Zoom"
-                } else {
-                    "Scale"
-                });
+                ui.label(crate::i18n::tr(
+                    if matches!(layer.content, LayerContent::Video(_)) {
+                        "Zoom"
+                    } else {
+                        "Scale"
+                    },
+                ));
                 if track(
                     ui.add(
                         egui::DragValue::new(&mut scale)

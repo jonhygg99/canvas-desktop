@@ -7,6 +7,62 @@ use crate::settings::LayersTabOrder;
 use canvas_core::{LayerId, Selection, ShapeKind};
 use eframe::egui;
 
+#[test]
+fn focused_tool_tab_opens_with_enter_without_a_mouse_gesture() {
+    let ctx = egui::Context::default();
+    let mut active = crate::editor::state::LeftTab::Layers;
+    let mut collapsed = true;
+    let focus = egui::Id::new(("left-tab-keyboard", crate::editor::state::LeftTab::Insert));
+    for frame in 0..2 {
+        if frame == 1 {
+            ctx.memory_mut(|memory| memory.request_focus(focus));
+        }
+        let events = if frame == 1 {
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }]
+        } else {
+            vec![]
+        };
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                vertical_tab_strip_ui(ui, &mut active, &mut collapsed, Default::default(), true);
+            },
+        );
+    }
+    assert_eq!(active, crate::editor::state::LeftTab::Insert);
+    assert!(!collapsed);
+}
+
+#[test]
+fn button_reordering_is_undoable_and_stays_inside_the_stack() {
+    let mut state = crate::editor::EditorState::new_blank(100.0, 100.0);
+    for name in ["bottom", "top"] {
+        state.insert_layer_centered(
+            name,
+            20.0,
+            20.0,
+            canvas_core::LayerContent::Shape(Default::default()),
+        );
+    }
+    let selected = state.selection.primary().unwrap();
+    ops::move_selected(&mut state, -1);
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(0));
+    ops::move_selected(&mut state, -1);
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(0));
+    state.undo();
+    assert_eq!(state.doc.page().unwrap().sibling_index(selected), Some(1));
+    assert_eq!(state.selection.primary(), Some(selected));
+}
+
 /// Lo que debe crear `insert_item` para cada etiqueta del panel Insert:
 /// nombre de la capa, tamaño y tipo de contenido. Espejo de `insert_item`
 /// para detectar cualquier desvío entre lo que ofrece la cuadrícula y lo
@@ -1357,7 +1413,16 @@ fn left_panel_renders_every_tab_without_panicking() {
                     generation: 0,
                     slot_id: 0,
                 };
-                let _ = left_panel_ui(&mut state, ui, &mut settings, None, insert_dest, &tx);
+                let mut collapsed = settings.layers_collapsed;
+                let _ = left_panel_ui(
+                    &mut state,
+                    ui,
+                    &mut settings,
+                    None,
+                    insert_dest,
+                    &tx,
+                    &mut collapsed,
+                );
             },
         );
         assert!(

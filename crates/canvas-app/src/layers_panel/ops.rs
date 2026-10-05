@@ -12,6 +12,7 @@ use crate::editor::EditorState;
 use super::Drop;
 
 pub(super) fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
+    order_buttons(state, ui);
     ui.horizontal_wrapped(|ui| {
         let (can_group, can_ungroup, can_delete) = match state.doc.page() {
             Ok(page) => {
@@ -62,6 +63,51 @@ pub(super) fn toolbar_ui(state: &mut EditorState, ui: &mut egui::Ui) {
             crate::editor::delete_selected(state);
         }
     });
+}
+
+fn order_buttons(state: &mut EditorState, ui: &mut egui::Ui) {
+    ui.horizontal_wrapped(|ui| {
+        for (offset, label) in [(1, "Move layer up"), (-1, "Move layer down")] {
+            if ui
+                .add_enabled(
+                    order_target(state, offset).is_some(),
+                    egui::Button::new(crate::i18n::tr(label)),
+                )
+                .clicked()
+            {
+                move_selected(state, offset);
+            }
+        }
+    });
+}
+
+fn order_target(state: &EditorState, offset: isize) -> Option<(LayerId, Option<LayerId>, usize)> {
+    let page = state.doc.page().ok()?;
+    let roots = state.selection.roots(page);
+    if roots.len() != 1 {
+        return None;
+    }
+    let id = roots[0];
+    if Some(id) == state.background_layer || page.effective_locked(id) {
+        return None;
+    }
+    let parent = page.layer(id)?.parent_id;
+    let index = page.sibling_index(id)?;
+    let siblings = page.children_of(parent);
+    let next = index.checked_add_signed(offset)?;
+    if next >= siblings.len() || Some(siblings[next]) == state.background_layer {
+        return None;
+    }
+    Some((id, parent, next))
+}
+
+pub(super) fn move_selected(state: &mut EditorState, offset: isize) {
+    if let Some((id, parent, next)) = order_target(state, offset) {
+        let mut command = Reorder::new(id, parent, next);
+        if command.apply(&mut state.doc).is_ok() {
+            state.push_undo_step(Box::new(command));
+        }
+    }
 }
 
 /// La selección, sin descendientes-de-otro-miembro (ver `Selection::roots`)

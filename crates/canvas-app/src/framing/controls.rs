@@ -62,11 +62,11 @@ pub(super) fn show(session: &mut Session, ui: &mut egui::Ui) {
                 ));
             }
         }
-        ui.weak(if !session.is_dirty() {
+        ui.weak(crate::i18n::tr(if !session.is_dirty() {
             "Framing saved"
         } else {
             "Framing not saved"
-        });
+        }));
     });
     if session.busy() {
         ui.spinner();

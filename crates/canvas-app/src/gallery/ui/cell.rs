@@ -155,7 +155,19 @@ fn gallery_cell_inner(
     rename_edit: &mut Option<(PathBuf, String)>,
     mut framings: Option<&mut super::super::framing::GalleryFramings>,
 ) -> Option<GalleryAction> {
+    let viewport = ui.ctx().viewport_id();
     let (rect, response) = ui.allocate_exact_size(cell_size, egui::Sense::click());
+    if selected.as_deref() == Some(item.path.as_path())
+        && ui.data(|d| {
+            d.get_temp::<bool>(egui::Id::new(("gallery-scroll-selection", viewport)))
+                .unwrap_or(false)
+        })
+    {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        ui.data_mut(|d| {
+            d.insert_temp(egui::Id::new(("gallery-scroll-selection", viewport)), false)
+        });
+    }
     // Fuera del viewport no hay click posible: solo se reservó espacio para
     // el scroll. Sin este corte, una celda invisible podía emitir `Open`.
     if !ui.is_rect_visible(rect) {
@@ -325,7 +337,8 @@ fn gallery_cell_inner(
                 ui.close();
             }
             ui.separator();
-            let delete_label = egui::RichText::new(crate::i18n::tr("Delete")).color(ui.visuals().warn_fg_color);
+            let delete_label =
+                egui::RichText::new(crate::i18n::tr("Delete")).color(ui.visuals().warn_fg_color);
             if ui.button(delete_label).clicked() {
                 action = Some(GalleryAction::Delete(item.path.clone()));
                 ui.close();

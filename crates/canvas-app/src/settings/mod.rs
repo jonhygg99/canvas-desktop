@@ -4,15 +4,16 @@
 
 use std::path::PathBuf;
 
-use eframe::egui;
 use serde::{Deserialize, Serialize};
 
 use crate::deck::{DeckAxis, StripSide};
 
+mod appearance;
 mod choices;
 mod sort;
 mod writer;
 
+pub use appearance::Density;
 pub use choices::{BulkCanvasSize, GallerySort, NewCanvasFormat, ThemeChoice};
 pub use sort::natural_cmp;
 pub(crate) use writer::flush_settings;

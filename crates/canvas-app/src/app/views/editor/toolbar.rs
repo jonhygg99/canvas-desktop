@@ -26,42 +26,7 @@ pub(super) fn show(
         ui.horizontal_wrapped(|ui| {
             editor::document_bar::mode_ui(state, ui);
             ui.separator();
-            let busy = state.saving || state.exporting || state.framing.is_some();
-            ui.add_enabled_ui(!busy, |ui| {
-                if ui
-                    .button(crate::i18n::tr("Save editable design…"))
-                    .on_hover_text(crate::i18n::tr(
-                        "Preserves layers in a standalone .canvas file",
-                    ))
-                    .clicked()
-                {
-                    if state.is_design {
-                        state.save_clicked = true;
-                    } else {
-                        loader::spawn_pick_design_path(
-                            Some(state.file_name()),
-                            f.tx.clone(),
-                            ui.ctx().clone(),
-                        );
-                    }
-                }
-                if !state.is_design
-                    && ui
-                        .button(crate::i18n::tr("Overwrite original"))
-                        .on_hover_text(crate::i18n::tr(
-                            "Replaces the source image; the existing confirmation still applies",
-                        ))
-                        .clicked()
-                {
-                    state.save_clicked = true;
-                }
-                if ui.button(crate::i18n::tr("Save as…")).clicked() {
-                    state.save_as_clicked = true;
-                }
-                if ui.button(crate::i18n::tr("Export image…")).clicked() {
-                    action = Some(menus::MenuAction::Export);
-                }
-            });
+            action = actions(state, ui, f);
             if ui.button(crate::i18n::tr("Help")).clicked() {
                 ui.data_mut(|d| {
                     let id = egui::Id::new("editor-help");
@@ -70,26 +35,75 @@ pub(super) fn show(
                 });
             }
         });
-        // Ayuda progresiva: no ocupa permanentemente el inspector.
-        let help = egui::Id::new("editor-help");
-        if ui.data(|d| d.get_temp::<bool>(help).unwrap_or(false)) {
-            let command = crate::i18n::command();
-            ui.weak(format!(
-                "{} · {command}+wheel: {} · {command}+0: {}",
-                crate::i18n::tr("Wheel: pan · Space: pan"),
-                crate::i18n::tr("Zoom"),
-                crate::i18n::tr("Fit to Window")
-            ));
-            ui.weak(format!(
-                "{command}+S: {} · {command}+Z: {} · {command}+C/V: {}/{}",
-                crate::i18n::tr("Save"),
-                crate::i18n::tr("Undo"),
-                crate::i18n::tr("Copy"),
-                crate::i18n::tr("Paste")
-            ));
+        help(ui);
+    });
+    action
+}
+
+fn actions(
+    state: &mut editor::EditorState,
+    ui: &mut egui::Ui,
+    f: &EditorFrame<'_>,
+) -> Option<menus::MenuAction> {
+    let mut action = None;
+    let busy = state.saving || state.exporting || state.framing.is_some();
+    ui.add_enabled_ui(!busy, |ui| {
+        if ui
+            .button(crate::i18n::tr("Save editable design…"))
+            .on_hover_text(crate::i18n::tr(
+                "Preserves layers in a standalone .canvas file",
+            ))
+            .clicked()
+        {
+            if state.is_design {
+                state.save_clicked = true;
+            } else {
+                loader::spawn_pick_design_path(
+                    Some(state.file_name()),
+                    f.tx.clone(),
+                    ui.ctx().clone(),
+                );
+            }
+        }
+        if !state.is_design
+            && ui
+                .button(crate::i18n::tr("Overwrite original"))
+                .on_hover_text(crate::i18n::tr(
+                    "Replaces the source image; the existing confirmation still applies",
+                ))
+                .clicked()
+        {
+            state.save_clicked = true;
+        }
+        if ui.button(crate::i18n::tr("Save as…")).clicked() {
+            state.save_as_clicked = true;
+        }
+        if ui.button(crate::i18n::tr("Export image…")).clicked() {
+            action = Some(menus::MenuAction::Export);
         }
     });
     action
+}
+
+fn help(ui: &mut egui::Ui) {
+    // Ayuda progresiva: no ocupa permanentemente el inspector.
+    let help = egui::Id::new("editor-help");
+    if ui.data(|d| d.get_temp::<bool>(help).unwrap_or(false)) {
+        let command = crate::i18n::command();
+        ui.weak(format!(
+            "{} · {command}+wheel: {} · {command}+0: {}",
+            crate::i18n::tr("Wheel: pan · Space: pan"),
+            crate::i18n::tr("Zoom"),
+            crate::i18n::tr("Fit to Window")
+        ));
+        ui.weak(format!(
+            "{command}+S: {} · {command}+Z: {} · {command}+C/V: {}/{}",
+            crate::i18n::tr("Save"),
+            crate::i18n::tr("Undo"),
+            crate::i18n::tr("Copy"),
+            crate::i18n::tr("Paste")
+        ));
+    }
 }
 
 fn save_status(state: &editor::EditorState) -> &'static str {

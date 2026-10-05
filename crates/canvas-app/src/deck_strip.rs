@@ -218,7 +218,7 @@ fn strip_add_cell(ui: &mut egui::Ui, m: &StripMetrics) -> bool {
     painter.text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
-        "Add canvas",
+        crate::i18n::tr("Add canvas"),
         egui::FontId::proportional(12.5),
         ui.visuals().text_color(),
     );

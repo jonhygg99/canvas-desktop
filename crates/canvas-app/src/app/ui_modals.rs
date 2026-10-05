@@ -35,6 +35,10 @@ impl AppInner {
         );
         if self.settings != before {
             self.settings.save_in_background();
+            let viewports = ctx.input(|i| i.raw.viewports.keys().copied().collect::<Vec<_>>());
+            for viewport in viewports {
+                ctx.request_repaint_of(viewport);
+            }
         }
         if let Some(action) = action {
             self.shell_status = "Working…".to_owned();

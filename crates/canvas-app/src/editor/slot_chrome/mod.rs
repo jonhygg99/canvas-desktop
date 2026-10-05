@@ -204,7 +204,7 @@ pub(super) fn draw_add_zone(state: &EditorState, deck: &Deck, ui: &egui::Ui, rec
     painter.text(
         screen_rect.center() + egui::vec2(0.0, glyph_size * 0.6),
         egui::Align2::CENTER_CENTER,
-        "Add canvas",
+        crate::i18n::tr("Add canvas"),
         egui::FontId::proportional(13.0),
         ui.visuals().weak_text_color(),
     );

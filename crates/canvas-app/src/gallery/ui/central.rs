@@ -47,26 +47,26 @@ fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Ga
         );
         use crate::gallery::framing::StatusFilter;
         egui::ComboBox::from_id_salt("framing-status")
-            .selected_text(match state.framings.filter {
+            .selected_text(crate::i18n::tr(match state.framings.filter {
                 StatusFilter::All => "All framing states",
                 StatusFilter::Saved => "Saved framings",
                 StatusFilter::Missing => "Without framing",
-            })
+            }))
             .show_ui(ui, |ui| {
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::All,
-                    "All framing states",
+                    crate::i18n::tr("All framing states"),
                 );
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::Saved,
-                    "Saved framings",
+                    crate::i18n::tr("Saved framings"),
                 );
                 ui.selectable_value(
                     &mut state.framings.filter,
                     StatusFilter::Missing,
-                    "Without framing",
+                    crate::i18n::tr("Without framing"),
                 );
             });
         if ui
@@ -113,7 +113,11 @@ fn folder_heading_ui(
     if renaming {
         let Some((_, text)) = state.folder_rename_edit.as_mut() else {
             ui.heading(&current_name);
-            ui.weak(format!("— {} items", state.items.len()));
+            ui.weak(format!(
+                "— {} {}",
+                state.items.len(),
+                crate::i18n::tr("items")
+            ));
             return false;
         };
         let id = egui::Id::new(("gallery_folder_rename_heading", &state.folder));
@@ -145,7 +149,11 @@ fn folder_heading_ui(
             });
         }
     }
-    ui.weak(format!("— {} items", state.items.len()));
+    ui.weak(format!(
+        "— {} {}",
+        state.items.len(),
+        crate::i18n::tr("items")
+    ));
     true
 }
 
@@ -324,13 +332,19 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             state.framings.card(&item.path, ui.ctx(), false);
         }
     }
+    let viewport = ui.ctx().viewport_id();
     egui::ScrollArea::vertical().show(ui, |ui| {
         let columns = state
             .gallery_columns
             .clamp(1, 12)
             .min((ui.available_width() / 140.0).floor().max(1.0) as usize);
         let mut cell_size = gallery_cell_size(ui.available_width(), columns);
-        ui.data_mut(|d| d.insert_temp(egui::Id::new("gallery-visible-columns"), columns));
+        ui.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::new(("gallery-visible-columns", viewport)),
+                columns,
+            )
+        });
         if state.framings.vertical {
             cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
         }

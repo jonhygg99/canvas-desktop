@@ -37,7 +37,9 @@ pub fn show(
             draw_welcome_actions(ui, &mut action);
             draw_recent_folders(ui, recents, pinned, &mut action);
             ui.add_space(18.0);
-            ui.weak(crate::i18n::tr("You can also drag an image or a folder onto this window."));
+            ui.weak(crate::i18n::tr(
+                "You can also drag an image or a folder onto this window.",
+            ));
             ui.add_space(8.0);
             if icon_text_button_ui(ui, true, draw_gear_icon, "Settings", None, egui::Vec2::ZERO)
                 .clicked()

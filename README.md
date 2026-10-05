@@ -23,6 +23,27 @@ Solo el instalador de **Windows x64** está soportado de verdad hoy (ver
 `CLAUDE.md`); los paquetes de macOS y Linux se publican *best-effort* y aún no
 se han verificado en hardware real.
 
+## Interfaz y preferencias
+
+La barra superior reúne navegación, nombre del archivo, estado de guardado y
+acciones: **Guardar diseño editable** conserva las capas en un `.canvas`
+independiente; **Sobrescribir original** actualiza la imagen; **Exportar imagen**
+produce un archivo de salida. Las capas de vídeo se exportan como fotograma.
+El inspector muestra propiedades según la selección y mantiene los efectos
+avanzados plegados hasta que se necesitan.
+
+**Editar / Encuadre 9:16** son modos explícitos. El encuadre no cambia el tamaño
+ni las capas del diseño. Incluye centrado, restablecimiento, guías de composición
+con margen geométrico del 10 % y aviso al salir con ajustes pendientes. Estas
+guías no representan las zonas seguras específicas de una red social.
+
+En **Ajustes** puedes elegir inglés o español, tema claro/oscuro/sistema,
+densidad cómoda/compacta, escala de interfaz del 75 al 200 % y reducción de
+movimiento. Las preferencias se conservan entre sesiones. Los paneles se pueden
+redimensionar; en ventanas estrechas se alternan herramientas e inspector.
+Los botones tienen foco visible y nombres accesibles; las pestañas admiten
+Tab e Intro/Espacio, y las capas pueden subir o bajar con botones deshacibles.
+
 ## Estado: primera entrega
 
 El canvas mínimo funcionando de punta a punta:
@@ -44,13 +65,14 @@ El canvas mínimo funcionando de punta a punta:
   Respeta la orientación EXIF. La página toma las dimensiones reales.
 - **Galería de carpeta**: abrir una carpeta muestra sus imágenes en una
   cuadrícula de miniaturas (generadas en paralelo con `rayon` y cacheadas en
-  disco). Clic para editar, botón para volver (pregunta si hay cambios).
+  disco). Un clic selecciona; doble clic o Intro abre; F2 renombra.
+  Búsqueda por nombre, filtros combinados y navegación con las flechas.
 - **Editar**: seleccionar, mover y redimensionar con manejadores de esquina
   (proporción bloqueada por defecto; `Shift` la libera), campos numéricos de
   X/Y/ancho/alto y % de escala, botones de alineación respecto a la página.
 - **Desenfoque gaussiano en GPU** (shader wgpu de dos pasadas), no
   destructivo, con vista previa en vivo. Solo se aplica de verdad al guardar.
-- **Guardar**: `Ctrl+S` (o el botón «💾 Guardar» del panel) actualiza el
+- **Guardar**: `Ctrl+S` (o «Sobrescribir original» en la barra superior) actualiza el
   archivo original en disco con escritura atómica (temporal en el mismo
   directorio + fsync + `ReplaceFileW` en Windows). `Ctrl+Shift+S` para
   «Guardar como…». Asterisco en el título con cambios sin guardar y

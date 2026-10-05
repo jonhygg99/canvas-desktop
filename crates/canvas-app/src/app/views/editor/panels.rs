@@ -22,10 +22,12 @@ pub(super) fn show_panels(
 ) {
     let mut strip_action = None;
     let mut canvas_action = None;
+    let properties_max = (ui.available_width() * 0.45).clamp(160.0, 400.0);
+    let properties_min = 220.0_f32.min(properties_max);
     if state.framing.is_some() {
         egui::Panel::right("properties")
             .default_size(260.0)
-            .size_range(220.0..=400.0)
+            .size_range(properties_min..=properties_max)
             .resizable(true)
             .show(ui, |ui| editor::properties_ui(state, ui));
         egui::CentralPanel::default().show(ui, |ui| {
@@ -44,7 +46,7 @@ pub(super) fn show_panels(
         .show(ui, |ui| {
             status_bar_ui(f, ui);
         });
-    let narrow = ui.available_width() < 960.0;
+    let narrow = ui.available_width() < 1100.0;
     if f.deck.is_visible() && !state.isolate && !narrow {
         let active_dirty = state.is_dirty();
         match f.deck.strip_side {
@@ -88,6 +90,12 @@ pub(super) fn show_panels(
     }
     let locked = f.deck.slots.get(f.deck.active).is_some_and(|s| s.locked);
     let layers_collapsed_before = f.settings.layers_collapsed;
+    let narrow_id = egui::Id::new(("narrow-tools-collapsed", ui.ctx().viewport_id()));
+    let mut layers_collapsed = if narrow {
+        ui.data(|d| d.get_temp::<bool>(narrow_id).unwrap_or(true))
+    } else {
+        f.settings.layers_collapsed
+    };
     const COLLAPSED_WIDTH: f32 = 36.0;
     // Con la pestaña Images, Web o Download activa el panel se ensancha
     // para que el contenido se vea grande; el resto usa el ancho normal.
@@ -105,7 +113,7 @@ pub(super) fn show_panels(
     type AnimState = (bool, f64, bool);
     let mut anim: Option<AnimState> = ui.data_mut(|d| d.get_temp(anim_salt).unwrap_or(None));
     let now: f64 = ui.input(|i| i.time);
-    let target_collapsed = f.settings.layers_collapsed || narrow;
+    let target_collapsed = layers_collapsed;
 
     if anim.is_none_or(|(t, _, _)| t != target_collapsed) {
         anim = Some((target_collapsed, now, false));
@@ -149,17 +157,17 @@ pub(super) fn show_panels(
     } else {
         panel
             .default_size(expanded_width)
-            .size_range(180.0..=420.0)
+            .size_range(180.0..=420.0_f32.min(ui.available_width() * 0.65).max(180.0))
             .resizable(true)
     };
     panel.show(ui, |ui| {
         ui.painter()
-            .rect_filled(ui.min_rect(), 0.0, ui.visuals().panel_fill);
+            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         if width < midpoint {
             let new_order = layers_panel::vertical_tab_strip_ui(
                 ui,
                 &mut state.active_left_tab,
-                &mut f.settings.layers_collapsed,
+                &mut layers_collapsed,
                 f.settings.layers_tab_order,
                 true,
             );
@@ -184,6 +192,7 @@ pub(super) fn show_panels(
                     f.deck.folder.clone(),
                     insert_dest,
                     f.tx,
+                    &mut layers_collapsed,
                 );
                 if let Some(new_order) = new_order {
                     if f.settings.layers_tab_order != new_order {
@@ -194,16 +203,23 @@ pub(super) fn show_panels(
             });
         }
     });
+    if narrow {
+        ui.data_mut(|d| d.insert_temp(narrow_id, layers_collapsed));
+    } else {
+        f.settings.layers_collapsed = layers_collapsed;
+    }
     if f.settings.layers_collapsed != layers_collapsed_before {
         f.settings.save_in_background();
     }
-    egui::Panel::right("properties")
-        .default_size(260.0)
-        .size_range(220.0..=400.0)
-        .resizable(true)
-        .show(ui, |ui| {
-            ui.add_enabled_ui(!locked, |ui| editor::properties_ui(state, ui));
-        });
+    if !narrow || target_collapsed {
+        egui::Panel::right("properties")
+            .default_size(260.0)
+            .size_range(properties_min..=properties_max)
+            .resizable(true)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!locked, |ui| editor::properties_ui(state, ui));
+            });
+    }
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
@@ -234,7 +250,7 @@ fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(egui::RichText::new(crate::i18n::tr("RAM libre")).weak());
+        ui.label(egui::RichText::new(crate::i18n::tr("Free RAM")).weak());
         match free {
             Some(bytes) => {
                 let (color, note) = if deck::is_critical_free_ram(free) {

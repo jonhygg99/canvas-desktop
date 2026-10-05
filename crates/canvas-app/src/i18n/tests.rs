@@ -18,3 +18,35 @@ fn language_is_persisted_and_old_settings_default_to_english() {
         serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
     assert_eq!(restored.language, Language::Spanish);
 }
+
+#[test]
+fn spanish_settings_render_translated_controls_with_unchanged_enum_values() {
+    let ctx = eframe::egui::Context::default();
+    let mut settings = crate::settings::AppSettings {
+        language: Language::Spanish,
+        ..Default::default()
+    };
+    set_language(settings.language);
+    let mut open = true;
+    for frame in 0..3 {
+        let output = ctx.run_ui(Default::default(), |_| {
+            crate::settings::settings_window(&ctx, &mut settings, &mut open, "");
+        });
+        let text = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                eframe::egui::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        if frame == 2 {
+            assert!(text.contains("Idioma"), "rendered settings: {text}");
+            assert!(text.contains("Densidad de interfaz"));
+            assert!(text.contains("Sistema"));
+        }
+    }
+    assert_eq!(settings.language, Language::Spanish);
+    set_language(Language::English);
+}

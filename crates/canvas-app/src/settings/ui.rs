@@ -14,6 +14,7 @@ pub fn settings_window(
 ) -> Option<SettingsAction> {
     let mut action = None;
     egui::Window::new(crate::i18n::tr("Settings"))
+        .id(egui::Id::new("settings-window"))
         .open(open)
         .collapsible(false)
         .resizable(true)
@@ -22,78 +23,9 @@ pub fn settings_window(
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 appearance::controls(ui, settings);
-                ui.label(crate::i18n::tr("Theme"));
-                ui.horizontal(|ui| {
-                    for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
-                        ui.selectable_value(&mut settings.theme, choice, choice.label());
-                    }
-                });
-                ui.add_space(10.0);
-
-                ui.label(crate::i18n::tr("New canvas format"));
-                egui::ComboBox::from_id_salt("new_canvas_format")
-                    .selected_text(settings.new_canvas_format.label())
-                    .show_ui(ui, |ui| {
-                        for choice in [
-                            NewCanvasFormat::Png,
-                            NewCanvasFormat::Jpeg,
-                            NewCanvasFormat::WebP,
-                            NewCanvasFormat::Canvas,
-                        ] {
-                            ui.selectable_value(
-                                &mut settings.new_canvas_format,
-                                choice,
-                                choice.label(),
-                            );
-                        }
-                    });
-                ui.weak(crate::i18n::tr(
-                    "What \"New design\" and the \"+\" canvas create: a real image file \
-                 (with its layers kept editable in a sidecar) or a standalone .canvas design.",
-                ));
-                ui.add_space(10.0);
-
-                ui.label(crate::i18n::tr("Web bulk canvas size"));
-                egui::ComboBox::from_id_salt("serper_bulk_size")
-                    .selected_text(settings.serper_bulk_size.label())
-                    .show_ui(ui, |ui| {
-                        for choice in BulkCanvasSize::ALL {
-                            ui.selectable_value(
-                                &mut settings.serper_bulk_size,
-                                choice,
-                                choice.label(),
-                            );
-                        }
-                    });
-                ui.weak(crate::i18n::tr(
-                    "Page size of every canvas created by \"Add\" in Select web images: \
-                 all canvases in the batch measure the same.",
-                ));
-                ui.add_space(10.0);
-
-                ui.label(crate::i18n::tr("JPEG quality when saving"));
-                ui.add(egui::Slider::new(&mut settings.jpeg_quality, 1..=100).show_value(true));
-                ui.weak(crate::i18n::tr(
-                    "Overwriting a JPEG re-encodes it; higher quality = larger file.",
-                ));
-                ui.add_space(10.0);
-
-                let mut ask = !settings.skip_overwrite_warning;
-                if ui
-                    .checkbox(
-                        &mut ask,
-                        crate::i18n::tr("Ask before overwriting the original file"),
-                    )
-                    .on_hover_text(crate::i18n::tr(
-                        "Shows a warning the first time you save over the original \
-                     image in each session.",
-                    ))
-                    .changed()
-                {
-                    settings.skip_overwrite_warning = !ask;
-                }
-                ui.add_space(10.0);
-
+                theme_controls(ui, settings);
+                canvas_controls(ui, settings);
+                file_controls(ui, settings);
                 explorer_section(ui, shell_status, &mut action);
             });
         });
@@ -122,4 +54,74 @@ fn explorer_section(ui: &mut egui::Ui, shell_status: &str, action: &mut Option<S
     if !shell_status.is_empty() {
         ui.weak(shell_status);
     }
+}
+
+fn theme_controls(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.label(crate::i18n::tr("Theme"));
+    ui.horizontal(|ui| {
+        for choice in [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark] {
+            ui.selectable_value(&mut settings.theme, choice, choice.label());
+        }
+    });
+    ui.add_space(10.0);
+}
+
+fn canvas_controls(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.label(crate::i18n::tr("New canvas format"));
+    egui::ComboBox::from_id_salt("new_canvas_format")
+        .selected_text(settings.new_canvas_format.label())
+        .show_ui(ui, |ui| {
+            for choice in [
+                NewCanvasFormat::Png,
+                NewCanvasFormat::Jpeg,
+                NewCanvasFormat::WebP,
+                NewCanvasFormat::Canvas,
+            ] {
+                ui.selectable_value(&mut settings.new_canvas_format, choice, choice.label());
+            }
+        });
+    ui.weak(crate::i18n::tr(
+        "What \"New design\" and the \"+\" canvas create: a real image file \
+                 (with its layers kept editable in a sidecar) or a standalone .canvas design.",
+    ));
+    ui.add_space(10.0);
+
+    ui.label(crate::i18n::tr("Web bulk canvas size"));
+    egui::ComboBox::from_id_salt("serper_bulk_size")
+        .selected_text(settings.serper_bulk_size.label())
+        .show_ui(ui, |ui| {
+            for choice in BulkCanvasSize::ALL {
+                ui.selectable_value(&mut settings.serper_bulk_size, choice, choice.label());
+            }
+        });
+    ui.weak(crate::i18n::tr(
+        "Page size of every canvas created by \"Add\" in Select web images: \
+                 all canvases in the batch measure the same.",
+    ));
+    ui.add_space(10.0);
+}
+
+fn file_controls(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.label(crate::i18n::tr("JPEG quality when saving"));
+    ui.add(egui::Slider::new(&mut settings.jpeg_quality, 1..=100).show_value(true));
+    ui.weak(crate::i18n::tr(
+        "Overwriting a JPEG re-encodes it; higher quality = larger file.",
+    ));
+    ui.add_space(10.0);
+
+    let mut ask = !settings.skip_overwrite_warning;
+    if ui
+        .checkbox(
+            &mut ask,
+            crate::i18n::tr("Ask before overwriting the original file"),
+        )
+        .on_hover_text(crate::i18n::tr(
+            "Shows a warning the first time you save over the original \
+                     image in each session.",
+        ))
+        .changed()
+    {
+        settings.skip_overwrite_warning = !ask;
+    }
+    ui.add_space(10.0);
 }

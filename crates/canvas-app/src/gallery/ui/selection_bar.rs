@@ -9,22 +9,18 @@ pub(super) fn show(
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.label(crate::i18n::tr("Search"));
-        let changed = ui
-            .add(
-                egui::TextEdit::singleline(&mut state.search)
-                    .id_salt("gallery-search")
-                    .hint_text(crate::i18n::tr("Search by name…"))
-                    .desired_width(180.0),
-            )
-            .changed();
-        if changed
-            && state.selected.as_ref().is_some_and(|path| {
-                !state
-                    .items
-                    .iter()
-                    .any(|item| &item.path == path && state.matches_item(item))
-            })
-        {
+        ui.add(
+            egui::TextEdit::singleline(&mut state.search)
+                .id_salt("gallery-search")
+                .hint_text(crate::i18n::tr("Search by name…"))
+                .desired_width(180.0),
+        );
+        if state.selected.as_ref().is_some_and(|path| {
+            !state
+                .items
+                .iter()
+                .any(|item| &item.path == path && state.matches_item(item))
+        }) {
             state.selected = None;
         }
         if !state.search.is_empty() && ui.button(crate::i18n::tr("Clear search")).clicked() {

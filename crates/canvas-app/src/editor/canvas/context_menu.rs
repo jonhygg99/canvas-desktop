@@ -24,16 +24,36 @@ pub(super) fn canvas_context_menu(
             ui.close();
         }
     };
-    item(ui, crate::i18n::tr("Undo"), state.can_undo(), MenuAction::Undo);
-    item(ui, crate::i18n::tr("Redo"), state.can_redo(), MenuAction::Redo);
+    item(
+        ui,
+        crate::i18n::tr("Undo"),
+        state.can_undo(),
+        MenuAction::Undo,
+    );
+    item(
+        ui,
+        crate::i18n::tr("Redo"),
+        state.can_redo(),
+        MenuAction::Redo,
+    );
     ui.separator();
     item(ui, crate::i18n::tr("Cut"), true, MenuAction::Cut);
     item(ui, crate::i18n::tr("Copy"), true, MenuAction::Copy);
     item(ui, crate::i18n::tr("Paste"), true, MenuAction::Paste);
-    item(ui, crate::i18n::tr("Duplicate"), true, MenuAction::Duplicate);
+    item(
+        ui,
+        crate::i18n::tr("Duplicate"),
+        true,
+        MenuAction::Duplicate,
+    );
     item(ui, crate::i18n::tr("Delete"), true, MenuAction::Delete);
     ui.separator();
-    item(ui, crate::i18n::tr("Select All"), true, MenuAction::SelectAll);
+    item(
+        ui,
+        crate::i18n::tr("Select All"),
+        true,
+        MenuAction::SelectAll,
+    );
     item(ui, crate::i18n::tr("Group"), true, MenuAction::Group);
     item(ui, crate::i18n::tr("Ungroup"), true, MenuAction::Ungroup);
     let selected_image = state.selection.primary().filter(|id| {
@@ -112,10 +132,30 @@ pub(super) fn canvas_context_menu(
                     ui.close();
                 }
             };
-            z(ui, crate::i18n::tr("Bring to Front"), can_go_forward, ZOrder::Front);
-            z(ui, crate::i18n::tr("Move Forward"), can_go_forward, ZOrder::Forward);
-            z(ui, crate::i18n::tr("Move Backward"), can_go_backward, ZOrder::Backward);
-            z(ui, crate::i18n::tr("Send to Back"), can_go_backward, ZOrder::Back);
+            z(
+                ui,
+                crate::i18n::tr("Bring to Front"),
+                can_go_forward,
+                ZOrder::Front,
+            );
+            z(
+                ui,
+                crate::i18n::tr("Move Forward"),
+                can_go_forward,
+                ZOrder::Forward,
+            );
+            z(
+                ui,
+                crate::i18n::tr("Move Backward"),
+                can_go_backward,
+                ZOrder::Backward,
+            );
+            z(
+                ui,
+                crate::i18n::tr("Send to Back"),
+                can_go_backward,
+                ZOrder::Back,
+            );
         });
     });
     ui.add_enabled_ui(sel.is_some(), |ui| {
@@ -203,7 +243,10 @@ pub(super) fn canvas_context_menu(
         .is_some_and(|l| matches!(l.content, LayerContent::Image(_) | LayerContent::Video(_)));
     let mut crop_on = state.crop_mode;
     if ui
-        .add_enabled(crop_eligible, egui::Checkbox::new(&mut crop_on, crate::i18n::tr("Crop")))
+        .add_enabled(
+            crop_eligible,
+            egui::Checkbox::new(&mut crop_on, crate::i18n::tr("Crop")),
+        )
         .clicked()
     {
         state.crop_mode = crop_on;
