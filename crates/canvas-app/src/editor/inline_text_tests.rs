@@ -95,3 +95,29 @@ fn save_request_commits_the_open_text_session_before_saving() {
     assert!(s.is_dirty());
     assert_eq!(s.history.undo_depth(), 2);
 }
+
+#[test]
+fn ctrl_enter_confirms_without_inserting_a_line_break() {
+    let (mut s, id) = fixture();
+    let before = text(&s, id);
+    let ctx = egui::Context::default();
+    inline_text::begin(&mut s, id);
+    show(&ctx, &mut s, vec![]);
+    show(&ctx, &mut s, vec![]);
+    show(&ctx, &mut s, vec![egui::Event::Text(" edited".to_owned())]);
+    show(
+        &ctx,
+        &mut s,
+        vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }],
+    );
+    assert!(s.inline_text.is_none());
+    assert!(!text(&s, id).contains('\n'));
+    s.undo();
+    assert_eq!(text(&s, id), before);
+}

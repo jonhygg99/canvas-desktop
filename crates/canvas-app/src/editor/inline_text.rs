@@ -96,8 +96,13 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
     };
     let corners = layer_corners_screen(&state.viewport, coord, &layer.transform);
     let bounds = egui::Rect::from_points(&corners);
-    let mut done = false;
-    let mut cancel = false;
+    let mut done = ui.input_mut(|i| {
+        i.consume_shortcut(&egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND,
+            egui::Key::Enter,
+        ))
+    });
+    let mut cancel = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     egui::Area::new(egui::Id::new("canvas_inline_text"))
         .order(egui::Order::Foreground)
         .fixed_pos(bounds.min)
@@ -118,9 +123,7 @@ pub(super) fn show(state: &mut EditorState, ui: &egui::Ui, coord: egui::Rect, cl
                     r.request_focus();
                     edit.focus = false;
                 }
-                cancel = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                done = r.lost_focus()
-                    || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter));
+                done |= r.lost_focus();
                 ui.horizontal(|ui| {
                     done |= ui.button(crate::i18n::tr("Done")).clicked();
                     cancel |= ui.button(crate::i18n::tr("Cancel")).clicked();
