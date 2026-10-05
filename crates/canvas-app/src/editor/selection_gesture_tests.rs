@@ -208,3 +208,30 @@ fn shift_locks_the_drag_to_its_dominant_axis() {
     assert_eq!(state.doc.layer(a).unwrap().transform.y, 20.0);
     assert_eq!(state.doc.layer(a).unwrap().transform.x, 60.0);
 }
+
+#[test]
+fn side_handle_resizes_only_width_and_remains_undoable() {
+    let (ctx, mut state, a, _) = fixture();
+    state.selection.set(Some(a));
+    frame(&ctx, &mut state, pointer(60.0, 40.0, Some(true)));
+    frame(&ctx, &mut state, pointer(80.0, 40.0, None));
+    frame(&ctx, &mut state, pointer(80.0, 40.0, Some(false)));
+    assert_eq!(
+        state.doc.layer(a).unwrap().transform,
+        Transform::new(20.0, 20.0, 60.0, 40.0)
+    );
+    state.undo();
+    assert_eq!(state.doc.layer(a).unwrap().transform.width, 40.0);
+}
+
+#[test]
+fn dragging_a_locked_layer_does_not_change_it() {
+    let (ctx, mut state, a, _) = fixture();
+    state.selection.set(Some(a));
+    state.doc.layer_mut(a).unwrap().locked = true;
+    frame(&ctx, &mut state, pointer(35.0, 35.0, Some(true)));
+    frame(&ctx, &mut state, pointer(80.0, 75.0, None));
+    frame(&ctx, &mut state, pointer(80.0, 75.0, Some(false)));
+    assert_eq!(state.doc.layer(a).unwrap().transform.x, 20.0);
+    assert_eq!(state.history.undo_depth(), 0);
+}

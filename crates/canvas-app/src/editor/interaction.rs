@@ -28,6 +28,7 @@ pub(super) enum Gesture {
     Resize {
         layer: LayerId,
         corner: Corner,
+        side: Option<super::edge_handles::Side>,
         start: Transform,
         origin: egui::Pos2,
     },
@@ -120,6 +121,15 @@ pub(super) fn layer_interaction(
                     Corner::TopRight | Corner::BottomLeft => egui::CursorIcon::ResizeNeSw,
                 };
                 ui.ctx().set_cursor_icon(icon);
+            } else if let Some(side) =
+                super::edge_handles::at(corners, pos).filter(|_| !state.crop_mode)
+            {
+                ui.ctx().set_cursor_icon(match side {
+                    super::edge_handles::Side::Left | super::edge_handles::Side::Right => {
+                        egui::CursorIcon::ResizeHorizontal
+                    }
+                    _ => egui::CursorIcon::ResizeVertical,
+                });
             } else {
                 let (px, py) = screen_to_page(&state.viewport, rect, pos);
                 if layer.transform.contains_point(px, py) && matches!(state.gesture, Gesture::None)
@@ -171,9 +181,20 @@ pub(super) fn layer_interaction(
                             Gesture::Resize {
                                 layer: sel,
                                 corner,
+                                side: None,
                                 start: t,
                                 origin: pos,
                             }
+                        };
+                    } else if let Some(side) =
+                        super::edge_handles::at(corners, pos).filter(|_| !state.crop_mode)
+                    {
+                        state.gesture = Gesture::Resize {
+                            layer: sel,
+                            corner: Corner::TopLeft,
+                            side: Some(side),
+                            start: t,
+                            origin: pos,
                         };
                     }
                 }
@@ -289,6 +310,7 @@ pub(super) fn layer_interaction(
                 Gesture::Resize {
                     layer,
                     corner,
+                    side,
                     start,
                     origin,
                 } => {
@@ -298,7 +320,11 @@ pub(super) fn layer_interaction(
                     );
                     let shift = ui.ctx().input(|i| i.modifiers.shift);
                     let keep_aspect = state.aspect_lock != shift; // Shift invierte el candado
-                    let t = resize_rotated_from_corner(&start, corner, dx, dy, keep_aspect, 1.0);
+                    let t = if let Some(side) = side {
+                        super::edge_handles::resize(start, side, dx, dy)
+                    } else {
+                        resize_rotated_from_corner(&start, corner, dx, dy, keep_aspect, 1.0)
+                    };
                     if let Ok(l) = state.doc.layer_mut(layer) {
                         l.transform = t;
                     }
