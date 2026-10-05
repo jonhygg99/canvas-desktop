@@ -3,6 +3,7 @@
 
 pub(crate) mod framing;
 mod item;
+mod query;
 mod ui;
 
 pub use item::{GalleryItem, ItemKind};
@@ -92,6 +93,7 @@ pub struct GalleryState {
     pub media_filter: MediaFilter,
     /// Número de diseños que se muestran por línea (no cambia los archivos).
     pub gallery_columns: usize,
+    pub search: String,
     /// Última celda marcada con clic derecho: lo que copia Ctrl+C.
     pub selected: Option<PathBuf>,
     /// Renombrado en curso: ruta y texto editable (solo el nombre base, sin
@@ -176,6 +178,7 @@ impl GalleryState {
             sort,
             media_filter,
             gallery_columns: 5,
+            search: String::new(),
             selected: None,
             rename_edit: None,
             new_folder_inside: None,
@@ -223,6 +226,7 @@ impl GalleryState {
             sort,
             media_filter,
             gallery_columns: 5,
+            search: String::new(),
             selected: None,
             rename_edit: None,
             new_folder_inside: None,

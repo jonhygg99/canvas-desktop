@@ -33,7 +33,8 @@ pub(super) fn show(state: &mut GalleryState, ui: &mut egui::Ui) -> Option<Galler
 /// Cabecera de la carpeta: título con renombrado in-place, contador de
 /// elementos y toolbar de orden/densidad/nuevo diseño — todo en una fila.
 fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
-    ui.horizontal(|ui| {
+    super::selection_bar::show(state, ui, action);
+    ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut state.framings.vertical, false, "Normal");
         ui.selectable_value(&mut state.framings.vertical, true, "Framings 9:16");
         use crate::gallery::framing::StatusFilter;
@@ -70,7 +71,7 @@ fn header_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Ga
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         // false = rama defensiva del renombrado (estado imposible en la
         // práctica): salta la toolbar, igual que el `return` del original.
         if folder_heading_ui(state, ui, action) {
@@ -307,7 +308,10 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
         }
     }
     egui::ScrollArea::vertical().show(ui, |ui| {
-        let columns = state.gallery_columns.clamp(1, 12);
+        let columns = state
+            .gallery_columns
+            .clamp(1, 12)
+            .min((ui.available_width() / 140.0).floor().max(1.0) as usize);
         let mut cell_size = gallery_cell_size(ui.available_width(), columns);
         if state.framings.vertical {
             cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
@@ -316,25 +320,15 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
         let visible: Vec<_> = state
             .items
             .iter()
-            .filter(|item| state.framings.matches(&item.path))
-            .filter(|i| match state.media_filter {
-                crate::settings::MediaFilter::All => true,
-                crate::settings::MediaFilter::ImagesOnly => {
-                    matches!(
-                        i.kind,
-                        crate::gallery::ItemKind::Image | crate::gallery::ItemKind::Design
-                    )
-                }
-                crate::settings::MediaFilter::VideosOnly => {
-                    matches!(i.kind, crate::gallery::ItemKind::Video)
-                }
-            })
+            .filter(|item| state.matches_item(item))
             .collect();
         if visible.is_empty() && state.scanned && state.scan_error.is_none() {
             let label = match state.media_filter {
                 crate::settings::MediaFilter::VideosOnly => "No videos in this folder.",
                 crate::settings::MediaFilter::ImagesOnly => "No images in this folder.",
-                crate::settings::MediaFilter::All => "",
+                crate::settings::MediaFilter::All => {
+                    "No matching designs. Clear search or change the filters."
+                }
             };
             if !label.is_empty() {
                 ui.vertical_centered(|ui| {

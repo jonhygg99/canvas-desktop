@@ -35,6 +35,25 @@ pub(super) fn handle(state: &mut GalleryState, ui: &egui::Ui) -> Option<GalleryA
         action = Some(clip_action);
     }
     if !ui.ctx().text_edit_focused() {
+        let offset = ui.input(|i| {
+            if i.modifiers.alt {
+                return 0;
+            }
+            if i.key_pressed(egui::Key::ArrowRight) {
+                1
+            } else if i.key_pressed(egui::Key::ArrowLeft) {
+                -1
+            } else if i.key_pressed(egui::Key::ArrowDown) {
+                state.gallery_columns as isize
+            } else if i.key_pressed(egui::Key::ArrowUp) {
+                -(state.gallery_columns as isize)
+            } else {
+                0
+            }
+        });
+        if offset != 0 {
+            state.move_selection(offset);
+        }
         if let Some(path) = state.selected.clone() {
             if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 action = Some(GalleryAction::Open(path));
