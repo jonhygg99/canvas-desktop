@@ -6,7 +6,6 @@
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 
-use crate::editor::state::LeftTab;
 use crate::{deck, deck_strip, editor, layers_panel};
 
 use super::super::super::frame::EditorFrame;
@@ -97,16 +96,10 @@ pub(super) fn show_panels(
         f.settings.layers_collapsed
     };
     const COLLAPSED_WIDTH: f32 = 36.0;
-    // Con la pestaña Images, Web o Download activa el panel se ensancha
-    // para que el contenido se vea grande; el resto usa el ancho normal.
-    let expanded_width = if matches!(
-        state.active_left_tab,
-        LeftTab::Images | LeftTab::Web | LeftTab::Download
-    ) {
-        320.0
-    } else {
-        220.0
-    };
+    // Todas las pestañas comparten el ancho elegido al arrastrar el borde.
+    let expanded_width =
+        egui::containers::panel::PanelState::load(ui.ctx(), egui::Id::new("layers"))
+            .map_or(220.0, |panel| panel.size().x);
     const PANEL_ANIM_SECS: f64 = 0.2;
 
     let anim_salt = egui::Id::new("layers_panel_anim");
@@ -151,7 +144,13 @@ pub(super) fn show_panels(
     let animating = anim.is_some_and(|(_, start, _)| now - start < PANEL_ANIM_SECS)
         && !f.settings.reduced_motion
         && !narrow;
-    let panel = egui::Panel::left("layers").frame(egui::Frame::NONE);
+    // La animación y el estado cerrado no sobrescriben el ancho expandido.
+    let panel_id = if target_collapsed || animating {
+        "layers_transition"
+    } else {
+        "layers"
+    };
+    let panel = egui::Panel::left(panel_id).frame(egui::Frame::NONE);
     let panel = if target_collapsed || animating {
         panel.exact_size(width).resizable(false)
     } else {
@@ -161,38 +160,16 @@ pub(super) fn show_panels(
             .resizable(true)
     };
     panel.show(ui, |ui| {
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
-        if width < midpoint {
-            let new_order = layers_panel::vertical_tab_strip_ui(
-                ui,
-                &mut state.active_left_tab,
-                &mut layers_collapsed,
-                f.settings.layers_tab_order,
-                true,
-            );
-            if let Some(new_order) = new_order {
-                if f.settings.layers_tab_order != new_order {
-                    f.settings.layers_tab_order = new_order;
-                    f.settings.save_in_background();
-                }
-            }
-        } else {
-            ui.add_enabled_ui(!locked, |ui| {
-                // Destino de inserción web/Unsplash (A07): la ranura
-                // activa de ESTA baraja en ESTA generación.
-                let insert_dest = crate::loader::ImageInsertDest {
-                    generation: f.deck.generation(),
-                    slot_id: f.deck.slots.get(f.deck.active).map_or(u64::MAX, |s| s.id),
-                };
-                let new_order = layers_panel::left_panel_ui(
-                    state,
+        crate::sidebar::fixed_width_ui(ui, |ui| {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+            if width < midpoint {
+                let new_order = layers_panel::vertical_tab_strip_ui(
                     ui,
-                    &mut *f.settings,
-                    f.deck.folder.clone(),
-                    insert_dest,
-                    f.tx,
+                    &mut state.active_left_tab,
                     &mut layers_collapsed,
+                    f.settings.layers_tab_order,
+                    true,
                 );
                 if let Some(new_order) = new_order {
                     if f.settings.layers_tab_order != new_order {
@@ -200,8 +177,32 @@ pub(super) fn show_panels(
                         f.settings.save_in_background();
                     }
                 }
-            });
-        }
+            } else {
+                ui.add_enabled_ui(!locked, |ui| {
+                    // Destino de inserción web/Unsplash (A07): la ranura
+                    // activa de ESTA baraja en ESTA generación.
+                    let insert_dest = crate::loader::ImageInsertDest {
+                        generation: f.deck.generation(),
+                        slot_id: f.deck.slots.get(f.deck.active).map_or(u64::MAX, |s| s.id),
+                    };
+                    let new_order = layers_panel::left_panel_ui(
+                        state,
+                        ui,
+                        &mut *f.settings,
+                        f.deck.folder.clone(),
+                        insert_dest,
+                        f.tx,
+                        &mut layers_collapsed,
+                    );
+                    if let Some(new_order) = new_order {
+                        if f.settings.layers_tab_order != new_order {
+                            f.settings.layers_tab_order = new_order;
+                            f.settings.save_in_background();
+                        }
+                    }
+                });
+            }
+        })
     });
     if narrow {
         ui.data_mut(|d| d.insert_temp(narrow_id, layers_collapsed));

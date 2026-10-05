@@ -95,17 +95,22 @@ fn search_bar_ui(
         SearchMode::Web => "Search the web…",
         SearchMode::Social => "Paste an Instagram/Facebook link or name…",
     };
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 58.0).max(110.0);
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut panel.query)
-                .hint_text(hint)
-                .desired_width(width),
-        );
-        let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let clicked = ui.button(crate::i18n::tr("Search")).clicked();
-        do_search = (submit || clicked) && !panel.query.trim().is_empty();
-    });
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            // Reservar primero el botón evita recortarlo en el sidebar estrecho.
+            let clicked = ui.button(crate::i18n::tr("Search")).clicked();
+            let width = (ui.available_width() - 8.0).max(1.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut panel.query)
+                    .hint_text(hint)
+                    .desired_width(width),
+            );
+            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            do_search = (submit || clicked) && !panel.query.trim().is_empty();
+        },
+    );
     budget_ui(panel, settings, ui);
     if do_search {
         start_search(panel, &settings.serper_blocked, tx, ui.ctx());
@@ -538,4 +543,27 @@ fn truncate_query(query: &str) -> String {
         return query.to_owned();
     }
     format!("{}…", query.chars().take(MAX).collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_search_bar_keeps_controls_inside_sidebar() {
+        for width in [180.0, 220.0, 320.0] {
+            let ctx = egui::Context::default();
+            let mut panel = Panel::default();
+            let mut settings = AppSettings::default();
+            let (tx, _rx) = std::sync::mpsc::channel();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0)),
+                ));
+                search_bar_ui(&mut panel, &mut settings, &mut child, &tx);
+                assert!(child.min_rect().width() <= width + 0.5);
+                assert!(child.min_rect().height() < 220.0);
+            });
+        }
+    }
 }
