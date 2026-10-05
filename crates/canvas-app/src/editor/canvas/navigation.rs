@@ -10,7 +10,8 @@ pub(super) fn show(state: &mut EditorState, deck: &Deck, ui: &egui::Ui, rect: eg
         .constrain_to(rect)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.set_max_width((rect.width() - 24.0).max(120.0));
+                ui.horizontal_wrapped(|ui| {
                     super::super::guides::controls(state, ui);
                     if ui
                         .button("−")

@@ -15,6 +15,7 @@ impl EditorState {
     }
     pub(crate) fn jump_history(&mut self, target: usize) {
         if !self.is_idle()
+            || self.framing.is_some()
             || !self.history_range().contains(&target)
             || self.pending_global_undo.is_some()
             || self.pending_global_redo.is_some()
@@ -23,12 +24,23 @@ impl EditorState {
         }
         while self.history.undo_depth() != target {
             let before = self.history.undo_depth();
+            let undoing = before > target;
+            let opposite_depth = if undoing {
+                self.global_redo.len()
+            } else {
+                self.global_undo.len()
+            };
             if before > target {
                 self.undo();
             } else {
                 self.redo();
             }
-            if self.history.undo_depth() == before || self.save_error.is_some() {
+            let after = if undoing {
+                self.global_redo.len()
+            } else {
+                self.global_undo.len()
+            };
+            if self.history.undo_depth() == before || after != opposite_depth + 1 {
                 break;
             }
         }
@@ -75,5 +87,16 @@ mod tests {
         assert!(state.pending_global_undo.is_none());
         state.jump_history(1);
         assert_eq!(state.doc.page().unwrap().width, 700.0);
+    }
+    #[test]
+    fn previous_save_error_does_not_stop_a_valid_history_jump() {
+        let mut state = EditorState::new_blank(600.0, 500.0);
+        for width in [700.0, 800.0, 900.0] {
+            resize(&mut state, width);
+        }
+        state.save_error = Some("Previous save failed".into());
+        state.jump_history(0);
+        assert_eq!(state.doc.page().unwrap().width, 600.0);
+        assert_eq!(state.history.undo_depth(), 0);
     }
 }

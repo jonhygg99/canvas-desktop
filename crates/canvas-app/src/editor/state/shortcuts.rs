@@ -21,7 +21,7 @@ impl EditorState {
         deck_renaming: bool,
     ) {
         use egui::{Event, Key, KeyboardShortcut, Modifiers};
-        if super::super::palette::is_open(ctx) {
+        if super::super::palette::is_open(ctx) || super::super::guides::is_open(self, ctx) {
             return;
         }
         if self.is_idle()

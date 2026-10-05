@@ -3,6 +3,13 @@ use super::{viewport::page_to_screen, EditorState};
 use canvas_core::{Guide, SetGuides};
 use eframe::egui;
 
+pub(super) fn is_open(state: &EditorState, ctx: &egui::Context) -> bool {
+    ctx.data(|d| {
+        d.get_temp::<Vec<Guide>>(egui::Id::new(("guide_editor", state.active_slot_id)))
+            .is_some()
+    })
+}
+
 pub(super) fn controls(state: &mut EditorState, ui: &mut egui::Ui) {
     ui.menu_button(crate::i18n::tr("Guides"), |ui| {
         ui.checkbox(&mut state.show_rulers, crate::i18n::tr("Show rulers"));
@@ -32,7 +39,7 @@ pub(super) fn window(state: &mut EditorState, ctx: &egui::Context) {
     };
     let mut open = true;
     let mut apply = false;
-    let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let mut cancel = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     egui::Window::new(crate::i18n::tr("Guides"))
         .id(key)
         .open(&mut open)

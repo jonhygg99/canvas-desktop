@@ -8,6 +8,7 @@ pub(crate) fn show(state: &mut EditorState, ui: &mut egui::Ui) {
         let current = state.history.undo_depth();
         let range = state.history_range();
         let enabled = state.is_idle()
+            && state.framing.is_none()
             && state.pending_global_undo.is_none()
             && state.pending_global_redo.is_none();
         let mut entries = vec![(0, crate::i18n::tr("Earlier state").to_owned())];
@@ -59,23 +60,25 @@ fn action_label(label: &str) -> String {
         "Transformar" | "Transformar capa" | "Mover selección" | "Transformar selección" => {
             "Transform selection"
         }
-        "Contenido" => "Edit content",
+        "Contenido" | "Editar contenido" => "Edit content",
         "Desenfoque" => "Blur",
         "Sombra" => "Shadow",
-        "Color" | "Ajustes de color" => "Color",
+        "Color" | "Ajustes de color" | "Ajustes" => "Color",
         "Opacidad" => "Opacity",
-        "Visibilidad" => "Visibility",
-        "Bloquear" | "Bloqueo" => "Lock",
-        "Renombrar" => "Rename",
+        "Visibilidad" | "Mostrar/ocultar capa" => "Visibility",
+        "Bloquear" | "Bloqueo" | "Bloquear capa" => "Lock",
+        "Renombrar" | "Renombrar capa" => "Rename",
         "Insertar capa" | "Añadir capa" => "Insert layer",
-        "Eliminar capa" | "Quitar capa" => "Delete layer",
-        "Reordenar" => "Reorder layers",
+        "Eliminar capa" | "Quitar capa" | "Quitar capas" => "Delete layer",
+        "Reordenar" | "Reordenar capas" => "Reorder layers",
         "Agrupar" => "Group layers",
         "Desagrupar" => "Ungroup layers",
         "Recortar" | "Recorte" => "Crop",
         "Tamaño de página" | "Cambiar resolución" => "Page size",
         "Alinear selección" => "Align selection",
         "Distribuir selección" => "Distribute selection",
+        "Organizar selección" => "Arrange selection",
+        "Pegar capas" => "Paste",
         other => other,
     };
     crate::i18n::tr(english).to_owned()

@@ -102,6 +102,28 @@ fn open_palette_keeps_delete_and_undo_from_editing_the_document() {
 }
 
 #[test]
+fn guide_dialog_keeps_undo_from_editing_the_document() {
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    inserted(&mut state);
+    let ctx = egui::Context::default();
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::new(("guide_editor", state.active_slot_id)),
+            Vec::<canvas_core::Guide>::new(),
+        )
+    });
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            events: vec![key(egui::Key::Z, egui::Modifiers::COMMAND)],
+            ..Default::default()
+        },
+        |_ui| state.handle_shortcuts(&ctx, false, false),
+    );
+    assert_eq!(layer_count(&state), 1);
+    assert_eq!(state.history.undo_depth(), 1);
+}
+
+#[test]
 fn arrows_move_selection_in_document_pixels_and_undo_together() {
     let mut state = EditorState::new_blank(800.0, 600.0);
     let a = inserted(&mut state);
