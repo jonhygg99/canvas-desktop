@@ -14,6 +14,10 @@ pub(crate) mod canvas;
 pub(crate) mod document_bar;
 mod interaction;
 mod layer_ops;
+mod selection_geometry;
+mod selection_gesture;
+#[cfg(test)]
+mod selection_gesture_tests;
 
 #[cfg(test)]
 #[path = "layer_ops_tests.rs"]

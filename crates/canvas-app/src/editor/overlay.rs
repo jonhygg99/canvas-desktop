@@ -78,13 +78,10 @@ pub(super) fn draw_selection_overlay(
         ));
     }
 
-    let Some(sel) = state.selection.primary() else {
+    let Some(t) = super::selection_geometry::selection_box(state) else {
         return;
     };
-    let Ok(layer) = state.doc.layer(sel) else {
-        return;
-    };
-    let t = &layer.transform;
+    let t = &t;
     let accent = if state.crop_mode {
         egui::Color32::from_rgb(255, 149, 0) // naranja: modo recorte
     } else {

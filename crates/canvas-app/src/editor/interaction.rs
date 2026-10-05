@@ -17,6 +17,7 @@ use super::{EditorState, HANDLE_SIZE};
 /// durante el gesto y al soltarlo se consolida en UN comando de deshacer.
 pub(super) enum Gesture {
     None,
+    Selection(super::selection_gesture::SelectionGesture),
     Move {
         layer: LayerId,
         start: Transform,
@@ -47,7 +48,7 @@ pub(super) enum Gesture {
 }
 
 /// La esquina (si hay) cuyo manejador contiene el punto de pantalla.
-fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Corner> {
+pub(super) fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Corner> {
     const ORDER: [Corner; 4] = [
         Corner::TopLeft,
         Corner::TopRight,
@@ -68,6 +69,9 @@ pub(super) fn layer_interaction(
     response: &egui::Response,
     rect: egui::Rect,
 ) {
+    if super::selection_gesture::handle(state, ui, response, rect) {
+        return;
+    }
     let pointer = response
         .interact_pointer_pos()
         .or_else(|| response.hover_pos());
@@ -99,7 +103,10 @@ pub(super) fn layer_interaction(
 
     // Inicio de gesto.
     if response.drag_started_by(egui::PointerButton::Primary) {
-        if let Some(pos) = response.interact_pointer_pos() {
+        if let Some(pos) = ui
+            .input(|i| i.pointer.press_origin())
+            .or_else(|| response.interact_pointer_pos())
+        {
             state.gesture = Gesture::None;
             // ¿Sobre un manejador de la selección actual?
             if let Some(sel) = state.selection.primary() {
@@ -304,7 +311,7 @@ pub(super) fn layer_interaction(
                     }
                     show_drag_tag(ui, pos, format_dims(&t));
                 }
-                Gesture::None => {}
+                Gesture::None | Gesture::Selection(_) => {}
             }
         }
     }
@@ -359,7 +366,7 @@ pub(super) fn layer_interaction(
                     }
                 }
             }
-            Gesture::None => {}
+            Gesture::None | Gesture::Selection(_) => {}
         }
     }
 
