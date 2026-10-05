@@ -26,9 +26,9 @@ pub(super) fn show(
     if let (Some(pos), Some(sel)) = (pointer, editable_primary) {
         if let Ok(layer) = state.doc.layer(sel) {
             let corners = layer_corners_screen(&state.viewport, rect, &layer.transform);
-            let on_rotate = rotation_handle_screen(&state.viewport, rect, &layer.transform)
-                .distance(pos)
-                <= HANDLE_SIZE / 2.0 + 3.0;
+            let on_rotate = !state.crop_mode
+                && rotation_handle_screen(&state.viewport, rect, &layer.transform).distance(pos)
+                    <= HANDLE_SIZE / 2.0 + 3.0;
             if on_rotate {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             } else if let Some(corner) = corner_at(corners, pos) {

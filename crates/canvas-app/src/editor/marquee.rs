@@ -21,6 +21,9 @@ pub(super) fn handle(
 ) -> bool {
     if r.drag_started_by(egui::PointerButton::Primary) && matches!(state.gesture, Gesture::None) {
         if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+            if super::interaction::crop_corner_at(state, rect, pos).is_some() {
+                return false;
+            }
             let origin = screen_to_page(&state.viewport, rect, pos);
             if state
                 .doc

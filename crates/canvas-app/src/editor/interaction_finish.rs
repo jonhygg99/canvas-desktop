@@ -70,6 +70,9 @@ pub(super) fn select(
     // Click sin arrastre: seleccionar / deseleccionar.
     if response.clicked_by(egui::PointerButton::Primary) {
         if let Some(pos) = response.interact_pointer_pos() {
+            if super::crop_corner_at(state, rect, pos).is_some() {
+                return;
+            }
             let (px, py) = screen_to_page(&state.viewport, rect, pos);
             if ui.input(|i| i.modifiers.alt) {
                 super::super::layer_picking::cycle(state, (px, py));

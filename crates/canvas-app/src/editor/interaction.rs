@@ -72,6 +72,32 @@ pub(super) fn corner_at(corners: [egui::Pos2; 4], pos: egui::Pos2) -> Option<Cor
         .map(|(c, _)| c)
 }
 
+/// El manejador de crop conserva la prioridad incluso fuera de la página.
+pub(super) fn crop_corner_at(
+    state: &EditorState,
+    rect: egui::Rect,
+    pos: egui::Pos2,
+) -> Option<Corner> {
+    if !state.crop_mode || state.selection.len() != 1 {
+        return None;
+    }
+    let id = state.selection.primary()?;
+    let page = state.doc.page().ok()?;
+    let layer = state.doc.layer(id).ok()?;
+    if page.effective_locked(id)
+        || !matches!(
+            layer.content,
+            canvas_core::LayerContent::Image(_) | canvas_core::LayerContent::Video(_)
+        )
+    {
+        return None;
+    }
+    corner_at(
+        super::viewport::layer_corners_screen(&state.viewport, rect, &layer.transform),
+        pos,
+    )
+}
+
 pub(super) fn layer_interaction(
     state: &mut EditorState,
     ui: &mut egui::Ui,

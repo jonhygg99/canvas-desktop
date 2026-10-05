@@ -174,7 +174,7 @@ pub fn canvas_ui(
             visible: &visible,
             space_down,
         },
-        ctx,
+        ctx.new_canvas_ext,
         &mut action,
     );
 

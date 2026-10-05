@@ -11,7 +11,11 @@ use crate::deck::{Deck, MoveDir, SlotContent};
 use super::super::slot_chrome::{failed_action_rects, slot_header_layout};
 use super::super::viewport::{page_to_screen, screen_to_page};
 use super::super::EditorState;
-use super::{CanvasAction, CanvasContext};
+use super::CanvasAction;
+
+#[cfg(test)]
+#[path = "picking_tests.rs"]
+mod tests;
 
 /// Geometría de la pulsación y el viewport que `handle_press` necesita,
 /// agrupada para reducir la firma de 9 a 6 parámetros (bajo el umbral).
@@ -27,7 +31,7 @@ pub(super) fn handle_press(
     deck: &mut Deck,
     ui: &egui::Ui,
     geo: &PressGeometry<'_>,
-    ctx: &CanvasContext,
+    new_canvas_ext: &str,
     action: &mut Option<CanvasAction>,
 ) {
     // Pulsación sobre un lienzo que no es el activo: lo activa (el
@@ -48,6 +52,12 @@ pub(super) fn handle_press(
         && geo.response.contains_pointer()
     {
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            let coord = super::layout::active_slot_rect(deck, geo.rect, state.viewport.zoom);
+            if super::super::interaction::crop_corner_at(state, coord, pos).is_some() {
+                // El overlay se pinta encima de todos los lienzos: sus controles
+                // también deben recibir la pulsación antes que el vecino.
+                return;
+            }
             // Cabecera de CUALQUIER lienzo visible (activo o no) se
             // comprueba PRIMERO, en espacio de pantalla — antes del hit-test
             // en espacio de página de más abajo, que solo conoce el cuerpo
@@ -173,8 +183,8 @@ pub(super) fn handle_press(
                     // aquí mismo — es una operación puramente en memoria, no
                     // toca disco ni el watcher, así que no hace falta pasar
                     // por `main.rs`.
-                    if let Some(idx) = deck
-                        .push_placeholder((deck.add_zone.w, deck.add_zone.h), ctx.new_canvas_ext)
+                    if let Some(idx) =
+                        deck.push_placeholder((deck.add_zone.w, deck.add_zone.h), new_canvas_ext)
                     {
                         deck.jump_to = Some(idx);
                         deck.jump_reframe = true;

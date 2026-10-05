@@ -38,8 +38,9 @@ fn start_handle(state: &mut EditorState, rect: egui::Rect, pos: egui::Pos2) {
         if let Ok(layer) = state.doc.layer(sel) {
             let t = layer.transform;
             let corners = layer_corners_screen(&state.viewport, rect, &t);
-            let on_rotate = rotation_handle_screen(&state.viewport, rect, &t).distance(pos)
-                <= HANDLE_SIZE / 2.0 + 3.0;
+            let on_rotate = !state.crop_mode
+                && rotation_handle_screen(&state.viewport, rect, &t).distance(pos)
+                    <= HANDLE_SIZE / 2.0 + 3.0;
             if on_rotate {
                 let (px, py) = screen_to_page(&state.viewport, rect, pos);
                 let (cx, cy) = t.center();
