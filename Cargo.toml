@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 # Mínimo real del conjunto resuelto (A13): la familia egui 0.35 exige 1.92
 # (verificado barriendo `rust-version` de los 651 paquetes de Cargo.lock;

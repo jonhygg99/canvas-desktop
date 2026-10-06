@@ -22,9 +22,10 @@ def main():
         subprocess.run(["gh", "release", "upload", tag, *map(str, assets),
                         "--repo", repo, "--clobber"], check=True)
     else:
+        release_notes = Path(".github/release-body.md").read_text(encoding="utf-8")
         subprocess.run(["gh", "release", "create", tag, *map(str, assets), "--repo", repo,
                         "--draft", "--verify-tag", "--title", f"Canvas Desktop {tag}",
-                        "--notes-file", ".github/release-body.md", "--generate-notes"], check=True)
+                        "--notes", release_notes, "--generate-notes"], check=True)
     # La promoción ocurre solo después de comprobar procedencia y subir ambos assets.
     subprocess.run(["gh", "release", "edit", tag, "--repo", repo,
                     "--draft=false", "--latest"], check=True)

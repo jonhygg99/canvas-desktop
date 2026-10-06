@@ -47,6 +47,8 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("--draft", calls[-2])
         self.assertIn("--verify-tag", calls[-2])
+        self.assertIn("--notes", calls[-2])
+        self.assertIn("--generate-notes", calls[-2])
         self.assertIn("--draft=false", calls[-1])
 
     def test_existing_draft_can_resume(self):
