@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      reuse_prepared:
+        description: 'Reutilizar artefactos del mismo SHA para el ensayo'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,18 +27,22 @@ jobs:
     uses: ./.github/workflows/build-windows.yml
     with:
       ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
   windows-arm64:
     uses: ./.github/workflows/build-windows-arm64.yml
     with:
       ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
   macos:
     uses: ./.github/workflows/build-macos.yml
     with:
       ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
   linux:
     uses: ./.github/workflows/build-linux.yml
     with:
       ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
   verify-dry-run:
     name: Ensayo sin publicar (${{ matrix.platform }})
     needs: [windows-x64, windows-arm64, macos, linux]
@@ -55,6 +64,8 @@ jobs:
         with:
           name: canvas-desktop-${{ matrix.platform }}
           path: dist
+          run-id: ${{ needs[matrix.platform].outputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Validar paquetes y procedencia sin publicar
         run: |
           python - <<'PY'

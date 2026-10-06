@@ -109,6 +109,8 @@ Para probar un cambio del pipeline sin crear tags ni publicar un release:
 
 ```powershell
 gh workflow run prepare-release.yml --ref <rama-o-main>
+# Con artefactos preparados del SHA actual de main, repetir solo la verificaci?n:
+gh workflow run prepare-release.yml --ref main -f reuse_prepared=true
 ```
 
 El dispatch manual ejecuta builds reales, instalaci?n/desinstalaci?n Windows y

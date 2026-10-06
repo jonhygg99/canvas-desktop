@@ -6,16 +6,41 @@ on:
       ref:
         required: true
         type: string
+      reuse:
+        default: false
+        type: boolean
+    outputs:
+      run_id:
+        value: ${{ jobs.select.outputs.run_id || github.run_id }}
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  select:
+    timeout-minutes: 35
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.prepared.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - id: prepared
+        if: inputs.reuse
+        run: python scripts/select_prepared.py windows-x64
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   installer:
+    needs: select
+    if: needs.select.outputs.run_id == ''
     runs-on: windows-latest
     timeout-minutes: 40
     permissions:

@@ -12,6 +12,8 @@ def select(repo, sha, platform, timeout=1800):
         runs = api(repo, f"actions/workflows/prepare-release.yml/runs?head_sha={sha}&per_page=100")
         pending = False
         for run in sorted(runs["workflow_runs"], key=lambda r: r["id"], reverse=True):
+            if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+                continue
             if (run["head_sha"] != sha or run["head_branch"] != "main"
                     or run["event"] not in ("push", "workflow_dispatch")):
                 continue

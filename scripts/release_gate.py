@@ -58,7 +58,7 @@ def main():
     repo = os.environ["GITHUB_REPOSITORY"]
     ci_run = wait_for_ci(repo, sha)
     from select_prepared import select
-    prepared = select(repo, sha, "windows-x64")
+    prepared = select(repo, sha, "windows-x64", timeout=300)
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write(f"sha={sha}\ntag={tag}\nprepared_run={prepared}\nci_run={ci_run}\n")
     print(f"Validado {tag} ({sha}); build preparado: {prepared or 'se compilará'}")
