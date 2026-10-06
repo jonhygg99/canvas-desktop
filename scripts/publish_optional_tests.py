@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,6 +8,14 @@ import publish_optional as publish
 
 
 class OptionalPublishTests(unittest.TestCase):
+    def test_dry_run_verifies_prepared_package_without_upload(self):
+        environment = dict(RELEASE_TAG="v0.7.0", GITHUB_REPOSITORY="owner/repo", RELEASE_SHA="sha",
+                           PLATFORM="macos", SIGNER_WORKFLOW="build-macos.yml", DRY_RUN="true")
+        with patch.dict(os.environ, environment), patch.object(publish, "checksums", return_value=[Path("test.dmg"), Path("sums.txt")]), patch.object(publish.subprocess, "run") as run, patch.object(publish, "upload_missing") as upload:
+            publish.main()
+            self.assertIn("owner/repo/.github/workflows/build-macos.yml", run.call_args.args[0])
+            upload.assert_not_called()
+
     def test_existing_identical_asset_is_skipped_and_missing_is_uploaded(self):
         with tempfile.TemporaryDirectory() as temp:
             asset = Path(temp) / "package.deb"

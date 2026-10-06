@@ -40,13 +40,6 @@ class ReleaseGateTests(unittest.TestCase):
         with patch.object(gate, "api", side_effect=replies), patch.object(gate.time, "sleep"):
             self.assertEqual(gate.wait_for_ci("owner/repo", "abc"), 1)
 
-    def test_prepared_artifact_must_be_successful_exact_and_unexpired(self):
-        run = dict(id=7, head_sha="abc", head_branch="main", event="push", conclusion="success")
-        for expired, expected in [(True, ""), (False, "7")]:
-            replies = [{"workflow_runs": [dict(run, id=8, head_sha="other"), run]},
-                       {"artifacts": [dict(name="canvas-desktop-windows-x64", expired=expired)]}]
-            with patch.object(gate, "api", side_effect=replies):
-                self.assertEqual(gate.prepared_run("owner/repo", "abc"), expected)
 
 
 if __name__ == "__main__":

@@ -41,20 +41,6 @@ def wait_for_ci(repo, sha, timeout=1800):
     raise ValueError("CI no terminó en 30 minutos. Revisa Actions y reintenta el release.")
 
 
-def prepared_run(repo, sha):
-    runs = api(repo, f"actions/workflows/prepare-release.yml/runs?head_sha={sha}&per_page=100")
-    candidates = sorted(runs["workflow_runs"], key=lambda r: r["id"], reverse=True)
-    for run in candidates:
-        if (run["head_sha"] != sha or run["head_branch"] != "main"
-                or run["event"] not in ("push", "workflow_dispatch")
-                or run["conclusion"] != "success"):
-            continue
-        artifacts = api(repo, f"actions/runs/{run['id']}/artifacts?per_page=100")
-        if any(a["name"] == "canvas-desktop-windows-x64" and not a["expired"]
-               for a in artifacts["artifacts"]):
-            return str(run["id"])
-    return ""
-
 
 def main():
     tag = os.environ["RELEASE_TAG"]
@@ -71,7 +57,8 @@ def main():
         raise ValueError("Ejecuta el workflow manual sobre el tag, no sobre main")
     repo = os.environ["GITHUB_REPOSITORY"]
     ci_run = wait_for_ci(repo, sha)
-    prepared = prepared_run(repo, sha)
+    from select_prepared import select
+    prepared = select(repo, sha, "windows-x64", timeout=300)
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write(f"sha={sha}\ntag={tag}\nprepared_run={prepared}\nci_run={ci_run}\n")
     print(f"Validado {tag} ({sha}); build preparado: {prepared or 'se compilará'}")

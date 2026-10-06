@@ -14,6 +14,9 @@ def main():
     subprocess.run(["gh", "attestation", "verify", str(assets[0]), "--repo", repo,
                     "--source-digest", sha, "--deny-self-hosted-runners",
                     "--signer-workflow", f"{repo}/.github/workflows/build-windows.yml"], check=True)
+    if os.environ.get("DRY_RUN") == "true":
+        print("Ensayo: instalador, hashes y procedencia verificados; no se publica.")
+        return
     existing = subprocess.run(["gh", "release", "view", tag, "--repo", repo,
                                "--json", "isDraft"], capture_output=True, text=True)
     if existing.returncode == 0:

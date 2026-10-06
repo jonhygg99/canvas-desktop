@@ -1,5 +1,4 @@
-name: Build Windows installer
-
+name: Build windows-arm64 package
 on:
   workflow_call:
     inputs:
@@ -12,15 +11,12 @@ on:
     outputs:
       run_id:
         value: ${{ jobs.select.outputs.run_id || github.run_id }}
-
 permissions:
   contents: read
   actions: read
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
-
 jobs:
   select:
     timeout-minutes: 35
@@ -34,11 +30,12 @@ jobs:
           persist-credentials: false
       - id: prepared
         if: inputs.reuse
-        run: python scripts/select_prepared.py windows-x64
+        run: python scripts/select_prepared.py windows-arm64
         env:
           GH_TOKEN: ${{ github.token }}
 
-  installer:
+  build:
+    name: Windows NSIS (arm64, best-effort)
     needs: select
     if: needs.select.outputs.run_id == ''
     runs-on: windows-latest
@@ -56,9 +53,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: '1.97.1'
+          targets: aarch64-pc-windows-msvc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          shared-key: release-windows-x64
+          shared-key: release-windows-arm64
           cache-bin: false
           cache-workspace-crates: true
       - name: Cache cargo-packager
@@ -69,23 +67,14 @@ jobs:
           key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
       - if: steps.packager.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked -p canvas-app
-      - run: cargo packager --release -p canvas-app --formats nsis
-      - name: Test installer
-        shell: pwsh
-        run: |
-          $assets = @(Get-ChildItem target/release/*-setup.exe)
-          if ($assets.Count -ne 1) { throw 'Se esperaba exactamente un instalador.' }
-          $version = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
-            Where-Object name -eq 'canvas-app' | Select-Object -ExpandProperty version
-          ./scripts/test_installer.ps1 -Installer $assets[0].FullName -Version $version
-      - name: Attest tested installer
+      - run: cargo build --release --locked --target aarch64-pc-windows-msvc -p canvas-app
+      - run: cargo packager --release --target aarch64-pc-windows-msvc -p canvas-app --formats nsis
+      - name: Attest package
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: target/release/*-setup.exe
+          subject-path: target/aarch64-pc-windows-msvc/release/*-setup.exe
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: canvas-desktop-windows-x64
-          path: target/release/*-setup.exe
           if-no-files-found: error
-          retention-days: 30
+          name: canvas-desktop-windows-arm64
+          path: target/aarch64-pc-windows-msvc/release/*-setup.exe

@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      reuse_prepared:
+        description: 'Reutilizar artefactos del mismo SHA para el ensayo'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
   id-token: write
   attestations: write
   artifact-metadata: write
@@ -17,8 +23,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows:
-    if: github.ref == 'refs/heads/main'
+  windows-x64:
     uses: ./.github/workflows/build-windows.yml
     with:
       ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
+  windows-arm64:
+    uses: ./.github/workflows/build-windows-arm64.yml
+    with:
+      ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
+  macos:
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
+  linux:
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      ref: ${{ github.sha }}
+      reuse: ${{ inputs.reuse_prepared || false }}
+  verify-dry-run:
+    name: Ensayo sin publicar (${{ matrix.platform }})
+    needs: [windows-x64, windows-arm64, macos, linux]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-x64, windows-arm64, macos, linux]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: canvas-desktop-${{ matrix.platform }}
+          path: dist
+          run-id: ${{ needs[matrix.platform].outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Validar paquetes y procedencia sin publicar
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          os.environ['RELEASE_TAG'] = f'v{version}'
+          if os.environ['PLATFORM'] == 'windows-x64':
+              from scripts import publish_release as publish
+          else:
+              from scripts import publish_optional as publish
+          publish.main()
+          PY
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: scripts
+          DRY_RUN: 'true'
+          PLATFORM: ${{ matrix.platform }}
+          RELEASE_SHA: ${{ github.sha }}
+          SIGNER_WORKFLOW: build-${{ matrix.platform }}.yml

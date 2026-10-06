@@ -1,5 +1,4 @@
-name: Build Windows installer
-
+name: Build macos package
 on:
   workflow_call:
     inputs:
@@ -12,15 +11,12 @@ on:
     outputs:
       run_id:
         value: ${{ jobs.select.outputs.run_id || github.run_id }}
-
 permissions:
   contents: read
   actions: read
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: '0'
-
 jobs:
   select:
     timeout-minutes: 35
@@ -34,20 +30,27 @@ jobs:
           persist-credentials: false
       - id: prepared
         if: inputs.reuse
-        run: python scripts/select_prepared.py windows-x64
+        run: python scripts/select_prepared.py macos
         env:
           GH_TOKEN: ${{ github.token }}
 
-  installer:
+  build:
+    name: macOS DMG (best-effort)
     needs: select
     if: needs.select.outputs.run_id == ''
-    runs-on: windows-latest
+    runs-on: macos-latest
     timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
       attestations: write
       artifact-metadata: write
+    env:
+      # Desactivable: sin certificado de firma/notarizacion no se puede
+      # compilar en CI. Poner a "true" y configurar los secrets de
+      # cargo-packager (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+      # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) para activarlo de verdad.
+      CANVAS_MACOS_SIGN: ${{ vars.CANVAS_MACOS_SIGN || 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -58,34 +61,26 @@ jobs:
           toolchain: '1.97.1'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          shared-key: release-windows-x64
+          shared-key: release-macos
           cache-bin: false
           cache-workspace-crates: true
       - name: Cache cargo-packager
         id: packager
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: ~/.cargo/bin/cargo-packager.exe
+          path: ~/.cargo/bin/cargo-packager*
           key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
       - if: steps.packager.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked -p canvas-app
-      - run: cargo packager --release -p canvas-app --formats nsis
-      - name: Test installer
-        shell: pwsh
-        run: |
-          $assets = @(Get-ChildItem target/release/*-setup.exe)
-          if ($assets.Count -ne 1) { throw 'Se esperaba exactamente un instalador.' }
-          $version = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
-            Where-Object name -eq 'canvas-app' | Select-Object -ExpandProperty version
-          ./scripts/test_installer.ps1 -Installer $assets[0].FullName -Version $version
-      - name: Attest tested installer
+      - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
+        run: cargo packager --release -p canvas-app --formats dmg
+      - name: Attest package
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: target/release/*-setup.exe
+          subject-path: target/release/*.dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: canvas-desktop-windows-x64
-          path: target/release/*-setup.exe
           if-no-files-found: error
-          retention-days: 30
+          name: canvas-desktop-macos
+          path: target/release/*.dmg

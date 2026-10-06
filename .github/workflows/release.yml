@@ -57,152 +57,40 @@ jobs:
       ref: ${{ needs.gate.outputs.sha }}
 
   windows-arm64:
-    name: Windows NSIS (arm64, best-effort)
-    runs-on: windows-latest
-    needs: gate
-    timeout-minutes: 40
+    uses: ./.github/workflows/build-windows-arm64.yml
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
       artifact-metadata: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: '1.97.1'
-          targets: aarch64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Cache cargo-packager
-        id: packager
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-packager*
-          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
-      - if: steps.packager.outputs.cache-hit != 'true'
-        run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked --target aarch64-pc-windows-msvc -p canvas-app
-      - run: cargo packager --release --target aarch64-pc-windows-msvc -p canvas-app --formats nsis
-      - name: Attest package
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: target/aarch64-pc-windows-msvc/release/*-setup.exe
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          if-no-files-found: error
-          name: canvas-desktop-windows-arm64
-          path: target/aarch64-pc-windows-msvc/release/*-setup.exe
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      reuse: true
 
-  # macOS y Linux: best-effort. Ninguno de los dos es «descargar y listo»
-  # todavía: el DMG va sin firmar ni notarizar (Gatekeeper obliga a
-  # clic derecho > Abrir la primera vez) y el AppImage necesita chmod +x. Un
-  # fallo aquí no bloquea el release, pero se publica lo que sí compile.
   macos-dmg:
-    name: macOS DMG (best-effort)
-    runs-on: macos-latest
-    needs: gate
-    timeout-minutes: 40
+    uses: ./.github/workflows/build-macos.yml
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
       artifact-metadata: write
-    env:
-      # Desactivable: sin certificado de firma/notarizacion no se puede
-      # compilar en CI. Poner a "true" y configurar los secrets de
-      # cargo-packager (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-      # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) para activarlo de verdad.
-      CANVAS_MACOS_SIGN: ${{ vars.CANVAS_MACOS_SIGN || 'false' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: '1.97.1'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - name: Cache cargo-packager
-        id: packager
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-packager*
-          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
-      - if: steps.packager.outputs.cache-hit != 'true'
-        run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked -p canvas-app
-      - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
-        run: cargo packager --release -p canvas-app --formats dmg
-      - name: Attest package
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: target/release/*.dmg
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          if-no-files-found: error
-          name: canvas-desktop-macos
-          path: target/release/*.dmg
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      reuse: true
 
   linux-packages:
-    name: Linux AppImage/deb (best-effort)
-    runs-on: ubuntu-latest
-    needs: gate
-    timeout-minutes: 40
+    uses: ./.github/workflows/build-linux.yml
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
       artifact-metadata: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.gate.outputs.sha }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: '1.97.1'
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # libfontconfig1-dev es obligatorio para COMPILAR: egui-winit enlaza
-      # `yeslogic-fontconfig-sys`, cuyo build script falla con exit 101 sin las
-      # cabeceras de fontconfig. libasound2-dev lo exige rodio (audio de vídeo)
-      # vía alsa-sys. La lista es la misma que la del job `test` de ci.yml
-      # (que sí lo tenía) más fuse/libfuse2, que solo hace falta para
-      # generar el AppImage.
-      - name: Install Linux GUI + audio (ALSA) + packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
-            libfontconfig1-dev libasound2-dev \
-            fuse libfuse2
-      - name: Cache cargo-packager
-        id: packager
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/cargo-packager*
-          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
-      - if: steps.packager.outputs.cache-hit != 'true'
-        run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked -p canvas-app
-      - run: cargo packager --release -p canvas-app --formats deb,appimage
-      - name: Attest package
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: |
-            target/release/*.deb
-            target/release/*.AppImage
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          if-no-files-found: error
-          name: canvas-desktop-linux
-          path: |
-            target/release/*.deb
-            target/release/*.AppImage
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      reuse: true
 
   release:
     name: Publicar Windows verificado
@@ -233,47 +121,86 @@ jobs:
           RELEASE_TAG: ${{ needs.gate.outputs.tag }}
           RELEASE_SHA: ${{ needs.gate.outputs.sha }}
 
-  optional-assets:
-    name: Adjuntar ${{ matrix.platform }} si compilo
-    needs: [gate, release, windows-arm64, macos-dmg, linux-packages]
-    if: always() && needs.release.result == 'success'
+  publish-windows-arm64:
+    name: Adjuntar windows-arm64
+    needs: [gate, release, windows-arm64]
+    if: always() && needs.release.result == 'success' && needs.windows-arm64.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     permissions:
       contents: write
       actions: read
       attestations: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-arm64
-            build: windows-arm64
-          - platform: macos
-            build: macos-dmg
-          - platform: linux
-            build: linux-packages
     steps:
-      - if: needs[matrix.build].result == 'success'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
-      - if: needs[matrix.build].result == 'success'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: canvas-desktop-${{ matrix.platform }}
+          name: canvas-desktop-windows-arm64
           path: dist
-      - name: Verificar procedencia y adjuntar sin sobrescribir
-        if: needs[matrix.build].result == 'success'
-        run: python scripts/publish_optional.py
+          run-id: ${{ needs.windows-arm64.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - run: python scripts/publish_optional.py
         env:
           GH_TOKEN: ${{ github.token }}
-          PLATFORM: ${{ matrix.platform }}
+          PLATFORM: windows-arm64
           RELEASE_TAG: ${{ needs.gate.outputs.tag }}
           RELEASE_SHA: ${{ needs.gate.outputs.sha }}
-      - name: Plataforma no disponible
-        if: needs[matrix.build].result != 'success'
-        run: echo "::warning::No se publicaron paquetes de $PLATFORM. Consulta el job de compilacion."
+          SIGNER_WORKFLOW: build-windows-arm64.yml
+
+  publish-macos:
+    name: Adjuntar macos
+    needs: [gate, release, macos-dmg]
+    if: always() && needs.release.result == 'success' && needs.macos-dmg.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: canvas-desktop-macos
+          path: dist
+          run-id: ${{ needs.macos-dmg.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - run: python scripts/publish_optional.py
         env:
-          PLATFORM: ${{ matrix.platform }}
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: macos
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          SIGNER_WORKFLOW: build-macos.yml
+
+  publish-linux:
+    name: Adjuntar linux
+    needs: [gate, release, linux-packages]
+    if: always() && needs.release.result == 'success' && needs.linux-packages.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: canvas-desktop-linux
+          path: dist
+          run-id: ${{ needs.linux-packages.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - run: python scripts/publish_optional.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: linux
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          SIGNER_WORKFLOW: build-linux.yml

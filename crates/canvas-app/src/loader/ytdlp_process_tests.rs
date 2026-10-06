@@ -24,20 +24,30 @@ fn progress_handles_estimates_missing_eta_and_finalization() {
 fn cancellation_stops_a_live_child_before_its_work_finishes() {
     let cancel = Arc::new(AtomicBool::new(false));
     let flag = cancel.clone();
-    let start = std::time::Instant::now();
+    // El arranque de PowerShell en un runner frío no mide la cancelación.
+    let mut cancellation_started = None;
+    let mut finished = false;
     let mut command = canvas_io::media_command("powershell.exe");
     command.args([
         "-NoProfile",
         "-Command",
-        "Write-Output 'ready'; Start-Sleep -Seconds 30",
+        "Write-Output 'ready'; Start-Sleep -Seconds 30; Write-Output 'finished'",
     ]);
     let result = run(&mut command, &cancel, |line| {
         if line == "ready" {
+            cancellation_started = Some(std::time::Instant::now());
             flag.store(true, Ordering::Relaxed);
         }
+        finished |= line == "finished";
     });
     assert!(result.unwrap_err().starts_with("Cancelled"));
-    assert!(start.elapsed() < Duration::from_secs(10));
+    assert!(
+        cancellation_started
+            .expect("El hijo no emitió ready")
+            .elapsed()
+            < Duration::from_secs(10)
+    );
+    assert!(!finished, "El trabajo del hijo terminó antes de cancelarlo");
 }
 
 #[cfg(windows)]

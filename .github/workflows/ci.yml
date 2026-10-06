@@ -14,13 +14,51 @@ on:
         default: true
         type: boolean
 
+# Un nuevo commit del PR sustituye su CI anterior; main conserva cada SHA.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
+  reuse:
+    name: Verificar CI equivalente del PR
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.check.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - id: check
+        run: python scripts/ci_reuse.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  verified-tree:
+    name: Registrar arbol verificado del PR
+    needs: [release-command, release-tools, fmt, test, shell-cross, msrv]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: git rev-parse 'HEAD^{tree}' > tree.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: verified-ci-tree
+          path: tree.txt
+          retention-days: 30
+
   release-command:
     name: release command tests
     runs-on: windows-latest
@@ -52,6 +90,8 @@ jobs:
           "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
 
   fmt:
+    needs: reuse
+    if: needs.reuse.outputs.reuse != 'true'
     name: fmt
     runs-on: ubuntu-latest
     steps:
@@ -65,6 +105,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   test:
+    needs: reuse
+    if: needs.reuse.outputs.reuse != 'true'
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -80,6 +122,8 @@ jobs:
           toolchain: '1.97.1'
           components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-workspace-crates: true
 
       # eframe con las features x11+wayland, egui-winit y arboard necesitan
       # estas cabeceras de desarrollo en Linux; muda (menus nativos) es
@@ -122,6 +166,8 @@ jobs:
   # enlazarse en el suyo: los checks cruzados (sin linker) son la única
   # forma de validar linux.rs y macos.rs desde el CI.
   shell-cross:
+    needs: reuse
+    if: needs.reuse.outputs.reuse != 'true'
     name: shell cross-check
     runs-on: ubuntu-latest
     steps:
@@ -133,6 +179,8 @@ jobs:
           toolchain: '1.97.1'
           targets: x86_64-unknown-linux-gnu,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-workspace-crates: true
       - run: cargo check -p canvas-shell --target x86_64-unknown-linux-gnu --locked
       - run: cargo check -p canvas-shell --target x86_64-apple-darwin --locked
 
@@ -140,6 +188,8 @@ jobs:
   # comprueba con esa toolchain exacta y `--locked`: el job `test` corre en
   # Rust 1.97.1 y no detectaría una incompatibilidad con el mínimo (A13).
   msrv:
+    needs: reuse
+    if: needs.reuse.outputs.reuse != 'true'
     name: msrv (Rust 1.92)
     runs-on: ubuntu-latest
     steps:
@@ -150,6 +200,8 @@ jobs:
         with:
           toolchain: '1.92'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          cache-workspace-crates: true
       - name: Install Linux GUI + audio (ALSA) dependencies
         run: |
           sudo apt-get update
