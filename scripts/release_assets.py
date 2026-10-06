@@ -17,7 +17,9 @@ def checksums(directory, platform, version):
         raise ValueError(f"Se esperaban {expected} paquetes de {platform}; hay {len(packages)}")
     lines = []
     for package in packages:
-        if not package.name.startswith(f"canvas-desktop_{version}_") or package.stat().st_size == 0:
+        # cargo-packager usa productName para DMG y el nombre binario en otros SO.
+        prefix = "Canvas Desktop" if platform == "macos" else "canvas-desktop"
+        if not re.fullmatch(rf"{re.escape(prefix)}_{re.escape(version)}_[A-Za-z0-9_.-]+", package.name) or package.stat().st_size == 0:
             raise ValueError(f"Paquete vacío o versión incorrecta: {package.name}")
         if platform.startswith("windows-") and f"_{platform.removeprefix('windows-')}-setup.exe" not in package.name:
             raise ValueError(f"Arquitectura incorrecta: {package.name}")

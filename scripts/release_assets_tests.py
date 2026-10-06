@@ -6,6 +6,15 @@ from release_assets import checksums
 
 
 class ReleaseAssetsTests(unittest.TestCase):
+    def test_real_macos_packager_name_preserved_for_attestation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = "Canvas Desktop_0.7.0_aarch64.dmg"
+            (root / name).write_bytes(b"dmg")
+            self.assertEqual(checksums(root, "macos", "0.7.0")[0].name, name)
+            with self.assertRaises(ValueError):
+                checksums(root, "macos", "0.7.1")
+
     def test_exact_windows_asset_and_digest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
