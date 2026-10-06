@@ -96,4 +96,3 @@ jobs:
           path: |
             target/release/*.deb
             target/release/*.AppImage
-

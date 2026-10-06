@@ -84,4 +84,3 @@ jobs:
           if-no-files-found: error
           name: canvas-desktop-macos
           path: target/release/*.dmg
-

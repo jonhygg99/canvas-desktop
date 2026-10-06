@@ -78,4 +78,3 @@ jobs:
           if-no-files-found: error
           name: canvas-desktop-windows-arm64
           path: target/aarch64-pc-windows-msvc/release/*-setup.exe
-
