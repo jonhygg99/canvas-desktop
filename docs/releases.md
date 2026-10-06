@@ -89,3 +89,34 @@ Validación local: `python -m unittest discover -s scripts -p '*_tests.py'`,
 `./scripts/release_tests.ps1` (comandos simulados) y actionlint.
 La instalación real, las attestations y los tiempos de caché se
 validan en la primera ejecución de **Prepare release** en GitHub Actions.
+
+## CI equivalente y ensayo sin publicar
+
+La CI de un PR completo conserva `verified-ci-tree`: el ?rbol Git del checkout
+que pas? formato, Clippy, tests, MSRV y comprobaci?n cruzada. En el push del merge
+a `main`, se reutiliza ?nicamente una ejecuci?n exitosa del PR del mismo repositorio,
+con merge SHA correcto y ?rbol id?ntico. Los scripts de release se prueban siempre.
+Si falta el artefacto, caduc?, difiere el ?rbol o falla la API, se ejecuta CI completa.
+No se reutilizan comprobaciones de forks ni se conf?a solo en el SHA de la rama.
+
+El tag espera la CI de main y los paquetes preparados de cada plataforma por
+separado; cada paquete se verifica por atestaci?n y SHA exacto antes de publicar.
+Un build fallido/caducado activa el respaldo sin esperar a las otras plataformas.
+Las cach?s incluyen crates del workspace y CI desactiva debuginfo para reducir
+compilaci?n/enlazado. Esto no omite tests ni cambia los paquetes release.
+
+Para probar un cambio del pipeline sin crear tags ni publicar un release:
+
+```powershell
+gh workflow run prepare-release.yml --ref <rama-o-main>
+```
+
+El dispatch manual ejecuta builds reales, instalaci?n/desinstalaci?n Windows y
+cuatro jobs `Ensayo sin publicar`: validan nombres, versiones, hashes y atestaciones
+usando los publicadores reales con `DRY_RUN=true`. El workflow tiene solo permisos
+de lectura de contenidos; no puede publicar releases. Se pueden descargar los
+artefactos desde Actions. Comprueba que los cuatro ensayos pasen antes de dar
+por terminado el cambio. Una primera cach? fr?a puede seguir tardando m?s.
+
+Referencias: [cach? Rust](https://github.com/Swatinem/rust-cache) y
+[workflows reutilizables](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).

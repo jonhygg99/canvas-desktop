@@ -8,7 +8,7 @@ import publish_release as publish
 
 
 class PublishReleaseTests(unittest.TestCase):
-    def execute(self, existing, fail_attestation=False, fail_upload=False):
+    def execute(self, existing, fail_attestation=False, fail_upload=False, dry_run=False):
         calls = []
 
         def run(args, **kwargs):
@@ -22,13 +22,20 @@ class PublishReleaseTests(unittest.TestCase):
                                                    json.dumps({"isDraft": existing}))
             return subprocess.CompletedProcess(args, 0)
 
-        environment = dict(RELEASE_TAG="v0.7.0", GITHUB_REPOSITORY="owner/repo", RELEASE_SHA="abc")
+        environment = dict(RELEASE_TAG="v0.7.0", GITHUB_REPOSITORY="owner/repo", RELEASE_SHA="abc",
+                           DRY_RUN="true" if dry_run else "false")
         with patch.dict(os.environ, environment), patch.object(publish, "checksums", return_value=[Path("setup.exe"), Path("SHA256SUMS.txt")]), patch.object(publish.subprocess, "run", side_effect=run):
             try:
                 publish.main()
             except (ValueError, subprocess.CalledProcessError):
                 return calls, False
         return calls, True
+
+    def test_dry_run_checks_provenance_without_any_release_commands(self):
+        calls, ok = self.execute(None, dry_run=True)
+        self.assertTrue(ok)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1:3], ["attestation", "verify"])
 
     def test_failed_provenance_never_creates_or_promotes_release(self):
         calls, ok = self.execute(None, fail_attestation=True)

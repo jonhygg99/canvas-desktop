@@ -32,11 +32,18 @@ def main():
     tag = os.environ["RELEASE_TAG"]
     repo = os.environ["GITHUB_REPOSITORY"]
     sha = os.environ["RELEASE_SHA"]
-    assets = checksums(Path("dist"), os.environ["PLATFORM"], tag.removeprefix("v"))
+    platform = os.environ["PLATFORM"]
+    signer = os.environ.get("SIGNER_WORKFLOW", "release.yml")
+    if signer not in ("release.yml", f"build-{platform}.yml"):
+        raise ValueError("Workflow firmante no permitido")
+    assets = checksums(Path("dist"), platform, tag.removeprefix("v"))
     for asset in assets[:-1]:
         subprocess.run(["gh", "attestation", "verify", str(asset), "--repo", repo,
                         "--source-digest", sha, "--deny-self-hosted-runners",
-                        "--signer-workflow", f"{repo}/.github/workflows/release.yml"], check=True)
+                        "--signer-workflow", f"{repo}/.github/workflows/{signer}"], check=True)
+    if os.environ.get("DRY_RUN") == "true":
+        print("Ensayo: paquetes, hashes y procedencia verificados; no se publica.")
+        return
     upload_missing(tag, repo, assets)
 
 
