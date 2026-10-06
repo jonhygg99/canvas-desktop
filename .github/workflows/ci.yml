@@ -16,7 +16,7 @@ on:
 
 # Un nuevo commit del PR sustituye su CI anterior; main conserva cada SHA.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
