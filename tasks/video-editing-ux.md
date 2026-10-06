@@ -48,9 +48,21 @@ Ajustes de distribución y sliders:
 - [x] Posición X/Y debajo de Zoom: sliders, campos en píxeles y Center video.
 - [x] Preview y canvas conservan el desplazamiento; el fondo permanece fijo.
 - [x] Reabrir Edit video restaura la posición desde la capa existente.
-- [x] Reset individual de Zoom, X, Y, Background blur, Start, End, Duration y Canvas size.
+- [x] Reset individual de Zoom, X, Y, Background blur, Start, End y Duration; Canvas size conserva solo el selector.
 - [x] Scroll propio del panel derecho con la altura de la preview izquierda.
 - [x] Preview vertical y controles de transporte centrados en su columna.
 - [x] Download without audio activado al inicializar el panel.
 
 En Windows hay que cerrar la app antes de recompilar el ejecutable.
+
+Recortes múltiples del mismo clip:
+- [x] Reproducción centrada independientemente de Canvas size, alineado a la derecha.
+- [x] En ventanas estrechas, Canvas size pasa a una segunda fila sin solapar el transporte.
+- [x] Add trim añade un tramo independiente; la lista permite seleccionarlo o eliminarlo.
+- [x] Cada tramo conserva sus tiempos y su propio Undo/Redo.
+- [x] Create N canvases crea un lienzo por recorte, compartiendo zoom, posición, fondo y tamaño.
+- [x] Cada canvas conserva su póster y trim al navegar, y se marca como pendiente de guardar.
+
+Validación: pruebas con eventos reales de egui para Add trim/Create N canvases,
+regresión del centrado y creación/navegación de todos los recortes. La revisión
+visual nativa sigue pendiente porque el puente Computer Use falla al iniciarse.

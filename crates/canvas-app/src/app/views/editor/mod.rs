@@ -93,7 +93,7 @@ pub(in crate::app) fn editor_view_ui(
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
     crate::ytdlp::retry_pending_frames(&mut state.ytdlp, f.tx, ctx);
     if let Some(accept) = crate::ytdlp::edit_window_ui(&mut state.ytdlp, f.settings, ui) {
-        let _ = f.tx.send(loader::AppMsg::YtdlpEditAccepted(accept));
+        let _ = f.tx.send(loader::AppMsg::YtdlpEditsAccepted(accept));
     }
     deck_nav::resolve(
         state,

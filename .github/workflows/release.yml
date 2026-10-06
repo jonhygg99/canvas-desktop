@@ -2,70 +2,97 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag existente que coincide con Cargo.toml (ej. v0.7.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
 
-# OJO: en un repo creado desde 2023 el GITHUB_TOKEN por defecto es de SOLO
-# LECTURA. Sin este bloque, `action-gh-release` falla con 403 «Resource not
-# accessible by integration» DESPUÉS de haber compilado y empaquetado los
-# cuatro jobs. Declararlo explícitamente es lo que hace que el release exista.
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  # NSIS x64: la plataforma principal (ver CLAUDE.md "Windows es el objetivo
-  # primario"). Es el ÚNICO asset que hoy cumple «descargar y listo»: doble
-  # clic al setup.exe y el asistente instala el .exe, registra las
-  # asociaciones «Abrir con» y crea accesos directos. El job `release` exige
-  # que este termine bien, así que un fallo aquí NO se publica como release.
-  windows-x64:
-    name: Windows NSIS (x64)
-    runs-on: windows-latest
+  gate:
+    name: Validar version, main y CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      sha: ${{ steps.validate.outputs.sha }}
+      tag: ${{ steps.validate.outputs.tag }}
+      prepared_run: ${{ steps.validate.outputs.prepared_run }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # Versión fijada a propósito: packaging/windows/installer.nsi es una
-      # bifurcación de la plantilla de cargo-packager del tag v0.11.8. Si CI
-      # instala «lo último» y cambian las variables Handlebars, el instalador
-      # deja de compilar sin que nadie haya tocado el repo.
-      - run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked -p canvas-app
-      - run: cargo packager --release -p canvas-app --formats nsis
-      # cargo-packager nombra el asset con el nombre del binario y la versión
-      # del workspace (`canvas-desktop_0.1.0_x64-setup.exe`): ya viene sin
-      # espacios ni mayúsculas, así que se sube tal cual y el enlace de
-      # descarga queda predecible.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          name: canvas-desktop-windows-x64
-          path: target/release/*-setup.exe
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validar release
+        id: validate
+        run: python scripts/release_gate.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-  # NSIS arm64: best-effort. Cross-compilar aarch64-pc-windows-msvc necesita
-  # el componente "MSVC ARM64 build tools" en la imagen del runner; no se ha
-  # podido verificar en local (falla el link.exe en un dev machine sin ese
-  # componente instalado) y tampoco hay hardware ARM64 para probar el
-  # instalador resultante. `continue-on-error` para que un fallo aqui no
-  # bloquee el release de x64.
+  windows-x64:
+    needs: gate
+    if: needs.gate.outputs.prepared_run == ''
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ref: ${{ needs.gate.outputs.sha }}
+
   windows-arm64:
     name: Windows NSIS (arm64, best-effort)
     runs-on: windows-latest
-    continue-on-error: true
+    needs: gate
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: '1.97.1'
           targets: aarch64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-packager --locked --version 0.11.8
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Cache cargo-packager
+        id: packager
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-packager*
+          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.packager.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked --target aarch64-pc-windows-msvc -p canvas-app
       - run: cargo packager --release --target aarch64-pc-windows-msvc -p canvas-app --formats nsis
-      - uses: actions/upload-artifact@v7
+      - name: Attest package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
+          subject-path: target/aarch64-pc-windows-msvc/release/*-setup.exe
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          if-no-files-found: error
           name: canvas-desktop-windows-arm64
           path: target/aarch64-pc-windows-msvc/release/*-setup.exe
 
@@ -76,7 +103,13 @@ jobs:
   macos-dmg:
     name: macOS DMG (best-effort)
     runs-on: macos-latest
-    continue-on-error: true
+    needs: gate
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       # Desactivable: sin certificado de firma/notarizacion no se puede
       # compilar en CI. Poner a "true" y configurar los secrets de
@@ -84,26 +117,54 @@ jobs:
       # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) para activarlo de verdad.
       CANVAS_MACOS_SIGN: ${{ vars.CANVAS_MACOS_SIGN || 'false' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-packager --locked --version 0.11.8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: '1.97.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Cache cargo-packager
+        id: packager
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-packager*
+          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.packager.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked -p canvas-app
       - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
         run: cargo packager --release -p canvas-app --formats dmg
-      - uses: actions/upload-artifact@v7
+      - name: Attest package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
+          subject-path: target/release/*.dmg
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          if-no-files-found: error
           name: canvas-desktop-macos
           path: target/release/*.dmg
 
   linux-packages:
     name: Linux AppImage/deb (best-effort)
     runs-on: ubuntu-latest
-    continue-on-error: true
+    needs: gate
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: '1.97.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # libfontconfig1-dev es obligatorio para COMPILAR: egui-winit enlaza
       # `yeslogic-fontconfig-sys`, cuyo build script falla con exit 101 sin las
       # cabeceras de fontconfig. libasound2-dev lo exige rodio (audio de vídeo)
@@ -119,48 +180,100 @@ jobs:
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
             libfontconfig1-dev libasound2-dev \
             fuse libfuse2
-      - run: cargo install cargo-packager --locked --version 0.11.8
+      - name: Cache cargo-packager
+        id: packager
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/cargo-packager*
+          key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.packager.outputs.cache-hit != 'true'
+        run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked -p canvas-app
       - run: cargo packager --release -p canvas-app --formats deb,appimage
-      - uses: actions/upload-artifact@v7
+      - name: Attest package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
+          subject-path: |
+            target/release/*.deb
+            target/release/*.AppImage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          if-no-files-found: error
           name: canvas-desktop-linux
           path: |
             target/release/*.deb
             target/release/*.AppImage
 
-  # ÚNICO publicador. Antes cada job llamaba a action-gh-release por su
-  # cuenta: cuatro creadores del MISMO release en paralelo es una carrera
-  # (el que pierde recibe «already_exists») y el cuerpo del release quedaba
-  # indefinido. Ahora los builds solo suben artefactos y este job los baja
-  # todos y publica una vez.
   release:
-    name: Publicar release
-    needs: [windows-x64, windows-arm64, macos-dmg, linux-packages]
-    # `always()` para que un fallo best-effort (arm64/macOS/Linux) no impida
-    # publicar, pero exigiendo windows-x64 en `success`: un release sin el
-    # instalador de Windows no le sirve a nadie, así que es preferible que no
-    # exista a que exista vacío o a medias.
+    name: Publicar Windows verificado
+    needs: [gate, windows-x64]
     if: >-
-      always()
-      && startsWith(github.ref, 'refs/tags/')
-      && needs['windows-x64'].result == 'success'
+      always() && needs.gate.result == 'success' &&
+      (needs.windows-x64.result == 'success' || needs.gate.outputs.prepared_run != '')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: canvas-desktop-windows-x64
           path: dist
-          merge-multiple: true
-      - name: Show assets to publish
-        run: ls -l dist
-      - uses: softprops/action-gh-release@v3
+          run-id: ${{ needs.gate.outputs.prepared_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - run: python scripts/publish_release.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+
+  optional-assets:
+    name: Adjuntar ${{ matrix.platform }} si compilo
+    needs: [gate, release, windows-arm64, macos-dmg, linux-packages]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-arm64
+            build: windows-arm64
+          - platform: macos
+            build: macos-dmg
+          - platform: linux
+            build: linux-packages
+    steps:
+      - if: needs[matrix.build].result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          name: "Canvas Desktop ${{ github.ref_name }}"
-          # `body_path` primero (guía de descarga, en español) y encima el
-          # changelog automático de commits que genera GitHub.
-          body_path: .github/release-body.md
-          generate_release_notes: true
-          make_latest: true
-          fail_on_unmatched_files: false
-          files: dist/*
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - if: needs[matrix.build].result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: canvas-desktop-${{ matrix.platform }}
+          path: dist
+      - name: Verificar procedencia y adjuntar sin sobrescribir
+        if: needs[matrix.build].result == 'success'
+        run: python scripts/publish_optional.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+      - name: Plataforma no disponible
+        if: needs[matrix.build].result != 'success'
+        run: echo "::warning::No se publicaron paquetes de $PLATFORM. Consulta el job de compilacion."
+        env:
+          PLATFORM: ${{ matrix.platform }}

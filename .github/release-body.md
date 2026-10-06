@@ -1,5 +1,9 @@
-## Novedades de v0.6.0
+## Novedades de v0.7.0
 
+- Recorta varias secciones del mismo vídeo y crea un canvas independiente por recorte.
+- Cada recorte conserva sus tiempos y su propio Undo/Redo; navega entre los canvases desde la tira.
+- Controles de reproducción centrados y selector de tamaño del canvas alineado a la derecha.
+- Instalador Windows probado antes de publicar; hashes SHA-256 y procedencia verificable.
 - Edición de vídeo con controles de zoom, posición, desenfoque, tamaño del canvas y recorte preciso.
 - Mejoras en reproducción, previsualización vertical y descarga; el audio se excluye por defecto.
 - Ajustes y reinicio más claros, y panel de edición desplazable junto a la previsualización.
