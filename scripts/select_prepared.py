@@ -21,7 +21,7 @@ def select(repo, sha, platform, timeout=1800):
                 return str(run["id"])
             # Una plataforma fallida no debe esperar al resto ni bloquear el respaldo.
             jobs = api(repo, f"actions/runs/{run['id']}/jobs?per_page=100")
-            own = [j for j in jobs["jobs"] if j["name"].startswith(f"{platform} /")]
+            own = [j for j in jobs["jobs"] if j["name"].startswith(f"{platform} /") and not j["name"].endswith("/ select")]
             pending |= run["status"] != "completed" and (not own or any(j["status"] != "completed" for j in own))
         if not pending or time.monotonic() >= deadline:
             return ""

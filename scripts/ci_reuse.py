@@ -39,7 +39,7 @@ def main():
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
         try:
             run = verified_run(os.environ["GITHUB_REPOSITORY"], sha, tree)
-        except (subprocess.CalledProcessError, KeyError, OSError, ValueError) as error:
+        except (subprocess.CalledProcessError, KeyError, TypeError, OSError, ValueError) as error:
             print(f"No se pudo reutilizar CI; se ejecutan todos los controles: {error}")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write(f"reuse={'true' if run else 'false'}\nsource_run={run}\n")

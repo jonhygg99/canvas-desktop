@@ -204,4 +204,3 @@ jobs:
           RELEASE_TAG: ${{ needs.gate.outputs.tag }}
           RELEASE_SHA: ${{ needs.gate.outputs.sha }}
           SIGNER_WORKFLOW: build-linux.yml
-
