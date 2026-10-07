@@ -1,5 +1,6 @@
-## Novedades de v0.7.0
+## Novedades de v0.7.1
 
+- «Create canvas» del editor de vídeo añade el lienzo al proyecto en curso en vez de abrir otro proyecto y descartar el actual.
 - Recorta varias secciones del mismo vídeo y crea un canvas independiente por recorte.
 - Cada recorte conserva sus tiempos y su propio Undo/Redo; navega entre los canvases desde la tira.
 - Controles de reproducción centrados y selector de tamaño del canvas alineado a la derecha.
