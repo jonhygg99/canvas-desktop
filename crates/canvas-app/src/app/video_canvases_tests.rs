@@ -64,3 +64,60 @@ fn every_trim_becomes_a_dirty_canvas_and_survives_navigation() {
         assert_eq!(deck.slots[index].name, accepts[index].title);
     }
 }
+
+#[test]
+fn create_canvas_keeps_current_project_instead_of_replacing_it() {
+    // Regresión: `Create canvas` añadía un proyecto nuevo y tiraba el lienzo
+    // en curso; ahora los nuevos van a la misma baraja y el actual se guarda
+    // en su ranura.
+    let mut deck = deck::Deck::new_design((1920.0, 1080.0));
+    let mut current = editor::EditorState::new_blank_image(1920.0, 1080.0);
+    current
+        .doc
+        .add_layer(
+            "actual",
+            canvas_core::Transform::new(10.0, 10.0, 100.0, 100.0),
+            canvas_core::LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Rect,
+                fill: [10, 20, 30, 255],
+                stroke: [0, 0, 0, 0],
+                stroke_width: 2.0,
+                corner_radius: 0.0,
+            }),
+        )
+        .unwrap();
+    current.history.mark_unsaved();
+    let outgoing = current.take_slot();
+    assert!(outgoing.history.is_dirty());
+
+    let mut new_state = editor::EditorState::new_blank_image(1080.0, 1920.0);
+    new_state.history.mark_unsaved();
+    let new_doc = new_state.take_slot();
+    let first_new = super::stash_and_push(
+        &mut deck,
+        outgoing,
+        vec![(new_doc, "Clip".to_owned(), (1080.0, 1920.0))],
+    )
+    .expect("la sesión sin guardar admite hermanos");
+    assert_eq!(first_new, 1);
+    assert_eq!(deck.slots.len(), 2);
+    // El lienzo actual sigue en su ranura, sucio y sin perder su capa.
+    let deck::SlotContent::Ready(old) = &deck.slots[0].content else {
+        panic!("el lienzo actual debe quedar guardado");
+    };
+    assert!(old.history.is_dirty());
+    assert!(old
+        .doc
+        .page()
+        .unwrap()
+        .layers
+        .iter()
+        .any(|l| l.name == "actual"));
+    // El nuevo ocupa su ranura con su nombre y tamaño.
+    assert_eq!(deck.slots[first_new].name, "Clip");
+    assert_eq!(deck.slots[first_new].page, Some((1080.0, 1920.0)));
+    assert!(matches!(
+        deck.slots[first_new].content,
+        deck::SlotContent::Ready(_)
+    ));
+}
