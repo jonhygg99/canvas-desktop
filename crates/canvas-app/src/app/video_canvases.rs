@@ -1,4 +1,6 @@
-//! Crea todos los recortes antes de reemplazar el workspace, sin perder ninguno.
+//! Crea los recortes del editor de vídeo dentro del proyecto actual:
+//! los añade como lienzos nuevos de la baraja existente y salta al primero,
+//! sin descartar el lienzo que se estaba editando.
 use super::{AppInner, View, Workspace};
 use crate::{deck, editor, ytdlp::VideoAccept};
 use eframe::egui;
@@ -26,25 +28,140 @@ impl AppInner {
                 return;
             }
         };
-        let (mut state, new_deck) = assemble_canvases(states, &accepts);
-        ws.deck = new_deck;
-        self.apply_deck_prefs(ws);
-        if accepts.len() > 1 {
+        // Si ya hay un editor abierto, los lienzos nuevos se añaden a SU
+        // baraja (mismo proyecto) en vez de reemplazar el workspace: antes
+        // `Create canvas` tiraba el proyecto en curso y abría otro.
+        // Devuelve los estados si no hay dónde añadir (hay que reemplazar).
+        if let Some(leftover) = try_append_video_canvases(self, ws, states, &accepts, ctx) {
+            let states = leftover;
+            let (mut state, new_deck) = assemble_canvases(states, &accepts);
+            ws.deck = new_deck;
+            self.apply_deck_prefs(ws);
+            if accepts.len() > 1 {
+                ws.deck.strip_visible = true;
+            }
+            state.from_gallery = ws.deck.folder.clone();
+            state.sidecar_enabled = self.settings.sidecar_default;
+            for slot in &mut ws.deck.slots {
+                if let deck::SlotContent::Ready(doc) = &mut slot.content {
+                    doc.sidecar_enabled = self.settings.sidecar_default;
+                }
+            }
+            self.remember_page_size(ws, &state.doc);
+            self.settings.ytdlp_canvas_size = accepts[0].size;
+            self.settings.save_in_background();
+            ws.view = View::Editor(Box::new(state));
+            self.sync_title(ctx, ws);
+        }
+    }
+}
+
+/// Añade los lienzos ya construidos a la baraja del workspace en curso y
+/// activa el primero. Devuelve `None` si los gestionó (éxito o error
+/// mostrado); devuelve `Some(estados)` si no hay editor/baraja donde
+/// añadirlos y el llamador debe usar el camino antiguo (reemplazar).
+fn try_append_video_canvases(
+    app: &mut AppInner,
+    ws: &mut Workspace,
+    states: Vec<editor::EditorState>,
+    accepts: &[VideoAccept],
+    ctx: &egui::Context,
+) -> Option<Vec<editor::EditorState>> {
+    if !matches!(ws.view, View::Editor(_)) {
+        return Some(states);
+    }
+    if ws.deck.slots.is_empty() || ws.deck.active >= ws.deck.slots.len() {
+        return Some(states);
+    }
+    // Una baraja de un solo archivo suelto no admite hermanos: se convierte
+    // en sesión sin guardar para conservar el lienzo actual y poder añadir.
+    if !ws.deck.can_add_canvas() {
+        ws.deck.unsaved_session = true;
+    }
+    if !ws.deck.can_add_canvas() {
+        return Some(states);
+    }
+    let sidecar_default = app.settings.sidecar_default;
+    // Préstamos disjuntos de `ws.view` y `ws.deck`: mientras `state` vive
+    // no se puede pedir `ws` entero (p. ej. `apply_deck_prefs`), así que el
+    // reencuadre y los ajustes se hacen después, sin el préstamo.
+    {
+        let View::Editor(state) = &mut ws.view else {
+            return Some(states);
+        };
+        // Guarda el lienzo actual en su ranura y añade los nuevos: puro
+        // sobre `Deck` (testeable sin ventana) + activación del primero.
+        let mut new_docs = Vec::with_capacity(states.len());
+        for (mut video_state, accept) in states.into_iter().zip(accepts.iter()) {
+            let mut slot = video_state.take_slot();
+            slot.sidecar_enabled = sidecar_default;
+            new_docs.push((slot, accept.title.clone(), accept.size));
+        }
+        let outgoing = state.take_slot();
+        let Some(first_new) = stash_and_push(&mut ws.deck, outgoing, new_docs) else {
+            // Sin sitio para hermanos: devuelve el lienzo a `state`.
+            let back = std::mem::replace(
+                &mut ws.deck.slots[ws.deck.active].content,
+                deck::SlotContent::Active,
+            );
+            if let deck::SlotContent::Ready(back) = back {
+                state.put_slot(*back);
+            }
+            state.ytdlp.error = Some("Could not create the canvas.".to_owned());
+            return None;
+        };
+        let incoming = std::mem::replace(
+            &mut ws.deck.slots[first_new].content,
+            deck::SlotContent::Active,
+        );
+        let deck::SlotContent::Ready(incoming) = incoming else {
+            unreachable!("ranura recién creada");
+        };
+        state.put_slot(*incoming);
+        state.from_gallery = ws.deck.folder.clone();
+        state.sidecar_enabled = sidecar_default;
+        if ws.deck.slots.len() > 1 {
             ws.deck.strip_visible = true;
         }
-        state.from_gallery = ws.deck.folder.clone();
-        state.sidecar_enabled = self.settings.sidecar_default;
-        for slot in &mut ws.deck.slots {
-            if let deck::SlotContent::Ready(doc) = &mut slot.content {
-                doc.sidecar_enabled = self.settings.sidecar_default;
-            }
-        }
-        self.remember_page_size(ws, &state.doc);
-        self.settings.ytdlp_canvas_size = accepts[0].size;
-        self.settings.save_in_background();
-        ws.view = View::Editor(Box::new(state));
-        self.sync_title(ctx, ws);
+        ws.deck.active = first_new;
+        ws.deck.jump_to = None;
+        ws.deck.jump_reframe = false;
+        ws.deck.layout_dirty = true;
+        state.viewport.request_fit();
     }
+    app.apply_deck_prefs(ws);
+    if let View::Editor(state) = &ws.view {
+        app.remember_page_size(ws, &state.doc);
+    }
+    app.settings.ytdlp_canvas_size = accepts[0].size;
+    app.settings.save_in_background();
+    app.sync_title(ctx, ws);
+    None
+}
+
+/// Guarda el lienzo actual en su ranura y añade los nuevos como
+/// provisionales listos. Puro sobre `Deck` (sin ventana): devuelve el índice
+/// del primer lienzo nuevo o `None` si un `push_placeholder` falló (entonces
+/// retira los nuevos a medias, pero el lienzo saliente ya quedó guardado en
+/// su ranura y el llamador debe devolverlo a `state`). El llamador ya
+/// verificó baraja no vacía, activo válido y `can_add_canvas`.
+/// No activa nada; el llamador hace el `put_slot` + reencuadre.
+fn stash_and_push(
+    deck: &mut deck::Deck,
+    outgoing: deck::SlotDoc,
+    new_docs: Vec<(deck::SlotDoc, String, (f64, f64))>,
+) -> Option<usize> {
+    deck.slots[deck.active].content = deck::SlotContent::Ready(Box::new(outgoing));
+    let first_new = deck.slots.len();
+    for (doc, title, size) in new_docs {
+        let Some(index) = deck.push_placeholder(size, "png") else {
+            deck.slots.truncate(first_new);
+            return None;
+        };
+        deck.slots[index].name = title;
+        deck.slots[index].content = deck::SlotContent::Ready(Box::new(doc));
+    }
+    Some(first_new)
 }
 
 fn assemble_canvases(
