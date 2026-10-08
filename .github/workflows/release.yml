@@ -49,6 +49,7 @@ jobs:
     if: needs.gate.outputs.prepared_run == ''
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
       artifact-metadata: write
