@@ -1,5 +1,7 @@
-## Novedades de v0.7.1
+## Novedades de v0.7.2
 
+- Los lienzos creados desde un clip del panel Download se muestran como vídeo en la baraja, con el nombre del archivo del clip, en vez de como una imagen `N.png`.
+- El formato de esos lienzos nuevos respeta el ajuste de Ajustes (PNG, JPEG, WebP o diseño `.canvas`): antes quedaba fijado en PNG.
 - «Create canvas» del editor de vídeo añade el lienzo al proyecto en curso en vez de abrir otro proyecto y descartar el actual.
 - Recorta varias secciones del mismo vídeo y crea un canvas independiente por recorte.
 - Cada recorte conserva sus tiempos y su propio Undo/Redo; navega entre los canvases desde la tira.
