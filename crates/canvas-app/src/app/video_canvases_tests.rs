@@ -29,14 +29,59 @@ fn clip_canvases_are_video_slots_named_after_the_clip() {
     let states = std::iter::once(single.clone())
         .map(|mut accept| {
             accept.poster = poster.clone();
-            build_video_canvas(&accept)
+            build_video_canvas(&accept, NewCanvasFormat::Png)
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let (_, deck) = assemble_canvases(states, std::slice::from_ref(&single));
+    let (_, deck) = assemble_canvases(states, std::slice::from_ref(&single), "png");
     assert_eq!(deck.slots.len(), 1);
     assert!(deck.slots[0].kind == ItemKind::Video);
     assert_eq!(deck.slots[0].name, "clip-Ana.mp4");
+}
+
+#[test]
+fn clip_canvases_use_the_new_canvas_format_from_settings() {
+    // Regresión: el formato venía incrustado como «png», así que un clip
+    // acababa en PNG incluso con «Canvas design» elegido en Ajustes.
+    let dir = tempfile::tempdir().unwrap();
+    let poster = dir.path().join("poster.png");
+    image::RgbaImage::from_pixel(16, 9, image::Rgba([50, 90, 140, 255]))
+        .save(&poster)
+        .unwrap();
+    let build = |format| {
+        let mut accept = crate::ytdlp::edit::default_accept(
+            dir.path().join("clip.mp4"),
+            "clip".to_owned(),
+            (1920.0, 1080.0),
+        );
+        accept.poster = poster.clone();
+        build_video_canvas(&accept, format)
+    };
+    let mut design = build(NewCanvasFormat::Canvas).unwrap();
+    assert!(design.is_design);
+    assert!(!build(NewCanvasFormat::WebP).unwrap().is_design);
+
+    // La extensión del ajuste es la que reserva la ranura provisional: es lo
+    // que decide el archivo que se escribe al guardar.
+    let mut deck = deck::Deck::new_design((1920.0, 1080.0));
+    let mut current = editor::EditorState::new_blank(1920.0, 1080.0);
+    current.history.mark_unsaved();
+    let outgoing = current.take_slot();
+    let doc = design.take_slot();
+    let first_new = super::stash_and_push(
+        &mut deck,
+        outgoing,
+        vec![(doc, "clip.mp4".to_owned(), (1920.0, 1080.0))],
+        NewCanvasFormat::Canvas.extension(),
+    )
+    .expect("la sesión sin guardar admite hermanos");
+    assert_eq!(
+        deck.slots[first_new]
+            .path
+            .extension()
+            .and_then(|e| e.to_str()),
+        Some(canvas_io::CANVAS_EXTENSION)
+    );
 }
 
 #[test]
@@ -52,6 +97,7 @@ fn appended_clip_canvases_are_video_slots() {
         &mut deck,
         outgoing,
         vec![(new_doc, "clip-Ana.mp4".to_owned(), (1080.0, 1920.0))],
+        "png",
     )
     .expect("la sesión sin guardar admite hermanos");
     assert!(deck.slots[first_new].kind == ItemKind::Video);
@@ -82,10 +128,10 @@ fn every_trim_becomes_a_dirty_canvas_and_survives_navigation() {
         .collect();
     let states = accepts
         .iter()
-        .map(build_video_canvas)
+        .map(|accept| build_video_canvas(accept, NewCanvasFormat::Png))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let (mut state, mut deck) = assemble_canvases(states, &accepts);
+    let (mut state, mut deck) = assemble_canvases(states, &accepts, "png");
     assert_eq!(deck.slots.len(), 3);
     assert!(deck.unsaved_session);
     assert!(deck.can_add_canvas());
@@ -155,6 +201,7 @@ fn create_canvas_keeps_current_project_instead_of_replacing_it() {
         &mut deck,
         outgoing,
         vec![(new_doc, "Clip".to_owned(), (1080.0, 1920.0))],
+        "png",
     )
     .expect("la sesión sin guardar admite hermanos");
     assert_eq!(first_new, 1);

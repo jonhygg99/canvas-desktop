@@ -2,6 +2,7 @@
 //! los añade como lienzos nuevos de la baraja existente y salta al primero,
 //! sin descartar el lienzo que se estaba editando.
 use super::{AppInner, View, Workspace};
+use crate::settings::NewCanvasFormat;
 use crate::{deck, editor, ytdlp::VideoAccept};
 use eframe::egui;
 
@@ -15,9 +16,12 @@ impl AppInner {
         if accepts.is_empty() {
             return;
         }
+        // El formato de los lienzos nuevos es el de Ajustes, igual que
+        // «✚ New design»: un clip no tiene por qué acabar en PNG.
+        let format = self.settings.new_canvas_format;
         let result = accepts
             .iter()
-            .map(build_video_canvas)
+            .map(|accept| build_video_canvas(accept, format))
             .collect::<Result<Vec<_>, _>>();
         let states = match result {
             Ok(states) => states,
@@ -32,9 +36,11 @@ impl AppInner {
         // baraja (mismo proyecto) en vez de reemplazar el workspace: antes
         // `Create canvas` tiraba el proyecto en curso y abría otro.
         // Devuelve los estados si no hay dónde añadir (hay que reemplazar).
-        if let Some(leftover) = try_append_video_canvases(self, ws, states, &accepts, ctx) {
+        if let Some(leftover) =
+            try_append_video_canvases(self, ws, states, &accepts, format.extension(), ctx)
+        {
             let states = leftover;
-            let (mut state, new_deck) = assemble_canvases(states, &accepts);
+            let (mut state, new_deck) = assemble_canvases(states, &accepts, format.extension());
             ws.deck = new_deck;
             self.apply_deck_prefs(ws);
             if accepts.len() > 1 {
@@ -65,6 +71,7 @@ fn try_append_video_canvases(
     ws: &mut Workspace,
     states: Vec<editor::EditorState>,
     accepts: &[VideoAccept],
+    ext: &str,
     ctx: &egui::Context,
 ) -> Option<Vec<editor::EditorState>> {
     if !matches!(ws.view, View::Editor(_)) {
@@ -98,7 +105,7 @@ fn try_append_video_canvases(
             new_docs.push((slot, clip_slot_name(accept, accepts.len() > 1), accept.size));
         }
         let outgoing = state.take_slot();
-        let Some(first_new) = stash_and_push(&mut ws.deck, outgoing, new_docs) else {
+        let Some(first_new) = stash_and_push(&mut ws.deck, outgoing, new_docs, ext) else {
             // Sin sitio para hermanos: devuelve el lienzo a `state`.
             let back = std::mem::replace(
                 &mut ws.deck.slots[ws.deck.active].content,
@@ -150,11 +157,12 @@ fn stash_and_push(
     deck: &mut deck::Deck,
     outgoing: deck::SlotDoc,
     new_docs: Vec<(deck::SlotDoc, String, (f64, f64))>,
+    ext: &str,
 ) -> Option<usize> {
     deck.slots[deck.active].content = deck::SlotContent::Ready(Box::new(outgoing));
     let first_new = deck.slots.len();
     for (doc, name, size) in new_docs {
-        let Some(index) = deck.push_placeholder(size, "png") else {
+        let Some(index) = deck.push_placeholder(size, ext) else {
             deck.slots.truncate(first_new);
             return None;
         };
@@ -168,6 +176,7 @@ fn stash_and_push(
 fn assemble_canvases(
     states: Vec<editor::EditorState>,
     accepts: &[VideoAccept],
+    ext: &str,
 ) -> (editor::EditorState, deck::Deck) {
     let mut states = states.into_iter();
     let first = states.next().expect("non-empty accepts checked by caller");
@@ -180,7 +189,7 @@ fn assemble_canvases(
     new_deck.slots[0].name = clip_slot_name(&accepts[0], accepts.len() > 1);
     for (mut state, accept) in states.zip(&accepts[1..]) {
         let index = new_deck
-            .push_placeholder(accept.size, "png")
+            .push_placeholder(accept.size, ext)
             .expect("unsaved session supports new canvases");
         as_video_slot(&mut new_deck.slots[index]);
         new_deck.slots[index].name = clip_slot_name(accept, accepts.len() > 1);
@@ -209,7 +218,10 @@ fn as_video_slot(slot: &mut deck::Slot) {
     slot.kind = crate::gallery::ItemKind::Video;
 }
 
-fn build_video_canvas(accept: &VideoAccept) -> Result<editor::EditorState, String> {
+fn build_video_canvas(
+    accept: &VideoAccept,
+    format: NewCanvasFormat,
+) -> Result<editor::EditorState, String> {
     let poster = if accept.poster.is_file() {
         canvas_io::load_image(&accept.poster)
     } else {
@@ -223,7 +235,13 @@ fn build_video_canvas(accept: &VideoAccept) -> Result<editor::EditorState, Strin
         .unwrap_or((f64::from(poster.width), f64::from(poster.height)));
     let duration = probe.and_then(|(_, _, d)| d);
     let (pw, ph) = accept.size;
-    let mut state = editor::EditorState::new_blank_image(pw, ph);
+    // `Canvas` es un diseño autónomo (guarda sus capas sin rasterizar); el
+    // resto, un raster real con sidecar — mismo reparto que `new_design`.
+    let mut state = if format == NewCanvasFormat::Canvas {
+        editor::EditorState::new_blank(pw, ph)
+    } else {
+        editor::EditorState::new_blank_image(pw, ph)
+    };
     let pixels = canvas_render::image_data_from_rgba(poster.rgba, poster.width, poster.height);
     if accept.blur_radius > 0.0 {
         let content = canvas_core::LayerContent::Image(canvas_core::ImageContent {
