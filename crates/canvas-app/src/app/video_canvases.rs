@@ -95,7 +95,7 @@ fn try_append_video_canvases(
         for (mut video_state, accept) in states.into_iter().zip(accepts.iter()) {
             let mut slot = video_state.take_slot();
             slot.sidecar_enabled = sidecar_default;
-            new_docs.push((slot, accept.title.clone(), accept.size));
+            new_docs.push((slot, clip_slot_name(accept, accepts.len() > 1), accept.size));
         }
         let outgoing = state.take_slot();
         let Some(first_new) = stash_and_push(&mut ws.deck, outgoing, new_docs) else {
@@ -153,12 +153,13 @@ fn stash_and_push(
 ) -> Option<usize> {
     deck.slots[deck.active].content = deck::SlotContent::Ready(Box::new(outgoing));
     let first_new = deck.slots.len();
-    for (doc, title, size) in new_docs {
+    for (doc, name, size) in new_docs {
         let Some(index) = deck.push_placeholder(size, "png") else {
             deck.slots.truncate(first_new);
             return None;
         };
-        deck.slots[index].name = title;
+        as_video_slot(&mut deck.slots[index]);
+        deck.slots[index].name = name;
         deck.slots[index].content = deck::SlotContent::Ready(Box::new(doc));
     }
     Some(first_new)
@@ -175,17 +176,37 @@ fn assemble_canvases(
     } else {
         deck::Deck::new_design(accepts[0].size)
     };
-    if accepts.len() > 1 {
-        new_deck.slots[0].name = accepts[0].title.clone();
-    }
+    as_video_slot(&mut new_deck.slots[0]);
+    new_deck.slots[0].name = clip_slot_name(&accepts[0], accepts.len() > 1);
     for (mut state, accept) in states.zip(&accepts[1..]) {
         let index = new_deck
             .push_placeholder(accept.size, "png")
             .expect("unsaved session supports new canvases");
-        new_deck.slots[index].name = accept.title.clone();
+        as_video_slot(&mut new_deck.slots[index]);
+        new_deck.slots[index].name = clip_slot_name(accept, accepts.len() > 1);
         new_deck.slots[index].content = deck::SlotContent::Ready(Box::new(state.take_slot()));
     }
     (first, new_deck)
+}
+
+/// Nombre visible de la ranura de un lienzo creado desde un clip. Con un solo
+/// recorte es el archivo del clip: la ranura ES ese vídeo, igual que abrirlo
+/// desde la galería. Con varios, el título, que ya los numera.
+fn clip_slot_name(accept: &VideoAccept, multiple: bool) -> String {
+    if multiple {
+        return accept.title.clone();
+    }
+    accept
+        .path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| accept.title.clone())
+}
+
+/// La ranura de un lienzo de clip se muestra como vídeo, no como imagen: su
+/// contenido es una capa de vídeo enlazada al clip de origen.
+fn as_video_slot(slot: &mut deck::Slot) {
+    slot.kind = crate::gallery::ItemKind::Video;
 }
 
 fn build_video_canvas(accept: &VideoAccept) -> Result<editor::EditorState, String> {

@@ -1,4 +1,61 @@
 use super::*;
+use crate::gallery::ItemKind;
+use std::path::PathBuf;
+
+#[test]
+fn clip_canvases_are_video_slots_named_after_the_clip() {
+    // Regresión: las ranuras nuevas salían como imagen (`N.png`) en vez de
+    // como el vídeo del que vienen.
+    let dir = tempfile::tempdir().unwrap();
+    let poster = dir.path().join("poster.png");
+    image::RgbaImage::from_pixel(16, 9, image::Rgba([50, 90, 140, 255]))
+        .save(&poster)
+        .unwrap();
+    let single = crate::ytdlp::edit::default_accept(
+        dir.path().join("clip-Ana.mp4"),
+        "clip Ana".to_owned(),
+        (1920.0, 1080.0),
+    );
+    assert_eq!(clip_slot_name(&single, false), "clip-Ana.mp4");
+    // Con varios recortes manda el título, que ya los numera.
+    let mut many = single.clone();
+    many.title = "clip Ana — Trim 2".to_owned();
+    assert_eq!(clip_slot_name(&many, true), "clip Ana — Trim 2");
+    // Un clip sin nombre de archivo cae al título en vez de a una ranura muda.
+    let mut nameless = single.clone();
+    nameless.path = PathBuf::new();
+    assert_eq!(clip_slot_name(&nameless, false), "clip Ana");
+
+    let states = std::iter::once(single.clone())
+        .map(|mut accept| {
+            accept.poster = poster.clone();
+            build_video_canvas(&accept)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let (_, deck) = assemble_canvases(states, std::slice::from_ref(&single));
+    assert_eq!(deck.slots.len(), 1);
+    assert!(deck.slots[0].kind == ItemKind::Video);
+    assert_eq!(deck.slots[0].name, "clip-Ana.mp4");
+}
+
+#[test]
+fn appended_clip_canvases_are_video_slots() {
+    let mut deck = deck::Deck::new_design((1920.0, 1080.0));
+    let mut current = editor::EditorState::new_blank(1920.0, 1080.0);
+    current.history.mark_unsaved();
+    let outgoing = current.take_slot();
+    let mut new_state = editor::EditorState::new_blank_image(1080.0, 1920.0);
+    new_state.history.mark_unsaved();
+    let new_doc = new_state.take_slot();
+    let first_new = super::stash_and_push(
+        &mut deck,
+        outgoing,
+        vec![(new_doc, "clip-Ana.mp4".to_owned(), (1080.0, 1920.0))],
+    )
+    .expect("la sesión sin guardar admite hermanos");
+    assert!(deck.slots[first_new].kind == ItemKind::Video);
+}
 
 #[test]
 fn every_trim_becomes_a_dirty_canvas_and_survives_navigation() {
@@ -62,6 +119,7 @@ fn every_trim_becomes_a_dirty_canvas_and_survives_navigation() {
         assert!(state.history.is_dirty());
         assert!(state.doc.source_path.is_none());
         assert_eq!(deck.slots[index].name, accepts[index].title);
+        assert!(deck.slots[index].kind == ItemKind::Video);
     }
 }
 
