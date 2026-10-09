@@ -1,6 +1,7 @@
-## Novedades de v0.7.3
+## Novedades de v0.7.4
 
-- El release vuelve a incluir ejecutable para **Mac con Intel** (i5/i7): hay un `.dmg` para Intel y otro para Apple Silicon. En v0.7.2 solo se publicó el de Apple Silicon y en un Intel no había nada que descargar.
+- El release incluye los dos `.dmg` de macOS: **Intel** (i5/i7) y **Apple Silicon**. En v0.7.3 solo llegó a publicarse el de Intel por un fallo del pipeline (las dos arquitecturas subían el artefacto con el mismo nombre y una pisaba a la otra).
+- En v0.7.2 solo se publicó el de Apple Silicon y en un Intel no había nada que descargar.
 - Los lienzos creados desde un clip del panel Download se muestran como vídeo en la baraja, con el nombre del archivo del clip, en vez de como una imagen `N.png`.
 - El formato de esos lienzos nuevos respeta el ajuste de Ajustes (PNG, JPEG, WebP o diseño `.canvas`): antes quedaba fijado en PNG.
 - «Create canvas» del editor de vídeo añade el lienzo al proyecto en curso en vez de abrir otro proyecto y descartar el actual.
