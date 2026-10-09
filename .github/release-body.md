@@ -1,5 +1,6 @@
-## Novedades de v0.7.2
+## Novedades de v0.7.3
 
+- El release vuelve a incluir ejecutable para **Mac con Intel** (i5/i7): hay un `.dmg` para Intel y otro para Apple Silicon. En v0.7.2 solo se publicó el de Apple Silicon y en un Intel no había nada que descargar.
 - Los lienzos creados desde un clip del panel Download se muestran como vídeo en la baraja, con el nombre del archivo del clip, en vez de como una imagen `N.png`.
 - El formato de esos lienzos nuevos respeta el ajuste de Ajustes (PNG, JPEG, WebP o diseño `.canvas`): antes quedaba fijado en PNG.
 - «Create canvas» del editor de vídeo añade el lienzo al proyecto en curso en vez de abrir otro proyecto y descartar el actual.
@@ -26,10 +27,11 @@ Si Windows SmartScreen avisa de un editor desconocido, pulsa *Más información 
 Ejecutar de todas formas* (el instalador no está firmado con un certificado de
 code signing).
 
-## macOS (Apple Silicon)
+## macOS (Apple Silicon e Intel)
 
-Descarga el **`.dmg`**, ábrelo y arrastra *Canvas Desktop* a la carpeta
-*Aplicaciones*.
+Descarga el **`.dmg`** de tu arquitectura (`aarch64` para Apple Silicon M1 y
+posteriores, `x86_64` para Intel i5/i7), ábrelo y arrastra *Canvas Desktop* a
+la carpeta *Aplicaciones*.
 
 Este build **no está firmado ni notarizado** (eso requiere una cuenta de Apple
 Developer de pago), así que la primera vez macOS dirá que no puede verificar al
