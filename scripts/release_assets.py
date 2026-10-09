@@ -12,7 +12,9 @@ def checksums(directory, platform, version):
                   "macos": (".dmg",), "linux": (".deb", ".AppImage")}
     files = sorted(directory.iterdir())
     packages = [p for p in files if p.is_file() and p.name.endswith(extensions[platform])]
-    expected = 2 if platform == "linux" else 1
+    # macOS publica 2 DMG (Intel x86_64 + Apple Silicon aarch64): exigir los
+    # dos evita repetir el v0.7.3, que salió con uno solo en silencio.
+    expected = 2 if platform in ("linux", "macos") else 1
     if len(packages) != expected:
         raise ValueError(f"Se esperaban {expected} paquetes de {platform}; hay {len(packages)}")
     lines = []

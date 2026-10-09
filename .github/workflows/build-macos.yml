@@ -95,6 +95,40 @@ jobs:
           # `error` a propósito: si el DMG falta, el job falla en visible en
           # vez de publicar un release silenciosamente sin binario (el caso
           # del Intel ausente en v0.7.2).
+          # Nombre POR ARQUITECTURA: dos patas subiendo al mismo nombre
+          # crean dos artefactos homónimos y `publish-macos` descargaría uno
+          # arbitrario (así se perdió el DMG ARM en v0.7.3); el job `merge`
+          # los fusiona en uno solo determinista.
+          if-no-files-found: error
+          name: canvas-desktop-macos-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/*.dmg
+
+  merge:
+    # Fusiona los dos DMG en el artefacto único `canvas-desktop-macos` que
+    # esperan `select_prepared.py`, `publish-macos` y el ensayo. Si una pata
+    # falla, este job se omite y macOS no se publica a medias: mejor sin DMG
+    # (visible en rojo) que con una sola arquitectura en silencio.
+    name: Fusionar DMGs Intel + ARM
+    needs: [select, build]
+    if: needs.select.outputs.run_id == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: canvas-desktop-macos-aarch64-apple-darwin
+          path: dist
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: canvas-desktop-macos-x86_64-apple-darwin
+          path: dist
+          github-token: ${{ github.token }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
           if-no-files-found: error
           name: canvas-desktop-macos
-          path: target/${{ matrix.target }}/release/*.dmg
+          path: dist/*.dmg
