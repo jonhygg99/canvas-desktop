@@ -120,7 +120,7 @@ Plan de diseño en `plan.md`. Las tareas se implementan por orden y dejan intact
 - [x] UI explica con una frase que el PNG es un asset derivado y el .canvas sigue siendo el proyecto editable.
 **Verificación:** Ejecutar app real y render de Auto en carpeta temporal; `cargo test`, clippy `-D warnings`, fmt.
 **Dependencias:** 1–8.
-**Archivos previstos:** probe de framing en `canvas-render/examples/`, pruebas de export/render del módulo correspondiente, `CLAUDE.md`.
+**Archivos previstos:** probe de framing en `canvas-render/examples/`, pruebas de export/render del módulo correspondiente, `AGENTS.md`.
 **Tamaño:** M.
 
 ## 10. Ver y administrar framings desde Gallery

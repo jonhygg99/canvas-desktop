@@ -132,7 +132,7 @@ Lista y criterios de implementación en `todo.md`.
 
 ## Referencias locales revisadas
 
-- Canvas Desktop: `CLAUDE.md`; editor de página `crates/canvas-app/src/editor/properties_panel/page.rs`; CanvasRenderer y composición de escena descritos en CLAUDE; guardado/export `crates/canvas-app/src/app/views/editor/save_flow.rs` y `crates/canvas-io/src/export/`; formato `.canvas` en `crates/canvas-io/src/sidecar/`.
+- Canvas Desktop: `AGENTS.md`; editor de página `crates/canvas-app/src/editor/properties_panel/page.rs`; CanvasRenderer y composición de escena descritos en AGENTS; guardado/export `crates/canvas-app/src/app/views/editor/save_flow.rs` y `crates/canvas-io/src/export/`; formato `.canvas` en `crates/canvas-io/src/sidecar/`.
 - Flashcut-Auto: `crates/app/src/framing.rs` (formato/lectura del sidecar); `crates/domain/src/validate/framing.rs` (rangos); `crates/renderer/src/ffmpeg/framing.rs` (render vertical y blur).
 
 ## Estado de la entrega (4 de octubre de 2026)

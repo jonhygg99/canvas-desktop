@@ -1,5 +1,5 @@
 //! Maquetado y pintado de texto con parley. `parley` comparte `peniko` con
-//! vello (ver CLAUDE.md): tras subir vello hay que revalidar el par con
+//! vello (ver AGENTS.md): tras subir vello hay que revalidar el par con
 //! `cargo tree -i peniko` y el ejemplo `text_probe`.
 
 use std::sync::{Mutex, OnceLock};

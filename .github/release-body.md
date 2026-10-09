@@ -34,10 +34,10 @@ Descarga el **`.dmg`** de tu arquitectura (`aarch64` para Apple Silicon M1 y
 posteriores, `x86_64` para Intel i5/i7), ábrelo y arrastra *Canvas Desktop* a
 la carpeta *Aplicaciones*.
 
-Este build **no está firmado ni notarizado** (eso requiere una cuenta de Apple
-Developer de pago), así que la primera vez macOS dirá que no puede verificar al
-desarrollador. Para abrirla igualmente: **clic derecho (o Control + clic) sobre
-la app → Abrir → Abrir**. Solo hace falta hacerlo una vez.
+Si el build está firmado por Apple, se abre directamente. Si macOS dice que no
+puede verificar al desarrollador (build sin firmar: requiere cuenta de Apple
+Developer de pago), ábrela igualmente con **clic derecho (o Control + clic)
+sobre la app → Abrir → Abrir**. Solo hace falta hacerlo una vez.
 
 ## Linux (x64)
 

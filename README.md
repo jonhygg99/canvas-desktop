@@ -20,7 +20,7 @@ descarga el archivo de tu sistema y listo.
 | Linux (Debian/Ubuntu) | `canvas-desktop_*.deb` | `sudo apt install ./canvas-desktop_*.deb` |
 
 Solo el instalador de **Windows x64** está soportado de verdad hoy (ver
-`CLAUDE.md`); los paquetes de macOS y Linux se publican *best-effort* y aún no
+`AGENTS.md`); los paquetes de macOS y Linux se publican *best-effort* y aún no
 se han verificado en hardware real.
 
 ## Interfaz y preferencias

@@ -45,7 +45,8 @@ jobs:
     needs: select
     if: needs.select.outputs.run_id == ''
     runs-on: macos-latest
-    timeout-minutes: 40
+    # 60: la notarización de Apple tarda minutos por arquitectura.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -55,12 +56,17 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
+    # Firma de Apple: se ACTIVA sola cuando existen estos repo secrets (ver
+    # scripts/macos_sign.py); sin ellos el DMG sale sin firmar y Gatekeeper
+    # avisa (clic derecho → Abrir). Requiere cuenta de pago de Apple
+    # Developer para el certificado "Developer ID Application".
     env:
-      # Desactivable: sin certificado de firma/notarizacion no se puede
-      # compilar en CI. Poner a "true" y configurar los secrets de
-      # cargo-packager (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-      # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID) para activarlo de verdad.
-      CANVAS_MACOS_SIGN: ${{ vars.CANVAS_MACOS_SIGN || 'false' }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -84,8 +90,10 @@ jobs:
       - if: steps.packager.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --locked --version 0.11.8
       - run: cargo build --release --locked --target ${{ matrix.target }} -p canvas-app
-      - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
+      - name: Package (unsigned unless Apple secrets exist)
         run: cargo packager --release --target ${{ matrix.target }} -p canvas-app --formats dmg
+      - name: Firmar y notarizar (no-op sin secretos de Apple)
+        run: python scripts/macos_sign.py ${{ matrix.target }}
       - name: Attest package
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
