@@ -35,11 +35,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
   build:
-    name: macOS DMG (best-effort)
+    # Intel (x86_64, Macs i5/i7) + Apple Silicon (aarch64): `macos-latest` es
+    # ARM64 y su binario nativo no arranca en un Intel, así que el x86_64 se
+    # compila cruzado con `--target` desde el mismo runner (sin necesitar
+    # runner Intel). Ambas patas suben al MISMO artefacto `canvas-desktop-macos`
+    # (upload-artifact los fusiona): `publish-macos` y el ensayo lo recogen sin
+    # cambios, y `select_prepared.py` sigue encontrando el artefacto por nombre.
+    name: macOS DMG ${{ matrix.target }} (best-effort)
     needs: select
     if: needs.select.outputs.run_id == ''
     runs-on: macos-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     permissions:
       contents: read
       id-token: write
@@ -59,9 +69,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: '1.97.1'
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          shared-key: release-macos
+          shared-key: release-macos-${{ matrix.target }}
           cache-bin: false
           cache-workspace-crates: true
       - name: Cache cargo-packager
@@ -72,15 +83,18 @@ jobs:
           key: packager-0.11.8-${{ runner.os }}-${{ runner.arch }}
       - if: steps.packager.outputs.cache-hit != 'true'
         run: cargo install cargo-packager --locked --version 0.11.8
-      - run: cargo build --release --locked -p canvas-app
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p canvas-app
       - name: Package (unsigned unless CANVAS_MACOS_SIGN=true)
-        run: cargo packager --release -p canvas-app --formats dmg
+        run: cargo packager --release --target ${{ matrix.target }} -p canvas-app --formats dmg
       - name: Attest package
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: target/release/*.dmg
+          subject-path: target/${{ matrix.target }}/release/*.dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
+          # `error` a propósito: si el DMG falta, el job falla en visible en
+          # vez de publicar un release silenciosamente sin binario (el caso
+          # del Intel ausente en v0.7.2).
           if-no-files-found: error
           name: canvas-desktop-macos
-          path: target/release/*.dmg
+          path: target/${{ matrix.target }}/release/*.dmg
