@@ -48,7 +48,7 @@ pub fn find_sidecar(image_path: &Path) -> Option<PathBuf> {
 
 /// Nombre desambiguado número `n` de `original`: `nombre 2.ext`,
 /// `nombre 3.ext`… (con `n == 1` devuelve el nombre tal cual). Dueña ÚNICA
-/// de la regla de nombres: la usan `free_name_in` (elegir un destino libre)
+/// de la regla de nombres: la usan `move_to_free_name` (reservar un destino libre)
 /// y `find_trashed_entry` (buscar la copia trasteada), que deben generar
 /// siempre los mismos nombres.
 pub fn numbered_name(original: &Path, n: u32) -> String {
@@ -74,20 +74,44 @@ pub fn numbered_name(original: &Path, n: u32) -> String {
 /// de proyecto ya hay un problema mayor que el nombre.
 pub const MAX_NAME_SUFFIX: u32 = 10_000;
 
-/// Nombre libre dentro de `dir` para `original`: el mismo nombre si está
-/// libre, y si no `nombre 2.ext`, `nombre 3.ext`… (los `rename` de Windows
-/// SOBRESCRIBEN el destino, así que «mover» sin desambiguar destruiría lo
-/// que ya hubiera ahí). Compartido por la cuarentena y la papelera del
-/// proyecto: ambas apartan archivos con nombres que el usuario puede volver
-/// a crear.
-pub fn free_name_in(dir: &Path, original: &Path) -> PathBuf {
+/// Reserva un nombre con `create_new` y mueve el archivo a esa reserva.
+/// Compartido por cuarentena y papelera: dos workers no pueden elegir la
+/// misma ruta, y agotar los nombres nunca reemplaza una copia anterior.
+pub(super) fn move_to_free_name(dir: &Path, original: &Path) -> Result<PathBuf, IoError> {
     for n in 1..=MAX_NAME_SUFFIX {
         let candidate = dir.join(numbered_name(original, n));
-        if !candidate.exists() {
-            return candidate;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => drop(file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(IoError::Io {
+                    path: candidate,
+                    source,
+                })
+            }
         }
+        if let Err(source) = std::fs::rename(original, &candidate) {
+            if let Err(error) = std::fs::remove_file(&candidate) {
+                tracing::warn!(
+                    "no se pudo retirar la reserva {}: {error}",
+                    candidate.display()
+                );
+            }
+            return Err(IoError::Io {
+                path: original.to_owned(),
+                source,
+            });
+        }
+        return Ok(candidate);
     }
-    dir.join(numbered_name(original, MAX_NAME_SUFFIX))
+    Err(IoError::Write {
+        path: original.to_owned(),
+        message: "no free destination name remains; nothing was moved".into(),
+    })
 }
 
 /// Crea `<folder>/.canvas` si no existe y, en Windows, la marca oculta con

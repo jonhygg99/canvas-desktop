@@ -1,13 +1,8 @@
 //! Cuarentena propia del proyecto: aparta archivos ilegibles (vacíos,
 //! truncados, con checksum roto) sin borrarlos. Vive dentro de `.canvas/`,
 //! así que los escaneos de galería/baraja ya la ignoran (filtran
-//! `SIDECAR_DIR` entero); a diferencia de `trash.rs`, NADA la purga al
-//! salir de la carpeta — solo el usuario la vacía o restaura.
-//!
-//! Difiere de `trash.rs` en un punto: la papelera se purga al salir de la
-//! carpeta y esta no. Ambas comparten la desambiguación de nombres
-//! (`free_name_in`), porque en las dos el usuario puede volver a crear un
-//! archivo con el mismo nombre y el `rename` sobrescribiría el antiguo.
+//! `SIDECAR_DIR` entero). Como la papelera, se conserva al navegar.
+//! Ambas reservan el destino antes de mover para conservar cada copia.
 
 use std::path::{Path, PathBuf};
 
@@ -18,13 +13,6 @@ use super::paths::ensure_sidecar_dir;
 /// Carpeta de cuarentena dentro de `.canvas/`.
 pub fn quarantine_dir(folder: &Path) -> PathBuf {
     super::paths::sidecar_dir(folder).join("quarantine")
-}
-
-/// Ruta que tendría `original` en cuarentena, desambiguando con
-/// `nombre 2.ext`, … si ya existe algo ahí. No crea nada.
-fn free_quarantine_path(original: &Path) -> PathBuf {
-    let folder = original.parent().unwrap_or_else(|| Path::new(""));
-    super::free_name_in(&quarantine_dir(folder), original)
 }
 
 /// Mueve `path` a la cuarentena del proyecto (creándola si hace falta) y
@@ -41,12 +29,7 @@ pub fn move_to_quarantine(path: &Path) -> Result<PathBuf, IoError> {
             });
         }
     }
-    let staged = free_quarantine_path(path);
-    std::fs::rename(path, &staged).map_err(|source| IoError::Write {
-        path: path.to_path_buf(),
-        message: format!("moviendo a la cuarentena del proyecto: {source}"),
-    })?;
-    Ok(staged)
+    super::paths::move_to_free_name(&dir, path)
 }
 
 /// Deshace `move_to_quarantine`: mueve `staged` de vuelta a `original`.

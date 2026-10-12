@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::IoError;
 
-use super::paths::{ensure_sidecar_dir, free_name_in, numbered_name, sidecar_dir, MAX_NAME_SUFFIX};
+use super::paths::{
+    ensure_sidecar_dir, move_to_free_name, numbered_name, sidecar_dir, MAX_NAME_SUFFIX,
+};
 
 /// Papelera propia del proyecto — deshacer un borrado ("Delete" del editor)
 /// mueve el archivo aquí en vez de a la del sistema operativo: un
@@ -36,19 +38,14 @@ pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
             });
         }
     }
-    let staged = free_name_in(&dir, path);
-    std::fs::rename(path, &staged).map_err(|source| IoError::Write {
-        path: path.to_path_buf(),
-        message: format!("moviendo a la papelera del proyecto: {source}"),
-    })?;
-    Ok(staged)
+    move_to_free_name(&dir, path)
 }
 
 /// Entrada de la papelera del proyecto correspondiente a `original` (la más
 /// antigua con ese nombre, desambiguada o no). `None` si no hay ninguna.
 /// Necesario desde que `move_to_local_trash` desambigua: quien solo conoce
 /// la ruta original ya no puede derivar la ruta papelera. Usa la MISMA regla
-/// de nombres que `free_name_in` (`numbered_name`), para encontrar siempre
+/// de nombres que `move_to_free_name` (`numbered_name`), para encontrar siempre
 /// lo que aquella escribió.
 ///
 /// Lee la carpeta UNA vez y busca en memoria: si no hay nada, el coste deja

@@ -8,6 +8,53 @@ use canvas_core::{ImageContent, LayerContent, Transform};
 use payload::encode_payload;
 
 #[test]
+fn concurrent_deletions_keep_distinct_trash_copies() {
+    use std::sync::{Arc, Barrier};
+    for _ in 0..32 {
+        let dir = tempfile::tempdir().unwrap();
+        let trash = trash_dir(dir.path());
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("a.png"), b"older").unwrap();
+        let paths = [dir.path().join("a.png"), dir.path().join("a 2.png")];
+        for (path, bytes) in paths
+            .iter()
+            .zip([b"first".as_slice(), b"second".as_slice()])
+        {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(3));
+        let workers = paths.map(|path| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                move_to_local_trash(&path).unwrap()
+            })
+        });
+        barrier.wait();
+        let [first, second] = workers.map(|worker| worker.join().unwrap());
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+        assert_eq!(std::fs::read(trash.join("a.png")).unwrap(), b"older");
+    }
+}
+
+#[test]
+fn full_trash_refuses_to_replace_the_last_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.png");
+    let trash = trash_dir(dir.path());
+    std::fs::create_dir_all(&trash).unwrap();
+    for n in 1..=paths::MAX_NAME_SUFFIX {
+        std::fs::write(trash.join(paths::numbered_name(&path, n)), b"older").unwrap();
+    }
+    std::fs::write(&path, b"new").unwrap();
+    assert!(move_to_local_trash(&path).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), b"new");
+    assert_eq!(std::fs::read(trash.join("a 10000.png")).unwrap(), b"older");
+}
+
+#[test]
 fn saving_an_unreadable_layer_refuses_to_replace_the_previous_design() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("wide.canvas");

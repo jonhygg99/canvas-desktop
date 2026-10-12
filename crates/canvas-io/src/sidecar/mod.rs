@@ -47,9 +47,7 @@ pub use io::{
     delete_sidecar, read_design, read_preview, read_sidecar, write_blank_canvas, write_design,
     write_sidecar,
 };
-pub use paths::{
-    ensure_sidecar_dir, find_sidecar, free_name_in, sidecar_dir, sidecar_path, SIDECAR_DIR,
-};
+pub use paths::{ensure_sidecar_dir, find_sidecar, sidecar_dir, sidecar_path, SIDECAR_DIR};
 pub use payload::{
     blank_design, fnv1a64, make_preview, preview_scale, CanvasPayload, LayerPixels,
     RestoredDocument,
