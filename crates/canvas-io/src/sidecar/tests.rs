@@ -7,6 +7,21 @@ use super::*;
 use canvas_core::{ImageContent, LayerContent, Transform};
 use payload::encode_payload;
 
+#[test]
+fn saving_an_unreadable_layer_refuses_to_replace_the_previous_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wide.canvas");
+    std::fs::write(&path, b"previous design").unwrap();
+    let payload = CanvasPayload {
+        document: Document::new(20_001.0, 1.0),
+        images: vec![(1, vec![255; 20_001 * 4], 20_001, 1)],
+        background_layer: None,
+        preview: None,
+    };
+    assert!(write_design(&path, &payload).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), b"previous design");
+}
+
 fn sample_doc() -> (Document, Vec<LayerPixels>) {
     let mut doc = Document::new(200.0, 100.0);
     let id = doc

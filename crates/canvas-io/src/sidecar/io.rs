@@ -61,7 +61,7 @@ type ParsedCanvasFile = (SidecarFile, Vec<(u64, LoadedImage)>);
 /// fotos grandes es legítimamente pesado; el tope solo corta antes de
 /// volcar a memoria un archivo absurdo (corrupto o malintencionado) de
 /// varios GB.
-const MAX_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
+pub(super) const MAX_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
 
 /// `fs::read` con tope de tamaño: comprueba la longitud ANTES de leer para
 /// no asignar el archivo entero si ya nació fuera de límite.

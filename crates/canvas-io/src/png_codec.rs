@@ -18,6 +18,14 @@ const MAX_LAYER_PNG_DIM: u32 = 20_000;
 /// memoria en `to_rgba8` antes de que nadie mire el contenido.
 const MAX_LAYER_PNG_ALLOC: u64 = 512 * 1024 * 1024;
 
+pub(crate) fn supported_rgba_bytes(width: u32, height: u32) -> Option<u64> {
+    if width == 0 || height == 0 || width > MAX_LAYER_PNG_DIM || height > MAX_LAYER_PNG_DIM {
+        return None;
+    }
+    let bytes = u64::from(width) * u64::from(height) * 4;
+    (bytes <= MAX_LAYER_PNG_ALLOC).then_some(bytes)
+}
+
 /// Codifica un buffer RGBA como PNG crudo. `context` solo se usa para dar
 /// contexto al mensaje de error si algo falla. Lo usan el contenedor v4 del
 /// sidecar (sección binaria) y `encode_layer_png` (portapapeles).
