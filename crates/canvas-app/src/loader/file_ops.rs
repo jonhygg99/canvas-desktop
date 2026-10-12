@@ -147,8 +147,8 @@ pub(super) fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf
 /// creería que se llevó también las capas editables). Antes el fallo del
 /// sidecar solo se registraba en el log.
 #[derive(Debug)]
-pub(super) struct PairOutcome {
-    pub result: Result<(), IoError>,
+pub(super) struct PairOutcome<T = ()> {
+    pub result: Result<T, IoError>,
     pub warning: Option<String>,
 }
 
@@ -202,51 +202,41 @@ pub(super) fn trash_with_sidecar(path: &Path) -> PairOutcome {
 /// editor/cabecera de un lienzo), y restaurar con un `rename` no depende de
 /// ninguna API de plataforma (a diferencia de `trash::os_limited`, que en
 /// macOS no existe).
-pub(super) fn trash_locally_with_sidecar(path: &Path) -> PairOutcome {
-    if let Err(e) = canvas_io::move_to_local_trash(path) {
-        return PairOutcome {
-            result: Err(e),
-            warning: None,
-        };
-    }
-    let Some(sidecar) = sidecar_of(path) else {
-        return PairOutcome::ok();
+pub(super) fn trash_locally_with_sidecar(path: &Path) -> PairOutcome<crate::editor::DeleteRecord> {
+    let staged = match canvas_io::move_to_local_trash(path) {
+        Ok(staged) => staged,
+        Err(e) => {
+            return PairOutcome {
+                result: Err(e),
+                warning: None,
+            }
+        }
     };
-    match canvas_io::move_to_local_trash(&sidecar) {
-        Ok(_) => PairOutcome::ok(),
-        Err(e) => PairOutcome::warned(format!(
-            "\"{}\" went to the project trash, but its editable layers could not be moved with it ({e}). Undo will bring back the file only.",
-            path.display()
-        )),
+    let mut record = crate::editor::DeleteRecord {
+        path: path.to_owned(),
+        staged,
+        sidecar: None,
+    };
+    let mut warning = None;
+    if let Some(sidecar) = sidecar_of(path) {
+        match canvas_io::move_to_local_trash(&sidecar) {
+            Ok(staged) => record.sidecar = Some((sidecar, staged)),
+            Err(e) => warning = Some(format!(
+                "\"{}\" went to the project trash, but its editable layers could not be moved with it ({e}). Undo will bring back the file only.", path.display()
+            )),
+        }
+    }
+    PairOutcome {
+        result: Ok(record),
+        warning,
     }
 }
 
-/// Restaura `original` desde la papelera del proyecto. Busca la entrada
-/// trasteada por nombre, porque `move_to_local_trash` desambigua: si el
-/// archivo se trasteó dos veces, el original puede estar como `foto.png` o
-/// como `foto 2.png`.
-///
-/// El llamador restaura la imagen y el sidecar por separado: lo que falle en
-/// el sidecar viaja como `warning`, para que el usuario sepa que el archivo
-/// volvió sin sus capas editables (que siguen en la papelera).
-pub(super) fn restore_one(original: &Path) -> PairOutcome {
-    let Some(staged) = canvas_io::find_trashed_entry(original) else {
-        return PairOutcome {
-            result: Err(IoError::Message {
-                message: format!(
-                    "nothing was found in the trash for \"{}\"",
-                    original.display()
-                ),
-            }),
-            warning: None,
-        };
-    };
-    match canvas_io::restore_from_local_trash(&staged, original) {
-        Ok(()) => PairOutcome::ok(),
-        Err(e) => PairOutcome {
-            result: Err(e),
-            warning: None,
-        },
+/// Restaura la entrada exacta registrada por el borrado, sin buscar por nombre.
+pub(super) fn restore_one(original: &Path, staged: &Path) -> PairOutcome {
+    PairOutcome {
+        result: canvas_io::restore_from_local_trash(staged, original),
+        warning: None,
     }
 }
 

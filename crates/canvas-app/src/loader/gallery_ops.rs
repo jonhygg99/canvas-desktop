@@ -149,16 +149,17 @@ pub fn spawn_document_delete(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Conte
 /// viaja como aviso (las capas siguen en la papelera), nunca como error de
 /// la operación principal.
 pub fn spawn_restore_from_trash(
-    path: PathBuf,
-    sidecar: Option<PathBuf>,
+    record: crate::editor::DeleteRecord,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let outcome = restore_one(&path);
+        let path = record.path;
+        let outcome = restore_one(&path, &record.staged);
         let mut warning = outcome.warning;
-        if let Some(sidecar) = &sidecar {
-            let side_out = restore_one(sidecar);
+        if let Some((sidecar, staged)) = record.sidecar.as_ref().filter(|_| outcome.result.is_ok())
+        {
+            let side_out = restore_one(sidecar, staged);
             if side_out.result.is_err() {
                 if let Err(e) = side_out.result {
                     warning = Some(format!(

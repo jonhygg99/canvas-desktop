@@ -315,7 +315,7 @@ pub enum AppMsg {
     /// «Delete» del panel).
     DocumentDeleted {
         path: PathBuf,
-        result: Result<(), IoError>,
+        result: Result<crate::editor::DeleteRecord, IoError>,
         /// El archivo se trasteó, pero su sidecar de capas editables no
         /// pudo acompañarlo: el deshacer traerá solo el archivo.
         warning: Option<String>,

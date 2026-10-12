@@ -37,8 +37,10 @@ pub(crate) enum GlobalStep {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct DeleteRecord {
     pub path: PathBuf,
-    /// El sidecar `.canvas` que se borró junto al archivo, si tenía uno.
-    pub sidecar: Option<PathBuf>,
+    /// Copia exacta reservada en la papelera para este borrado.
+    pub staged: PathBuf,
+    /// (ruta original del sidecar, copia exacta en la papelera).
+    pub sidecar: Option<(PathBuf, PathBuf)>,
 }
 
 impl GlobalStep {

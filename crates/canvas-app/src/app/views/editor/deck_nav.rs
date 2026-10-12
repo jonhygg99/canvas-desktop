@@ -126,8 +126,7 @@ pub(super) fn resolve(
                 *f.ignore_fs_events_until =
                     Some(Instant::now() + std::time::Duration::from_secs(2));
                 *f.watcher = None;
-                let sidecar = canvas_io::find_sidecar(&path);
-                f.deck_ops.undoable_deletes.insert(path.clone(), sidecar);
+                f.deck_ops.undoable_deletes.insert(path.clone());
                 loader::spawn_document_delete(path, f.tx.clone(), ctx.clone());
             }
         }
@@ -290,6 +289,6 @@ pub(super) fn resolve(
         state.finish_pending_global_redo();
     }
     if let Some(record) = state.pending_restore.take() {
-        loader::spawn_restore_from_trash(record.path, record.sidecar, f.tx.clone(), ctx.clone());
+        loader::spawn_restore_from_trash(record, f.tx.clone(), ctx.clone());
     }
 }

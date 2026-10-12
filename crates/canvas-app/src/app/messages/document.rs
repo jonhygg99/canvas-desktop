@@ -50,18 +50,15 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), canvas_io::IoError>,
+        result: Result<editor::DeleteRecord, canvas_io::IoError>,
         warning: Option<String>,
         open_after: &mut Option<Nav>,
     ) {
         let mut go_to_welcome = false;
         let undoable_delete = ws.deck_ops.undoable_deletes.remove(&path);
-        if result.is_ok() {
-            if let (Some(sidecar), View::Editor(state)) = (undoable_delete, &mut ws.view) {
-                state.record_delete(editor::DeleteRecord {
-                    path: path.clone(),
-                    sidecar,
-                });
+        if undoable_delete {
+            if let (Ok(record), View::Editor(state)) = (&result, &mut ws.view) {
+                state.record_delete(record.clone());
             }
         }
         let is_active = matches!(&ws.view, View::Editor(state)
@@ -69,7 +66,7 @@ impl AppInner {
         if is_active {
             if let View::Editor(state) = &mut ws.view {
                 match result {
-                    Ok(()) => {
+                    Ok(_) => {
                         let mut jumped = false;
                         if ws.deck.slots.len() > 1 {
                             let removed = ws.deck.active;
@@ -102,7 +99,7 @@ impl AppInner {
             }
         } else {
             match result {
-                Ok(()) => {
+                Ok(_) => {
                     if let Some(idx) = ws.deck.slots.iter().position(|s| s.path == path) {
                         ws.deck.slots.remove(idx);
                         if idx < ws.deck.active {

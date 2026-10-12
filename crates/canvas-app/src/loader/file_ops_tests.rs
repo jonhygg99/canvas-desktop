@@ -198,7 +198,7 @@ fn a_warning_travels_with_a_successful_result() {
 /// aviso (no hay operación a medias que explicar).
 #[test]
 fn a_failed_main_operation_carries_no_warning() {
-    let outcome = PairOutcome {
+    let outcome: PairOutcome = PairOutcome {
         result: Err(canvas_io::IoError::Message {
             message: "no se pudo mover".to_owned(),
         }),
@@ -216,7 +216,40 @@ fn restoring_with_an_empty_trash_is_an_error() {
     let image = dir.path().join("9.png");
     fs::write(&image, b"img").unwrap();
 
-    let outcome = restore_one(&image);
+    let outcome = restore_one(&image, &dir.path().join("missing-trash-entry"));
     assert!(outcome.result.is_err(), "no hay nada que restaurar");
     assert_eq!(outcome.warning, None);
+}
+
+#[test]
+fn undo_restores_the_specific_deletion_not_an_older_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = dir.path().join("repeat.png");
+    fs::write(&image, b"first").unwrap();
+    let first = canvas_io::move_to_local_trash(&image).unwrap();
+    fs::write(&image, b"second").unwrap();
+    let second = canvas_io::move_to_local_trash(&image).unwrap();
+    let outcome = restore_one(&image, &second);
+    assert!(outcome.result.is_ok());
+    assert_eq!(fs::read(&image).unwrap(), b"second");
+    assert!(first.exists());
+    assert!(!second.exists());
+}
+
+#[test]
+fn trash_record_keeps_the_matching_image_and_editable_layers() {
+    let dir = tempfile::tempdir().unwrap();
+    let image = image_with_sidecar(dir.path(), "pair.png");
+    let first = trash_locally_with_sidecar(&image).result.unwrap();
+    fs::write(&image, b"new image").unwrap();
+    fs::write(sidecar_path(&image), b"new layers").unwrap();
+    let second = trash_locally_with_sidecar(&image).result.unwrap();
+    assert_ne!(first.staged, second.staged);
+    assert!(restore_one(&second.path, &second.staged).result.is_ok());
+    let (original, staged) = second.sidecar.unwrap();
+    assert!(restore_one(&original, &staged).result.is_ok());
+    assert_eq!(fs::read(&image).unwrap(), b"new image");
+    assert_eq!(fs::read(original).unwrap(), b"new layers");
+    assert!(first.staged.exists());
+    assert!(first.sidecar.unwrap().1.exists());
 }

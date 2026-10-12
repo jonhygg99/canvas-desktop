@@ -50,8 +50,7 @@ pub(super) fn handle_file_ops(
             *f.ignore_fs_events_until = Some(Instant::now() + std::time::Duration::from_secs(2));
             *f.watcher = None;
             if !from_undo {
-                let sidecar = canvas_io::find_sidecar(&path);
-                f.deck_ops.undoable_deletes.insert(path.clone(), sidecar);
+                f.deck_ops.undoable_deletes.insert(path.clone());
             }
             loader::spawn_document_delete(path, f.tx.clone(), ctx.clone());
         }

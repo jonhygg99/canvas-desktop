@@ -189,7 +189,11 @@ fn undoing_a_delete_step_requests_a_restore_without_touching_redo() {
     state.pending_creation = false; // no es lo que se está probando aquí
     let record = DeleteRecord {
         path: PathBuf::from("C:/photos/cat.png"),
-        sidecar: Some(PathBuf::from("C:/photos/.canvas/cat.png.canvas")),
+        staged: PathBuf::from("C:/photos/.canvas/trash/cat.png"),
+        sidecar: Some((
+            PathBuf::from("C:/photos/.canvas/cat.png.canvas"),
+            PathBuf::from("C:/photos/.canvas/.canvas/trash/cat.png.canvas"),
+        )),
     };
     state.record_delete(record.clone());
     assert!(state.can_undo());
