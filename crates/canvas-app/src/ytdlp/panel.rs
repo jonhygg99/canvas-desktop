@@ -10,6 +10,7 @@ use crate::loader;
 
 use super::api;
 use super::state::Panel;
+use egui::containers::scroll_area::ScrollAreaOutput;
 #[path = "download_jobs.rs"]
 mod jobs;
 #[path = "download_options.rs"]
@@ -18,22 +19,34 @@ mod options;
 /// Contenido de la pestaña «Download» del panel lateral izquierdo.
 /// `dest` es la carpeta temporal de descargas: el proyecto nunca recibe el
 /// mp4 (valor, no `Option` — no hay caso «sin destino» que mostrar).
-pub fn panel_ui(panel: &mut Panel, dest: PathBuf, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
-    let Some(ytdlp) = api::ytdlp_path() else {
-        ui.add_space(8.0);
-        ui.label(crate::i18n::tr("yt-dlp.exe not found"));
-        ui.add_space(4.0);
-        ui.weak(crate::i18n::tr(
-            "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\n\
-             or set YTDLP_PATH and restart the app.",
-        ));
-        return;
-    };
-    let _ = ytdlp;
-
-    download_form(panel, dest, ui, tx);
-    jobs::show(panel, ui, tx);
-    downloaded_results(panel, ui, tx);
+/// Todo rueda, formulario incluido (como la pestaña Web): la lista crece sin
+/// cota y en ventanas bajas hasta el botón Download quedaba fuera de alcance.
+/// Devuelve la salida del área para poder afirmarla en tests.
+pub fn panel_ui(
+    panel: &mut Panel,
+    dest: PathBuf,
+    ui: &mut egui::Ui,
+    tx: &Sender<loader::AppMsg>,
+) -> ScrollAreaOutput<()> {
+    egui::ScrollArea::vertical()
+        .id_salt("download")
+        .show(ui, |ui| {
+            // Solo el formulario necesita el binario; la lista (progreso y
+            // clips de la sesión) se muestra igual sin él.
+            if api::ytdlp_path().is_none() {
+                ui.add_space(8.0);
+                ui.label(crate::i18n::tr("yt-dlp.exe not found"));
+                ui.add_space(4.0);
+                ui.weak(crate::i18n::tr(
+                    "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\n\
+                     or set YTDLP_PATH and restart the app.",
+                ));
+            } else {
+                download_form(panel, dest, ui, tx);
+            }
+            jobs::show(panel, ui, tx);
+            downloaded_results(panel, ui, tx);
+        })
 }
 
 fn download_form(panel: &mut Panel, dest: PathBuf, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
@@ -110,4 +123,46 @@ fn downloaded_results(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::
     ui.weak(crate::i18n::tr(
         "Files are saved as clip(x).mp4 in a temporary folder.\nThey stay in Download until moved to trash.\nTrim uses times; .part resumes on retry.",
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// El sidebar de Download rueda entero: con más contenido que viewport,
+    /// el área lo recoge con scroll. Va por `panel_ui` (la entrada real) para
+    /// que también quede cableado el formulario, no solo la lista. Vale con
+    /// y sin binario: en ambos casos las tarjetas desbordan igual.
+    #[test]
+    fn download_sidebar_scrolls_when_content_overflows() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut panel = Panel::default();
+        panel.done = (0..6)
+            .map(|i| PathBuf::from(format!("clip{i}.mp4")))
+            .collect();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(egui::FontDefinitions::empty());
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(300.0, 200.0),
+            )),
+            ..Default::default()
+        };
+        let last: Cell<Option<ScrollAreaOutput<()>>> = Cell::new(None);
+        // Dos frames: el tamaño del contenido se conoce tras el primero.
+        for _ in 0..2 {
+            let _ = ctx.run_ui(input(), |ui| {
+                last.set(Some(panel_ui(&mut panel, PathBuf::from("tmp"), ui, &tx)));
+            });
+        }
+        let out = last.take().expect("scroll area shown");
+        assert!(
+            out.content_size.y > out.inner_rect.height(),
+            "el contenido ({:.0}px) debe desbordar el viewport ({:.0}px)",
+            out.content_size.y,
+            out.inner_rect.height()
+        );
+    }
 }
