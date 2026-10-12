@@ -7,7 +7,10 @@ use eframe::egui;
 
 use crate::{deck, loader};
 
-use super::super::{persistence::start_save_all_flow, AppInner, Nav, View, Workspace};
+use super::super::{
+    persistence::{saved_exit_ready, start_save_all_flow},
+    AppInner, Nav, View, Workspace,
+};
 
 impl AppInner {
     /// Respuesta del diálogo «¿guardar los cambios?» lanzado en un hilo
@@ -151,6 +154,11 @@ impl AppInner {
                     // `deck_nav` sigue saltando y guardando el fondo. Sin
                     // esta espera, salir con «Save» perdería el fondo tras
                     // guardar solo el activo.
+                    if (ws.save.close_after_save || ws.save.after_save.is_some())
+                        && !saved_exit_ready(state, &ws.deck, &mut ws.save)
+                    {
+                        return;
+                    }
                     if ws.save.close_after_save {
                         if ws.save.save_all_queue.is_empty() {
                             ws.save.allow_close = true;

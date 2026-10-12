@@ -86,6 +86,28 @@ pub(super) fn start_save_all_flow(
     save.save_all_attempted = false;
 }
 
+/// Revalida todos los lienzos antes de ejecutar una salida diferida.
+pub(in crate::app) fn saved_exit_ready(
+    state: &mut editor::EditorState,
+    deck: &deck::Deck,
+    save: &mut SaveFlow,
+) -> bool {
+    if !save.save_all_queue.is_empty() {
+        return false;
+    }
+    if !state.is_idle() || save_all_doc_count(deck, state) > 0 {
+        save.close_after_save = false;
+        save.after_save = None;
+        save.allow_close = false;
+        state.save_error = Some(
+            "Changes or edits are still pending — finish editing and save again before leaving."
+                .into(),
+        );
+        return false;
+    }
+    true
+}
+
 /// Cuántos documentos escribiría «Save all» (el activo, si está sucio,
 /// más las ranuras de fondo sucias) — para el aviso de
 /// poca RAM. Pura: se prueba con barajas construidas a mano.

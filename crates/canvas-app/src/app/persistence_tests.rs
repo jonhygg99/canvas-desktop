@@ -6,6 +6,58 @@
 use std::path::{Path, PathBuf};
 
 #[test]
+fn saved_exit_rechecks_changes_after_the_queue_drains() {
+    let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("b.png"));
+    let mut state = EditorState::new_blank_image(10.0, 10.0);
+    let mut save = crate::app::SaveFlow {
+        close_after_save: true,
+        after_save: Some(crate::app::Nav::CloseProject),
+        ..Default::default()
+    };
+    deck.slots[0].content = SlotContent::Ready(Box::new(slot_doc(false)));
+    start_save_all_flow(&mut state, &mut deck, &mut save);
+    assert!(save.save_all_queue.is_empty());
+    // A se vuelve a editar después de su guardado; B ya está limpio.
+    let SlotContent::Ready(doc) = &mut deck.slots[0].content else {
+        unreachable!()
+    };
+    doc.history.mark_unsaved();
+    assert!(!saved_exit_ready(&mut state, &deck, &mut save));
+    assert!(!save.close_after_save);
+    assert!(save.after_save.is_none());
+    assert!(!save.allow_close);
+    assert!(state.save_error.is_some());
+}
+
+#[test]
+fn saved_exit_allows_a_clean_session_but_waits_for_the_queue() {
+    let deck = Deck::single("a.png".into());
+    let mut state = EditorState::new_blank_image(10.0, 10.0);
+    let mut save = crate::app::SaveFlow::default();
+    save.save_all_queue.push(deck.slots[0].id);
+    assert!(!saved_exit_ready(&mut state, &deck, &mut save));
+    save.save_all_queue.clear();
+    assert!(saved_exit_ready(&mut state, &deck, &mut save));
+    state.history.mark_unsaved();
+    assert!(!saved_exit_ready(&mut state, &deck, &mut save));
+}
+
+#[test]
+fn saved_exit_keeps_an_uncommitted_edit_open() {
+    let deck = Deck::single("a.png".into());
+    let mut state = EditorState::new_blank_image(10.0, 10.0);
+    state.doc = doc_with_visible_image();
+    state.rename_edit = Some((LayerId::from_raw(1), "before".into(), "after".into()));
+    let mut save = crate::app::SaveFlow {
+        close_after_save: true,
+        ..Default::default()
+    };
+    assert!(!state.is_dirty());
+    assert!(!saved_exit_ready(&mut state, &deck, &mut save));
+    assert!(!save.close_after_save);
+}
+
+#[test]
 fn save_all_keeps_dirty_protected_formats_in_the_queue() {
     let mut deck = Deck::from_seed(
         seed(&["a.png", "b.svg", "c.gif", "d.mp4"]),
@@ -64,7 +116,8 @@ use crate::settings::GallerySort;
 
 use super::{
     bake_came_out_blank_or_incomplete, bakes_match, doc_needs_bake_verify, has_raster_layers,
-    resolve_canvas_sidecar, save_all_doc_count, should_warn_low_memory, start_save_all_flow,
+    resolve_canvas_sidecar, save_all_doc_count, saved_exit_ready, should_warn_low_memory,
+    start_save_all_flow,
 };
 
 /// Documento de 100×100 con una capa de imagen visible 50×50.
