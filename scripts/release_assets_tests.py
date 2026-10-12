@@ -7,14 +7,24 @@ from release_assets import checksums
 
 class ReleaseAssetsTests(unittest.TestCase):
     def test_real_macos_name_normalized_without_changing_attested_bytes(self):
+        # macOS exige los dos DMG (Intel + Apple Silicon) desde 33987ad: el
+        # fixture los crea los dos, o el propio test fallaría en la CI.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            name = "Canvas Desktop_0.7.0_aarch64.dmg"
-            (root / name).write_bytes(b"dmg")
+            arm = "Canvas Desktop_0.7.0_aarch64.dmg"
+            intel = "Canvas Desktop_0.7.0_x86_64.dmg"
+            (root / arm).write_bytes(b"arm")
+            (root / intel).write_bytes(b"intel")
             assets = checksums(root, "macos", "0.7.0")
-            self.assertEqual(assets[0].name, name.replace(" ", "."))
-            self.assertEqual(assets[0].read_bytes(), b"dmg")
-            self.assertIn(assets[0].name, assets[1].read_text())
+            self.assertEqual(len(assets), 3)
+            self.assertEqual(assets[0].name, arm.replace(" ", "."))
+            self.assertEqual(assets[1].name, intel.replace(" ", "."))
+            self.assertEqual(assets[0].read_bytes(), b"arm")
+            self.assertEqual(assets[1].read_bytes(), b"intel")
+            manifest = assets[2].read_text()
+            self.assertIn(assets[0].name, manifest)
+            self.assertIn(assets[1].name, manifest)
+            # Idempotente: reintentar no renombra dos veces.
             self.assertEqual(checksums(root, "macos", "0.7.0")[0].name, assets[0].name)
             with self.assertRaises(ValueError):
                 checksums(root, "macos", "0.7.1")
