@@ -38,8 +38,18 @@ python -m unittest discover -s scripts -p '*_tests.py'
 ./scripts/release_tests.ps1
 ```
 
-Pasan las 811 pruebas de la suite completa, las 19 pruebas de GPU ejecutadas aparte y las 22 pruebas Python. Clippy, formato, build de la app y ensayos de publicación pasan. Las pruebas de vídeo y escritura usan archivos y procesos reales. Los ensayos de publicación no modifican GitHub.
+La validación inicial pasó 811 pruebas, las 19 pruebas de GPU ejecutadas aparte y las 22 pruebas Python. Clippy, formato, build de la app y ensayos de publicación pasaron. Las pruebas de vídeo y escritura usan archivos y procesos reales. Los ensayos de publicación no modifican GitHub.
 
 El binario compilado arranca y abre `fixture.png` (160×120) en una ventana nativa, con ajustes y logs en un directorio temporal y el reenvío a otras instancias desactivado. La prueba de arranque no modifica proyectos existentes.
 
 La comprobación visual de la app nativa queda pendiente: el helper de Computer Use devuelve `Computer Use native pipe is unavailable`, error 2. Las regresiones de interacción ejecutan los handlers reales y los frames egui, pero no sustituyen esa comprobación visual.
+
+## Correcciones de la revisión
+
+- Papelera y cuarentena reservan el destino con `create_new(true)` antes de mover el archivo. Dos borrados simultáneos conservan copias distintas. Si se agotan los 10.000 nombres, se devuelve error y el archivo original permanece intacto.
+- La salida después de guardar revalida todos los documentos cuando se vacía la cola. Los cambios nuevos y las ediciones todavía en curso cancelan el cierre o navegación diferidos y muestran un aviso. Se comprueba tanto después de una escritura como al omitir un guardado del documento activo limpio.
+- `find_trashed_entry` y sus exports se eliminan. Las pruebas de restauración usan la ruta exacta de la copia y comprueban que la otra copia del mismo nombre se conserva.
+
+La suite actual pasa 815 pruebas: 545 de la app y 270 del resto del workspace. Las regresiones de reserva y salida fallan sin sus respectivas protecciones. Clippy, formato y el build normal de la app pasan.
+
+La ejecución de las pruebas de la app necesita una compilación con `cargo rustc -p canvas-app --tests --locked --message-format=json -- -C debuginfo=0`, seguida de la ejecución del binario de pruebas indicado por Cargo. El enlazado normal de ese binario falla con información de depuración corrupta (`LNK1103`); también se observaron fallos internos de `rustc` con ambas versiones instaladas. El resto del workspace pasa con `cargo test --workspace --exclude canvas-app --locked`. La configuración del repositorio no se modifica para este diagnóstico.
