@@ -90,8 +90,10 @@ fn download_one(
     let target = match &request.target {
         Some(target) => target.clone(),
         None => {
-            let path = api::reserve_clip_path(&request.dest, &api::clip_stem(&request.dest))
-                .map_err(|error| error.to_string())?;
+            // El destino ya es el temporal (`staging_dir`): `clip.mp4`,
+            // `clip (2).mp4`…; el título real lo muestra la tarjeta.
+            let path =
+                api::reserve_clip_path(&request.dest, "clip").map_err(|error| error.to_string())?;
             std::fs::remove_file(&path).map_err(|error| error.to_string())?;
             path
         }

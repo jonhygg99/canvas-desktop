@@ -127,6 +127,7 @@ fn folder_heading_ui(
                 .desired_width(200.0)
                 .font(egui::TextStyle::Heading),
         );
+        crate::focus::focus_once(ui, id, &response);
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             state.folder_rename_edit = None;
         } else if response.lost_focus() {
@@ -141,12 +142,11 @@ fn folder_heading_ui(
             .fill(egui::Color32::TRANSPARENT);
         if ui.add(btn).clicked() {
             state.folder_rename_edit = Some((state.folder.clone(), current_name.clone()));
-            ui.ctx().memory_mut(|m| {
-                m.request_focus(egui::Id::new((
-                    "gallery_folder_rename_heading",
-                    &state.folder,
-                )));
-            });
+            // Foco diferido al pintar el campo (ver `crate::focus`).
+            crate::focus::arm_focus_once(
+                ui.ctx(),
+                egui::Id::new(("gallery_folder_rename_heading", &state.folder)),
+            );
         }
     }
     ui.weak(format!(

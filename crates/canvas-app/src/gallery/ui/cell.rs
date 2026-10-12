@@ -110,9 +110,8 @@ pub(super) fn begin_rename(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     *rename_edit = Some((item.path.clone(), stem));
-    ctx.memory_mut(|memory| {
-        memory.request_focus(egui::Id::new(("gallery_rename", item.path.clone())))
-    });
+    // Foco diferido al pintar el campo (ver `crate::focus`).
+    crate::focus::arm_focus_once(ctx, egui::Id::new(("gallery_rename", item.path.clone())));
 }
 
 #[cfg(test)]
@@ -255,6 +254,7 @@ fn gallery_cell_inner(
                     .id(text_id)
                     .horizontal_align(egui::Align::LEFT),
             );
+            crate::focus::focus_once(ui, text_id, &edit_response);
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 cancel = true;
             } else if edit_response.lost_focus() {

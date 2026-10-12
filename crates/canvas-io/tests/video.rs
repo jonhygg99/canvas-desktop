@@ -1,4 +1,196 @@
-use canvas_io::{ffmpeg_path, media_command, probe_video_size, VideoFrameStream};
+use canvas_io::{
+    export_video_composition, ffmpeg_path, media_command, probe_video_size, VideoComposition,
+    VideoFrameStream,
+};
+
+fn lavfi_source(
+    dir: &std::path::Path,
+    name: &str,
+    size: &str,
+    seconds: &str,
+) -> std::path::PathBuf {
+    let ffmpeg = ffmpeg_path().expect("ffmpeg para el fixture");
+    let source = dir.join(name);
+    let make = media_command(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("testsrc=size={size}:rate=10"),
+            "-t",
+            seconds,
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        make.status.success(),
+        "{}",
+        String::from_utf8_lossy(&make.stderr)
+    );
+    source
+}
+
+/// Fuente con pista de audio real (tono): la rama de audio del render solo
+/// se ejecuta con clips con sonido — todos los de teléfono — y las fixtures
+/// mudas no la tocan.
+fn lavfi_source_with_audio(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let ffmpeg = ffmpeg_path().expect("ffmpeg para el fixture");
+    let source = dir.join(name);
+    let make = media_command(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=90x160:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=6",
+            "-t",
+            "6",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        make.status.success(),
+        "{}",
+        String::from_utf8_lossy(&make.stderr)
+    );
+    source
+}
+
+fn has_audio(path: &std::path::Path) -> bool {
+    let ffmpeg = ffmpeg_path().expect("ffmpeg para el sondeo");
+    let probe = ffmpeg
+        .parent()
+        .map(|d| d.join("ffprobe"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| std::path::PathBuf::from("ffprobe"));
+    media_command(probe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+        ])
+        .arg(path)
+        .output()
+        .is_ok_and(|out| out.status.success() && !out.stdout.is_empty())
+}
+
+#[test]
+fn rendered_composition_keeps_the_audio_track() {
+    if ffmpeg_path().is_none() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = lavfi_source_with_audio(dir.path(), "sounding.mp4");
+    assert!(has_audio(&source), "el fixture trae audio");
+    let dst = dir.path().join("sounding-render.mp4");
+    export_video_composition(&VideoComposition {
+        src: source,
+        start_s: 1.0,
+        end_s: Some(3.0),
+        page_w: 320,
+        page_h: 180,
+        fg_x: 115,
+        fg_y: 10,
+        fg_w: 90,
+        fg_h: 160,
+        bg_blur: 8.0,
+        dst: dst.clone(),
+    })
+    .unwrap();
+    assert!(has_audio(&dst), "el render conserva la pista de audio");
+    let (_, _, duration) = probe_video_size(&dst).unwrap();
+    assert!((duration.unwrap() - 2.0).abs() < 0.5);
+}
+
+#[test]
+fn rendered_composition_matches_the_page_not_the_source() {
+    // El caso del informe: fuente vertical 9:16 en página 1920×1080 con
+    // fondo — la salida es la página (con fondo), no la fuente recortada.
+    if ffmpeg_path().is_none() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = lavfi_source(dir.path(), "source.mp4", "90x160", "6");
+    let dst = dir.path().join("render.mp4");
+    let rendered = export_video_composition(&VideoComposition {
+        src: source,
+        start_s: 1.0,
+        end_s: Some(3.0),
+        page_w: 320,
+        page_h: 180,
+        fg_x: 115,
+        fg_y: 10,
+        fg_w: 90,
+        fg_h: 160,
+        bg_blur: 8.0,
+        dst: dst.clone(),
+    })
+    .unwrap();
+    assert!((rendered.duration_secs - 2.0).abs() < 0.01);
+    assert_eq!(
+        (rendered.width, rendered.height),
+        (320, 180),
+        "el render informa la página: la capa se re-ancla a él"
+    );
+    // Sin rastro del temporal atómico.
+    assert!(!dir.path().join("render.exporting").exists());
+    let (w, h, duration) = probe_video_size(&dst).unwrap();
+    assert_eq!((w, h), (320, 180), "la salida es la página, no la fuente");
+    assert!((duration.unwrap() - 2.0).abs() < 0.5);
+    // Guardar en el sitio (el destino ya existe) sustituye sin fallar: es el
+    // camino de `Ctrl+S` tras el primer guardado.
+    let again = export_video_composition(&VideoComposition {
+        src: dst.clone(),
+        start_s: 0.0,
+        end_s: None,
+        page_w: 320,
+        page_h: 180,
+        fg_x: 0,
+        fg_y: 0,
+        fg_w: 320,
+        fg_h: 180,
+        bg_blur: 0.0,
+        dst: dst.clone(),
+    })
+    .unwrap();
+    assert!((again.duration_secs - 2.0).abs() < 0.5);
+    // Tramo inválido: error limpio sin tocar el disco.
+    let bad = dir.path().join("bad.mp4");
+    assert!(export_video_composition(&VideoComposition {
+        src: dst,
+        start_s: 3.0,
+        end_s: Some(1.0),
+        page_w: 320,
+        page_h: 180,
+        fg_x: 0,
+        fg_y: 0,
+        fg_w: 320,
+        fg_h: 180,
+        bg_blur: 0.0,
+        dst: bad.clone(),
+    })
+    .is_err());
+    assert!(!bad.exists());
+}
 
 #[test]
 fn stream_decodes_changing_frames_and_seeks_inside_the_clip() {

@@ -41,7 +41,7 @@ pub use metadata::{
 pub use mounts::{describe_read_dir_error, is_cloud_storage_path, read_dir_resilient};
 pub use probe::{probe_page_size, probe_page_size_with};
 pub use repair::{repair_png, RepairError};
-pub use save::{save_format_from_path, save_rgba, write_atomic};
+pub use save::{replace_file_with_tmp, save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
     blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, make_preview,
     move_to_local_trash, move_to_quarantine, preview_scale, purge_local_trash, quarantine_dir,
@@ -52,7 +52,10 @@ pub use sidecar::{
 pub use svg::load_svg;
 pub use thumbs::thumbnail;
 pub use verify::{classify, CorruptionKind};
-pub use video::{ffmpeg_path, ffprobe_path, load_video_frame, media_command, probe_video_size};
+pub use video::{
+    export_video_composition, ffmpeg_path, ffprobe_path, load_video_frame, media_command,
+    probe_video_size, VideoComposition, VideoRenderInfo,
+};
 pub use video_stream::{VideoFrameStream, VideoStreamCancellation};
 
 use std::path::PathBuf;

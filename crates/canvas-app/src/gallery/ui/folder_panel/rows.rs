@@ -80,9 +80,8 @@ fn gallery_folder_row_ui(
     if row_resp.double_clicked() {
         let stem = folder_name(path);
         *rename_edit = Some((path.to_owned(), stem));
-        ui.ctx().memory_mut(|m| {
-            m.request_focus(egui::Id::new(("folder_rename", path.as_os_str())));
-        });
+        // Foco diferido al pintar el campo (ver `crate::focus`).
+        crate::focus::arm_focus_once(ui.ctx(), egui::Id::new(("folder_rename", path.as_os_str())));
     }
 
     // ── Menú contextual ──
@@ -121,9 +120,11 @@ fn gallery_folder_row_ui(
             }
         } else {
             *rename_edit = Some((p, extra));
-            ui.ctx().memory_mut(|m| {
-                m.request_focus(egui::Id::new(("folder_rename", path.as_os_str())));
-            });
+            // Foco diferido al pintar el campo (ver `crate::focus`).
+            crate::focus::arm_focus_once(
+                ui.ctx(),
+                egui::Id::new(("folder_rename", path.as_os_str())),
+            );
         }
     }
 
@@ -146,6 +147,7 @@ pub(super) fn folder_button_list(
             };
             let id = egui::Id::new(("folder_rename", folder.as_os_str()));
             let response = ui.add(egui::TextEdit::singleline(text).id(id).desired_width(140.0));
+            crate::focus::focus_once(ui, id, &response);
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 *rename_edit = None;
             } else if response.lost_focus() {

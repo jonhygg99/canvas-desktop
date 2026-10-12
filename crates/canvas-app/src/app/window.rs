@@ -71,17 +71,27 @@ impl AppInner {
     }
 
     /// Mantiene el título de la ventana (con asterisco de cambios sin
-    /// guardar) al día; solo envía el comando cuando cambia.
+    /// guardar y aviso de guardado/render en curso) al día; solo envía el
+    /// comando cuando cambia. El «Saving…» importa: un render de vídeo tarda
+    /// segundos en un hilo de fondo y sin él `Ctrl+S` parecía no hacer nada.
     pub(crate) fn sync_title(&mut self, ctx: &egui::Context, ws: &mut Workspace) {
         let title = match &ws.view {
             View::Editor(state) => {
                 let dirty = if state.is_dirty() { "*" } else { "" };
+                let activity = if state.saving || state.exporting {
+                    "Saving… "
+                } else {
+                    ""
+                };
                 let position = if ws.deck.slots.len() > 1 {
                     format!(" ({}/{})", ws.deck.active + 1, ws.deck.slots.len())
                 } else {
                     String::new()
                 };
-                format!("{dirty}{}{position} — Canvas Desktop", state.file_name())
+                format!(
+                    "{activity}{dirty}{}{position} — Canvas Desktop",
+                    state.file_name()
+                )
             }
             View::Loading { path } => format!(
                 "Loading {}… — Canvas Desktop",

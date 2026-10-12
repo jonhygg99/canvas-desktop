@@ -192,6 +192,151 @@ impl AppInner {
         }
     }
 
+    /// La composición de un lienzo de vídeo terminó de renderizarse a `dst`
+    /// (`duration` = segundos renderizados). Guardando en el sitio (`dst` es
+    /// el propio origen), el archivo ahora ES la composición y el trim se
+    /// resetea al archivo entero — si no, el próximo guardado recortaría dos
+    /// veces. El primer guardado desde Download (`dst` = nombre reservado de
+    /// la provisional, origen en el temporal) y el «Guardar como…» que sale
+    /// del temporal adoptan `dst` como nuevo origen; el «Guardar como…» desde
+    /// un archivo ya en proyecto SIGUE apuntando a su origen (es una copia).
+    /// Por lo demás, mismo contrato que `on_saved`: sello A04, y los
+    /// cierres/navegaciones diferidos solo se ejecutan si no hubo ediciones
+    /// durante el renderizado.
+    pub(super) fn on_video_composition_rendered(
+        &mut self,
+        ws: &mut Workspace,
+        dst: PathBuf,
+        result: Result<canvas_io::VideoRenderInfo, canvas_io::IoError>,
+        ctx: &egui::Context,
+        open_after: &mut Option<Nav>,
+    ) {
+        if let View::Editor(state) = &mut ws.view {
+            state.saving = false;
+            match result {
+                Ok(info) => {
+                    tracing::info!("composición renderizada OK: {}", dst.display());
+                    let captured = state.saving_capture.take();
+                    state.born_blank = false;
+                    let duration = info.duration_secs;
+                    let rendered = (info.width, info.height);
+                    let src = state.doc.source_path.clone();
+                    if src.as_deref() == Some(dst.as_path()) {
+                        // En el sitio: el archivo ahora ES la composición (ver
+                        // `reset_rendered_trim`).
+                        let mut slot = state.take_slot();
+                        crate::app::video_canvases::reset_rendered_trim(
+                            &mut slot,
+                            dst.as_path(),
+                            duration,
+                            rendered,
+                        );
+                        state.put_slot(slot);
+                    } else if src
+                        .as_deref()
+                        .is_some_and(crate::app::video_canvases::is_staging_path)
+                    {
+                        // Primer editado: el origen era el temporal de Download.
+                        // Se adopta el render como origen (documento + ranura) y
+                        // el temporal sigue intacto en Download hasta borrarlo.
+                        let slot_id = ws.deck.slots.get(ws.deck.active).map(|s| s.id);
+                        let src_path = src.clone().expect("origen con staging");
+                        let mut slot = state.take_slot();
+                        let adopted = slot_id.is_some_and(|id| {
+                            crate::app::video_canvases::adopt_rendered_video(
+                                &mut ws.deck,
+                                &mut slot,
+                                id,
+                                &src_path,
+                                &dst,
+                                duration,
+                                rendered,
+                            )
+                        });
+                        if !adopted {
+                            // Sin proyecto (sesión sin guardar o ranura movida por
+                            // el medio): el destino elegido es el nuevo hogar.
+                            // Se reenlazan también las capas — si no, seguirían
+                            // bebiendo del temporal y el próximo guardado
+                            // recortaría dos veces sobre un archivo que quizá ya
+                            // no exista.
+                            if let Some(from) = slot.doc.page().ok().and_then(|page| {
+                                page.layers.iter().find_map(|layer| match &layer.content {
+                                    canvas_core::LayerContent::Video(link) => {
+                                        link.source_path.clone()
+                                    }
+                                    _ => None,
+                                })
+                            }) {
+                                crate::app::video_canvases::relink_video_doc(
+                                    &mut slot, &from, &dst,
+                                );
+                            }
+                            crate::app::video_canvases::reset_rendered_trim(
+                                &mut slot, &dst, duration, rendered,
+                            );
+                            if let Some(id) = slot_id {
+                                if let Some(s) = ws.deck.slots.iter_mut().find(|s| s.id == id) {
+                                    s.path = dst.clone();
+                                    s.name = dst
+                                        .file_name()
+                                        .map(|n| n.to_string_lossy().into_owned())
+                                        .unwrap_or(s.name.clone());
+                                    s.kind = crate::gallery::ItemKind::Video;
+                                    s.is_placeholder = false;
+                                }
+                            }
+                        }
+                        state.put_slot(slot);
+                        state.from_gallery = ws.deck.folder.clone();
+                    }
+                    let marked = match captured {
+                        Some((depth, revision)) => state.history.mark_saved_at(depth, revision),
+                        None => {
+                            state.history.mark_saved();
+                            true
+                        }
+                    };
+                    if !marked {
+                        ws.save.close_after_save = false;
+                        ws.save.after_save = None;
+                        state.save_error = Some(
+                            "Rendered, but edits made during the render are still unsaved — \
+                             save again to include them."
+                                .into(),
+                        );
+                        return;
+                    }
+                    if (ws.save.close_after_save || ws.save.after_save.is_some())
+                        && !saved_exit_ready(state, &ws.deck, &mut ws.save)
+                    {
+                        return;
+                    }
+                    if ws.save.close_after_save {
+                        if ws.save.save_all_queue.is_empty() {
+                            ws.save.allow_close = true;
+                            ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::Close);
+                        }
+                    } else if ws.save.save_all_queue.is_empty() {
+                        if let Some(nav) = ws.save.after_save.take() {
+                            *open_after = Some(nav);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // En el log queda el motivo (el banner solo lo muestra en
+                    // la UI): sin esto, un render que falla en bucle es
+                    // imposible de diagnosticar a posteriori.
+                    tracing::warn!("render vídeo a {} falló: {e}", dst.display());
+                    state.saving_capture = None;
+                    ws.save.close_after_save = false;
+                    ws.save.after_save = None;
+                    state.save_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+
     pub(super) fn on_canvas_path_reserved(
         &mut self,
         ws: &mut Workspace,

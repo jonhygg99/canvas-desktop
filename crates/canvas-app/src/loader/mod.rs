@@ -44,8 +44,9 @@ pub use load_ops::{
 };
 pub use repair_ops::{auto_action_for, spawn_repair_png, AutoRepairAction};
 pub use save_ops::{
-    spawn_pick_design_path, spawn_pick_save_path, spawn_reserve_canvas_path, spawn_save,
-    spawn_save_design, SaveInput,
+    spawn_pick_design_path, spawn_pick_save_path, spawn_pick_video_export_path,
+    spawn_render_video_composition, spawn_reserve_canvas_path, spawn_save, spawn_save_design,
+    SaveInput,
 };
 pub use serper_ops::{
     begin_bulk_files, default_bulk_dir, resolve_bulk_page, spawn_serper_image, spawn_serper_search,
@@ -213,6 +214,14 @@ pub enum AppMsg {
         result: Result<(), IoError>,
         /// true si venía de «Guardar como…» y el documento debe apuntar aquí.
         new_source: bool,
+    },
+    /// Un lienzo de vídeo terminó de renderizar su composición (página +
+    /// fondo + clip recortado) a `dst`. En éxito, duración y tamaño del
+    /// archivo (siempre la página): quien guarda en el sitio los necesita
+    /// para resetear el trim y re-anclar la capa al archivo entero.
+    VideoCompositionRendered {
+        dst: PathBuf,
+        result: Result<canvas_io::VideoRenderInfo, IoError>,
     },
     /// Ruta elegida para exportar (o `None` si se canceló el diálogo).
     ExportPathPicked(Option<PathBuf>),

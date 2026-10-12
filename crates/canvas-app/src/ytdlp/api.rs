@@ -2,13 +2,25 @@
 //! `clip-[carpeta](x).mp4`.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const HARDCODED_YTDLP_DIR: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp";
 const HARDCODED_YTDLP_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\yt-dlp.exe";
 
 /// Localiza `yt-dlp.exe`: `YTDLP_PATH`/`CANVAS_YTDLP_DIR` → carpeta fijada
 /// del usuario → `PATH`. Devuelve la ruta al ejecutable.
+///
+/// Se resuelve UNA vez por proceso (caché): el fallback a `PATH` lanza
+/// `yt-dlp --version` en un proceso hijo y esta función se llama en cada
+/// frame con la pestaña Download visible — sin caché, un yt-dlp PyInstaller
+/// (arranque de cientos de ms) deja la UI a ~1 fps. Cambiar el entorno
+/// requiere reiniciar la app (el propio panel ya lo indica).
 pub fn ytdlp_path() -> Option<PathBuf> {
+    static CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    CACHE.get_or_init(resolve_ytdlp_path).clone()
+}
+
+fn resolve_ytdlp_path() -> Option<PathBuf> {
     for key in ["YTDLP_PATH", "CANVAS_YTDLP_DIR", "CANVAS_FFMPEG_DIR"] {
         if let Ok(v) = std::env::var(key) {
             let p = PathBuf::from(&v);
@@ -162,37 +174,54 @@ pub fn section_arg(start: Option<f64>, end: Option<f64>) -> Option<String> {
     }
 }
 
-/// Carpeta de Vídeos del usuario para descargar sin contexto (diseño nuevo
-/// en blanco). `None` si el SO no la expone.
-pub fn default_download_dir() -> Option<PathBuf> {
-    directories::UserDirs::new()?
-        .video_dir()
-        .map(|d| d.to_owned())
+/// Carpeta temporal donde caen TODAS las descargas de yt-dlp
+/// (`clip(2).mp4`, con sus `.part` de reanudación): el proyecto nunca recibe
+/// el mp4 completo. La lista de Download es su dueña hasta que el clip se
+/// borra desde ahí (papelera del SO). Se crea al primer uso, lo mejor
+/// posible: si falla, la descarga lo informa con el error del SO.
+pub fn staging_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join("canvas-desktop-downloads");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
-/// Destino del Download: contexto vivo (baraja/archivo/galería) → última
-/// carpeta usada → Vídeos del usuario. Así un diseño nuevo también descarga.
-pub fn resolve_download_dir(
-    deck: Option<PathBuf>,
-    file_parent: Option<PathBuf>,
-    gallery: Option<PathBuf>,
-    last: Option<PathBuf>,
-) -> Option<PathBuf> {
-    deck.filter(|d| d.is_dir())
-        .or(file_parent)
-        .or(gallery)
-        .or(last)
-        .or_else(default_download_dir)
+/// Destino del Download: siempre el temporal. Antes era el contexto vivo
+/// (baraja/archivo/galería) → última carpeta → Vídeos, y el mp4 completo
+/// acababa dentro del proyecto.
+pub fn resolve_download_dir() -> PathBuf {
+    staging_dir()
 }
 
-/// `clip-[nombre-carpeta]`: el stem base del archivo descargado.
-pub fn clip_stem(folder: &Path) -> String {
-    let name = folder
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| "clip".to_owned());
-    format!("clip-{name}")
+/// Borra del staging los mp4 (y sus `.part`/`.ytdl` de reanudación) más
+/// viejos que `older_than` (lo mejor posible, sin fallar). La app lo llama
+/// una vez al arrancar, en un hilo de fondo: la lista de Download es solo de
+/// sesión, así que lo viejo es por definición huérfano de sesiones
+/// anteriores — lo reciente (esta sesión) no se toca.
+pub fn sweep_stale_downloads(older_than: std::time::Duration) {
+    sweep_stale_downloads_in(&staging_dir(), older_than);
+}
+
+fn sweep_stale_downloads_in(dir: &Path, older_than: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_clip = name.ends_with(".mp4") || name.ends_with(".part") || name.ends_with(".ytdl");
+        if !is_clip {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= older_than);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Reserva `clip-Nombre.mp4`, `clip-Nombre (2).mp4`… con `create_new`
@@ -280,6 +309,23 @@ mod tests {
     }
 
     #[test]
+    fn stale_sweep_keeps_fresh_clips_and_drops_old_ones() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["clip-a.mp4", "clip-a.mp4.part", "notes.txt"] {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        // Umbral enorme: nada es viejo, todo sobrevive (el .txt ni siquiera
+        // es candidato a descarga).
+        sweep_stale_downloads_in(dir.path(), std::time::Duration::from_secs(30 * 24 * 3600));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+        // Umbral cero: los clips caen; lo que no es descarga sobrevive.
+        sweep_stale_downloads_in(dir.path(), std::time::Duration::ZERO);
+        assert!(dir.path().join("notes.txt").is_file());
+        assert!(!dir.path().join("clip-a.mp4").exists());
+        assert!(!dir.path().join("clip-a.mp4.part").exists());
+    }
+
+    #[test]
     fn clamp_trim_orders_and_clamps() {
         assert_eq!(clamp_trim(5.0, 2.0, 10.0), (2.0, 5.0));
         assert_eq!(clamp_trim(-3.0, 99.0, 10.0), (0.0, 10.0));
@@ -301,21 +347,15 @@ mod tests {
     }
 
     #[test]
-    fn download_dir_prefers_live_context_then_last() {
-        let deck = tempfile::tempdir().expect("deck");
-        let last = tempfile::tempdir().expect("last");
-        let deck_path = deck.path().to_owned();
-        let last_path = last.path().to_owned();
-        // Baraja viva manda; vacía (diseño nuevo) cae a la última.
-        assert_eq!(
-            resolve_download_dir(Some(deck_path.clone()), None, None, Some(last_path.clone())),
-            Some(deck_path)
-        );
-        assert_eq!(
-            resolve_download_dir(None, None, None, Some(last_path.clone())),
-            Some(last_path)
-        );
-        // Sin nada, Vídeos del SO o None (según la máquina; no debe pánico).
-        let _ = resolve_download_dir(None, None, None, None);
+    fn download_dir_is_always_the_staging_temp() {
+        // El destino ya no depende del contexto: el proyecto nunca recibe el
+        // mp4. Estable entre llamadas y creado en disco.
+        let first = resolve_download_dir();
+        let second = resolve_download_dir();
+        assert_eq!(first, second);
+        assert!(first.is_dir(), "el temporal se crea al resolver");
+        assert!(first
+            .file_name()
+            .is_some_and(|n| n == "canvas-desktop-downloads"));
     }
 }

@@ -132,15 +132,100 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IoError> {
         })
         .map(|(f, p)| (drop(f), p))?;
 
-    if let Err(e) = replace_file(&tmp_path, path) {
+    if let Err(e) = replace_with_retry(|| replace_file(&tmp_path, path)) {
         // No dejes basura si la sustitución falla.
         let _ = std::fs::remove_file(&tmp_path);
         return Err(IoError::Write {
             path: path.to_owned(),
-            message: e.to_string(),
+            message: friendly_replace_message(&e),
         });
     }
     Ok(())
+}
+
+/// Sustitución atómica de un archivo ya escrito en un temporal: la misma
+/// primitiva que `write_atomic`, para salidas que no nacen de bytes en RAM
+/// (p. ej. el mp4 que escribe ffmpeg). Vale para guardar en el sitio: el
+/// temporal se sustituye al final, nunca se lee y escribe el mismo archivo a
+/// la vez. Sin rastro si falla.
+///
+/// Ante `sharing violation` (0x80070020: el reproductor propio aún cerrando
+/// su handle, Drive/OneDrive subiendo el archivo, el indexador) reintenta
+/// con espera en vez de fallar al primer intento: esos bloqueos son
+/// transitorios y el reintento los gana. Otros errores fallan a la primera.
+pub fn replace_file_with_tmp(tmp: &Path, dest: &Path) -> Result<(), IoError> {
+    if let Err(e) = replace_with_retry(|| replace_file(tmp, dest)) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(IoError::Write {
+            path: dest.to_owned(),
+            message: friendly_replace_message(&e),
+        });
+    }
+    Ok(())
+}
+
+/// Pausas entre reintentos de sustitución (ms): ~3 s en total. Solo para
+/// `sharing violation`; cualquier otro error falla sin esperar.
+const REPLACE_RETRY_DELAYS_MS: &[u64] = &[200, 400, 800, 1600];
+
+/// ¿Es un bloqueo transitorio por archivo en uso (reintentable)? En Windows
+/// es el HRESULT 0x80070020 (`ERROR_SHARING_VIOLATION`); se detecta por
+/// código y por texto porque `ReplaceFileW` llega envuelto en varios
+/// `io::Error` distintos según el camino. Pura (testeable sin disco).
+pub fn is_sharing_violation(error: &std::io::Error) -> bool {
+    if let Some(code) = error.raw_os_error() {
+        // 32 = ERROR_SHARING_VIOLATION (Win32); el HRESULT 0x80070020 lo
+        // contiene en sus 16 bits bajos en algunos envoltorios.
+        if code == 32 || (code as u32 & 0xFFFF) == 32 {
+            return true;
+        }
+    }
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("0x80070020")
+        || text.contains("sharing violation")
+        || text.contains("being used by another process")
+}
+
+/// Reintenta `op` mientras falle con `sharing violation`, durmiendo entre
+/// intentos según `REPLACE_RETRY_DELAYS_MS`. El resto de errores sale a la
+/// primera. `op` corre en hilos de trabajo (guardado/export/render), nunca
+/// en el hilo de UI, así que dormir aquí no congela nada. Pura en su
+/// política (testeable con una `op` falsa).
+pub fn replace_with_retry(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut last = None;
+    for (attempt, delay) in REPLACE_RETRY_DELAYS_MS
+        .iter()
+        .copied()
+        .chain(std::iter::once(0))
+        .enumerate()
+    {
+        match op() {
+            Ok(()) => return Ok(()),
+            Err(e) if is_sharing_violation(&e) && delay > 0 => {
+                tracing::debug!(
+                    "sustitución bloqueada (intento {}): {e}; reintentando en {delay} ms",
+                    attempt + 1
+                );
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                last = Some(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("al menos un intento"))
+}
+
+/// Tras agotar los reintentos, el críptico `ReplaceFileW: … (0x80070020)` se
+/// traduce a quién suele tener el archivo: el propio preview/audio, o la
+/// nube (Drive/OneDrive). Pura (testeable).
+fn friendly_replace_message(error: &std::io::Error) -> String {
+    if is_sharing_violation(error) {
+        format!(
+            "{error}. The file is locked by another process — usually the video preview/audio still closing, or cloud sync (Drive/OneDrive) uploading it. Stop playback, pause the sync and try again"
+        )
+    } else {
+        error.to_string()
+    }
 }
 
 /// Sustituye `dest` por `tmp`.
@@ -178,6 +263,48 @@ fn replace_file(tmp: &Path, dest: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sharing_violation_is_detected_by_code_and_text() {
+        // 32 = ERROR_SHARING_VIOLATION; el HRESULT 0x80070020 lo contiene.
+        let by_code = std::io::Error::from_raw_os_error(32);
+        assert!(is_sharing_violation(&by_code));
+        let by_text = std::io::Error::other(
+            "ReplaceFileW: El proceso no tiene acceso al archivo porque está siendo utilizado por otro proceso. (0x80070020)",
+        );
+        assert!(is_sharing_violation(&by_text));
+        assert!(!is_sharing_violation(&std::io::Error::other(
+            "access denied"
+        )));
+    }
+
+    #[test]
+    fn replace_retries_sharing_violations_and_wins_when_released() {
+        // El bloqueo se libera al tercer intento: el reintento lo gana.
+        let mut calls = 0;
+        let result = replace_with_retry(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(std::io::Error::other("sharing violation (0x80070020)"))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn replace_fails_fast_on_non_sharing_errors() {
+        // Un error que no es bloqueo no espera ni reintenta.
+        let mut calls = 0;
+        let result = replace_with_retry(|| {
+            calls += 1;
+            Err::<(), _>(std::io::Error::other("access denied"))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+    }
 
     fn checkered(width: u32, height: u32) -> Vec<u8> {
         let mut v = Vec::with_capacity((width * height * 4) as usize);

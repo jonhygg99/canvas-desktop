@@ -190,8 +190,8 @@ pub(super) fn overwrite_modal_ui(
     }
 }
 
-/// Modal para SVG/GIF: no se pueden sobrescribir, se explica por qué y se
-/// ofrece «Save as…» en su lugar.
+/// Modal para SVG/GIF/vídeo no renderizable: no se pueden sobrescribir, se
+/// explica por qué y se ofrece «Save as…» (póster) en su lugar.
 pub(super) fn readonly_modal_ui(
     state: &mut editor::EditorState,
     tx: &Sender<AppMsg>,
@@ -213,6 +213,7 @@ pub(super) fn readonly_modal_ui(
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
+    let is_video = canvas_io::is_video_file(&path);
     let modal = egui::Modal::new(egui::Id::new("readonly_source")).show(ctx, |ui| {
         ui.set_max_width(400.0);
         ui.heading(crate::i18n::tr("This file can't be overwritten"));
@@ -221,6 +222,13 @@ pub(super) fn readonly_modal_ui(
             ui.label(format!(
                 "\"{file_name}\" is a vector SVG. Canvas Desktop edits \
                  raster pixels and can't rewrite vector artwork, so the \
+                 original stays untouched."
+            ));
+        } else if is_video {
+            ui.label(format!(
+                "\"{file_name}\" is a video canvas that can't be rendered \
+                 as-is (extra layers, or a rotated/cropped clip). Use \
+                 \"Save as…\" to keep a still poster instead — the \
                  original stays untouched."
             ));
         } else {
@@ -248,6 +256,9 @@ pub(super) fn readonly_modal_ui(
     }
     if save_as_instead {
         *readonly_prompt = None;
+        // Siempre el diálogo de imagen (póster): es lo único que funciona
+        // para SVG/GIF y para un vídeo no renderizable — el diálogo de vídeo
+        // acabaría en un error de formato tras elegir nombre.
         loader::spawn_pick_save_path(Some(state.file_name()), tx.clone(), ctx.clone());
     } else if cancel {
         *readonly_prompt = None;

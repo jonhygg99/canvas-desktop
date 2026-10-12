@@ -100,9 +100,11 @@ pub(super) fn handle_press(
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     deck.rename_edit = Some((id, stem));
-                    ui.memory_mut(|m| {
-                        m.request_focus(egui::Id::new(("canvas_slot_rename", id)));
-                    });
+                    // Foco diferido al pintar el campo (ver `crate::focus`).
+                    crate::focus::arm_focus_once(
+                        ui.ctx(),
+                        egui::Id::new(("canvas_slot_rename", id)),
+                    );
                     header_hit = true;
                 } else if header.prev.contains(pos) {
                     deck.move_slot(id, MoveDir::Prev);

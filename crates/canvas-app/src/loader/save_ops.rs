@@ -179,15 +179,86 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
     });
 }
 
-pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: egui::Context) {
-    // El lienzo no sabe guardar SVG: sugiere el mismo nombre en .png.
-    let suggested = suggested.map(|name| {
-        if name.to_ascii_lowercase().ends_with(".svg") {
-            format!("{}.png", &name[..name.len() - 4])
-        } else {
-            name
+/// Nombre raster que propone el diálogo: el lienzo no sabe guardar ni SVG
+/// ni vídeo como tal — propone el mismo nombre en `.png` (póster) en vez
+/// del formato que el guardado rechazaría tras hornear. Pura (testeable).
+fn raster_suggestion(name: &str) -> String {
+    if name.to_ascii_lowercase().ends_with(".svg") {
+        return format!("{}.png", &name[..name.len() - 4]);
+    }
+    let path = std::path::Path::new(name);
+    if canvas_io::is_video_file(path) {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| name.to_owned());
+        return format!("{stem}.png");
+    }
+    name.to_owned()
+}
+
+/// Nombre que propone el diálogo de exportar tramo: el clip recortado no es
+/// el original, así que se sugiere `<origen>-trim.mp4` (si ya acaba en
+/// `-trim`, se respeta). Pura (testeable).
+pub fn video_export_suggestion(name: &str) -> String {
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.to_owned());
+    if stem.to_ascii_lowercase().ends_with("-trim") {
+        format!("{stem}.mp4")
+    } else {
+        format!("{stem}-trim.mp4")
+    }
+}
+
+/// Diálogo «Guardar como…» para un lienzo de vídeo: lo que se guarda es el
+/// tramo recortado (In/Out), nunca el mp4 original, así que el diálogo filtra
+/// contenedores de vídeo y propone `<origen>-trim.mp4`. La ruta elegida
+/// vuelve por el mismo `SaveAsPicked` de siempre: la extensión final decide
+/// la rama en `handle_save`.
+pub fn spawn_pick_video_export_path(
+    suggested: Option<String>,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    let suggested = suggested.map(|name| video_export_suggestion(&name));
+    std::thread::spawn(move || {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Save trimmed clip as…")
+            .add_filter("MP4 video", &["mp4"])
+            .add_filter("Video", &["mp4", "mov", "mkv", "webm"]);
+        if let Some(name) = suggested {
+            dialog = dialog.set_file_name(name);
         }
+        let picked = dialog.save_file();
+        let _ = tx.send(AppMsg::SaveAsPicked(picked));
+        ctx.request_repaint();
     });
+}
+
+/// Renderiza la composición de un lienzo de vídeo en un hilo de trabajo; el
+/// resultado vuelve como `VideoCompositionRendered` con duración y tamaño
+/// (los necesita quien guarda en el sitio para resetear el trim y re-anclar
+/// la capa al archivo entero). Hilo de fondo por disciplina: renderizar tarda
+/// segundos y la UI no espera nunca ni al disco ni a ffmpeg.
+pub fn spawn_render_video_composition(
+    comp: canvas_io::VideoComposition,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let result = canvas_io::export_video_composition(&comp);
+        let _ = tx.send(AppMsg::VideoCompositionRendered {
+            dst: comp.dst,
+            result,
+        });
+        ctx.request_repaint();
+    });
+}
+
+pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: egui::Context) {
+    let suggested = suggested.map(|name| raster_suggestion(&name));
     std::thread::spawn(move || {
         let mut dialog = rfd::FileDialog::new()
             .set_title("Save as…")
@@ -208,6 +279,29 @@ pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_export_dialog_suggests_a_trim_name() {
+        // Lo que se guarda es el recorte, no el original: el nombre lo dice.
+        assert_eq!(video_export_suggestion("1.mp4"), "1-trim.mp4");
+        assert_eq!(
+            video_export_suggestion("G:/vids/mi clip.MP4"),
+            "mi clip-trim.mp4"
+        );
+        assert_eq!(video_export_suggestion("1-trim.mp4"), "1-trim.mp4");
+        assert_eq!(video_export_suggestion("foto.png"), "foto-trim.mp4");
+    }
+
+    #[test]
+    fn save_dialog_suggests_a_poster_for_unsaveable_sources() {
+        // El SVG ya se reescribía; el vídeo caía al diálogo como `1.mp4` y el
+        // guardado fallaba tras hornear (`UnsupportedFormat`).
+        assert_eq!(raster_suggestion("clip.svg"), "clip.png");
+        assert_eq!(raster_suggestion("1.mp4"), "1.png");
+        assert_eq!(raster_suggestion("G:/vids/1.MP4"), "1.png");
+        assert_eq!(raster_suggestion("foto.png"), "foto.png");
+        assert_eq!(raster_suggestion("foto.jpg"), "foto.jpg");
+    }
 
     #[test]
     fn invalid_sidecar_never_rewrites_the_raster() {

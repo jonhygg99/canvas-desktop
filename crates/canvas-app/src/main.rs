@@ -20,6 +20,7 @@ mod deck;
 mod deck_strip;
 mod editor;
 mod export;
+mod focus;
 mod framing;
 mod gallery;
 mod http;
@@ -145,6 +146,14 @@ fn main() -> Result<()> {
         event_loop_builder: Some(Box::new(paste_hook::install)),
         ..Default::default()
     };
+
+    // Limpieza del staging de Download una vez por arranque, en un hilo de
+    // fondo: los mp4 viejos son huérfanos de sesiones anteriores (la lista
+    // de Download no sobrevive al cierre) y el temporal no debe crecer sin
+    // cota. Lo reciente (esta sesión) no se toca.
+    std::thread::spawn(|| {
+        ytdlp::api::sweep_stale_downloads(std::time::Duration::from_secs(30 * 24 * 3600));
+    });
 
     eframe::run_native(
         "Canvas Desktop",

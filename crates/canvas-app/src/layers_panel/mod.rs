@@ -11,7 +11,6 @@
 
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
-use std::path::Path;
 
 use crate::editor::properties_panel::page::page_ui;
 use crate::editor::state::LeftTab;
@@ -155,19 +154,9 @@ pub fn left_panel_ui(
                     }
                     LeftTab::Images => crate::unsplash::panel_ui(state, insert_dest, ui, tx),
                     LeftTab::Download => {
-                        // Contexto vivo → última usada → Vídeos: así un
-                        // diseño nuevo también descarga.
-                        let dest = crate::ytdlp::api::resolve_download_dir(
-                            deck_folder.clone(),
-                            state
-                                .doc
-                                .source_path
-                                .clone()
-                                .and_then(|p| p.parent().map(Path::to_path_buf)),
-                            state.from_gallery.clone(),
-                            settings.ytdlp_last_folder.clone(),
-                        );
-                        crate::ytdlp::panel_ui(&mut state.ytdlp, settings, dest, ui, tx);
+                        // Siempre al temporal: el proyecto nunca recibe el mp4.
+                        let dest = crate::ytdlp::api::resolve_download_dir();
+                        crate::ytdlp::panel_ui(&mut state.ytdlp, dest, ui, tx);
                         // Insertar = Aceptar neutro (mismo lienzo 1920×1080
                         // con fondo): el builder extrae el póster.
                         if let Some(path) = state.ytdlp.pending_insert.take() {

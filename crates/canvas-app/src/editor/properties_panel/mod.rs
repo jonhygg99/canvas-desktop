@@ -238,6 +238,7 @@ pub(crate) fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         let mut commit = false;
         if let Some(text) = state.file_rename_edit.as_mut() {
             let resp = ui.add(egui::TextEdit::singleline(text).id(id));
+            crate::focus::focus_once(ui, id, &resp);
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 cancel = true;
             } else if resp.lost_focus() {
@@ -285,7 +286,8 @@ pub(crate) fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 state.file_rename_edit = Some(stem);
-                ui.memory_mut(|m| m.request_focus(id));
+                // Foco diferido al pintar el campo (ver `crate::focus`).
+                crate::focus::arm_focus_once(ui.ctx(), id);
             }
         });
     }

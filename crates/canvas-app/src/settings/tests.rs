@@ -98,9 +98,9 @@ fn new_canvas_default_is_full_hd() {
 }
 
 #[test]
-fn ytdlp_defaults_download_anywhere_and_full_hd() {
+fn ytdlp_defaults_full_hd_canvas() {
+    // Sin carpeta recordada: el Download siempre va al temporal.
     let s = AppSettings::default();
-    assert_eq!(s.ytdlp_last_folder, None);
     assert_eq!(s.ytdlp_canvas_size, (1920.0, 1080.0));
 }
 

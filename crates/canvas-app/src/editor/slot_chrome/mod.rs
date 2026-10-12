@@ -177,6 +177,7 @@ pub(super) fn draw_rename_overlay(
                     header.name.size(),
                     egui::TextEdit::singleline(text).id(text_id),
                 );
+                crate::focus::focus_once(ui, text_id, &resp);
                 if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     cancel = true;
                 } else if resp.lost_focus() {

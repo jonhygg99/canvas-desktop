@@ -31,6 +31,9 @@ pub struct Panel {
     pub pending_edit: Option<PathBuf>,
     /// Sesión de edición abierta (`None` = ventana cerrada).
     pub edit: Option<super::edit::VideoEdit>,
+    /// Fotogramas ya extraídos por clip: abrir «Edit video» sobre el mismo
+    /// archivo no repite el pase de ffmpeg (ver `frames_cache`).
+    pub(crate) frames_cache: super::frames_cache::FramesCache,
 }
 
 impl Default for Panel {
@@ -53,6 +56,7 @@ impl Default for Panel {
             pending_insert: None,
             pending_edit: None,
             edit: None,
+            frames_cache: Default::default(),
         }
     }
 }

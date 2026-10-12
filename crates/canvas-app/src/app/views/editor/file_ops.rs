@@ -78,11 +78,23 @@ pub(super) fn handle_file_ops(
         });
     if let Some((id, ext)) = placeholder {
         let has_canvas_content = state.doc.page().is_ok_and(|page| !page.layers.is_empty());
+        // Un lienzo de clip no se auto-materializa (ni en mp4 ni como diseño
+        // Canvas): la ranura ya tiene su nombre final reservado
+        // (`clip (8).mp4`) y el primer `Ctrl+S` lo rellena con el render
+        // editado; reservar otro archivo aquí duplicaría la ranura y
+        // reescribiría el origen. Se mira el tipo de ranura, no el origen del
+        // documento: un diseño Canvas de clip no enlaza ningún vídeo.
+        let is_video_canvas = f
+            .deck
+            .slots
+            .get(f.deck.active)
+            .is_some_and(|s| s.kind == crate::gallery::ItemKind::Video);
         if has_canvas_content
             && state.is_dirty()
             && !state.saving
             && f.deck_ops.materializing.is_none()
             && f.deck_ops.materialize_blocked != Some(id)
+            && !is_video_canvas
         {
             if let Some(folder) = f.deck.folder.clone() {
                 f.deck_ops.materializing = Some(id);

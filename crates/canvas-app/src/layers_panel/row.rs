@@ -106,7 +106,8 @@ pub(super) fn row_ui(
             let click = ui.interact(drag_resp.rect, row_id.with("click"), egui::Sense::click());
             if click.double_clicked() {
                 state.rename_edit = Some((row.id, name.clone(), name));
-                ui.memory_mut(|m| m.request_focus(row_id.with("rename")));
+                // Foco diferido al pintar el campo (ver `crate::focus`).
+                crate::focus::arm_focus_once(ui.ctx(), row_id.with("rename"));
             } else if click.clicked() {
                 let mods = ui.input(|i| i.modifiers);
                 if mods.command {
@@ -264,6 +265,7 @@ fn rename_edit_ui(state: &mut EditorState, ui: &mut egui::Ui, id: LayerId) {
                 .id(text_id)
                 .desired_width(140.0),
         );
+        crate::focus::focus_once(ui, text_id, &resp);
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             cancel = true;
         } else if resp.lost_focus() {

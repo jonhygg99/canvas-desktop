@@ -114,6 +114,9 @@ impl AppInner {
                 result,
                 new_source,
             } => self.on_saved(ws, path, result, new_source, ctx, open_after),
+            AppMsg::VideoCompositionRendered { dst, result } => {
+                self.on_video_composition_rendered(ws, dst, result, ctx, open_after)
+            }
             AppMsg::UnsavedDialogAnswer(decision) => {
                 self.on_unsaved_dialog_answer(ws, decision, open_after, ctx)
             }
@@ -250,9 +253,9 @@ impl AppInner {
             AppMsg::YtdlpFilesDeleted { removed, errors } => {
                 self.on_ytdlp_files_deleted(ws, removed, errors)
             }
-            AppMsg::YtdlpFramesReady(done) => self.on_ytdlp_frames_ready(ws, done),
+            AppMsg::YtdlpFramesReady(done) => Self::on_ytdlp_frames_ready(ws, done),
             AppMsg::YtdlpFramesFailed { clip_id, error } => {
-                self.on_ytdlp_frames_failed(ws, clip_id, error)
+                Self::on_ytdlp_frames_failed(ws, clip_id, error)
             }
             AppMsg::YtdlpEditAccepted(accept) => self.on_ytdlp_edit_accepted(ws, accept, ctx),
             AppMsg::YtdlpEditsAccepted(accepts) => {

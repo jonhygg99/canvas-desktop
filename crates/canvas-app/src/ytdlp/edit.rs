@@ -230,6 +230,17 @@ impl VideoEdit {
     }
 
     /// Fotogramas listos: fija dims/duración/trim final y coloca el playhead.
+    /// Sigue esperando sus fotogramas (abierto o reintentado, sin resultado
+    /// todavía): distingue la extracción vigente de una superseded tardía.
+    pub(crate) fn waiting_for_frames(&self) -> bool {
+        self.loading_frames
+    }
+
+    /// Ruta del clip en edición (para la caché de fotogramas).
+    pub(crate) fn clip_path(&self) -> &std::path::PathBuf {
+        &self.path
+    }
+
     pub(crate) fn set_frames(
         &mut self,
         files: Vec<PathBuf>,
@@ -266,6 +277,13 @@ impl VideoEdit {
     pub(crate) fn set_frames_error(&mut self, error: String) {
         self.loading_frames = false;
         self.frames_error = Some(error);
+    }
+
+    /// Último error de extracción, si lo hubo (la UI lo muestra como guía).
+    /// Solo lo usan los tests del guard superseded (`messages::ytdlp`).
+    #[cfg(test)]
+    pub(crate) fn frames_error(&self) -> Option<&str> {
+        self.frames_error.as_deref()
     }
 }
 
@@ -363,7 +381,16 @@ pub fn open_pending_edit(
         size,
         doc,
     ));
-    loader::spawn_ytdlp_frames(file_name, path, None, tx.clone(), ctx.clone());
+    // Si el clip no cambió desde la última extracción, se reutilizan sus
+    // PNG: evita otro pase completo de ffmpeg (y otro directorio temporal).
+    if let Some(cached) = video.frames_cache.get(&path) {
+        if let Some(edit) = video.edit.as_mut() {
+            edit.set_source_fps(cached.source_fps);
+            edit.set_frames(cached.files, cached.fps, cached.duration, cached.video_size);
+        }
+    } else {
+        loader::spawn_ytdlp_frames(file_name, path, None, tx.clone(), ctx.clone());
+    }
 }
 
 /// Ventana de edición. Devuelve los recortes aceptados; cerrar/X/Cancelar

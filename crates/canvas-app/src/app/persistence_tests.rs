@@ -488,3 +488,19 @@ fn save_all_count_skips_clean_but_includes_protected_active_doc() {
     }));
     assert_eq!(save_all_doc_count(&deck, &state), 1);
 }
+
+/// Un vídeo (o una extensión sin codificador) se rechaza ANTES de hornear:
+/// el informe era un `UnsupportedFormat` tras todo el trabajo de GPU.
+#[test]
+fn raster_save_refuses_video_before_baking() {
+    use super::raster_target_error;
+    let error =
+        raster_target_error(Path::new(r"G:\vids\1.mp4")).expect("el mp4 no es destino raster");
+    assert!(
+        error.to_string().contains("not a format"),
+        "mismo mensaje que el worker, pero sin hornear: {error}"
+    );
+    assert!(raster_target_error(Path::new("foto.png")).is_none());
+    assert!(raster_target_error(Path::new("foto.jpg")).is_none());
+    assert!(raster_target_error(Path::new("sin-extension")).is_some());
+}

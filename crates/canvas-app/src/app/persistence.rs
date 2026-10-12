@@ -254,6 +254,20 @@ fn free_far_slot_scopes(deck: &mut crate::deck::Deck, renderer: &mut CanvasRende
     count
 }
 
+/// ¿Rechazar este destino raster ANTES de hornear? Un vídeo (o cualquier
+/// extensión sin codificador) acabaría en `UnsupportedFormat` tras todo el
+/// trabajo de GPU: se falla rápido con el mismo error, sin tocar el archivo
+/// (el camino para un vídeo es Save As → póster PNG). Pura (testeable).
+pub(super) fn raster_target_error(path: &std::path::Path) -> Option<canvas_io::IoError> {
+    if canvas_io::save_format_from_path(path).is_none() {
+        Some(canvas_io::IoError::UnsupportedFormat {
+            path: path.to_owned(),
+        })
+    } else {
+        None
+    }
+}
+
 pub(super) fn start_save(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
@@ -263,6 +277,10 @@ pub(super) fn start_save(
     jpeg_quality: u8,
 ) {
     if state.saving {
+        return;
+    }
+    if let Some(error) = raster_target_error(&path) {
+        state.save_error = Some(error.to_string());
         return;
     }
     // RAM crítica: no se intenta el bake (podría salir incompleto o matar la

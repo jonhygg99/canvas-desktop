@@ -1,5 +1,5 @@
 //! UI de la pestaña «Download»: URL(s), trim por tiempos, sin audio y
-//! destino `clip-[carpeta](x).mp4`.
+//! destino siempre temporal (`clip(x).mp4` en el staging de la app).
 
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -7,7 +7,6 @@ use std::sync::mpsc::Sender;
 use eframe::egui;
 
 use crate::loader;
-use crate::settings::AppSettings;
 
 use super::api;
 use super::state::Panel;
@@ -17,15 +16,9 @@ mod jobs;
 mod options;
 
 /// Contenido de la pestaña «Download» del panel lateral izquierdo.
-/// `dest` es la carpeta donde se guardará el clip (baraja/archivo/galería,
-/// última usada o Vídeos).
-pub fn panel_ui(
-    panel: &mut Panel,
-    settings: &mut AppSettings,
-    dest: Option<PathBuf>,
-    ui: &mut egui::Ui,
-    tx: &Sender<loader::AppMsg>,
-) {
+/// `dest` es la carpeta temporal de descargas: el proyecto nunca recibe el
+/// mp4 (valor, no `Option` — no hay caso «sin destino» que mostrar).
+pub fn panel_ui(panel: &mut Panel, dest: PathBuf, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
     let Some(ytdlp) = api::ytdlp_path() else {
         ui.add_space(8.0);
         ui.label(crate::i18n::tr("yt-dlp.exe not found"));
@@ -38,18 +31,12 @@ pub fn panel_ui(
     };
     let _ = ytdlp;
 
-    download_form(panel, settings, dest, ui, tx);
+    download_form(panel, dest, ui, tx);
     jobs::show(panel, ui, tx);
     downloaded_results(panel, ui, tx);
 }
 
-fn download_form(
-    panel: &mut Panel,
-    settings: &mut AppSettings,
-    dest: Option<PathBuf>,
-    ui: &mut egui::Ui,
-    tx: &Sender<loader::AppMsg>,
-) {
+fn download_form(panel: &mut Panel, dest: PathBuf, ui: &mut egui::Ui, tx: &Sender<loader::AppMsg>) {
     ui.add_space(6.0);
     ui.label(crate::i18n::tr(
         "Video URL (one per line, playlist allowed):",
@@ -65,21 +52,12 @@ fn download_form(
     let section = options::show(panel, ui);
 
     ui.add_space(4.0);
-    match &dest {
-        Some(d) => {
-            ui.weak(format!("Save to: {}", d.display()));
-        }
-        None => {
-            ui.weak(crate::i18n::tr(
-                "Open a folder or canvas first to choose where to save.",
-            ));
-        }
-    }
+    ui.weak(format!("Save to (temporary): {}", dest.display()));
 
     ui.add_space(6.0);
     let urls = api::split_urls(&panel.urls);
     let has_urls = !urls.is_empty();
-    let can_download = !panel.downloading && has_urls && dest.is_some() && section.is_ok();
+    let can_download = !panel.downloading && has_urls && section.is_ok();
     if ui
         .add_enabled(can_download, egui::Button::new(crate::i18n::tr("Download")))
         .clicked()
@@ -88,16 +66,15 @@ fn download_form(
         panel.progress = "Starting…".to_owned();
         panel.error = None;
         // La lista NO se vacía: los clips se quedan hasta que se borren.
-        // La carpeta usada se recuerda para la próxima (detrás del contexto
-        // vivo en la resolución, como `serper_last_folder`).
-        settings.ytdlp_last_folder = dest.clone();
-        settings.save_in_background();
+        // El destino es siempre el temporal (el ajuste `ytdlp_last_folder`
+        // murió con el «Save to» por contexto), así que no hay nada que
+        // recordar en ajustes.
         let request = loader::YtdlpDownloadRequest {
             urls,
             start: section.expect("validated section").0,
             end: section.expect("validated section").1,
             mute: panel.mute,
-            dest: dest.clone().expect("destino comprobado"),
+            dest: dest.clone(),
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             target: None,
         };
@@ -131,6 +108,6 @@ fn downloaded_results(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::
     }
     ui.add_space(4.0);
     ui.weak(crate::i18n::tr(
-        "Files are saved as clip-[folder](x).mp4.\nTrim uses times; .part resumes on retry.",
+        "Files are saved as clip(x).mp4 in a temporary folder.\nThey stay in Download until moved to trash.\nTrim uses times; .part resumes on retry.",
     ));
 }

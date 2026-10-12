@@ -92,6 +92,9 @@ fn run_frames(
         });
         ctx.request_repaint();
     };
+    // Restos de sesiones anteriores (ver `frames_cache`): una vez por
+    // extracción y fuera del hilo de UI.
+    crate::ytdlp::sweep_stale_frame_dirs(std::time::Duration::from_secs(24 * 3600));
     if !path.is_file() {
         fail("The video file is gone. Download it again.".to_owned());
         return;

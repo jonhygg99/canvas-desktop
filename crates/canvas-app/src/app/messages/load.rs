@@ -63,7 +63,6 @@ impl AppInner {
                     state.sidecar_enabled = self.settings.sidecar_default;
                     state.source_metadata = metadata;
                     self.remember_page_size(ws, &state.doc);
-                    ws.deck = deck::Deck::single("current.png".into());
                     ws.view = View::Editor(Box::new(state));
                 } else {
                     loader::spawn_load_image(path.clone(), false, ws.tx.clone(), ctx.clone());
@@ -75,7 +74,6 @@ impl AppInner {
                 let mut state = editor::EditorState::from_design(path.clone(), restored);
                 state.from_gallery = ws.deck.folder.clone();
                 self.remember_page_size(ws, &state.doc);
-                ws.deck = deck::Deck::single("current.png".into());
                 ws.view = View::Editor(Box::new(state));
             }
             Ok(loader::LoadOutcome::Flat(img)) => {
@@ -86,7 +84,6 @@ impl AppInner {
                         state.sidecar_enabled = self.settings.sidecar_default;
                         state.source_metadata = metadata;
                         self.remember_page_size(ws, &state.doc);
-                        ws.deck = deck::Deck::single("current.png".into());
                         ws.view = View::Editor(Box::new(state));
                     }
                     Err(e) => {
@@ -278,5 +275,98 @@ mod tests {
             assert_eq!(state.doc, before);
             assert!(state.save_error.is_none());
         }
+    }
+
+    /// Abrir el elemento central de una semilla de 3 conserva la baraja con
+    /// el clicado activo (antes, `on_image_loaded` la tiraba y dejaba una
+    /// sola ranura). Requiere GPU real (`RenderState` headless sin
+    /// superficie): `#[ignore]` para que no falle en CI sin adaptador, igual
+    /// que `canvas-render/tests/gpu_bake.rs`. Se corre con
+    /// `cargo test -p canvas-app -- --ignored`.
+    #[test]
+    #[ignore]
+    fn opening_the_middle_item_keeps_the_seeded_deck() {
+        let rs = pollster::block_on(eframe::egui_wgpu::RenderState::create(
+            &eframe::egui_wgpu::WgpuConfiguration::default(),
+            &eframe::egui_wgpu::wgpu::Instance::new(
+                eframe::egui_wgpu::wgpu::InstanceDescriptor::new_without_display_handle(),
+            ),
+            None,
+            eframe::egui_wgpu::RendererOptions::default(),
+        ))
+        .expect("RenderState headless para el test");
+        let renderer = canvas_render::CanvasRenderer::new(&rs.device).expect("renderer compartido");
+        let (shell_tx, shell_rx) = std::sync::mpsc::channel();
+        // La imagen mide lo mismo que `last_page_size` por defecto: abrirla
+        // no dispara `save_in_background` (sin escrituras a disco reales).
+        let settings = crate::settings::AppSettings {
+            last_page_size: (1920.0, 1080.0),
+            ..crate::settings::AppSettings::default()
+        };
+        let mut app = AppInner {
+            workspaces: Vec::new(),
+            me: None,
+            renderer,
+            rs,
+            settings,
+            thumb_cache: None,
+            shell_status: String::new(),
+            menu_mirror: crate::app::MenuMirror::default(),
+            applied_theme: None,
+            switcher: crate::app::switcher::SwitcherState::default(),
+            focused: 0,
+            shell_rx,
+            shell_tx,
+            next_ws_id: 1,
+            last_workspaces_save: None,
+            workspaces_dirty: false,
+            pending_focus: None,
+            atlas_regs: 0,
+            atlas_reups: 0,
+            atlas_log_frames: 0,
+        };
+        let dir = PathBuf::from("seed-test");
+        let paths: Vec<PathBuf> = ["a.png", "b.png", "c.png"]
+            .into_iter()
+            .map(|n| dir.join(n))
+            .collect();
+        let seed = deck::DeckSeed {
+            folder: dir,
+            sort: crate::settings::GallerySort::Name,
+            items: paths
+                .iter()
+                .map(|p| deck::SeedItem {
+                    path: p.clone(),
+                    name: p.file_name().unwrap().to_string_lossy().into_owned(),
+                    kind: crate::gallery::ItemKind::Image,
+                    mtime: None,
+                    thumb: None,
+                    thumb_failed: false,
+                })
+                .collect(),
+        };
+        let mut ws = Workspace::new(egui::ViewportId::ROOT);
+        ws.deck_ops.pending_deck = Some(seed);
+        let open = paths[1].clone();
+        ws.view = View::Loading { path: open.clone() };
+        let ctx = egui::Context::default();
+        let img = canvas_io::LoadedImage {
+            rgba: vec![128u8; 1920 * 1080 * 4],
+            width: 1920,
+            height: 1080,
+        };
+        app.on_image_loaded(
+            &mut ws,
+            open.clone(),
+            Ok(loader::LoadOutcome::Flat(img)),
+            canvas_io::ImageMetadata::default(),
+            &ctx,
+        );
+        assert_eq!(ws.deck.slots.len(), 3, "la semilla sobrevive a la apertura");
+        assert_eq!(ws.deck.slots[ws.deck.active].path, open);
+        let View::Editor(state) = &ws.view else {
+            unreachable!("debe abrir el editor");
+        };
+        assert_eq!(state.doc.source_path.as_deref(), Some(open.as_path()));
     }
 }

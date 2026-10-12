@@ -199,6 +199,7 @@ fn new_folder_ui(
                     .hint_text(crate::i18n::tr("Folder name"))
                     .desired_width(160.0),
             );
+            crate::focus::focus_once(ui, id, &response);
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 *new_folder_name = None;
             } else if response.lost_focus() {
@@ -221,9 +222,12 @@ fn new_folder_ui(
             .clicked()
             {
                 *new_folder_name = Some(String::new());
-                ui.ctx().memory_mut(|m| {
-                    m.request_focus(egui::Id::new(("new_folder_input", id_prefix, parent)))
-                });
+                // El foco se pide al pintar el campo (`focus_once`): pedirlo
+                // aquí, con el `TextEdit` aún inexistente, aborta accesskit.
+                crate::focus::arm_focus_once(
+                    ui.ctx(),
+                    egui::Id::new(("new_folder_input", id_prefix, parent)),
+                );
             }
         }
     }

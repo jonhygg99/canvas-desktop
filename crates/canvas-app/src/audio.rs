@@ -144,6 +144,18 @@ pub fn pause_for(path: &Path) {
     }
 }
 
+/// Suelta el handle del archivo de audio de este vídeo (cierra el `File` que
+/// `rodio`/`symphonia` mantiene abierto dentro del `Sink`). Pausar no basta:
+/// en Windows un handle abierto — aunque esté en pausa — bloquea `ReplaceFileW`
+/// con 0x80070020 al guardar en el sitio. Solo toca el audio de esta ruta.
+pub fn stop_for(path: &Path) {
+    if let Some(mut g) = global_state() {
+        if g.current_path.as_deref() == Some(path) {
+            g.stop();
+        }
+    }
+}
+
 pub fn stop() {
     if let Some(mut g) = global_state() {
         g.stop();

@@ -103,3 +103,6 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Solo para el test de regresión `#[ignore]` de `messages::load` (RenderState
+# headless): la misma versión que ya usa canvas-render (0.4, en el lock).
+pollster = "0.4"

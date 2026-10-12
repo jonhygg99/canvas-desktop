@@ -21,7 +21,6 @@ pub(crate) struct VideoPlayback {
     video: VideoContent,
     frames: Arc<Mutex<Option<FrameResult>>>,
     cancel: mpsc::Sender<()>,
-    playing: bool,
 }
 
 impl VideoPlayback {
@@ -104,7 +103,6 @@ impl VideoPlayback {
             video,
             frames,
             cancel,
-            playing,
         }
     }
 
@@ -120,10 +118,11 @@ impl VideoPlayback {
 impl Drop for VideoPlayback {
     fn drop(&mut self) {
         let _ = self.cancel.send(());
-        if self.playing {
-            if let Some(path) = self.video.source_path.as_deref() {
-                crate::audio::pause_for(path);
-            }
+        // Soltar el handle, no solo pausar: el `File` abierto dentro del
+        // `Sink` de rodio bloquea `ReplaceFileW` (0x80070020) al guardar en
+        // el sitio aunque el audio esté en pausa.
+        if let Some(path) = self.video.source_path.as_deref() {
+            crate::audio::stop_for(path);
         }
     }
 }

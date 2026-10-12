@@ -34,7 +34,6 @@ fn pending_frame(state: &mut EditorState, id: LayerId) -> mpsc::Receiver<()> {
         slot: state.active_slot_id,
         video,
         cancel,
-        playing: false,
         frames: Arc::new(Mutex::new(Some(Ok(Some((
             0.5,
             LoadedImage {
