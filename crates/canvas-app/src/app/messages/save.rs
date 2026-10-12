@@ -107,10 +107,7 @@ impl AppInner {
                         );
                     }
                     if new_source {
-                        if let Some(slot) = ws.deck.slots.get(ws.deck.active) {
-                            ws.deck.materialize_placeholder(slot.id, path.clone());
-                        }
-                        state.doc.source_path = Some(path);
+                        adopt_saved_source(state, &mut ws.deck, path);
                     }
                     // A04: el worker escribió la captura tomada al lanzar el
                     // guardado. Solo se marca como guardado si el historial
@@ -252,5 +249,60 @@ impl AppInner {
                 }
             }
         }
+    }
+}
+
+fn adopt_saved_source(
+    state: &mut crate::editor::EditorState,
+    deck: &mut deck::Deck,
+    path: PathBuf,
+) {
+    state.is_design = canvas_io::is_canvas_file(&path);
+    if let Some(slot) = deck.slots.get_mut(deck.active) {
+        slot.path = path.clone();
+        slot.name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        slot.is_placeholder = false;
+        slot.kind = if state.is_design {
+            crate::gallery::ItemKind::Design
+        } else {
+            crate::gallery::ItemKind::Image
+        };
+    }
+    state.doc.source_path = Some(path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::EditorState;
+
+    #[test]
+    fn saved_image_uses_raster_format_and_new_slot_path() {
+        let old = PathBuf::from("old.canvas");
+        let new = PathBuf::from("new.png");
+        let mut state = EditorState::new_blank(20.0, 20.0);
+        state.doc.source_path = Some(old.clone());
+        let mut deck = deck::Deck::single(old);
+        adopt_saved_source(&mut state, &mut deck, new.clone());
+        assert!(!state.is_design);
+        assert_eq!(state.doc.source_path, Some(new.clone()));
+        assert_eq!(deck.slots[0].path, new);
+        assert_eq!(deck.slots[0].name, "new.png");
+    }
+
+    #[test]
+    fn successful_design_save_adopts_design_format() {
+        let old = PathBuf::from("photo.png");
+        let new = PathBuf::from("photo.canvas");
+        let mut state = EditorState::new_blank_image(20.0, 20.0);
+        state.doc.source_path = Some(old.clone());
+        let mut deck = deck::Deck::single(old);
+        adopt_saved_source(&mut state, &mut deck, new.clone());
+        assert!(state.is_design);
+        assert_eq!(state.doc.source_path, Some(new));
     }
 }

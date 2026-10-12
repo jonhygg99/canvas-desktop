@@ -348,7 +348,6 @@ pub(super) fn start_save_design(
         return;
     }
     tracing::info!("guardando diseño en {}", path.display());
-    state.is_design = true;
     let mut payload = state.sidecar_payload();
     let (pw, ph) = state
         .doc
