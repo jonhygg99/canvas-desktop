@@ -38,7 +38,7 @@ pub(in crate::app) struct SaveContext<'a> {
 impl AppInner {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no
     /// índice) y guarda el documento ACTIVO, si está sucio, de inmediato.
-    /// Deja fuera SVG/GIF. Si la RAM libre del sistema está por debajo del
+    /// Los formatos protegidos piden Guardar como. Si la RAM libre está por debajo del
     /// umbral, NO encola nada y abre el aviso de poca memoria: un horneado
     /// masivo bajo presión es la receta del PNG blanco (ver
     /// `bake_came_out_blank`), y mejor avisar antes de lanzar N horneados.
@@ -60,7 +60,7 @@ impl AppInner {
 }
 
 /// Construye la cola de «Save all»: guarda el documento activo (si está
-/// sucio y es sobrescribible) y encola las ranuras de fondo sucias (id
+/// sucio) y encola todas las ranuras de fondo sucias (id
 /// estable, no índice). Libre para poder re-dispararse desde el modal de
 /// aviso de poca RAM, donde `state`/`deck`/`save` son préstamos disjuntos
 /// del mismo workspace.
@@ -86,8 +86,8 @@ pub(super) fn start_save_all_flow(
     save.save_all_attempted = false;
 }
 
-/// Cuántos documentos escribiría «Save all» (el activo, si está sucio y es
-/// sobrescribible, más las ranuras de fondo sucias) — para el aviso de
+/// Cuántos documentos escribiría «Save all» (el activo, si está sucio,
+/// más las ranuras de fondo sucias) — para el aviso de
 /// poca RAM. Pura: se prueba con barajas construidas a mano.
 fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
     if deck.unsaved_session {

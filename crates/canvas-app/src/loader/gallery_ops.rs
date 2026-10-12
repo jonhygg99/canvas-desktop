@@ -143,7 +143,7 @@ pub fn spawn_document_delete(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Conte
     });
 }
 
-/// Restaura de la papelera del proyecto `path` (y `sidecar`, si lo tenía) a
+/// Restaura las copias exactas de `record` (imagen y sidecar, si lo tenía) a
 /// su ubicación original — deshacer un `GlobalStep::Delete`. El sidecar es
 /// independiente: si no se puede restaurar, el archivo sí vuelve y el fallo
 /// viaja como aviso (las capas siguen en la papelera), nunca como error de

@@ -804,7 +804,7 @@ fn gallery_probes_need_only_the_header_not_the_layer_blobs() {
     };
     let mut bytes = encode_payload(&path, None, &payload).unwrap();
     bytes.extend_from_slice(&100u32.to_le_bytes());
-    // Pixel data may be unavailable while another process is copying it.
+    // Los píxeles pueden faltar mientras otro proceso copia el archivo.
     std::fs::write(&path, bytes).unwrap();
     assert_eq!(io::read_page_size(&path).unwrap(), (123.0, 456.0));
     assert_eq!(read_preview(&path).unwrap().unwrap().rgba, vec![255; 4]);
