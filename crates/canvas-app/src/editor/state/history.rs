@@ -37,8 +37,10 @@ pub(crate) enum GlobalStep {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct DeleteRecord {
     pub path: PathBuf,
-    /// El sidecar `.canvas` que se borró junto al archivo, si tenía uno.
-    pub sidecar: Option<PathBuf>,
+    /// Copia exacta reservada en la papelera para este borrado.
+    pub staged: PathBuf,
+    /// (ruta original del sidecar, copia exacta en la papelera).
+    pub sidecar: Option<(PathBuf, PathBuf)>,
 }
 
 impl GlobalStep {
@@ -107,6 +109,20 @@ impl EditorState {
         }
         self.global_undo.push(GlobalStep::Edit(self.active_slot_id));
         self.global_redo.clear();
+        let mut expired = self
+            .global_undo
+            .iter()
+            .filter(|step| **step == GlobalStep::Edit(self.active_slot_id))
+            .count()
+            .saturating_sub(self.history.undo_depth());
+        self.global_undo.retain(|step| {
+            if expired > 0 && *step == GlobalStep::Edit(self.active_slot_id) {
+                expired -= 1;
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// ¿Hay algo que deshacer/rehacer en TODA la sesión (no solo en el

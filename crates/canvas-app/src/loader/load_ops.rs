@@ -16,7 +16,7 @@ use crate::app::persistence::build_slot_doc;
 /// UNA: `canvas_io::open_document`.
 pub fn spawn_load_image(path: PathBuf, use_sidecar: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = canvas_io::open_document(&path, use_sidecar).map(LoadOutcome::from);
+        let result = canvas_io::open_document(&path, use_sidecar);
         // ICC/EXIF del archivo en disco (mejor esfuerzo), venga el documento
         // aplanado o restaurado del sidecar: el original es el mismo.
         let metadata = canvas_io::extract_metadata_from_file(&path);
@@ -68,7 +68,7 @@ pub fn spawn_load_slot(
             };
             build_slot_doc(
                 path.clone(),
-                outcome.into(),
+                outcome,
                 (!metadata.is_empty()).then_some(metadata),
                 sidecar_default,
             )

@@ -23,6 +23,46 @@ pub struct CanvasPayload {
     pub preview: Option<LoadedImage>,
 }
 
+pub(super) const MAX_DECODED_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
+
+impl CanvasPayload {
+    /// Valida antes de reemplazar la imagen o el diseño en disco.
+    pub fn validate_for_save(&self, path: &Path) -> Result<(), IoError> {
+        let mut total = 0u64;
+        let mut ids = std::collections::HashSet::new();
+        for (id, rgba, width, height) in &self.images {
+            let bytes = crate::png_codec::supported_rgba_bytes(*width, *height)
+                .filter(|bytes| *bytes == rgba.len() as u64)
+                .ok_or_else(|| IoError::Encode {
+                    path: path.to_owned(),
+                    message:
+                        "layer pixels exceed supported save limits or do not match their dimensions"
+                            .into(),
+                })?;
+            total += bytes;
+            if total > MAX_DECODED_CANVAS_BYTES || !ids.insert(*id) {
+                return Err(IoError::Encode {
+                    path: path.to_owned(),
+                    message:
+                        "editable layers exceed the 512 MiB decoded limit or repeat a layer ID"
+                            .into(),
+                });
+            }
+        }
+        if let Some(preview) = &self.preview {
+            if crate::png_codec::supported_rgba_bytes(preview.width, preview.height)
+                != Some(preview.rgba.len() as u64)
+            {
+                return Err(IoError::Encode {
+                    path: path.to_owned(),
+                    message: "invalid design preview dimensions".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Documento restaurado desde un `.canvas`, con los píxeles ya decodificados.
 pub struct RestoredDocument {
     pub document: Document,
@@ -98,6 +138,7 @@ pub(super) fn encode_payload(
     image_hash: Option<String>,
     payload: &CanvasPayload,
 ) -> Result<Vec<u8>, IoError> {
+    payload.validate_for_save(path)?;
     // Los píxeles de las capas van a la sección BINARIA del contenedor v5
     // (PNG crudo, sin base64): ~25 % menos de archivo y sin el coste de
     // codificar/decodificar base64 de un documento con fotos grandes.
@@ -137,5 +178,12 @@ pub(super) fn encode_payload(
         path: path.to_owned(),
         message: format!("serializing the sidecar: {e}"),
     })?;
-    Ok(super::container::encode_container(&json, &blobs))
+    let bytes = super::container::encode_container(&json, &blobs);
+    if bytes.len() as u64 > super::io::MAX_CANVAS_BYTES {
+        return Err(IoError::Encode {
+            path: path.to_owned(),
+            message: "canvas file exceeds the 512 MiB read limit".into(),
+        });
+    }
+    Ok(bytes)
 }

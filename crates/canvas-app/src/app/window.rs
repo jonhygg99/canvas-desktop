@@ -57,9 +57,15 @@ impl AppInner {
                 && path.is_file()
                 && canvas_io::is_media_file(&path)
             {
-                loader::spawn_load_image_as_layer(path, ws.tx.clone(), ctx.clone());
+                if let Some(slot) = ws.deck.slots.get(ws.deck.active) {
+                    let dest = loader::ImageInsertDest {
+                        generation: ws.deck.generation,
+                        slot_id: slot.id,
+                    };
+                    loader::spawn_load_image_as_layer(path, dest, ws.tx.clone(), ctx.clone());
+                }
             } else {
-                self.open_path(ws, path, ctx);
+                self.request_nav(ws, super::Nav::Open(path), ctx);
             }
         }
     }
@@ -107,12 +113,7 @@ impl AppInner {
     /// Discard), deja que el cierre continúe. Para la raíz reenvía el
     /// `Close` (el `CancelClose` lo canceló); para una hija marca
     /// `close_requested` para que el frame raíz la retire.
-    pub(crate) fn confirm_window_close(
-        &mut self,
-        ws: &mut Workspace,
-        ctx: &egui::Context,
-        is_root: bool,
-    ) {
+    pub(crate) fn confirm_window_close(ws: &mut Workspace, ctx: &egui::Context, is_root: bool) {
         if ws.save.allow_close {
             return;
         }

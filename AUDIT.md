@@ -2,6 +2,22 @@
 
 Fecha: 2026-10-02. Base Git: `75aea1280648f9f4f1cd20c27faa8347e646644f`, incluyendo los cambios locales presentes al comenzar.
 
+## Actualización 2026-10-09 (revisión ponytail-audit)
+
+Verificación directa del estado actual de los 13 hallazgos más los no listados. **Código revisado, no ejecutado en la app.**
+
+**Ya corregidos (no tocar):** A03 (sidecar fallido ya no reporta éxito: `loader/save_ops.rs:124-137`), A04 (captura sellada por `saving_capture`), A01 (la cámara ya compensa con zoom: `editor/canvas/layout.rs` + `camera_tests.rs`), A02 (checkbox con `push_id` estable por foto: `serper/bulk.rs:221`), A13 (MSRV 1.92 con la evidencia en `Cargo.toml`).
+
+**Corregidos en esta pasada:**
+- `canvas-io/src/video.rs`: fuera las tres rutas absolutas de la máquina del desarrollador; ffmpeg/ffprobe se buscan por variables de entorno y PATH.
+- `delete_sidecar` devuelve `Result` y `loader/save_ops.rs:144-156` lo propaga: desactivar el sidecar ya no borra las capas editables sin poder informar.
+- `loader/file_ops.rs:92-116`: si el sidecar no se puede renombrar, la imagen recupera su nombre; si tampoco, error explícito. Tests en `loader/file_ops_tests.rs`.
+- `app/http.rs::read_response_string_bounded` (más dos tests): las búsquedas de Unsplash y Serper leen la respuesta con el tope de 64 MiB que ya tenían las descargas.
+- `crates/canvas-io/src/sidecar/paths.rs::free_name_in` compartido por papelera y cuarentena, y `find_trashed_entry`: borrar dos veces un archivo con el mismo nombre ya no destruye la copia anterior (la restauración sigue funcionando).
+
+**Pendiente de esta revisión, con detalle en los archivos `plan-blurred-background-17.md` y `plan-partial-bake-guard.md`:** detección de horneados parciales no uniformes (guard sin señal de vello), y el resto de la deuda estructural (duplicación de "reservar nombre libre", tests de las rutas de papelera/cuarentena en `canvas-app`).
+
+
 ## Resultado
 
 Se identificaron **13 hallazgos prioritarios**. Los dos fallos comunicados tienen mecanismos reproducibles: una compensación de cámara que omite el zoom y una selección de Serper que reutiliza la identidad de un checkbox tras recolocar las tarjetas. Además, existen riesgos de pérdida de capas, cambios marcados incorrectamente como guardados, navegación que descarta documentos sucios e importaciones simultáneas que sobrescriben archivos.

@@ -18,6 +18,14 @@ const MAX_LAYER_PNG_DIM: u32 = 20_000;
 /// memoria en `to_rgba8` antes de que nadie mire el contenido.
 const MAX_LAYER_PNG_ALLOC: u64 = 512 * 1024 * 1024;
 
+pub(crate) fn supported_rgba_bytes(width: u32, height: u32) -> Option<u64> {
+    if width == 0 || height == 0 || width > MAX_LAYER_PNG_DIM || height > MAX_LAYER_PNG_DIM {
+        return None;
+    }
+    let bytes = u64::from(width) * u64::from(height) * 4;
+    (bytes <= MAX_LAYER_PNG_ALLOC).then_some(bytes)
+}
+
 /// Codifica un buffer RGBA como PNG crudo. `context` solo se usa para dar
 /// contexto al mensaje de error si algo falla. Lo usan el contenedor v4 del
 /// sidecar (sección binaria) y `encode_layer_png` (portapapeles).
@@ -61,6 +69,14 @@ pub(crate) fn decode_layer_png(
     png_base64: &str,
     context: &Path,
 ) -> Result<(Vec<u8>, u32, u32), IoError> {
+    decode_layer_png_with_budget(png_base64, context, MAX_LAYER_PNG_ALLOC)
+}
+
+pub(crate) fn decode_layer_png_with_budget(
+    png_base64: &str,
+    context: &Path,
+    budget: u64,
+) -> Result<(Vec<u8>, u32, u32), IoError> {
     let png = base64::engine::general_purpose::STANDARD
         .decode(png_base64)
         .map_err(|e| IoError::Decode {
@@ -69,7 +85,7 @@ pub(crate) fn decode_layer_png(
                 "invalid base64: {e}"
             ))),
         })?;
-    decode_png_bytes(&png, context)
+    decode_png_bytes_with_budget(&png, context, budget)
 }
 
 /// Decodifica bytes PNG crudos a RGBA + dimensiones (blobs binarios del
@@ -77,13 +93,32 @@ pub(crate) fn decode_layer_png(
 /// contenido puede venir de un archivo compartido o modificado fuera de la
 /// app, y un PNG con cabeceras infladas no debe poder pedir memoria sin
 /// control.
-pub(crate) fn decode_png_bytes(png: &[u8], context: &Path) -> Result<(Vec<u8>, u32, u32), IoError> {
+pub(crate) fn decode_png_bytes_with_budget(
+    png: &[u8],
+    context: &Path,
+    budget: u64,
+) -> Result<(Vec<u8>, u32, u32), IoError> {
+    let (width, height) =
+        image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png)
+            .into_dimensions()
+            .map_err(|source| IoError::Decode {
+                path: context.to_owned(),
+                source,
+            })?;
+    if supported_rgba_bytes(width, height).is_none_or(|bytes| bytes > budget) {
+        return Err(IoError::Decode {
+            path: context.to_owned(),
+            source: image::ImageError::IoError(std::io::Error::other(
+                "decoded image exceeds the remaining document memory budget",
+            )),
+        });
+    }
     let mut reader =
         image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
     // `Limits` es #[non_exhaustive]: se parte de `default()` y se fija cada
     // campo, para no depender de cuáles trae por defecto la versión actual.
     let mut limits = image::Limits::default();
-    limits.max_alloc = Some(MAX_LAYER_PNG_ALLOC);
+    limits.max_alloc = Some(MAX_LAYER_PNG_ALLOC.min(budget));
     limits.max_image_width = Some(MAX_LAYER_PNG_DIM);
     limits.max_image_height = Some(MAX_LAYER_PNG_DIM);
     reader.limits(limits);

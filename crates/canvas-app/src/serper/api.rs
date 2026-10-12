@@ -54,6 +54,32 @@ pub enum SerperError {
     FilteredBanner,
 }
 
+/// Mapeo único del error compartido de red al de este dominio, para las
+/// DESCARGAS de imagen. Las búsquedas usan `read_search_bounded`, que no
+/// confunde un cuerpo vacío con una "imagen vacía".
+impl From<crate::http::HttpError> for SerperError {
+    fn from(e: crate::http::HttpError) -> Self {
+        match e {
+            crate::http::HttpError::Download(err) => SerperError::Download(err),
+            crate::http::HttpError::TooLarge(n) => SerperError::TooLarge(n),
+            crate::http::HttpError::Empty => SerperError::Empty,
+        }
+    }
+}
+
+/// Lee una respuesta de BÚSQUEDA con tope de bytes: un cuerpo vacío o
+/// desbordado es una respuesta inválida, no una "imagen vacía".
+pub(super) fn read_search_bounded(resp: ureq::Response) -> Result<String, SerperError> {
+    crate::http::read_response_string_bounded(resp, crate::http::MAX_DOWNLOAD_BYTES).map_err(|e| {
+        match e {
+            crate::http::HttpError::Download(err) => SerperError::Request(err),
+            crate::http::HttpError::TooLarge(_) | crate::http::HttpError::Empty => {
+                SerperError::BadResponse("empty or oversized search response".to_owned())
+            }
+        }
+    })
+}
+
 /// Lee la API key del entorno; `None` si no está definida (o está vacía).
 pub fn access_key() -> Option<String> {
     std::env::var(API_KEY_ENV)
@@ -219,13 +245,16 @@ fn post_images(key: &str, body: &str) -> Result<String, SerperError> {
             // La API responde 4xx/5xx con el motivo en el cuerpo: se
             // propaga como error de API, no como fallo de red.
             ureq::Error::Status(code, resp) => {
-                let detail = resp.into_string().unwrap_or_default();
+                let detail = crate::http::read_response_string_bounded(
+                    resp,
+                    crate::http::MAX_DOWNLOAD_BYTES,
+                )
+                .unwrap_or_default();
                 SerperError::Api(format!("HTTP {code}: {}", detail.trim()))
             }
             other => SerperError::Request(other.to_string()),
         })?;
-    resp.into_string()
-        .map_err(|e| SerperError::Request(e.to_string()))
+    read_search_bounded(resp)
 }
 
 /// Parsea la respuesta y aplica el filtro local (con la lista real de

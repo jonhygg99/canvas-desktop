@@ -1,6 +1,7 @@
 //! Lectura y escritura real a disco de un `.canvas` (sidecar o diseño
 //! autónomo).
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -61,7 +62,7 @@ type ParsedCanvasFile = (SidecarFile, Vec<(u64, LoadedImage)>);
 /// fotos grandes es legítimamente pesado; el tope solo corta antes de
 /// volcar a memoria un archivo absurdo (corrupto o malintencionado) de
 /// varios GB.
-const MAX_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
+pub(super) const MAX_CANVAS_BYTES: u64 = 512 * 1024 * 1024;
 
 /// `fs::read` con tope de tamaño: comprueba la longitud ANTES de leer para
 /// no asignar el archivo entero si ya nació fuera de límite.
@@ -78,7 +79,7 @@ fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
 
 /// (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
 /// formatos: contenedor v5 o JSON puro v1–v4.
-type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<Vec<u8>>);
+type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<&'a [u8]>);
 
 /// Separa (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
 /// formatos: contenedor v5 (mágica `CANVAS5`) o JSON puro v1–v4 (el archivo
@@ -86,19 +87,52 @@ type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<Vec<u8>>);
 fn split_canvas_file<'a>(bytes: &'a [u8], path: &Path) -> Result<SplitCanvas<'a>, IoError> {
     if container::is_container(bytes) {
         let (json, blobs) = container::split_container(bytes, path)?;
-        Ok((
-            Cow::Borrowed(json),
-            blobs.into_iter().map(<[u8]>::to_vec).collect(),
-        ))
+        Ok((Cow::Borrowed(json), blobs))
     } else {
         Ok((Cow::Borrowed(bytes), Vec::new()))
     }
+}
+
+/// Los probes v5 leen solo el JSON; los archivos legacy siguen siendo JSON completo.
+fn read_header(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    if file_len > MAX_CANVAS_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            "canvas file exceeds the read limit",
+        ));
+    }
+    let mut magic = Vec::with_capacity(7);
+    file.by_ref().take(7).read_to_end(&mut magic)?;
+    if magic != container::CONTAINER_MAGIC {
+        return read_capped(path);
+    }
+    let mut length = [0u8; 8];
+    file.read_exact(&mut length)?;
+    let length = u64::from_le_bytes(length);
+    if length > file_len.saturating_sub(15) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "canvas JSON length exceeds the file",
+        ));
+    }
+    let mut header = vec![0; length as usize];
+    file.read_exact(&mut header)?;
+    Ok(header)
 }
 
 /// Lee y valida el `.canvas` en `path`: probe de versión, parseo completo,
 /// reparación de la invariante de preorden y decodificación de los píxeles
 /// de cada capa. Compartido por `read_sidecar` y `read_design`.
 fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
+    read_canvas_file_with_budget(path, super::payload::MAX_DECODED_CANVAS_BYTES)
+}
+
+fn read_canvas_file_with_budget(
+    path: &Path,
+    mut budget: u64,
+) -> Result<Option<ParsedCanvasFile>, IoError> {
     let bytes = match read_capped(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -139,10 +173,21 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
     }
 
     let mut images = Vec::with_capacity(file.images.len());
+    let mut ids = std::collections::HashSet::new();
     for entry in &file.images {
+        if !ids.insert(entry.layer) {
+            return Err(IoError::Decode {
+                path: path.to_owned(),
+                source: image::ImageError::IoError(std::io::Error::other(
+                    "duplicate layer ID in canvas pixels",
+                )),
+            });
+        }
         // v1–v4: PNG en base64 dentro del JSON. v5: blob binario por índice.
         let (rgba, width, height) = match (&entry.png_base64, entry.blob) {
-            (Some(png_base64), _) => crate::png_codec::decode_layer_png(png_base64, path)?,
+            (Some(png_base64), _) => {
+                crate::png_codec::decode_layer_png_with_budget(png_base64, path, budget)?
+            }
             (None, Some(blob_index)) => {
                 let Some(png) = blobs.get(blob_index as usize) else {
                     return Err(IoError::Decode {
@@ -152,7 +197,7 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
                         ))),
                     });
                 };
-                crate::png_codec::decode_png_bytes(png, path)?
+                crate::png_codec::decode_png_bytes_with_budget(png, path, budget)?
             }
             (None, None) => {
                 return Err(IoError::Decode {
@@ -163,6 +208,7 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
                 })
             }
         };
+        budget -= rgba.len() as u64;
         images.push((
             entry.layer,
             LoadedImage {
@@ -258,7 +304,7 @@ pub fn read_design(path: &Path) -> Result<RestoredDocument, IoError> {
 /// capas. `Ok(None)` si el archivo no existe o no tiene miniatura (p. ej. un
 /// diseño creado pero nunca guardado con éxito).
 pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
-    let bytes = match read_capped(path) {
+    let json = match read_header(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -269,7 +315,6 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
         }
     };
     // Solo la cabecera: la miniatura vive en el JSON (v5 y legacy).
-    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PreviewProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
@@ -291,12 +336,11 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
 /// píxeles. Usado por `canvas_io::probe_page_size` para apilar la baraja del
 /// editor antes de cargar ningún documento entero.
 pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
-    let bytes = read_capped(path).map_err(|source| IoError::Open {
+    let json = read_header(path).map_err(|source| IoError::Open {
         path: path.to_owned(),
         source,
     })?;
     // Solo la cabecera: el tamaño de página vive en el JSON (v5 y legacy).
-    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PageProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
@@ -315,13 +359,26 @@ pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
 /// Borra el sidecar de `image_path` si existe (guardado con el sidecar
 /// desactivado) — en cualquiera de sus dos posibles ubicaciones, para que un
 /// hermano legacy no sobreviva y vuelva a avisar de "hash cambiado" más tarde.
-pub fn delete_sidecar(image_path: &Path) {
+/// Devuelve error si alguno no se pudo borrar: un sidecar que sobrevive sin
+/// borrarse es un fallo que el llamador debe poder comunicar (el archivo con
+/// las capas editables sigue en disco).
+pub fn delete_sidecar(image_path: &Path) -> Result<(), IoError> {
+    let mut failure = None;
     for path in [sidecar_path(image_path), legacy_sidecar_path(image_path)] {
-        if path.is_file() {
-            if let Err(e) = std::fs::remove_file(&path) {
-                tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
-            }
+        if !path.is_file() {
+            continue;
         }
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
+            failure.get_or_insert(IoError::Write {
+                path,
+                message: format!("borrando el sidecar de capas editables: {e}"),
+            });
+        }
+    }
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
@@ -347,4 +404,23 @@ pub fn write_blank_canvas(
     let rgba = vec![255u8; w as usize * h as usize * 4];
     let bytes = crate::save_rgba(path, rgba, w, h, jpeg_quality, None)?;
     write_sidecar(path, &bytes, &payload)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn decoded_layers_share_one_memory_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("budget.canvas");
+        let payload = CanvasPayload {
+            document: canvas_core::Document::new(4.0, 4.0),
+            images: (1..=3).map(|id| (id, vec![255; 64], 4, 4)).collect(),
+            background_layer: None,
+            preview: None,
+        };
+        write_design(&path, &payload).unwrap();
+        assert!(read_canvas_file_with_budget(&path, 192).is_ok());
+        assert!(read_canvas_file_with_budget(&path, 128).is_err());
+    }
 }

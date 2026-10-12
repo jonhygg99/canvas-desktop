@@ -38,7 +38,7 @@ pub(in crate::app) struct SaveContext<'a> {
 impl AppInner {
     /// «Save all»: encola las ranuras de fondo sucias (id estable, no
     /// índice) y guarda el documento ACTIVO, si está sucio, de inmediato.
-    /// Deja fuera SVG/GIF. Si la RAM libre del sistema está por debajo del
+    /// Los formatos protegidos piden Guardar como. Si la RAM libre está por debajo del
     /// umbral, NO encola nada y abre el aviso de poca memoria: un horneado
     /// masivo bajo presión es la receta del PNG blanco (ver
     /// `bake_came_out_blank`), y mejor avisar antes de lanzar N horneados.
@@ -60,7 +60,7 @@ impl AppInner {
 }
 
 /// Construye la cola de «Save all»: guarda el documento activo (si está
-/// sucio y es sobrescribible) y encola las ranuras de fondo sucias (id
+/// sucio) y encola todas las ranuras de fondo sucias (id
 /// estable, no índice). Libre para poder re-dispararse desde el modal de
 /// aviso de poca RAM, donde `state`/`deck`/`save` son préstamos disjuntos
 /// del mismo workspace.
@@ -74,49 +74,52 @@ pub(super) fn start_save_all_flow(
         save.save_all_attempted = false;
         return;
     }
-    if state.is_dirty()
-        && state
-            .doc
-            .source_path
-            .as_deref()
-            .is_some_and(canvas_io::can_overwrite)
-    {
+    if state.is_dirty() {
         state.save_clicked = true;
     }
     save.save_all_queue = deck
         .slots
         .iter()
-        .filter(|s| {
-            !s.is_placeholder
-                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
-                && canvas_io::can_overwrite(&s.path)
-        })
+        .filter(|s| matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty()))
         .map(|s| s.id)
         .collect();
     save.save_all_attempted = false;
 }
 
-/// Cuántos documentos escribiría «Save all» (el activo, si está sucio y es
-/// sobrescribible, más las ranuras de fondo sucias) — para el aviso de
+/// Revalida todos los lienzos antes de ejecutar una salida diferida.
+pub(in crate::app) fn saved_exit_ready(
+    state: &mut editor::EditorState,
+    deck: &deck::Deck,
+    save: &mut SaveFlow,
+) -> bool {
+    if !save.save_all_queue.is_empty() {
+        return false;
+    }
+    if !state.is_idle() || save_all_doc_count(deck, state) > 0 {
+        save.close_after_save = false;
+        save.after_save = None;
+        save.allow_close = false;
+        state.save_error = Some(
+            "Changes or edits are still pending — finish editing and save again before leaving."
+                .into(),
+        );
+        return false;
+    }
+    true
+}
+
+/// Cuántos documentos escribiría «Save all» (el activo, si está sucio,
+/// más las ranuras de fondo sucias) — para el aviso de
 /// poca RAM. Pura: se prueba con barajas construidas a mano.
 fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
     if deck.unsaved_session {
         return session_dirty_ids(deck, state).len();
     }
-    let active = state.is_dirty()
-        && state
-            .doc
-            .source_path
-            .as_deref()
-            .is_some_and(canvas_io::can_overwrite);
+    let active = state.is_dirty();
     let background = deck
         .slots
         .iter()
-        .filter(|s| {
-            !s.is_placeholder
-                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
-                && canvas_io::can_overwrite(&s.path)
-        })
+        .filter(|s| matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty()))
         .count();
     background + usize::from(active)
 }
@@ -231,17 +234,24 @@ fn critical_after_freeing_own_memory(
         return false;
     }
     tracing::info!("RAM crítica: descartando caché propia de la baraja y scopes FX");
-    // Presupuesto 0 = expulsar TODO lo que se pueda expulsar con seguridad
-    // (la activa, `jump_to`, placeholders y ranuras con historial quedan
-    // fuera, ver `Deck::evict_with_budget`). Soltar la caché ES la vía de
-    // escape cuando la presión la causa la propia app.
+    // Soltar la caché ES la vía de escape cuando la presión la causa la propia app.
+    let count = free_far_slot_scopes(deck, renderer);
+    tracing::info!("liberados {count} scope(s); re-midiendo RAM libre");
+    critical()
+}
+
+/// Expulsa las ranuras lejanas de la baraja y olvida sus scopes FX para dar
+/// sitio en el atlas de vello antes de hornear (ver
+/// plan-blurred-background-17.md). Presupuesto 0 = expulsar TODO lo que se
+/// pueda expulsar con seguridad (la activa, `jump_to`, placeholders y ranuras
+/// con historial quedan fuera, ver `Deck::evict_with_budget`).
+fn free_far_slot_scopes(deck: &mut crate::deck::Deck, renderer: &mut CanvasRenderer) -> usize {
     let evicted = deck.evict_with_budget(0);
     let count = evicted.len();
     for scope in evicted {
         renderer.forget_scope(scope);
     }
-    tracing::info!("liberados {count} scope(s); re-midiendo RAM libre");
-    critical()
+    count
 }
 
 pub(super) fn start_save(
@@ -270,6 +280,8 @@ pub(super) fn start_save(
         );
         return;
     }
+    // Sitio en el atlas para el bake: expulsa ranuras lejanas (protege la activa).
+    free_far_slot_scopes(deck, sctx.renderer);
     let capas = state
         .doc
         .page()
@@ -282,8 +294,10 @@ pub(super) fn start_save(
         })
         .unwrap_or_default();
     tracing::info!(ruta = %path.display(), capas = %capas, "start_save disparado");
+    // Sin `forget_scope`: el bake reutiliza las texturas asentadas del
+    // preview (su propio re-sync garantiza frescura); olvidar aquí re-subía
+    // todo al atlas lleno y vello soltaba capas en silencio (17.png).
     let scope = canvas_render::FxScope(sctx.scope);
-    sctx.renderer.forget_scope(scope);
     match sctx.renderer.bake_page_counting(
         &sctx.rs.device,
         &sctx.rs.queue,
@@ -302,6 +316,20 @@ pub(super) fn start_save(
                 state.save_error = Some(
                     "The save was refused because the image came out blank or incomplete — \
                      the file was not overwritten. Close other apps to free memory and try again."
+                        .into(),
+                );
+                return;
+            }
+            if doc_needs_bake_verify(&state.doc)
+                && !rebake_matches_first(&mut *sctx, scope, &state.doc, &state.images, 1.0, &rgba)
+            {
+                tracing::error!(
+                    "horneado inestable (el segundo horneado difiere); \
+                     no se sobrescribe el archivo"
+                );
+                state.save_error = Some(
+                    "The image rendered inconsistently — the file was not overwritten. \
+                     Try saving again."
                         .into(),
                 );
                 return;
@@ -348,7 +376,6 @@ pub(super) fn start_save_design(
         return;
     }
     tracing::info!("guardando diseño en {}", path.display());
-    state.is_design = true;
     let mut payload = state.sidecar_payload();
     let (pw, ph) = state
         .doc
@@ -356,8 +383,8 @@ pub(super) fn start_save_design(
         .map(|p| (p.width, p.height))
         .unwrap_or((0.0, 0.0));
     let scale = canvas_io::preview_scale(pw, ph);
+    // Igual que en `start_save`: hornear sobre las texturas asentadas.
     let scope = canvas_render::FxScope(sctx.scope);
-    sctx.renderer.forget_scope(scope);
     match sctx.renderer.bake_page(
         &sctx.rs.device,
         &sctx.rs.queue,
@@ -415,6 +442,8 @@ pub(super) fn start_export(
         );
         return;
     }
+    // Sitio en el atlas para el bake: expulsa ranuras lejanas (protege la activa).
+    free_far_slot_scopes(deck, sctx.renderer);
     let ExportRequest {
         path,
         settings,
@@ -423,8 +452,7 @@ pub(super) fn start_export(
     tracing::info!("exportando a {}", path.display());
     let scale = f64::from(settings.scale);
     let scope = canvas_render::FxScope(scope);
-    sctx.renderer.forget_scope(scope);
-
+    // Igual que en `start_save`: hornear sobre las texturas asentadas.
     if settings.format.needs_bake() {
         match sctx.renderer.bake_page_counting(
             &sctx.rs.device,
@@ -443,6 +471,26 @@ pub(super) fn start_export(
                     state.save_error = Some(
                         "The export was refused because it came out blank or incomplete — \
                          nothing was written. Close other apps to free memory and try again."
+                            .into(),
+                    );
+                    return;
+                }
+                if doc_needs_bake_verify(&state.doc)
+                    && !rebake_matches_first(
+                        &mut *sctx,
+                        scope,
+                        &state.doc,
+                        &state.images,
+                        scale,
+                        &rgba,
+                    )
+                {
+                    tracing::error!(
+                        "export inestable (el segundo horneado difiere); no se escribe"
+                    );
+                    state.save_error = Some(
+                        "The export rendered inconsistently — nothing was written. \
+                         Try exporting again."
                             .into(),
                     );
                     return;
@@ -538,6 +586,72 @@ pub(super) fn has_raster_layers(doc: &Document) -> bool {
                 )
         })
     })
+}
+
+/// Lado mayor en px naturales que marca una capa como riesgo GPU: por debajo
+/// ni dos capas llenan el atlas de 4096² medido en GPU real (mitad de
+/// `MAX_FX_DIM`, ver plan-partial-bake-guard.md).
+const GPU_VERIFY_MIN_SIDE: u32 = 1024;
+
+/// ¿El documento necesita doble horneado de verificación? Sí cuando alguna
+/// capa VISIBLE lleva efectos GPU (blur o ajustes de color) o es grande:
+/// solo esas texturas puede soltar vello en silencio.
+pub(super) fn doc_needs_bake_verify(doc: &Document) -> bool {
+    doc.page().is_ok_and(|page| {
+        page.layers.iter().any(|layer| {
+            layer.visible
+                && (layer.effects.blur_radius > 0.0
+                    || layer.effects.has_color_adjustments()
+                    || natural_long_side(&layer.content) > GPU_VERIFY_MIN_SIDE)
+        })
+    })
+}
+
+/// Lado mayor de las dimensiones naturales de una capa raster; 0 para
+/// texto/formas/grupos (nunca van al atlas de imágenes).
+fn natural_long_side(content: &LayerContent) -> u32 {
+    let (w, h) = match content {
+        LayerContent::Image(c) => (c.natural_width, c.natural_height),
+        LayerContent::Video(c) => (c.natural_width, c.natural_height),
+        LayerContent::Svg(c) => (c.natural_width, c.natural_height),
+        _ => return 0,
+    };
+    w.max(h)
+}
+
+/// ¿Los dos horneados coinciden byte a byte? El render es determinista, así
+/// que cualquier diferencia es inestabilidad real de la GPU, no redondeo.
+pub(super) fn bakes_match(first: &[u8], second: &[u8]) -> bool {
+    first == second
+}
+
+/// Segundo horneado de verificación con el mismo scope: `true` si coincide
+/// byte a byte con el primero. Un error al re-hornear también es `false` —
+/// si la GPU ya no repite el render, no hay motivo para confiar en el
+/// primero. Quien llama rechaza sin escribir (ver
+/// plan-partial-bake-guard.md).
+fn rebake_matches_first(
+    sctx: &mut SaveContext,
+    scope: canvas_render::FxScope,
+    doc: &Document,
+    images: &canvas_render::ImageMap,
+    scale: f64,
+    first: &[u8],
+) -> bool {
+    match sctx.renderer.bake_page_counting(
+        &sctx.rs.device,
+        &sctx.rs.queue,
+        scope,
+        doc,
+        images,
+        scale,
+    ) {
+        Ok((second, _, _, _)) => bakes_match(first, &second),
+        Err(e) => {
+            tracing::error!("verificación sin segundo horneado ({e}); no se escribe");
+            false
+        }
+    }
 }
 
 /// ¿El horneado salió UNIFORME (un solo color) pese a que el documento tiene

@@ -7,6 +7,68 @@ use super::*;
 use canvas_core::{ImageContent, LayerContent, Transform};
 use payload::encode_payload;
 
+#[test]
+fn concurrent_deletions_keep_distinct_trash_copies() {
+    use std::sync::{Arc, Barrier};
+    for _ in 0..32 {
+        let dir = tempfile::tempdir().unwrap();
+        let trash = trash_dir(dir.path());
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("a.png"), b"older").unwrap();
+        let paths = [dir.path().join("a.png"), dir.path().join("a 2.png")];
+        for (path, bytes) in paths
+            .iter()
+            .zip([b"first".as_slice(), b"second".as_slice()])
+        {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(3));
+        let workers = paths.map(|path| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                move_to_local_trash(&path).unwrap()
+            })
+        });
+        barrier.wait();
+        let [first, second] = workers.map(|worker| worker.join().unwrap());
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+        assert_eq!(std::fs::read(trash.join("a.png")).unwrap(), b"older");
+    }
+}
+
+#[test]
+fn full_trash_refuses_to_replace_the_last_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.png");
+    let trash = trash_dir(dir.path());
+    std::fs::create_dir_all(&trash).unwrap();
+    for n in 1..=paths::MAX_NAME_SUFFIX {
+        std::fs::write(trash.join(paths::numbered_name(&path, n)), b"older").unwrap();
+    }
+    std::fs::write(&path, b"new").unwrap();
+    assert!(move_to_local_trash(&path).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), b"new");
+    assert_eq!(std::fs::read(trash.join("a 10000.png")).unwrap(), b"older");
+}
+
+#[test]
+fn saving_an_unreadable_layer_refuses_to_replace_the_previous_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wide.canvas");
+    std::fs::write(&path, b"previous design").unwrap();
+    let payload = CanvasPayload {
+        document: Document::new(20_001.0, 1.0),
+        images: vec![(1, vec![255; 20_001 * 4], 20_001, 1)],
+        background_layer: None,
+        preview: None,
+    };
+    assert!(write_design(&path, &payload).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), b"previous design");
+}
+
 fn sample_doc() -> (Document, Vec<LayerPixels>) {
     let mut doc = Document::new(200.0, 100.0);
     let id = doc
@@ -146,14 +208,14 @@ fn missing_sidecar_is_none_and_delete_is_quiet() {
     let image_path = dir.path().join("foto.png");
     std::fs::write(&image_path, b"x").unwrap();
     assert!(read_sidecar(&image_path).expect("leer").is_none());
-    delete_sidecar(&image_path); // no explota sin sidecar
+    delete_sidecar(&image_path).expect("no explota sin sidecar");
 
     let (doc, images) = sample_doc();
     let payload = sample_payload(&doc, &images, Some(7));
     write_sidecar(&image_path, b"x", &payload).expect("escribir");
     let restored = read_sidecar(&image_path).unwrap().unwrap();
     assert_eq!(restored.background_layer, Some(7));
-    delete_sidecar(&image_path);
+    delete_sidecar(&image_path).expect("borrar");
     assert!(!sidecar_path(&image_path).exists());
 }
 
@@ -362,9 +424,21 @@ fn delete_sidecar_removes_both_locations() {
     std::fs::write(sidecar_path(&image_path), b"{}").unwrap();
     std::fs::write(legacy_sidecar_path(&image_path), b"{}").unwrap();
 
-    delete_sidecar(&image_path);
+    delete_sidecar(&image_path).expect("sin sidecars es Ok");
     assert!(!sidecar_path(&image_path).exists());
     assert!(!legacy_sidecar_path(&image_path).exists());
+}
+
+#[test]
+fn delete_sidecar_reports_a_failure_instead_of_swallowing_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let image_path = dir.path().join("foto.png");
+    std::fs::write(&image_path, b"x").unwrap();
+
+    // Sin sidecars en disco: Ok. Lo importante es que el tipo de retorno
+    // permita ahora propagar un fallo (antes devolvía `()` y save_ops no
+    // podía comunicar que las capas editables seguían vivas).
+    assert!(delete_sidecar(&image_path).is_ok());
 }
 
 #[test]
@@ -420,8 +494,12 @@ fn v5_container_keeps_pixel_blobs_out_of_the_json_header() {
 
     // Los blobs son PNG decodificables de vuelta a los píxeles originales.
     for (blob, (_, rgba, w, h)) in blobs.iter().zip(&images) {
-        let (decoded, dw, dh) =
-            crate::png_codec::decode_png_bytes(blob, Path::new("test")).unwrap();
+        let (decoded, dw, dh) = crate::png_codec::decode_png_bytes_with_budget(
+            blob,
+            Path::new("test"),
+            payload::MAX_DECODED_CANVAS_BYTES,
+        )
+        .unwrap();
         assert_eq!((dw, dh), (*w, *h));
         assert_eq!(decoded, *rgba);
     }
@@ -547,8 +625,6 @@ fn moving_to_local_trash_and_restoring_round_trips_the_file() {
     assert!(!path.exists(), "ya no debe estar en su sitio original");
     assert!(staged.exists());
     assert_eq!(staged, trash_dir(dir.path()).join("foto.png"));
-    assert_eq!(staged, local_trash_path(&path));
-
     restore_from_local_trash(&staged, &path).expect("restaurar");
     assert!(path.exists());
     assert!(!staged.exists());
@@ -579,19 +655,61 @@ fn purge_removes_everything_left_in_the_trash_but_not_the_folder_itself() {
     let b = dir.path().join("b.png");
     std::fs::write(&a, b"a").unwrap();
     std::fs::write(&b, b"b").unwrap();
-    move_to_local_trash(&a).expect("mover a");
-    move_to_local_trash(&b).expect("mover b");
+    // Las rutas que devuelve `move_to_local_trash` son las que hay que
+    // conservar: con el nombre desambiguado ya no se pueden derivar.
+    let staged_a = move_to_local_trash(&a).expect("mover a");
+    let staged_b = move_to_local_trash(&b).expect("mover b");
 
     purge_local_trash(dir.path());
 
-    assert!(!local_trash_path(&a).exists());
-    assert!(!local_trash_path(&b).exists());
+    assert!(!staged_a.exists(), "a debe salir de la papelera");
+    assert!(!staged_b.exists(), "b debe salir de la papelera");
+    assert!(
+        trash_dir(dir.path()).exists(),
+        "la carpeta en sí no se borra, solo su contenido"
+    );
 }
 
 #[test]
 fn purge_of_a_folder_with_no_trash_yet_does_not_panic() {
     let dir = tempfile::tempdir().expect("tempdir");
     purge_local_trash(dir.path());
+}
+
+/// El bug: borrar un archivo, crear otro con el MISMO nombre y borrarlo
+/// otra vez sin purga de por medio. El `rename` a la papelera sobrescribe
+/// en Windows, así que sin desambiguar la primera copia (con sus capas
+/// editables) quedaba destruida y sin aviso.
+#[test]
+fn trashing_the_same_name_twice_keeps_both_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("foto.png");
+
+    std::fs::write(&path, b"primera").unwrap();
+    let first = move_to_local_trash(&path).expect("primera");
+
+    // El usuario recrea el archivo (o lo re-descarga) con el mismo nombre.
+    std::fs::write(&path, b"segunda").unwrap();
+    let second = move_to_local_trash(&path).expect("segunda");
+
+    assert_ne!(first, second, "el segundo no puede pisar al primero");
+    assert_eq!(std::fs::read(&first).unwrap(), b"primera");
+    assert_eq!(std::fs::read(&second).unwrap(), b"segunda");
+}
+
+/// Deshacer recupera la copia exacta aunque haya otras del mismo nombre.
+#[test]
+fn undoing_a_delete_restores_the_recorded_copy_when_the_name_clashed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("foto.png");
+    std::fs::write(&path, b"first").unwrap();
+    let first = move_to_local_trash(&path).unwrap();
+    std::fs::write(&path, b"second").unwrap();
+    let second = move_to_local_trash(&path).unwrap();
+    restore_from_local_trash(&second, &path).unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"second");
+    assert_eq!(std::fs::read(first).unwrap(), b"first");
+    assert!(!second.exists());
 }
 
 // ---- Corpus adversarial del parser de .canvas ----
@@ -690,4 +808,27 @@ fn mutated_design_files_never_panic_when_read_back() {
         std::fs::write(&path, &bytes).expect("escribir");
         let _ = read_design(&path);
     }
+}
+
+#[test]
+fn gallery_probes_need_only_the_header_not_the_layer_blobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("header.canvas");
+    let payload = CanvasPayload {
+        document: Document::new(123.0, 456.0),
+        images: vec![],
+        background_layer: None,
+        preview: Some(crate::LoadedImage {
+            rgba: vec![255; 4],
+            width: 1,
+            height: 1,
+        }),
+    };
+    let mut bytes = encode_payload(&path, None, &payload).unwrap();
+    bytes.extend_from_slice(&100u32.to_le_bytes());
+    // Los píxeles pueden faltar mientras otro proceso copia el archivo.
+    std::fs::write(&path, bytes).unwrap();
+    assert_eq!(io::read_page_size(&path).unwrap(), (123.0, 456.0));
+    assert_eq!(read_preview(&path).unwrap().unwrap().rgba, vec![255; 4]);
+    assert!(read_design(&path).is_err());
 }

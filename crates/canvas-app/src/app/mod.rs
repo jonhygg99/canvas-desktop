@@ -239,8 +239,8 @@ pub(super) struct DeckOps {
     /// Id de una ranura provisional cuya reserva FALLÓ.
     pub(super) materialize_blocked: Option<u64>,
     /// Rutas cuyo borrado en curso se pidió directamente por el usuario,
-    /// con el sidecar que tenían (para apilar `GlobalStep::Delete`).
-    pub(super) undoable_deletes: std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    /// para apilar `GlobalStep::Delete` con las rutas devueltas por el worker.
+    pub(super) undoable_deletes: std::collections::HashSet<PathBuf>,
     /// Primer lienzo creado por un bulk web, pendiente de mostrar: en cuanto
     /// el reescaneo lo incorpora a la baraja se salta a él (si no, el usuario
     /// no vería dónde cayeron).

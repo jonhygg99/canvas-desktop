@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::IoError;
 
-use super::paths::{ensure_sidecar_dir, sidecar_dir};
+use super::paths::{ensure_sidecar_dir, move_to_free_name, sidecar_dir};
 
 /// Papelera propia del proyecto — deshacer un borrado ("Delete" del editor)
 /// mueve el archivo aquí en vez de a la del sistema operativo: un
@@ -17,18 +17,12 @@ pub fn trash_dir(folder: &Path) -> PathBuf {
     sidecar_dir(folder).join("trash")
 }
 
-/// Ruta que tendría `original` si estuviera en la papelera del proyecto:
-/// mismo nombre de archivo, sin desambiguar — un archivo no puede estar
-/// borrado dos veces a la vez en la misma carpeta (la segunda vez ya lo
-/// habría movido o purgado la primera), así que no hace falta un sufijo.
-pub fn local_trash_path(original: &Path) -> PathBuf {
-    let folder = original.parent().unwrap_or_else(|| Path::new(""));
-    let name = original.file_name().unwrap_or_default();
-    trash_dir(folder).join(name)
-}
-
 /// Mueve `path` a la papelera del proyecto (creándola si hace falta) y
 /// devuelve dónde quedó — deshacible con `restore_from_local_trash`.
+/// El nombre se desambigua si ya había otro igual (borrar, restaurar y
+/// volver a crear el mismo nombre; el `rename` de Windows SOBRESCRIBIRÍA el
+/// destino), por lo que hay que conservar la ruta devuelta para restaurar
+/// la copia exacta.
 pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
     let folder = path.parent().unwrap_or_else(|| Path::new(""));
     ensure_sidecar_dir(folder)?;
@@ -41,12 +35,7 @@ pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
             });
         }
     }
-    let staged = local_trash_path(path);
-    std::fs::rename(path, &staged).map_err(|source| IoError::Write {
-        path: path.to_path_buf(),
-        message: format!("moviendo a la papelera del proyecto: {source}"),
-    })?;
-    Ok(staged)
+    move_to_free_name(&dir, path)
 }
 
 /// Deshace `move_to_local_trash`: mueve `staged` de vuelta a `original`.
@@ -66,11 +55,8 @@ pub fn restore_from_local_trash(staged: &Path, original: &Path) -> Result<(), Io
     })
 }
 
-/// Borra de verdad (mejor esfuerzo, sin fallar si `trash/` no existe o algún
-/// archivo ya no está) todo lo que quedó en la papelera del proyecto sin
-/// deshacer — se llama al salir de la carpeta (galería/proyecto) y al
-/// volver a entrar en ella, para que un `Ctrl+Z` que nunca llegó, o los
-/// restos de una sesión que se cerró en falso, no se queden para siempre.
+/// Limpieza explícita de la papelera. La app no la ejecuta al navegar:
+/// otra ventana puede conservar pasos de deshacer que aún necesitan estos archivos.
 pub fn purge_local_trash(folder: &Path) {
     let dir = trash_dir(folder);
     let Ok(entries) = std::fs::read_dir(&dir) else {

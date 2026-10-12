@@ -102,7 +102,7 @@ impl AppInner {
     ) {
         match msg {
             AppMsg::FilePicked(Some(path)) | AppMsg::FolderPicked(Some(path)) => {
-                *open_after = Some(Nav::Open(path));
+                self.request_nav(ws, Nav::Open(path), ctx);
             }
             AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
             AppMsg::SaveAsPicked(path) => {
@@ -119,15 +119,16 @@ impl AppInner {
             }
             AppMsg::ExportPathPicked(path) => self.on_export_path_picked(ws, path),
             AppMsg::Exported { path, result } => self.on_exported(ws, path, result),
-            AppMsg::ImageLoadedForLayer { path, result } => {
-                self.on_image_loaded_for_layer(ws, path, result)
+            AppMsg::ImageLoadedForLayer { dest, path, result } => {
+                Self::on_image_loaded_for_layer(ws, dest, path, result)
             }
             AppMsg::ImageLoadedForReplace {
+                dest,
                 layer,
                 label,
                 source_path,
                 result,
-            } => self.on_image_loaded_for_replace(ws, layer, label, source_path, result),
+            } => Self::on_image_loaded_for_replace(ws, dest, layer, label, source_path, result),
             AppMsg::UnsplashSearch {
                 query,
                 seq,
@@ -218,12 +219,16 @@ impl AppInner {
             AppMsg::DocumentRenamed { old_path, result } => {
                 self.on_document_renamed(ws, old_path, result)
             }
-            AppMsg::DocumentDeleted { path, result } => {
-                self.on_document_deleted(ws, path, result, open_after)
-            }
-            AppMsg::DocumentRestored { path, result } => {
-                self.on_document_restored(ws, path, result, ctx)
-            }
+            AppMsg::DocumentDeleted {
+                path,
+                result,
+                warning,
+            } => self.on_document_deleted(ws, path, result, warning, open_after),
+            AppMsg::DocumentRestored {
+                path,
+                result,
+                warning,
+            } => self.on_document_restored(ws, path, result, warning, ctx),
             AppMsg::FocusWindow => self.on_focus_window(ctx),
             AppMsg::ShellIntegrationDone(result) => self.on_shell_integration_done(result),
             AppMsg::OpenPathExternal(path) => self.on_open_path_external(ctx, path),

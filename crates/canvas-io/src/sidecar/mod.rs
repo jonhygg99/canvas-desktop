@@ -53,9 +53,7 @@ pub use payload::{
     RestoredDocument,
 };
 pub use quarantine::{move_to_quarantine, quarantine_dir, restore_from_quarantine};
-pub use trash::{
-    local_trash_path, move_to_local_trash, purge_local_trash, restore_from_local_trash, trash_dir,
-};
+pub use trash::{move_to_local_trash, purge_local_trash, restore_from_local_trash, trash_dir};
 
 /// Versión del formato. v2 añadió capas de texto/forma/SVG; v3 añade capas
 /// de grupo (`LayerContent::Group`, ilegible para un build v2); v4 hace

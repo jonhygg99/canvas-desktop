@@ -35,6 +35,17 @@ pub enum UnsplashError {
     Decode(String),
 }
 
+/// Mapeo único del error compartido de red al de este dominio.
+impl From<crate::http::HttpError> for UnsplashError {
+    fn from(e: crate::http::HttpError) -> Self {
+        match e {
+            crate::http::HttpError::Download(err) => UnsplashError::Download(err),
+            crate::http::HttpError::TooLarge(n) => UnsplashError::TooLarge(n),
+            crate::http::HttpError::Empty => UnsplashError::Empty,
+        }
+    }
+}
+
 /// Lee la Access Key del entorno; `None` si no está definida (o está vacía).
 pub fn access_key() -> Option<String> {
     std::env::var(ACCESS_KEY_ENV)
@@ -80,9 +91,9 @@ pub fn search(query: &str, page: u32, filters: SearchFilters) -> Result<SearchPa
     let resp = req
         .call()
         .map_err(|e| UnsplashError::Request(e.to_string()))?;
-    let body = resp
-        .into_string()
-        .map_err(|e| UnsplashError::Request(e.to_string()))?;
+    // Lectura acotada: sin tope, una respuesta desbocada (o un
+    // `Content-Length` que miente) llenaría la memoria antes de parsear.
+    let body = read_search_bounded(resp)?;
     let parsed: SearchResponse =
         serde_json::from_str(&body).map_err(|e| UnsplashError::BadResponse(e.to_string()))?;
     if let Some(err) = parsed.errors.first() {
@@ -119,10 +130,20 @@ pub(super) fn reached_end(total_pages: Option<u32>, page: u32, returned: usize) 
 /// en vez de acumular sin límite. Reutiliza el helper compartido y mapea su
 /// error al tipo de este dominio.
 pub fn download(url: &str) -> Result<Vec<u8>, UnsplashError> {
-    crate::http::get_bytes_bounded(url).map_err(|e| match e {
-        crate::http::HttpError::Download(err) => UnsplashError::Download(err),
-        crate::http::HttpError::TooLarge(n) => UnsplashError::TooLarge(n),
-        crate::http::HttpError::Empty => UnsplashError::Empty,
+    crate::http::get_bytes_bounded(url).map_err(UnsplashError::from)
+}
+
+/// Lee una respuesta de API con tope de bytes. El mapeo es el de la
+/// BÚSQUEDA, distinto del de `download`: un cuerpo vacío o desbordado aquí
+/// no es "imagen vacía" (no hay imagen), es una respuesta inválida.
+pub fn read_search_bounded(resp: ureq::Response) -> Result<String, UnsplashError> {
+    crate::http::read_response_string_bounded(resp, crate::http::MAX_DOWNLOAD_BYTES).map_err(|e| {
+        match e {
+            crate::http::HttpError::Download(err) => UnsplashError::Request(err),
+            crate::http::HttpError::TooLarge(_) | crate::http::HttpError::Empty => {
+                UnsplashError::BadResponse("empty or oversized search response".to_owned())
+            }
+        }
     })
 }
 

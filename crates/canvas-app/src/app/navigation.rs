@@ -88,9 +88,6 @@ impl AppInner {
             ws.deck = deck::Deck::single(path.to_path_buf());
             self.apply_deck_prefs(ws);
         }
-        if let Some(folder) = ws.deck.folder.clone() {
-            canvas_io::purge_local_trash(&folder);
-        }
     }
 
     fn initialize_seeded_deck(
@@ -218,19 +215,10 @@ impl AppInner {
 
     /// Aplica una navegación diferida sobre un workspace.
     pub(crate) fn navigate(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
-        let leaving_folder = match &ws.view {
-            View::Gallery(g) => Some(g.folder.clone()),
-            View::Editor(_) => ws.deck.folder.clone(),
-            _ => None,
-        };
-        if let Some(folder) = leaving_folder {
-            canvas_io::purge_local_trash(&folder);
-        }
         match nav {
             Nav::Open(path) => self.open_path(ws, path, ctx),
             Nav::OpenGallery { path, navigation } => {
                 let path = gallery::normalize_folder(path);
-                canvas_io::purge_local_trash(&path);
                 let mut gallery_state = gallery::GalleryState::with_navigation(
                     path.clone(),
                     self.settings.gallery_sort,

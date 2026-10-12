@@ -75,3 +75,48 @@ fn media_child_has_no_console() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+#[test]
+fn rotated_video_probe_matches_the_decoded_poster() {
+    let Some(ffmpeg) = ffmpeg_path() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.mp4");
+    let rotated = dir.path().join("rotated.mp4");
+    let make = media_command(&ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x48:rate=5",
+            "-t",
+            "0.4",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        make.status.success(),
+        "{}",
+        String::from_utf8_lossy(&make.stderr)
+    );
+    let rotate = media_command(&ffmpeg)
+        .args(["-v", "error", "-display_rotation", "90", "-i"])
+        .arg(&source)
+        .args(["-c", "copy"])
+        .arg(&rotated)
+        .output()
+        .unwrap();
+    assert!(
+        rotate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rotate.stderr)
+    );
+    let poster = canvas_io::load_video_frame(&rotated, 0.0).unwrap();
+    assert_eq!((poster.width, poster.height), (48, 64));
+    let (width, height, _) = probe_video_size(&rotated).unwrap();
+    assert_eq!((width, height), (poster.width, poster.height));
+}

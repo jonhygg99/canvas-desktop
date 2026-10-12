@@ -56,6 +56,10 @@ pub(super) fn resolve(
         }
         None => {}
     }
+    let image_dest = loader::ImageInsertDest {
+        generation: f.deck.generation,
+        slot_id: state.active_slot_id,
+    };
     match canvas_action {
         Some(editor::CanvasAction::Rename(id, new_stem)) => {
             let is_active = f.deck.slots.get(f.deck.active).map(|s| s.id) == Some(id);
@@ -126,16 +130,27 @@ pub(super) fn resolve(
                 *f.ignore_fs_events_until =
                     Some(Instant::now() + std::time::Duration::from_secs(2));
                 *f.watcher = None;
-                let sidecar = canvas_io::find_sidecar(&path);
-                f.deck_ops.undoable_deletes.insert(path.clone(), sidecar);
+                f.deck_ops.undoable_deletes.insert(path.clone());
                 loader::spawn_document_delete(path, f.tx.clone(), ctx.clone());
             }
         }
         Some(editor::CanvasAction::ReplaceFromLocal(layer)) => {
-            loader::spawn_pick_replacement_image(layer, None, f.tx.clone(), ctx.clone());
+            loader::spawn_pick_replacement_image(
+                layer,
+                image_dest,
+                None,
+                f.tx.clone(),
+                ctx.clone(),
+            );
         }
         Some(editor::CanvasAction::ReplaceFromUrl(layer, url)) => {
-            loader::spawn_load_replacement_image_from_url(layer, url, f.tx.clone(), ctx.clone());
+            loader::spawn_load_replacement_image_from_url(
+                layer,
+                image_dest,
+                url,
+                f.tx.clone(),
+                ctx.clone(),
+            );
         }
         Some(editor::CanvasAction::Menu(action)) => {
             *pending_menu_action = Some(action);
@@ -290,6 +305,6 @@ pub(super) fn resolve(
         state.finish_pending_global_redo();
     }
     if let Some(record) = state.pending_restore.take() {
-        loader::spawn_restore_from_trash(record.path, record.sidecar, f.tx.clone(), ctx.clone());
+        loader::spawn_restore_from_trash(record, f.tx.clone(), ctx.clone());
     }
 }

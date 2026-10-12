@@ -46,6 +46,72 @@ pub fn find_sidecar(image_path: &Path) -> Option<PathBuf> {
     legacy.is_file().then_some(legacy)
 }
 
+/// Nombre desambiguado número `n` de `original`: `nombre 2.ext`,
+/// `nombre 3.ext`… (con `n == 1` devuelve el nombre tal cual). Dueña ÚNICA
+/// de la regla de nombres usada al reservar destinos de papelera y cuarentena.
+pub fn numbered_name(original: &Path, n: u32) -> String {
+    let name = original
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_owned());
+    if n <= 1 {
+        return name;
+    }
+    let stem = original
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or(name);
+    let ext = original
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{stem} {n}{ext}")
+}
+
+/// Tope del desambiguado: con 10 000 copias del mismo nombre en una carpeta
+/// de proyecto ya hay un problema mayor que el nombre.
+pub const MAX_NAME_SUFFIX: u32 = 10_000;
+
+/// Reserva un nombre con `create_new` y mueve el archivo a esa reserva.
+/// Compartido por cuarentena y papelera: dos workers no pueden elegir la
+/// misma ruta, y agotar los nombres nunca reemplaza una copia anterior.
+pub(super) fn move_to_free_name(dir: &Path, original: &Path) -> Result<PathBuf, IoError> {
+    for n in 1..=MAX_NAME_SUFFIX {
+        let candidate = dir.join(numbered_name(original, n));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => drop(file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(source) => {
+                return Err(IoError::Io {
+                    path: candidate,
+                    source,
+                })
+            }
+        }
+        if let Err(source) = std::fs::rename(original, &candidate) {
+            if let Err(error) = std::fs::remove_file(&candidate) {
+                tracing::warn!(
+                    "no se pudo retirar la reserva {}: {error}",
+                    candidate.display()
+                );
+            }
+            return Err(IoError::Io {
+                path: original.to_owned(),
+                source,
+            });
+        }
+        return Ok(candidate);
+    }
+    Err(IoError::Write {
+        path: original.to_owned(),
+        message: "no free destination name remains; nothing was moved".into(),
+    })
+}
+
 /// Crea `<folder>/.canvas` si no existe y, en Windows, la marca oculta con
 /// `FILE_ATTRIBUTE_HIDDEN` — el prefijo `.` del nombre no oculta nada ahí, a
 /// diferencia de Unix. Solo marca el atributo justo cuando ACABA de crear la

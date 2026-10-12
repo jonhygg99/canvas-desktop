@@ -11,7 +11,9 @@ use eframe::egui_wgpu::RenderState;
 use crate::{editor, loader};
 
 use super::super::super::frame::EditorFrame;
-use super::super::super::persistence::{start_save, start_save_design, SaveContext};
+use super::super::super::persistence::{
+    saved_exit_ready, start_save, start_save_design, SaveContext,
+};
 use super::super::super::Nav;
 
 pub(super) fn handle_save(
@@ -57,7 +59,9 @@ pub(super) fn handle_save(
             // cola de «Save all» siga con fondo por guardar (A05): el
             // diferido espera al drenaje en `on_saved`, no se adelanta aquí.
             tracing::info!("documento sin cambios: no se reescribe el archivo");
-            if f.save.save_all_queue.is_empty() {
+            if (f.save.close_after_save || f.save.after_save.is_some())
+                && saved_exit_ready(state, f.deck, f.save)
+            {
                 if f.save.close_after_save {
                     f.save.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);

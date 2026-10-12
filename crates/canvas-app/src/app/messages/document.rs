@@ -24,11 +24,7 @@ impl AppInner {
                 match result {
                     Ok(new_path) => {
                         if let Some(slot) = ws.deck.slots.get_mut(ws.deck.active) {
-                            slot.path = new_path.clone();
-                            slot.name = new_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
+                            rename_slot(slot, &new_path);
                         }
                         state.doc.source_path = Some(new_path);
                     }
@@ -39,11 +35,7 @@ impl AppInner {
             match result {
                 Ok(new_path) => {
                     if let Some(slot) = ws.deck.slots.iter_mut().find(|s| s.path == old_path) {
-                        slot.path = new_path.clone();
-                        slot.name = new_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        rename_slot(slot, &new_path);
                     }
                 }
                 Err(e) => tracing::warn!(
@@ -58,17 +50,15 @@ impl AppInner {
         &mut self,
         ws: &mut Workspace,
         path: PathBuf,
-        result: Result<(), canvas_io::IoError>,
+        result: Result<editor::DeleteRecord, canvas_io::IoError>,
+        warning: Option<String>,
         open_after: &mut Option<Nav>,
     ) {
         let mut go_to_welcome = false;
         let undoable_delete = ws.deck_ops.undoable_deletes.remove(&path);
-        if result.is_ok() {
-            if let (Some(sidecar), View::Editor(state)) = (undoable_delete, &mut ws.view) {
-                state.record_delete(editor::DeleteRecord {
-                    path: path.clone(),
-                    sidecar,
-                });
+        if undoable_delete {
+            if let (Ok(record), View::Editor(state)) = (&result, &mut ws.view) {
+                state.record_delete(record.clone());
             }
         }
         let is_active = matches!(&ws.view, View::Editor(state)
@@ -76,7 +66,7 @@ impl AppInner {
         if is_active {
             if let View::Editor(state) = &mut ws.view {
                 match result {
-                    Ok(()) => {
+                    Ok(_) => {
                         let mut jumped = false;
                         if ws.deck.slots.len() > 1 {
                             let removed = ws.deck.active;
@@ -109,7 +99,7 @@ impl AppInner {
             }
         } else {
             match result {
-                Ok(()) => {
+                Ok(_) => {
                     if let Some(idx) = ws.deck.slots.iter().position(|s| s.path == path) {
                         ws.deck.slots.remove(idx);
                         if idx < ws.deck.active {
@@ -130,6 +120,13 @@ impl AppInner {
                 failed_kind: None,
             };
         }
+        // El archivo se trasteó pero su sidecar no pudo acompañarlo: hay que
+        // decírselo, porque el deshacer solo traerá el archivo.
+        if let Some(warning) = warning {
+            if let View::Editor(state) = &mut ws.view {
+                state.save_error = Some(warning);
+            }
+        }
     }
 
     pub(super) fn on_document_restored(
@@ -137,6 +134,7 @@ impl AppInner {
         ws: &mut Workspace,
         path: PathBuf,
         result: Result<(), canvas_io::IoError>,
+        warning: Option<String>,
         ctx: &egui::Context,
     ) {
         match result {
@@ -168,6 +166,12 @@ impl AppInner {
                 }
             }
         }
+        // El archivo volvió; sus capas editables siguen en la papelera.
+        if let Some(warning) = warning {
+            if let View::Editor(state) = &mut ws.view {
+                state.save_error = Some(warning);
+            }
+        }
     }
 
     pub(super) fn on_source_changed_on_disk(&mut self, ws: &mut Workspace, path: PathBuf) {
@@ -181,5 +185,40 @@ impl AppInner {
                 }
             }
         }
+    }
+}
+
+fn rename_slot(slot: &mut deck::Slot, path: &std::path::Path) {
+    slot.path = path.to_owned();
+    slot.name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    match &mut slot.content {
+        deck::SlotContent::Ready(doc) => doc.doc.source_path = Some(path.to_owned()),
+        deck::SlotContent::Loading => slot.content = deck::SlotContent::Idle,
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renaming_a_loaded_slot_updates_the_path_used_by_its_next_save() {
+        let old = PathBuf::from("old.png");
+        let new = PathBuf::from("renamed.png");
+        let mut state = editor::EditorState::new_blank_image(20.0, 20.0);
+        state.doc.source_path = Some(old.clone());
+        let mut deck = deck::Deck::single(old);
+        deck.slots[0].content = deck::SlotContent::Ready(Box::new(state.take_slot()));
+        rename_slot(&mut deck.slots[0], &new);
+        let deck::SlotContent::Ready(doc) = &deck.slots[0].content else {
+            panic!("loaded slot");
+        };
+        assert_eq!(doc.doc.source_path.as_ref(), Some(&new));
+        assert_eq!(deck.slots[0].path, new);
     }
 }

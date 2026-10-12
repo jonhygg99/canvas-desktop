@@ -28,7 +28,7 @@ pub use ytdlp_download::{
 use std::path::PathBuf;
 
 use canvas_core::LayerId;
-use canvas_io::{ImageMetadata, IoError, LoadedImage, RestoredDocument};
+use canvas_io::{ImageMetadata, IoError, LoadedImage};
 
 pub use export_ops::{spawn_export_raster, spawn_export_vector, spawn_pick_export_path};
 pub use gallery_ops::{
@@ -57,24 +57,7 @@ pub use ytdlp_ops::{spawn_ytdlp_delete, spawn_ytdlp_frames, YtdlpFramesOutcome};
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
 /// el archivo abierto ES el documento, no la imagen que lo acompaña.
-pub enum LoadOutcome {
-    Flat(LoadedImage),
-    Restored(RestoredDocument),
-    Design(RestoredDocument),
-}
-
-/// El resultado de `canvas_io::open_document` (la política única de
-/// apertura, en canvas-io) viaja como `LoadOutcome` por `AppMsg`; no hay
-/// lógica de conversión: es la misma información con otro nombre.
-impl From<canvas_io::OpenOutcome> for LoadOutcome {
-    fn from(outcome: canvas_io::OpenOutcome) -> Self {
-        match outcome {
-            canvas_io::OpenOutcome::Flat(loaded) => LoadOutcome::Flat(loaded),
-            canvas_io::OpenOutcome::Restored(restored) => LoadOutcome::Restored(restored),
-            canvas_io::OpenOutcome::Design(restored) => LoadOutcome::Design(restored),
-        }
-    }
-}
+pub use canvas_io::OpenOutcome as LoadOutcome;
 
 /// Resultado de una operación de archivos de la galería (crear, duplicar,
 // pegar): lo que transporta `AppMsg::GalleryOpDone`. Agrupa en un valor con
@@ -88,6 +71,10 @@ pub struct GalleryOpOutcome {
     /// rescanear; ausente si la operación falló.
     pub created: Option<PathBuf>,
     pub result: Result<(), IoError>,
+    /// Aviso de una operación a medias: la principal salió bien, pero la
+    /// parte editable (sidecar de capas) no. La UI lo muestra para que el
+    /// usuario no crea que se llevó también las capas.
+    pub warning: Option<String>,
     /// Si venía de «✚ New design», abre el archivo recién creado.
     pub open: bool,
 }
@@ -101,6 +88,12 @@ pub struct GalleryOpOutcome {
 pub struct ImageInsertDest {
     pub generation: u64,
     pub slot_id: u64,
+}
+
+impl ImageInsertDest {
+    pub fn is_current(self, generation: u64, slot_id: Option<u64>) -> bool {
+        self.generation == generation && Some(self.slot_id) == slot_id
+    }
 }
 
 /// Identidad completa de una inserción asíncrona de imagen (Unsplash/Serper):
@@ -126,8 +119,7 @@ pub fn insert_target_current(
     slot_id: Option<u64>,
 ) -> bool {
     pending.is_some_and(|t| t.seq == msg.seq && t.photo_id == msg.photo_id)
-        && msg.dest.generation == generation
-        && Some(msg.dest.slot_id) == slot_id
+        && msg.dest.is_current(generation, slot_id)
 }
 
 pub enum AppMsg {
@@ -141,11 +133,13 @@ pub enum AppMsg {
     },
     /// Imagen cargada para AÑADIRSE como capa al documento abierto.
     ImageLoadedForLayer {
+        dest: ImageInsertDest,
         path: PathBuf,
         result: Result<LoadedImage, IoError>,
     },
     /// Imagen cargada para REEMPLAZAR una capa de imagen concreta.
     ImageLoadedForReplace {
+        dest: ImageInsertDest,
         layer: LayerId,
         label: String,
         source_path: Option<PathBuf>,
@@ -311,13 +305,19 @@ pub enum AppMsg {
     /// «Delete» del panel).
     DocumentDeleted {
         path: PathBuf,
-        result: Result<(), IoError>,
+        result: Result<crate::editor::DeleteRecord, IoError>,
+        /// El archivo se trasteó, pero su sidecar de capas editables no
+        /// pudo acompañarlo: el deshacer traerá solo el archivo.
+        warning: Option<String>,
     },
     /// Se restauró `path` desde la Papelera de reciclaje al deshacer un
     /// `GlobalStep::Delete` (`editor::EditorState::pending_restore`).
     DocumentRestored {
         path: PathBuf,
         result: Result<(), IoError>,
+        /// El archivo volvió, pero sus capas editables siguen en la
+        /// papelera (no se pudieron restaurar).
+        warning: Option<String>,
     },
     /// Respuesta del diálogo «¿guardar los cambios?» de una ventana o de
     /// una navegación. El modal corre en un hilo aparte a propósito:

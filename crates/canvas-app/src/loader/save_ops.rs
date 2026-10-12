@@ -104,6 +104,17 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
             new_source,
             sidecar,
         } = input;
+        if let Some(payload) = &sidecar {
+            if let Err(error) = payload.validate_for_save(&path) {
+                let _ = tx.send(AppMsg::Saved {
+                    path,
+                    result: Err(error),
+                    new_source,
+                });
+                ctx.request_repaint();
+                return;
+            }
+        }
         // La miniatura embebida del sidecar se reduce de este mismo RGBA
         // (ya horneado a tamaño completo): no hace falta una segunda pasada
         // de GPU solo para la celda de la galería.
@@ -142,8 +153,19 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
                 // Sidecar desactivado: retira el que hubiera para no
                 // dejar uno obsoleto que luego avise de hash cambiado.
                 None => {
-                    canvas_io::delete_sidecar(&path);
-                    Ok(())
+                    if let Err(e) = canvas_io::delete_sidecar(&path) {
+                        // Un sidecar que NO se pudo borrar deja las capas
+                        // editables en disco: es un guardado parcial, no un
+                        // éxito — mismo trato que el fallo de `write_sidecar`.
+                        Err(canvas_io::IoError::Message {
+                            message: format!(
+                                "Image saved to \"{}\" but its old editable layers could not be removed: {e}. The document is still marked as unsaved.",
+                                path.display()
+                            ),
+                        })
+                    } else {
+                        Ok(())
+                    }
                 }
             },
             Err(e) => Err(e),
@@ -181,4 +203,44 @@ pub fn spawn_pick_save_path(suggested: Option<String>, tx: Sender<AppMsg>, ctx: 
         let _ = tx.send(AppMsg::SaveAsPicked(picked));
         ctx.request_repaint();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_sidecar_never_rewrites_the_raster() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("original.png");
+        std::fs::write(&path, b"original image").unwrap();
+        let payload = CanvasPayload {
+            document: canvas_core::Document::new(20_001.0, 1.0),
+            images: vec![(1, vec![255; 20_001 * 4], 20_001, 1)],
+            background_layer: None,
+            preview: None,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_save(
+            SaveInput {
+                path: path.clone(),
+                rgba: vec![10, 20, 30, 255],
+                width: 1,
+                height: 1,
+                jpeg_quality: 92,
+                metadata: None,
+                new_source: false,
+                sidecar: Some(payload),
+            },
+            tx,
+            egui::Context::default(),
+        );
+        let AppMsg::Saved { result, .. } =
+            rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap()
+        else {
+            panic!("save completion");
+        };
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"original image");
+    }
 }
