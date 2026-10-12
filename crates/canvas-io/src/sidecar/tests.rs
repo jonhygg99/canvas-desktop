@@ -787,3 +787,26 @@ fn mutated_design_files_never_panic_when_read_back() {
         let _ = read_design(&path);
     }
 }
+
+#[test]
+fn gallery_probes_need_only_the_header_not_the_layer_blobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("header.canvas");
+    let payload = CanvasPayload {
+        document: Document::new(123.0, 456.0),
+        images: vec![],
+        background_layer: None,
+        preview: Some(crate::LoadedImage {
+            rgba: vec![255; 4],
+            width: 1,
+            height: 1,
+        }),
+    };
+    let mut bytes = encode_payload(&path, None, &payload).unwrap();
+    bytes.extend_from_slice(&100u32.to_le_bytes());
+    // Pixel data may be unavailable while another process is copying it.
+    std::fs::write(&path, bytes).unwrap();
+    assert_eq!(io::read_page_size(&path).unwrap(), (123.0, 456.0));
+    assert_eq!(read_preview(&path).unwrap().unwrap().rgba, vec![255; 4]);
+    assert!(read_design(&path).is_err());
+}

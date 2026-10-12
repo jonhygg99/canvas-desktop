@@ -1,6 +1,7 @@
 //! Lectura y escritura real a disco de un `.canvas` (sidecar o diseño
 //! autónomo).
 
+use std::io::Read;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -78,7 +79,7 @@ fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
 
 /// (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
 /// formatos: contenedor v5 o JSON puro v1–v4.
-type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<Vec<u8>>);
+type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<&'a [u8]>);
 
 /// Separa (cabecera JSON, blobs) de un `.canvas` en cualquiera de los dos
 /// formatos: contenedor v5 (mágica `CANVAS5`) o JSON puro v1–v4 (el archivo
@@ -86,13 +87,39 @@ type SplitCanvas<'a> = (Cow<'a, [u8]>, Vec<Vec<u8>>);
 fn split_canvas_file<'a>(bytes: &'a [u8], path: &Path) -> Result<SplitCanvas<'a>, IoError> {
     if container::is_container(bytes) {
         let (json, blobs) = container::split_container(bytes, path)?;
-        Ok((
-            Cow::Borrowed(json),
-            blobs.into_iter().map(<[u8]>::to_vec).collect(),
-        ))
+        Ok((Cow::Borrowed(json), blobs))
     } else {
         Ok((Cow::Borrowed(bytes), Vec::new()))
     }
+}
+
+/// Los probes v5 leen solo el JSON; los archivos legacy siguen siendo JSON completo.
+fn read_header(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    if file_len > MAX_CANVAS_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            "canvas file exceeds the read limit",
+        ));
+    }
+    let mut magic = Vec::with_capacity(7);
+    file.by_ref().take(7).read_to_end(&mut magic)?;
+    if magic != container::CONTAINER_MAGIC {
+        return read_capped(path);
+    }
+    let mut length = [0u8; 8];
+    file.read_exact(&mut length)?;
+    let length = u64::from_le_bytes(length);
+    if length > file_len.saturating_sub(15) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "canvas JSON length exceeds the file",
+        ));
+    }
+    let mut header = vec![0; length as usize];
+    file.read_exact(&mut header)?;
+    Ok(header)
 }
 
 /// Lee y valida el `.canvas` en `path`: probe de versión, parseo completo,
@@ -277,7 +304,7 @@ pub fn read_design(path: &Path) -> Result<RestoredDocument, IoError> {
 /// capas. `Ok(None)` si el archivo no existe o no tiene miniatura (p. ej. un
 /// diseño creado pero nunca guardado con éxito).
 pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
-    let bytes = match read_capped(path) {
+    let json = match read_header(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
@@ -288,7 +315,6 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
         }
     };
     // Solo la cabecera: la miniatura vive en el JSON (v5 y legacy).
-    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PreviewProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
@@ -310,12 +336,11 @@ pub fn read_preview(path: &Path) -> Result<Option<LoadedImage>, IoError> {
 /// píxeles. Usado por `canvas_io::probe_page_size` para apilar la baraja del
 /// editor antes de cargar ningún documento entero.
 pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
-    let bytes = read_capped(path).map_err(|source| IoError::Open {
+    let json = read_header(path).map_err(|source| IoError::Open {
         path: path.to_owned(),
         source,
     })?;
     // Solo la cabecera: el tamaño de página vive en el JSON (v5 y legacy).
-    let (json, _) = split_canvas_file(&bytes, path)?;
     let probe: PageProbe = serde_json::from_slice(&json).map_err(|e| IoError::Decode {
         path: path.to_owned(),
         source: image::ImageError::IoError(std::io::Error::other(format!("corrupt sidecar: {e}"))),
