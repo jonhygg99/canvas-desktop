@@ -447,8 +447,12 @@ fn v5_container_keeps_pixel_blobs_out_of_the_json_header() {
 
     // Los blobs son PNG decodificables de vuelta a los píxeles originales.
     for (blob, (_, rgba, w, h)) in blobs.iter().zip(&images) {
-        let (decoded, dw, dh) =
-            crate::png_codec::decode_png_bytes(blob, Path::new("test")).unwrap();
+        let (decoded, dw, dh) = crate::png_codec::decode_png_bytes_with_budget(
+            blob,
+            Path::new("test"),
+            payload::MAX_DECODED_CANVAS_BYTES,
+        )
+        .unwrap();
         assert_eq!((dw, dh), (*w, *h));
         assert_eq!(decoded, *rgba);
     }

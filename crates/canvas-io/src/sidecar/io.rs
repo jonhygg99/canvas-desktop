@@ -99,6 +99,13 @@ fn split_canvas_file<'a>(bytes: &'a [u8], path: &Path) -> Result<SplitCanvas<'a>
 /// reparación de la invariante de preorden y decodificación de los píxeles
 /// de cada capa. Compartido por `read_sidecar` y `read_design`.
 fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
+    read_canvas_file_with_budget(path, super::payload::MAX_DECODED_CANVAS_BYTES)
+}
+
+fn read_canvas_file_with_budget(
+    path: &Path,
+    mut budget: u64,
+) -> Result<Option<ParsedCanvasFile>, IoError> {
     let bytes = match read_capped(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -139,10 +146,21 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
     }
 
     let mut images = Vec::with_capacity(file.images.len());
+    let mut ids = std::collections::HashSet::new();
     for entry in &file.images {
+        if !ids.insert(entry.layer) {
+            return Err(IoError::Decode {
+                path: path.to_owned(),
+                source: image::ImageError::IoError(std::io::Error::other(
+                    "duplicate layer ID in canvas pixels",
+                )),
+            });
+        }
         // v1–v4: PNG en base64 dentro del JSON. v5: blob binario por índice.
         let (rgba, width, height) = match (&entry.png_base64, entry.blob) {
-            (Some(png_base64), _) => crate::png_codec::decode_layer_png(png_base64, path)?,
+            (Some(png_base64), _) => {
+                crate::png_codec::decode_layer_png_with_budget(png_base64, path, budget)?
+            }
             (None, Some(blob_index)) => {
                 let Some(png) = blobs.get(blob_index as usize) else {
                     return Err(IoError::Decode {
@@ -152,7 +170,7 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
                         ))),
                     });
                 };
-                crate::png_codec::decode_png_bytes(png, path)?
+                crate::png_codec::decode_png_bytes_with_budget(png, path, budget)?
             }
             (None, None) => {
                 return Err(IoError::Decode {
@@ -163,6 +181,7 @@ fn read_canvas_file(path: &Path) -> Result<Option<ParsedCanvasFile>, IoError> {
                 })
             }
         };
+        budget -= rgba.len() as u64;
         images.push((
             entry.layer,
             LoadedImage {
@@ -360,4 +379,23 @@ pub fn write_blank_canvas(
     let rgba = vec![255u8; w as usize * h as usize * 4];
     let bytes = crate::save_rgba(path, rgba, w, h, jpeg_quality, None)?;
     write_sidecar(path, &bytes, &payload)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn decoded_layers_share_one_memory_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("budget.canvas");
+        let payload = CanvasPayload {
+            document: canvas_core::Document::new(4.0, 4.0),
+            images: (1..=3).map(|id| (id, vec![255; 64], 4, 4)).collect(),
+            background_layer: None,
+            preview: None,
+        };
+        write_design(&path, &payload).unwrap();
+        assert!(read_canvas_file_with_budget(&path, 192).is_ok());
+        assert!(read_canvas_file_with_budget(&path, 128).is_err());
+    }
 }
