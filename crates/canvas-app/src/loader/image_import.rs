@@ -8,20 +8,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use canvas_core::LayerId;
 use eframe::egui;
 
-use super::AppMsg;
+use super::{AppMsg, ImageInsertDest};
 
 /// Como `spawn_load_image`, pero el resultado se añade como capa nueva al
 /// documento abierto en vez de sustituirlo.
-pub fn spawn_load_image_as_layer(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
+pub fn spawn_load_image_as_layer(
+    path: PathBuf,
+    dest: ImageInsertDest,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
         let result = canvas_io::load_image(&path);
-        let _ = tx.send(AppMsg::ImageLoadedForLayer { path, result });
+        let _ = tx.send(AppMsg::ImageLoadedForLayer { dest, path, result });
         ctx.request_repaint();
     });
 }
 
 pub fn spawn_pick_replacement_image(
     layer: LayerId,
+    dest: ImageInsertDest,
     start_dir: Option<PathBuf>,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
@@ -37,6 +43,7 @@ pub fn spawn_pick_replacement_image(
             let label = image_label_from_path(&path);
             let result = canvas_io::load_image(&path);
             let _ = tx.send(AppMsg::ImageLoadedForReplace {
+                dest,
                 layer,
                 label,
                 source_path: Some(path),
@@ -49,6 +56,7 @@ pub fn spawn_pick_replacement_image(
 
 pub fn spawn_load_replacement_image_from_url(
     layer: LayerId,
+    dest: ImageInsertDest,
     url: String,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
@@ -61,6 +69,7 @@ pub fn spawn_load_replacement_image_from_url(
             loaded
         });
         let _ = tx.send(AppMsg::ImageLoadedForReplace {
+            dest,
             layer,
             label,
             source_path: None,

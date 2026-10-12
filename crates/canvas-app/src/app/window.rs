@@ -57,7 +57,13 @@ impl AppInner {
                 && path.is_file()
                 && canvas_io::is_media_file(&path)
             {
-                loader::spawn_load_image_as_layer(path, ws.tx.clone(), ctx.clone());
+                if let Some(slot) = ws.deck.slots.get(ws.deck.active) {
+                    let dest = loader::ImageInsertDest {
+                        generation: ws.deck.generation,
+                        slot_id: slot.id,
+                    };
+                    loader::spawn_load_image_as_layer(path, dest, ws.tx.clone(), ctx.clone());
+                }
             } else {
                 self.request_nav(ws, super::Nav::Open(path), ctx);
             }

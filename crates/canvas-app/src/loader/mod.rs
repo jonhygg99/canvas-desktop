@@ -107,6 +107,12 @@ pub struct ImageInsertDest {
     pub slot_id: u64,
 }
 
+impl ImageInsertDest {
+    pub fn is_current(self, generation: u64, slot_id: Option<u64>) -> bool {
+        self.generation == generation && Some(self.slot_id) == slot_id
+    }
+}
+
 /// Identidad completa de una inserción asíncrona de imagen (Unsplash/Serper):
 /// destino + nº de petición del panel + foto pedida. No se usa la URL como
 /// identidad: dos peticiones seguidas con la misma URL son indistinguibles
@@ -130,8 +136,7 @@ pub fn insert_target_current(
     slot_id: Option<u64>,
 ) -> bool {
     pending.is_some_and(|t| t.seq == msg.seq && t.photo_id == msg.photo_id)
-        && msg.dest.generation == generation
-        && Some(msg.dest.slot_id) == slot_id
+        && msg.dest.is_current(generation, slot_id)
 }
 
 pub enum AppMsg {
@@ -145,11 +150,13 @@ pub enum AppMsg {
     },
     /// Imagen cargada para AÑADIRSE como capa al documento abierto.
     ImageLoadedForLayer {
+        dest: ImageInsertDest,
         path: PathBuf,
         result: Result<LoadedImage, IoError>,
     },
     /// Imagen cargada para REEMPLAZAR una capa de imagen concreta.
     ImageLoadedForReplace {
+        dest: ImageInsertDest,
         layer: LayerId,
         label: String,
         source_path: Option<PathBuf>,

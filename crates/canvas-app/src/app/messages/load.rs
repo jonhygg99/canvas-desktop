@@ -63,6 +63,7 @@ impl AppInner {
                     state.sidecar_enabled = self.settings.sidecar_default;
                     state.source_metadata = metadata;
                     self.remember_page_size(ws, &state.doc);
+                    ws.deck = deck::Deck::single("current.png".into());
                     ws.view = View::Editor(Box::new(state));
                 } else {
                     loader::spawn_load_image(path.clone(), false, ws.tx.clone(), ctx.clone());
@@ -74,6 +75,7 @@ impl AppInner {
                 let mut state = editor::EditorState::from_design(path.clone(), restored);
                 state.from_gallery = ws.deck.folder.clone();
                 self.remember_page_size(ws, &state.doc);
+                ws.deck = deck::Deck::single("current.png".into());
                 ws.view = View::Editor(Box::new(state));
             }
             Ok(loader::LoadOutcome::Flat(img)) => {
@@ -84,6 +86,7 @@ impl AppInner {
                         state.sidecar_enabled = self.settings.sidecar_default;
                         state.source_metadata = metadata;
                         self.remember_page_size(ws, &state.doc);
+                        ws.deck = deck::Deck::single("current.png".into());
                         ws.view = View::Editor(Box::new(state));
                     }
                     Err(e) => {
@@ -112,11 +115,17 @@ impl AppInner {
     }
 
     pub(super) fn on_image_loaded_for_layer(
-        &mut self,
         ws: &mut Workspace,
+        dest: loader::ImageInsertDest,
         path: PathBuf,
         result: Result<canvas_io::LoadedImage, canvas_io::IoError>,
     ) {
+        if !dest.is_current(
+            ws.deck.generation,
+            ws.deck.slots.get(ws.deck.active).map(|s| s.id),
+        ) {
+            return;
+        }
         if let View::Editor(state) = &mut ws.view {
             match result {
                 Ok(img) => {
@@ -134,13 +143,19 @@ impl AppInner {
     }
 
     pub(super) fn on_image_loaded_for_replace(
-        &mut self,
         ws: &mut Workspace,
+        dest: loader::ImageInsertDest,
         layer: canvas_core::LayerId,
         label: String,
         source_path: Option<PathBuf>,
         result: Result<canvas_io::LoadedImage, canvas_io::IoError>,
     ) {
+        if !dest.is_current(
+            ws.deck.generation,
+            ws.deck.slots.get(ws.deck.active).map(|s| s.id),
+        ) {
+            return;
+        }
         if let View::Editor(state) = &mut ws.view {
             match result {
                 Ok(img) => {
@@ -207,6 +222,61 @@ impl AppInner {
     ) {
         if ws.deck.accepts_response(&folder, generation) {
             ws.deck.set_probes(sizes);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stale_local_image_results_do_not_edit_another_document() {
+        for stale_generation in [false, true] {
+            let mut ws = Workspace::new(egui::ViewportId::ROOT);
+            ws.deck = deck::Deck::single("current.png".into());
+            ws.view = View::Editor(Box::new(editor::EditorState::new_blank_image(20.0, 20.0)));
+            let dest = loader::ImageInsertDest {
+                generation: if stale_generation {
+                    ws.deck.generation + 1
+                } else {
+                    ws.deck.generation
+                },
+                slot_id: if stale_generation {
+                    ws.deck.slots[0].id
+                } else {
+                    ws.deck.slots[0].id + 1
+                },
+            };
+            let before = if let View::Editor(state) = &ws.view {
+                state.doc.clone()
+            } else {
+                unreachable!()
+            };
+            AppInner::on_image_loaded_for_layer(
+                &mut ws,
+                dest,
+                "incoming.png".into(),
+                Ok(canvas_io::LoadedImage {
+                    rgba: vec![255; 4],
+                    width: 1,
+                    height: 1,
+                }),
+            );
+            AppInner::on_image_loaded_for_replace(
+                &mut ws,
+                dest,
+                canvas_core::LayerId::from_raw(1),
+                "incoming".into(),
+                None,
+                Err(canvas_io::IoError::Message {
+                    message: "stale failure".into(),
+                }),
+            );
+            let View::Editor(state) = &ws.view else {
+                unreachable!()
+            };
+            assert_eq!(state.doc, before);
+            assert!(state.save_error.is_none());
         }
     }
 }

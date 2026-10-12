@@ -56,6 +56,10 @@ pub(super) fn resolve(
         }
         None => {}
     }
+    let image_dest = loader::ImageInsertDest {
+        generation: f.deck.generation,
+        slot_id: state.active_slot_id,
+    };
     match canvas_action {
         Some(editor::CanvasAction::Rename(id, new_stem)) => {
             let is_active = f.deck.slots.get(f.deck.active).map(|s| s.id) == Some(id);
@@ -131,10 +135,22 @@ pub(super) fn resolve(
             }
         }
         Some(editor::CanvasAction::ReplaceFromLocal(layer)) => {
-            loader::spawn_pick_replacement_image(layer, None, f.tx.clone(), ctx.clone());
+            loader::spawn_pick_replacement_image(
+                layer,
+                image_dest,
+                None,
+                f.tx.clone(),
+                ctx.clone(),
+            );
         }
         Some(editor::CanvasAction::ReplaceFromUrl(layer, url)) => {
-            loader::spawn_load_replacement_image_from_url(layer, url, f.tx.clone(), ctx.clone());
+            loader::spawn_load_replacement_image_from_url(
+                layer,
+                image_dest,
+                url,
+                f.tx.clone(),
+                ctx.clone(),
+            );
         }
         Some(editor::CanvasAction::Menu(action)) => {
             *pending_menu_action = Some(action);

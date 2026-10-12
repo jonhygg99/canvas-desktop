@@ -119,15 +119,16 @@ impl AppInner {
             }
             AppMsg::ExportPathPicked(path) => self.on_export_path_picked(ws, path),
             AppMsg::Exported { path, result } => self.on_exported(ws, path, result),
-            AppMsg::ImageLoadedForLayer { path, result } => {
-                self.on_image_loaded_for_layer(ws, path, result)
+            AppMsg::ImageLoadedForLayer { dest, path, result } => {
+                Self::on_image_loaded_for_layer(ws, dest, path, result)
             }
             AppMsg::ImageLoadedForReplace {
+                dest,
                 layer,
                 label,
                 source_path,
                 result,
-            } => self.on_image_loaded_for_replace(ws, layer, label, source_path, result),
+            } => Self::on_image_loaded_for_replace(ws, dest, layer, label, source_path, result),
             AppMsg::UnsplashSearch {
                 query,
                 seq,
