@@ -43,12 +43,11 @@ pub use probe::{probe_page_size, probe_page_size_with};
 pub use repair::{repair_png, RepairError};
 pub use save::{save_format_from_path, save_rgba, write_atomic};
 pub use sidecar::{
-    blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, find_trashed_entry,
-    make_preview, move_to_local_trash, move_to_quarantine, preview_scale, purge_local_trash,
-    quarantine_dir, read_design, read_preview, read_sidecar, restore_from_local_trash,
-    restore_from_quarantine, sidecar_dir, sidecar_path, trash_dir, write_blank_canvas,
-    write_design, write_sidecar, CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM,
-    SIDECAR_DIR,
+    blank_design, delete_sidecar, ensure_sidecar_dir, find_sidecar, make_preview,
+    move_to_local_trash, move_to_quarantine, preview_scale, purge_local_trash, quarantine_dir,
+    read_design, read_preview, read_sidecar, restore_from_local_trash, restore_from_quarantine,
+    sidecar_dir, sidecar_path, trash_dir, write_blank_canvas, write_design, write_sidecar,
+    CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM, SIDECAR_DIR,
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;

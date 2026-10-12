@@ -48,9 +48,7 @@ pub fn find_sidecar(image_path: &Path) -> Option<PathBuf> {
 
 /// Nombre desambiguado número `n` de `original`: `nombre 2.ext`,
 /// `nombre 3.ext`… (con `n == 1` devuelve el nombre tal cual). Dueña ÚNICA
-/// de la regla de nombres: la usan `move_to_free_name` (reservar un destino libre)
-/// y `find_trashed_entry` (buscar la copia trasteada), que deben generar
-/// siempre los mismos nombres.
+/// de la regla de nombres usada al reservar destinos de papelera y cuarentena.
 pub fn numbered_name(original: &Path, n: u32) -> String {
     let name = original
         .file_name()

@@ -625,11 +625,6 @@ fn moving_to_local_trash_and_restoring_round_trips_the_file() {
     assert!(!path.exists(), "ya no debe estar en su sitio original");
     assert!(staged.exists());
     assert_eq!(staged, trash_dir(dir.path()).join("foto.png"));
-    // La ruta que devuelve `move_to_local_trash` (o `find_trashed_entry`)
-    // es la que hay que usar: con la papelera vacía coincide con derivarla
-    // a mano, pero en cuanto hay una copia anterior ya no.
-    assert_eq!(find_trashed_entry(&path), Some(staged.clone()));
-
     restore_from_local_trash(&staged, &path).expect("restaurar");
     assert!(path.exists());
     assert!(!staged.exists());
@@ -702,39 +697,19 @@ fn trashing_the_same_name_twice_keeps_both_files() {
     assert_eq!(std::fs::read(&second).unwrap(), b"segunda");
 }
 
-/// Sin nada en la papelera, `find_trashed_entry` debe decir que no hay nada
-/// sin recorrer el desambiguado entero: antes eran 10 000 `is_file()`
-/// seguidos (caros en carpetas de red) antes de devolver `None`.
+/// Deshacer recupera la copia exacta aunque haya otras del mismo nombre.
 #[test]
-fn finding_a_missing_trashed_entry_reports_none() {
-    let dir = tempfile::tempdir().expect("tempdir");
+fn undoing_a_delete_restores_the_recorded_copy_when_the_name_clashed() {
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("foto.png");
-
-    assert_eq!(find_trashed_entry(&path), None);
-
-    // Y con la papelera creada pero vacía, igual.
-    std::fs::create_dir_all(trash_dir(dir.path())).unwrap();
-    assert_eq!(find_trashed_entry(&path), None);
-}
-
-/// El deshacer de un borrado solo conoce la ruta original. Tras borrar
-/// dos veces el mismo nombre (la segunda con la papelera aún sin purgar),
-/// `find_trashed_entry` debe seguir encontrando UNA de las copias y
-/// permitir restaurarla: es lo que usa el undo (`restore_one`).
-#[test]
-fn undoing_a_delete_finds_the_trashed_copy_even_when_the_name_clashed() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("foto.png");
-
-    std::fs::write(&path, b"primera").unwrap();
-    let _ = move_to_local_trash(&path).expect("primera");
-    std::fs::write(&path, b"segunda").unwrap();
-    let _ = move_to_local_trash(&path).expect("segunda");
-
-    let staged = find_trashed_entry(&path).expect("alguna copia debe estar");
-    restore_from_local_trash(&staged, &path).expect("restaurar");
-    assert!(path.exists(), "el archivo vuelve a su sitio");
-    assert!(!staged.exists(), "la copia restaurada sale de la papelera");
+    std::fs::write(&path, b"first").unwrap();
+    let first = move_to_local_trash(&path).unwrap();
+    std::fs::write(&path, b"second").unwrap();
+    let second = move_to_local_trash(&path).unwrap();
+    restore_from_local_trash(&second, &path).unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"second");
+    assert_eq!(std::fs::read(first).unwrap(), b"first");
+    assert!(!second.exists());
 }
 
 // ---- Corpus adversarial del parser de .canvas ----

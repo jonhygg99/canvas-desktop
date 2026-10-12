@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::IoError;
 
-use super::paths::{
-    ensure_sidecar_dir, move_to_free_name, numbered_name, sidecar_dir, MAX_NAME_SUFFIX,
-};
+use super::paths::{ensure_sidecar_dir, move_to_free_name, sidecar_dir};
 
 /// Papelera propia del proyecto — deshacer un borrado ("Delete" del editor)
 /// mueve el archivo aquí en vez de a la del sistema operativo: un
@@ -23,9 +21,8 @@ pub fn trash_dir(folder: &Path) -> PathBuf {
 /// devuelve dónde quedó — deshacible con `restore_from_local_trash`.
 /// El nombre se desambigua si ya había otro igual (borrar, restaurar y
 /// volver a crear el mismo nombre; el `rename` de Windows SOBRESCRIBIRÍA el
-/// destino), así que la ruta devuelta es la que hay que conservar —o buscar
-/// con `find_trashed_entry`— para restaurar: derivarla de `path` apuntaría a
-/// la copia vieja.
+/// destino), por lo que hay que conservar la ruta devuelta para restaurar
+/// la copia exacta.
 pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
     let folder = path.parent().unwrap_or_else(|| Path::new(""));
     ensure_sidecar_dir(folder)?;
@@ -39,33 +36,6 @@ pub fn move_to_local_trash(path: &Path) -> Result<PathBuf, IoError> {
         }
     }
     move_to_free_name(&dir, path)
-}
-
-/// Entrada de la papelera del proyecto correspondiente a `original` (la más
-/// antigua con ese nombre, desambiguada o no). `None` si no hay ninguna.
-/// Necesario desde que `move_to_local_trash` desambigua: quien solo conoce
-/// la ruta original ya no puede derivar la ruta papelera. Usa la MISMA regla
-/// de nombres que `move_to_free_name` (`numbered_name`), para encontrar siempre
-/// lo que aquella escribió.
-///
-/// Lee la carpeta UNA vez y busca en memoria: si no hay nada, el coste deja
-/// de depender del tope de desambiguado (10 000 `is_file()` seguidos en una
-/// carpeta de red se notan en un Ctrl+Z).
-pub fn find_trashed_entry(original: &Path) -> Option<PathBuf> {
-    let folder = original.parent().unwrap_or_else(|| Path::new(""));
-    let dir = trash_dir(folder);
-    let names: std::collections::HashSet<String> = std::fs::read_dir(&dir)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    for n in 1..=MAX_NAME_SUFFIX {
-        let name = numbered_name(original, n);
-        if names.contains(&name) {
-            return Some(dir.join(name));
-        }
-    }
-    None
 }
 
 /// Deshace `move_to_local_trash`: mueve `staged` de vuelta a `original`.
