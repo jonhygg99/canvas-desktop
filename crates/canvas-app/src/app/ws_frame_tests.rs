@@ -10,6 +10,27 @@ use eframe::egui;
 
 use super::capture_geometry;
 
+#[test]
+fn closing_root_does_not_discard_a_dirty_child() {
+    use crate::app::{UnsavedDialog, View, Workspace};
+    use std::sync::{Arc, Mutex};
+    let mut root = Workspace::new(egui::ViewportId::ROOT);
+    let mut child = Workspace::new(egui::ViewportId::from_hash_of("dirty-child"));
+    let mut state = crate::editor::EditorState::new_blank(20.0, 20.0);
+    state.history.mark_unsaved();
+    child.view = View::Editor(Box::new(state));
+    // Un diálogo ya pendiente evita abrir un modal nativo durante el test.
+    child.unsaved_dialog = Some(UnsavedDialog::WindowClose);
+    let child = Arc::new(Mutex::new(child));
+    let workspaces = vec![
+        Arc::new(Mutex::new(Workspace::new(egui::ViewportId::ROOT))),
+        child.clone(),
+    ];
+    super::request_window_close(&workspaces, &mut root, &egui::Context::default(), true);
+    assert!(!child.lock().unwrap().close_requested);
+    assert!(!child.lock().unwrap().save.allow_close);
+}
+
 fn rect(min: (f32, f32), max: (f32, f32)) -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(min.0, min.1), egui::pos2(max.0, max.1))
 }

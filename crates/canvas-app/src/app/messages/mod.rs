@@ -102,7 +102,7 @@ impl AppInner {
     ) {
         match msg {
             AppMsg::FilePicked(Some(path)) | AppMsg::FolderPicked(Some(path)) => {
-                *open_after = Some(Nav::Open(path));
+                self.request_nav(ws, Nav::Open(path), ctx);
             }
             AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
             AppMsg::SaveAsPicked(path) => {

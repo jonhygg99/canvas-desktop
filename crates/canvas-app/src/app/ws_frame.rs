@@ -231,16 +231,7 @@ impl AppInner {
     /// y se cierra la última pestaña hija: Cmd+W siempre cierra UNA pestaña,
     /// y la app solo termina cuando es la única ventana restante.
     fn handle_window_close(&mut self, ws: &mut Workspace, ctx: &egui::Context, is_root: bool) {
-        if is_root && self.workspaces.len() > 1 {
-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
-            if let Some(last_idx) = self.workspaces.len().checked_sub(1).filter(|&i| i > 0) {
-                if let Some(ws_last) = self.workspaces.get(last_idx) {
-                    ws_last.lock_ok().close_requested = true;
-                }
-            }
-        } else {
-            self.confirm_window_close(ws, ctx, is_root);
-        }
+        request_window_close(&self.workspaces, ws, ctx, is_root);
         // `finish_root_frame` (que retira la pestaña marcada) corre en la
         // raíz; repintarla garantiza que ocurra aunque egui esté en reposo.
         self.request_repaint_all_viewports(ctx);
@@ -259,6 +250,22 @@ impl AppInner {
     /// falta pedírselo.
     pub(super) fn request_repaint_all_viewports(&self, ctx: &egui::Context) {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+}
+
+fn request_window_close(
+    workspaces: &[std::sync::Arc<std::sync::Mutex<Workspace>>],
+    ws: &mut Workspace,
+    ctx: &egui::Context,
+    is_root: bool,
+) {
+    if is_root && workspaces.len() > 1 {
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::CancelClose);
+        if let Some(last) = workspaces.last() {
+            AppInner::confirm_window_close(&mut last.lock_ok(), ctx, false);
+        }
+    } else {
+        AppInner::confirm_window_close(ws, ctx, is_root);
     }
 }
 
