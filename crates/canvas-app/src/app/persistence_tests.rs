@@ -6,6 +6,29 @@
 use std::path::{Path, PathBuf};
 
 #[test]
+fn save_all_keeps_dirty_protected_formats_in_the_queue() {
+    let mut deck = Deck::from_seed(
+        seed(&["a.png", "b.svg", "c.gif", "d.mp4"]),
+        Path::new("a.png"),
+    );
+    for slot in deck.slots.iter_mut().skip(1) {
+        slot.content = SlotContent::Ready(Box::new(slot_doc(true)));
+    }
+    let mut state = EditorState::new_blank_image(10.0, 10.0);
+    let mut save = crate::app::SaveFlow::default();
+    start_save_all_flow(&mut state, &mut deck, &mut save);
+    assert_eq!(
+        save.save_all_queue,
+        deck.slots
+            .iter()
+            .skip(1)
+            .map(|slot| slot.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(save_all_doc_count(&deck, &state), 3);
+}
+
+#[test]
 fn save_all_keeps_all_edited_new_design_canvases_in_the_queue() {
     let mut deck = Deck::new_design((100.0, 100.0));
     let mut state = EditorState::new_blank(100.0, 100.0);
@@ -252,9 +275,7 @@ fn warns_only_when_measured_free_ram_is_below_the_threshold() {
     );
 }
 
-/// «Save all» cuenta el activo sucio y las ranuras de fondo sucias; ni las
-/// limpias ni las provisionales (aunque una provisional estuviera sucia —
-/// no debería — no se escribe).
+/// «Save all» cuenta cada documento sucio, incluso una provisional editada.
 #[test]
 fn save_all_count_adds_dirty_active_and_background_slots() {
     let mut deck = Deck::from_seed(seed(&["a.png", "b.png", "c.png"]), Path::new("a.png"));
@@ -276,14 +297,14 @@ fn save_all_count_adds_dirty_active_and_background_slots() {
 
     assert_eq!(
         save_all_doc_count(&deck, &state),
-        2,
-        "activa sucia + b sucia; ni c ni la provisional"
+        3,
+        "activa sucia + b sucia + provisional sucia; c está limpia"
     );
 }
 
 /// El flujo real de «Save all» (lo que dispara el botón del modal): guarda
 /// el activo sucio y encola las ranuras de fondo sucias por id estable,
-/// dejando fuera limpias, provisionales y no sobrescribibles.
+/// dejando fuera solo las limpias; los formatos protegidos piden Guardar como.
 #[test]
 fn save_all_flow_saves_the_active_doc_and_queues_dirty_background_slots() {
     use crate::app::SaveFlow;
@@ -294,7 +315,7 @@ fn save_all_flow_saves_the_active_doc_and_queues_dirty_background_slots() {
     );
     let mut save = SaveFlow::default();
     // Activo (0) sucio y sobrescribible; b sucia; c limpia; d.svg sucia
-    // pero no sobrescribible (SVG/GIF se dejan fuera).
+    // pero no sobrescribible: necesita Guardar como.
     deck.slots[1].content = SlotContent::Ready(Box::new(slot_doc(true)));
     deck.slots[2].content = SlotContent::Ready(Box::new(slot_doc(false)));
     deck.slots[3].content = SlotContent::Ready(Box::new(slot_doc(true)));
@@ -312,21 +333,21 @@ fn save_all_flow_saves_the_active_doc_and_queues_dirty_background_slots() {
     assert!(state.save_clicked, "el activo sucio se guarda de inmediato");
     assert_eq!(
         save.save_all_queue,
-        vec![deck.slots[1].id],
-        "solo la ranura de fondo sucia y sobrescribible entra en la cola"
+        vec![deck.slots[1].id, deck.slots[3].id],
+        "las dos ranuras sucias entran en la cola"
     );
     assert!(!save.save_all_attempted);
 }
 
-/// Un documento activo limpio (o sin ruta sobrescribible) no cuenta.
+/// Un documento limpio no cuenta; un origen protegido sí requiere guardar.
 #[test]
-fn save_all_count_skips_a_clean_or_non_overwritable_active_doc() {
+fn save_all_count_skips_clean_but_includes_protected_active_doc() {
     let deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
     // Limpia y sin ruta: 0.
     let state = EditorState::new_blank(100.0, 100.0);
     assert_eq!(save_all_doc_count(&deck, &state), 0);
 
-    // Sucia pero con un origen no sobrescribible (SVG/GIF): sigue en 0.
+    // Sucia con un origen no sobrescribible: necesita Guardar como.
     let mut state = EditorState::new_blank(100.0, 100.0);
     state.doc.source_path = Some(PathBuf::from(r"C:\folder\a.svg"));
     state.history.push_applied(Box::new(canvas_core::Rename {
@@ -334,5 +355,5 @@ fn save_all_count_skips_a_clean_or_non_overwritable_active_doc() {
         before: "a".to_string(),
         after: "b".to_string(),
     }));
-    assert_eq!(save_all_doc_count(&deck, &state), 0);
+    assert_eq!(save_all_doc_count(&deck, &state), 1);
 }

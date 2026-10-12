@@ -74,23 +74,13 @@ pub(super) fn start_save_all_flow(
         save.save_all_attempted = false;
         return;
     }
-    if state.is_dirty()
-        && state
-            .doc
-            .source_path
-            .as_deref()
-            .is_some_and(canvas_io::can_overwrite)
-    {
+    if state.is_dirty() {
         state.save_clicked = true;
     }
     save.save_all_queue = deck
         .slots
         .iter()
-        .filter(|s| {
-            !s.is_placeholder
-                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
-                && canvas_io::can_overwrite(&s.path)
-        })
+        .filter(|s| matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty()))
         .map(|s| s.id)
         .collect();
     save.save_all_attempted = false;
@@ -103,20 +93,11 @@ fn save_all_doc_count(deck: &deck::Deck, state: &editor::EditorState) -> usize {
     if deck.unsaved_session {
         return session_dirty_ids(deck, state).len();
     }
-    let active = state.is_dirty()
-        && state
-            .doc
-            .source_path
-            .as_deref()
-            .is_some_and(canvas_io::can_overwrite);
+    let active = state.is_dirty();
     let background = deck
         .slots
         .iter()
-        .filter(|s| {
-            !s.is_placeholder
-                && matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty())
-                && canvas_io::can_overwrite(&s.path)
-        })
+        .filter(|s| matches!(&s.content, deck::SlotContent::Ready(d) if d.history.is_dirty()))
         .count();
     background + usize::from(active)
 }
