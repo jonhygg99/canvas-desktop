@@ -1,3 +1,10 @@
+## Novedades de v0.7.5
+
+- Los lienzos de vídeo se guardan como **mp4 renderizado** (página + fondo con blur + clip colocado y recortado): el primer `Ctrl+S` adopta el render como origen y «Guardar como…» ofrece el tramo recortado (`<origen>-trim.mp4`).
+- Tras guardar, el clip ya no se ve distorsionado en el lienzo: la capa se re-ancla al archivo adoptado (tamaño de página y pantalla completa) en vez de decodificarlo al tamaño del clip original.
+- La pestaña **Download** rueda entera, formulario incluido: con muchos clips ya no quedan fuera de alcance.
+- Tanda de robustez de guardado y papelera: destinos reservados atómicamente, límites de lectura, y deshacer/recuperar de la papelera preservados al navegar.
+
 ## Novedades de v0.7.4
 
 - El release incluye los dos `.dmg` de macOS: **Intel** (i5/i7) y **Apple Silicon**. En v0.7.3 solo llegó a publicarse el de Intel por un fallo del pipeline (las dos arquitecturas subían el artefacto con el mismo nombre y una pisaba a la otra).
