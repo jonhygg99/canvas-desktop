@@ -111,6 +111,8 @@ pub fn probe_video_size(path: &Path) -> Result<(u32, u32, Option<f64>), IoError>
             "-show_entries",
             "stream=width,height,duration,rotate,rotation",
             "-show_entries",
+            "stream_side_data=rotation:stream_tags=rotate",
+            "-show_entries",
             "format=duration",
             "-of",
             "json",
@@ -164,8 +166,14 @@ pub fn probe_video_size(path: &Path) -> Result<(u32, u32, Option<f64>), IoError>
             })
             .or_else(|| {
                 s.get("rotation")
-                    .and_then(|x| x.as_str())
-                    .and_then(|s| s.parse::<f64>().ok())
+                    .and_then(|x| x.as_f64().or_else(|| x.as_str()?.parse::<f64>().ok()))
+            })
+            .or_else(|| {
+                s.get("side_data_list")?
+                    .as_array()?
+                    .iter()
+                    .filter_map(|data| data.get("rotation"))
+                    .find_map(|x| x.as_f64().or_else(|| x.as_str()?.parse::<f64>().ok()))
             });
         if let Some(r) = rotate {
             let r = r.rem_euclid(360.0);
