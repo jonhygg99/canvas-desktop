@@ -24,11 +24,7 @@ impl AppInner {
                 match result {
                     Ok(new_path) => {
                         if let Some(slot) = ws.deck.slots.get_mut(ws.deck.active) {
-                            slot.path = new_path.clone();
-                            slot.name = new_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
+                            rename_slot(slot, &new_path);
                         }
                         state.doc.source_path = Some(new_path);
                     }
@@ -39,11 +35,7 @@ impl AppInner {
             match result {
                 Ok(new_path) => {
                     if let Some(slot) = ws.deck.slots.iter_mut().find(|s| s.path == old_path) {
-                        slot.path = new_path.clone();
-                        slot.name = new_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        rename_slot(slot, &new_path);
                     }
                 }
                 Err(e) => tracing::warn!(
@@ -181,5 +173,40 @@ impl AppInner {
                 }
             }
         }
+    }
+}
+
+fn rename_slot(slot: &mut deck::Slot, path: &std::path::Path) {
+    slot.path = path.to_owned();
+    slot.name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    match &mut slot.content {
+        deck::SlotContent::Ready(doc) => doc.doc.source_path = Some(path.to_owned()),
+        deck::SlotContent::Loading => slot.content = deck::SlotContent::Idle,
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renaming_a_loaded_slot_updates_the_path_used_by_its_next_save() {
+        let old = PathBuf::from("old.png");
+        let new = PathBuf::from("renamed.png");
+        let mut state = editor::EditorState::new_blank_image(20.0, 20.0);
+        state.doc.source_path = Some(old.clone());
+        let mut deck = deck::Deck::single(old);
+        deck.slots[0].content = deck::SlotContent::Ready(Box::new(state.take_slot()));
+        rename_slot(&mut deck.slots[0], &new);
+        let deck::SlotContent::Ready(doc) = &deck.slots[0].content else {
+            panic!("loaded slot");
+        };
+        assert_eq!(doc.doc.source_path.as_ref(), Some(&new));
+        assert_eq!(deck.slots[0].path, new);
     }
 }
