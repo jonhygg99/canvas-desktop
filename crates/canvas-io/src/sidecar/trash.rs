@@ -66,11 +66,8 @@ pub fn restore_from_local_trash(staged: &Path, original: &Path) -> Result<(), Io
     })
 }
 
-/// Borra de verdad (mejor esfuerzo, sin fallar si `trash/` no existe o algún
-/// archivo ya no está) todo lo que quedó en la papelera del proyecto sin
-/// deshacer — se llama al salir de la carpeta (galería/proyecto) y al
-/// volver a entrar en ella, para que un `Ctrl+Z` que nunca llegó, o los
-/// restos de una sesión que se cerró en falso, no se queden para siempre.
+/// Limpieza explícita de la papelera. La app no la ejecuta al navegar:
+/// otra ventana puede conservar pasos de deshacer que aún necesitan estos archivos.
 pub fn purge_local_trash(folder: &Path) {
     let dir = trash_dir(folder);
     let Ok(entries) = std::fs::read_dir(&dir) else {
