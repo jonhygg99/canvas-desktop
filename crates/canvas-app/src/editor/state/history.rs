@@ -109,6 +109,20 @@ impl EditorState {
         }
         self.global_undo.push(GlobalStep::Edit(self.active_slot_id));
         self.global_redo.clear();
+        let mut expired = self
+            .global_undo
+            .iter()
+            .filter(|step| **step == GlobalStep::Edit(self.active_slot_id))
+            .count()
+            .saturating_sub(self.history.undo_depth());
+        self.global_undo.retain(|step| {
+            if expired > 0 && *step == GlobalStep::Edit(self.active_slot_id) {
+                expired -= 1;
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// ¿Hay algo que deshacer/rehacer en TODA la sesión (no solo en el

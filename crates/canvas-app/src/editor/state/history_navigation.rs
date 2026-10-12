@@ -61,6 +61,39 @@ mod tests {
             .unwrap();
     }
     #[test]
+    fn capped_local_history_does_not_leave_phantom_global_edits() {
+        let mut state = EditorState::new_blank(600.0, 500.0);
+        state.pending_creation = false;
+        for width in 601..=850 {
+            resize(&mut state, width as f64);
+        }
+        assert_eq!(state.history.undo_depth(), 200);
+        for _ in 0..200 {
+            state.undo();
+        }
+        assert!(!state.can_undo());
+        assert_eq!(state.global_redo.len(), 200);
+    }
+
+    #[test]
+    fn trimming_old_edits_preserves_other_documents_and_creation_steps() {
+        let mut state = EditorState::new_blank(600.0, 500.0);
+        state.pending_creation = false;
+        state.global_undo.push(GlobalStep::Edit(99));
+        state
+            .global_undo
+            .push(GlobalStep::Create(state.active_slot_id));
+        for width in 601..=850 {
+            resize(&mut state, width as f64);
+        }
+        assert_eq!(state.global_undo.len(), 202);
+        assert_eq!(state.global_undo[0], GlobalStep::Edit(99));
+        assert_eq!(
+            state.global_undo[1],
+            GlobalStep::Create(state.active_slot_id)
+        );
+    }
+    #[test]
     fn jumping_keeps_global_undo_and_redo_in_sync() {
         let mut state = EditorState::new_blank(600.0, 500.0);
         for width in [700.0, 800.0, 900.0] {
