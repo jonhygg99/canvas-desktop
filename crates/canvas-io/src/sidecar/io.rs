@@ -315,13 +315,26 @@ pub(crate) fn read_page_size(path: &Path) -> Result<(f64, f64), IoError> {
 /// Borra el sidecar de `image_path` si existe (guardado con el sidecar
 /// desactivado) — en cualquiera de sus dos posibles ubicaciones, para que un
 /// hermano legacy no sobreviva y vuelva a avisar de "hash cambiado" más tarde.
-pub fn delete_sidecar(image_path: &Path) {
+/// Devuelve error si alguno no se pudo borrar: un sidecar que sobrevive sin
+/// borrarse es un fallo que el llamador debe poder comunicar (el archivo con
+/// las capas editables sigue en disco).
+pub fn delete_sidecar(image_path: &Path) -> Result<(), IoError> {
+    let mut failure = None;
     for path in [sidecar_path(image_path), legacy_sidecar_path(image_path)] {
-        if path.is_file() {
-            if let Err(e) = std::fs::remove_file(&path) {
-                tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
-            }
+        if !path.is_file() {
+            continue;
         }
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!("no se pudo borrar el sidecar {}: {e}", path.display());
+            failure.get_or_insert(IoError::Write {
+                path,
+                message: format!("borrando el sidecar de capas editables: {e}"),
+            });
+        }
+    }
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 

@@ -1389,3 +1389,165 @@ fn fx_budget_evicts_lru_scopes_keeping_active_and_rebake_restores() {
         "el scope re-horneado debe volver a la caché de efectos"
     );
 }
+
+// ─── fondo blur cuadrado 2000²: el caso 17.png ─────────────────────────
+
+/// Documento réplica de `17.png`: foto cuadrada de 2000×2000 como fondo
+/// `cover` (0, -420, 1920, 1920) con blur 50 + la MISMA foto nítida centrada
+/// de 1080×1080, fondo de página blanco. Ambas capas embeben los mismos
+/// píxeles (los blobs del sidecar real son idénticos), una por su `LayerId`.
+fn square_17png_doc() -> (Document, ImageMap) {
+    let (iw, ih) = (2000u32, 2000u32);
+    let mut doc = Document::new(1920.0, 1080.0);
+    doc.page_mut().unwrap().background = Some([255, 255, 255, 255]);
+    let bg = doc
+        .add_layer(
+            "Blurred background",
+            Transform::new(0.0, -420.0, 1920.0, 1920.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: iw,
+                natural_height: ih,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    doc.layer_mut(bg).unwrap().effects.blur_radius = 50.0;
+    let sharp = doc
+        .add_layer(
+            "Web",
+            Transform::new(420.0, 0.0, 1080.0, 1080.0),
+            LayerContent::Image(ImageContent {
+                source_path: None,
+                natural_width: iw,
+                natural_height: ih,
+                crop: None,
+            }),
+        )
+        .unwrap();
+    let (rgba_src, _, _) = gradient_image(iw, ih);
+    let mut images = ImageMap::new();
+    let src = image_data_from_rgba(rgba_src, iw, ih);
+    images.insert(bg, src.clone());
+    images.insert(sharp, src);
+    (doc, images)
+}
+
+/// Réplica del documento real de `17.png` (M/Memo Schutz): foto CUADRADA de
+/// 2000×2000 (bajo `MAX_FX_DIM`, entra sin capar) como fondo `cover` con
+/// blur 50 + la MISMA foto nítida centrada de 1080×1080, fondo de página
+/// blanco. El guardado real horneó solo la capa nítida (laterales blancos)
+/// sin que el guard lo detectara (salida no uniforme, `skipped == 0`).
+/// El bake debe pintar blur en los laterales, y el resultado debe ser
+/// estable tras `forget_scope` + re-horneado (el camino de la herramienta
+/// de reparación).
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_square_blur_background_paints_sides_like_17png() {
+    let (device, queue) = gpu_device();
+    let (doc, images) = square_17png_doc();
+    let (w, h) = (1920u32, 1080u32);
+
+    // Scope de ranura NO-default, como `start_save`/`start_export`.
+    let scope = FxScope(17);
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+    let (rgba, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, scope, &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (w, h));
+    assert_eq!(
+        skipped, 0,
+        "ninguna capa debe omitirse con el mapa completo"
+    );
+
+    // Laterales (solo los cubre el fondo): blur real de un degradado
+    // conserva decenas de colores; el bug los dejaba blancos puros.
+    let mid = h / 2;
+    for (x0, x1) in [(0, 420), (1500, 1920)] {
+        let uniq = row_unique_colors(&rgba, w, mid, x0, x1);
+        assert!(
+            uniq > 20,
+            "el lateral {x0}..{x1} salió plano ({uniq} colores) — fondo perdido como en 17.png"
+        );
+    }
+    for x in [5, w - 6] {
+        let i = ((mid * w + x) * 4) as usize;
+        assert!(
+            rgba[i..i + 3] != [255, 255, 255],
+            "el píxel lateral ({x},{mid}) es blanco puro — fondo perdido como en 17.png"
+        );
+    }
+
+    // Estabilidad tras olvidar + re-hornear (camino de reparación).
+    renderer.forget_scope(scope);
+    let (rgba2, _, _, skipped2) = renderer
+        .bake_page_counting(&device, &queue, scope, &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!(skipped2, 0);
+    assert_eq!(
+        rgba, rgba2,
+        "forget_scope + re-horneado cambió el resultado a 2000²"
+    );
+}
+
+/// El doc tipo-17 bajo presión de atlas: el bug real necesitaba el renderer
+/// compartido con las vecinas de la baraja. Se hornean primero 8 documentos
+/// grandes con blur en scopes ajenos (medido en GPU real: el atlas es de
+/// 4096² y esta secuencia ya provoca evictions, que vello re-sube bien) y
+/// luego el doc tipo-17 en su scope: los laterales deben seguir pintando
+/// aunque vello tenga que evictar para hacer sitio. Si este test falla en
+/// una GPU, el mecanismo transitorio del informe está confirmado y el guard
+/// sigue ciego ante él.
+#[test]
+#[ignore = "requiere GPU"]
+fn bake_17png_doc_under_atlas_pressure_keeps_sides() {
+    let (device, queue) = gpu_device();
+    let mut renderer = CanvasRenderer::new(&device).unwrap();
+
+    // Vecinas: página completa con blur sobre degradado 2000², un scope
+    // distinto cada una (como las ranuras de la baraja).
+    for s in 0u64..8 {
+        let (ndoc, nimages) = doc_with_blur_image(2000, 2000, 20.0);
+        bake(
+            &mut renderer,
+            &device,
+            &queue,
+            FxScope(100 + s),
+            &ndoc,
+            &nimages,
+            1.0,
+        );
+    }
+
+    let (doc, images) = square_17png_doc();
+    let (w, h) = (1920u32, 1080u32);
+    let (rgba, bw, bh, skipped) = renderer
+        .bake_page_counting(&device, &queue, FxScope(17), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!((bw, bh), (w, h));
+    assert_eq!(
+        skipped, 0,
+        "ninguna capa debe omitirse con el mapa completo"
+    );
+
+    // Mismo criterio que el test sin presión: laterales con blur, no blancos.
+    let mid = h / 2;
+    for (x0, x1) in [(0, 420), (1500, 1920)] {
+        let uniq = row_unique_colors(&rgba, w, mid, x0, x1);
+        assert!(
+            uniq > 20,
+            "el lateral {x0}..{x1} salió plano bajo presión ({uniq} colores) — fondo perdido"
+        );
+    }
+
+    // Determinismo bajo presión: la premisa del doble horneado de
+    // verificación (plan-partial-bake-guard.md) — re-hornear de inmediato
+    // da bytes idénticos aunque haya habido evictions.
+    let (rgba2, _, _, _) = renderer
+        .bake_page_counting(&device, &queue, FxScope(17), &doc, &images, 1.0)
+        .unwrap();
+    assert_eq!(
+        rgba, rgba2,
+        "el re-horneado bajo presión difiere — inestabilidad real"
+    );
+}

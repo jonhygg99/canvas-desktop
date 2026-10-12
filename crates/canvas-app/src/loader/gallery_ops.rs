@@ -20,67 +20,81 @@ use super::{AppMsg, GalleryOp};
 /// `AppMsg::GalleryOpDone`.
 pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let (folder, created, result): (PathBuf, Option<PathBuf>, Result<(), IoError>) = match op {
+        let (folder, created, result, warning): (
+            PathBuf,
+            Option<PathBuf>,
+            Result<(), IoError>,
+            Option<String>,
+        ) = match op {
             GalleryOp::Duplicate { path } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
                 match duplicate_into(&path, &folder, true) {
-                    Ok(dst) => (folder, Some(dst), Ok(())),
-                    Err(e) => (folder, None, Err(e)),
+                    Ok(dst) => (folder, Some(dst), Ok(()), None),
+                    Err(e) => (folder, None, Err(e), None),
                 }
             }
             GalleryOp::CopyInto { src, folder } => {
                 let same_folder = src.parent() == Some(folder.as_path());
                 match duplicate_into(&src, &folder, same_folder) {
-                    Ok(dst) => (folder, Some(dst), Ok(())),
-                    Err(e) => (folder, None, Err(e)),
+                    Ok(dst) => (folder, Some(dst), Ok(()), None),
+                    Err(e) => (folder, None, Err(e), None),
                 }
             }
             GalleryOp::Rename { path, new_stem } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
                 match rename_with_sidecar(&path, &new_stem) {
-                    Ok(dst) => (folder, Some(dst), Ok(())),
-                    Err(e) => (folder, None, Err(e)),
+                    Ok(dst) => (folder, Some(dst), Ok(()), None),
+                    Err(e) => (folder, None, Err(e), None),
                 }
             }
             GalleryOp::Delete { path } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
-                match trash_with_sidecar(&path) {
-                    Ok(()) => (folder, None, Ok(())),
-                    Err(e) => (folder, None, Err(e)),
-                }
+                let outcome = trash_with_sidecar(&path);
+                (folder, None, outcome.result, outcome.warning)
             }
             GalleryOp::Quarantine { path } => {
                 let folder = path.parent().map(PathBuf::from).unwrap_or_default();
                 match canvas_io::move_to_quarantine(&path) {
-                    Ok(_) => (folder, None, Ok(())),
-                    Err(e) => (folder, None, Err(e)),
+                    Ok(_) => (folder, None, Ok(()), None),
+                    Err(e) => (folder, None, Err(e), None),
                 }
             }
             GalleryOp::CreateFolder { parent, name } => {
                 let path = parent.join(&name);
                 match std::fs::create_dir(&path) {
-                    Ok(()) => (parent, Some(path.clone()), Ok(())),
-                    Err(source) => (parent, None, Err(canvas_io::IoError::Io { path, source })),
+                    Ok(()) => (parent, Some(path.clone()), Ok(()), None),
+                    Err(source) => (
+                        parent,
+                        None,
+                        Err(canvas_io::IoError::Io { path, source }),
+                        None,
+                    ),
                 }
             }
             GalleryOp::RenameFolder { path, new_name } => {
                 let parent = path.parent().map(PathBuf::from).unwrap_or_default();
                 let dst = parent.join(&new_name);
                 match std::fs::rename(&path, &dst) {
-                    Ok(()) => (parent, Some(dst), Ok(())),
-                    Err(source) => (parent, None, Err(canvas_io::IoError::Io { path, source })),
+                    Ok(()) => (parent, Some(dst), Ok(()), None),
+                    Err(source) => (
+                        parent,
+                        None,
+                        Err(canvas_io::IoError::Io { path, source }),
+                        None,
+                    ),
                 }
             }
             GalleryOp::DeleteFolder { path } => {
                 let parent = path.parent().map(PathBuf::from).unwrap_or_default();
                 match trash::delete(&path) {
-                    Ok(()) => (parent, None, Ok(())),
+                    Ok(()) => (parent, None, Ok(()), None),
                     Err(e) => (
                         parent,
                         None,
                         Err(canvas_io::IoError::Message {
                             message: e.to_string(),
                         }),
+                        None,
                     ),
                 }
             }
@@ -89,6 +103,7 @@ pub fn spawn_gallery_op(op: GalleryOp, open: bool, tx: Sender<AppMsg>, ctx: egui
             folder,
             created,
             result,
+            warning,
             open,
         }));
         ctx.request_repaint();
@@ -118,15 +133,21 @@ pub fn spawn_document_rename(
 /// desde la cabecera de un lienzo de fondo.
 pub fn spawn_document_delete(path: PathBuf, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let result = trash_locally_with_sidecar(&path);
-        let _ = tx.send(AppMsg::DocumentDeleted { path, result });
+        let outcome = trash_locally_with_sidecar(&path);
+        let _ = tx.send(AppMsg::DocumentDeleted {
+            path,
+            result: outcome.result,
+            warning: outcome.warning,
+        });
         ctx.request_repaint();
     });
 }
 
 /// Restaura de la papelera del proyecto `path` (y `sidecar`, si lo tenía) a
 /// su ubicación original — deshacer un `GlobalStep::Delete`. El sidecar es
-/// mejor esfuerzo (solo se avisa por log si falla, no aborta el resto).
+/// independiente: si no se puede restaurar, el archivo sí vuelve y el fallo
+/// viaja como aviso (las capas siguen en la papelera), nunca como error de
+/// la operación principal.
 pub fn spawn_restore_from_trash(
     path: PathBuf,
     sidecar: Option<PathBuf>,
@@ -134,13 +155,26 @@ pub fn spawn_restore_from_trash(
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = restore_one(&path);
+        let outcome = restore_one(&path);
+        let mut warning = outcome.warning;
         if let Some(sidecar) = &sidecar {
-            if let Err(e) = restore_one(sidecar) {
-                tracing::warn!("no se pudo restaurar el sidecar: {e}");
+            let side_out = restore_one(sidecar);
+            if side_out.result.is_err() {
+                if let Err(e) = side_out.result {
+                    warning = Some(format!(
+                        "\"{}\" was restored, but its editable layers could not be brought back ({e}). They are still in the project trash.",
+                        path.display()
+                    ));
+                }
+            } else if let Some(w) = side_out.warning {
+                warning = Some(w);
             }
         }
-        let _ = tx.send(AppMsg::DocumentRestored { path, result });
+        let _ = tx.send(AppMsg::DocumentRestored {
+            path,
+            result: outcome.result,
+            warning,
+        });
         ctx.request_repaint();
     });
 }

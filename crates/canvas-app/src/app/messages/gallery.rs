@@ -128,6 +128,7 @@ impl AppInner {
             folder,
             created,
             result,
+            warning,
             open,
         } = op;
         ws.ignore_fs_events_until =
@@ -179,6 +180,16 @@ impl AppInner {
                     if g.folder == folder {
                         g.op_error = Some(e.to_string());
                     }
+                }
+            }
+        }
+        // Operación a medias: lo principal salió, el sidecar no. Se muestra
+        // en el mismo banner que los errores porque el usuario tiene que
+        // saber que sus capas editables no se fueron con el archivo.
+        if let Some(warning) = warning {
+            if let View::Gallery(g) = &mut ws.view {
+                if g.folder == folder {
+                    g.op_error = Some(warning);
                 }
             }
         }

@@ -68,13 +68,25 @@ pub(super) fn duplicate_into(
     Ok(dst)
 }
 
+/// Deja el sidecar de `src` junto al archivo renombrado `dst`: asegura la
+/// carpeta `.canvas` de `folder` (un sidecar hermano legacy necesita que
+/// exista) y renombra dentro de ella. Error tipado: el llamador revierte el
+/// rename de la imagen con este error, así que tiene que sobrevivir al viaje
+/// hasta el banner sin pasar por `String`.
+fn move_sidecar_next_to(folder: &Path, src: &Path, dst: &Path) -> Result<(), IoError> {
+    canvas_io::ensure_sidecar_dir(folder)?;
+    let dst_sidecar = canvas_io::sidecar_path(dst);
+    std::fs::rename(src, &dst_sidecar).map_err(|source| IoError::Write {
+        path: dst_sidecar,
+        message: format!("moviendo el sidecar de capas editables: {source}"),
+    })
+}
+
 /// Cambia el nombre base de `path` a `new_stem`, conservando su extensión
 /// original. Si el destino ya existe se rechaza en vez de sobrescribir:
 /// `std::fs::rename` en Windows usa `MOVEFILE_REPLACE_EXISTING`, así que sin
 /// este chequeo previo un nombre repetido perdería el archivo que ya
-/// hubiera ahí en silencio. Si `path` es una imagen con sidecar, lo
-/// renombra también (mejor esfuerzo: un fallo ahí no deshace el renombrado
-/// principal, solo se registra).
+/// hubiera ahí en silencio.
 pub(super) fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf, IoError> {
     let folder = path.parent().map(PathBuf::from).unwrap_or_default();
     let (_, ext) = split_name(path);
@@ -95,17 +107,67 @@ pub(super) fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf
     })?;
     if canvas_io::is_image_file(path) {
         if let Some(src_sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = canvas_io::ensure_sidecar_dir(&folder) {
-                tracing::warn!("no se pudo preparar la carpeta de sidecars: {e}");
-            } else {
-                let dst_sidecar = canvas_io::sidecar_path(&dst);
-                if let Err(e) = std::fs::rename(&src_sidecar, &dst_sidecar) {
-                    tracing::warn!("no se pudo renombrar el sidecar: {e}");
-                }
+            // Las capas editables tienen que acabar junto al archivo nuevo.
+            // Cualquier fallo en el camino — crear `.canvas` o renombrar el
+            // sidecar — deja la imagen ya renombrada sin ellas, así que los
+            // dos pasos comparten el mismo deshacer.
+            if let Err(e) = move_sidecar_next_to(&folder, &src_sidecar, &dst) {
+                // Rollback: devolver la imagen a su nombre original. Si
+                // tampoco se puede, informar al usuario en vez de callar.
+                let rollback = std::fs::rename(&dst, path);
+                return Err(match rollback {
+                    Ok(()) => IoError::Message {
+                        message: format!(
+                            "\"{}\" was renamed but its editable layers could not be moved: {e}. The file keeps its original name.",
+                            path.display()
+                        ),
+                    },
+                    Err(back) => IoError::Message {
+                        message: format!(
+                            "\"{}\" is now \"{}\" but its editable layers are still in the old sidecar \"{}\" and could not be moved ({e}), and the rename could not be undone ({back}).",
+                            path.display(),
+                            dst.display(),
+                            src_sidecar.display()
+                        ),
+                    },
+                });
             }
         }
     }
     Ok(dst)
+}
+
+/// Resultado de una operación sobre la pareja imagen + sidecar: lo que pasó
+/// con el archivo principal y, si la parte editable falló SIN poder deshacer
+/// la principal, el texto que hay que enseñar al usuario.
+///
+/// Existe porque esas operaciones son a medias por naturaleza: la imagen ya
+/// se ha movido cuando el sidecar falla, así que no se puede devolver error
+/// sin mentir (la operación principal SÍ ocurrió) ni `Ok` sin más (el usuario
+/// creería que se llevó también las capas editables). Antes el fallo del
+/// sidecar solo se registraba en el log.
+#[derive(Debug)]
+pub(super) struct PairOutcome {
+    pub result: Result<(), IoError>,
+    pub warning: Option<String>,
+}
+
+impl PairOutcome {
+    /// Operación principal completada, sin nada que avisar.
+    fn ok() -> Self {
+        Self {
+            result: Ok(()),
+            warning: None,
+        }
+    }
+
+    /// Operación principal completada, con un aviso sobre el sidecar.
+    fn warned(message: String) -> Self {
+        Self {
+            result: Ok(()),
+            warning: Some(message),
+        }
+    }
 }
 
 /// Envía `path` (y su sidecar, si es una imagen que tiene uno) a la
@@ -113,18 +175,25 @@ pub(super) fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf
 /// equivoca, a diferencia de un borrado permanente. Usado por el borrado
 /// desde la GALERÍA (`GalleryOp::Delete`) — ese no tiene deshacer, así que
 /// sí le compensa depender de la papelera real del sistema.
-pub(super) fn trash_with_sidecar(path: &Path) -> Result<(), IoError> {
-    trash::delete(path).map_err(|e| IoError::Message {
-        message: e.to_string(),
-    })?;
-    if canvas_io::is_image_file(path) {
-        if let Some(sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = trash::delete(&sidecar) {
-                tracing::warn!("no se pudo borrar el sidecar: {e}");
-            }
-        }
+pub(super) fn trash_with_sidecar(path: &Path) -> PairOutcome {
+    if let Err(e) = trash::delete(path) {
+        return PairOutcome {
+            result: Err(IoError::Message {
+                message: e.to_string(),
+            }),
+            warning: None,
+        };
     }
-    Ok(())
+    let Some(sidecar) = sidecar_of(path) else {
+        return PairOutcome::ok();
+    };
+    match trash::delete(&sidecar) {
+        Ok(()) => PairOutcome::ok(),
+        Err(e) => PairOutcome::warned(format!(
+            "\"{}\" went to the Recycle Bin, but its editable layers could not be removed from the design folder ({e}). They are still there if you restore the file.",
+            path.display()
+        )),
+    }
 }
 
 /// Mueve `path` (y su sidecar, si es una imagen que tiene uno) a la
@@ -133,19 +202,61 @@ pub(super) fn trash_with_sidecar(path: &Path) -> Result<(), IoError> {
 /// editor/cabecera de un lienzo), y restaurar con un `rename` no depende de
 /// ninguna API de plataforma (a diferencia de `trash::os_limited`, que en
 /// macOS no existe).
-pub(super) fn trash_locally_with_sidecar(path: &Path) -> Result<(), IoError> {
-    canvas_io::move_to_local_trash(path)?;
-    if canvas_io::is_image_file(path) {
-        if let Some(sidecar) = canvas_io::find_sidecar(path) {
-            if let Err(e) = canvas_io::move_to_local_trash(&sidecar) {
-                tracing::warn!("no se pudo mover el sidecar a la papelera: {e}");
-            }
-        }
+pub(super) fn trash_locally_with_sidecar(path: &Path) -> PairOutcome {
+    if let Err(e) = canvas_io::move_to_local_trash(path) {
+        return PairOutcome {
+            result: Err(e),
+            warning: None,
+        };
     }
-    Ok(())
+    let Some(sidecar) = sidecar_of(path) else {
+        return PairOutcome::ok();
+    };
+    match canvas_io::move_to_local_trash(&sidecar) {
+        Ok(_) => PairOutcome::ok(),
+        Err(e) => PairOutcome::warned(format!(
+            "\"{}\" went to the project trash, but its editable layers could not be moved with it ({e}). Undo will bring back the file only.",
+            path.display()
+        )),
+    }
 }
 
-pub(super) fn restore_one(original: &Path) -> Result<(), IoError> {
-    let staged = canvas_io::local_trash_path(original);
-    canvas_io::restore_from_local_trash(&staged, original)
+/// Restaura `original` desde la papelera del proyecto. Busca la entrada
+/// trasteada por nombre, porque `move_to_local_trash` desambigua: si el
+/// archivo se trasteó dos veces, el original puede estar como `foto.png` o
+/// como `foto 2.png`.
+///
+/// El llamador restaura la imagen y el sidecar por separado: lo que falle en
+/// el sidecar viaja como `warning`, para que el usuario sepa que el archivo
+/// volvió sin sus capas editables (que siguen en la papelera).
+pub(super) fn restore_one(original: &Path) -> PairOutcome {
+    let Some(staged) = canvas_io::find_trashed_entry(original) else {
+        return PairOutcome {
+            result: Err(IoError::Message {
+                message: format!(
+                    "nothing was found in the trash for \"{}\"",
+                    original.display()
+                ),
+            }),
+            warning: None,
+        };
+    };
+    match canvas_io::restore_from_local_trash(&staged, original) {
+        Ok(()) => PairOutcome::ok(),
+        Err(e) => PairOutcome {
+            result: Err(e),
+            warning: None,
+        },
+    }
 }
+
+/// Sidecar de `path` si es una imagen que lo tiene.
+fn sidecar_of(path: &Path) -> Option<PathBuf> {
+    canvas_io::is_image_file(path)
+        .then(|| canvas_io::find_sidecar(path))
+        .flatten()
+}
+
+#[cfg(test)]
+#[path = "file_ops_tests.rs"]
+mod file_ops_tests;

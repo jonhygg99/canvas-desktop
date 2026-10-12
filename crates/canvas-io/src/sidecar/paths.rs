@@ -46,6 +46,50 @@ pub fn find_sidecar(image_path: &Path) -> Option<PathBuf> {
     legacy.is_file().then_some(legacy)
 }
 
+/// Nombre desambiguado número `n` de `original`: `nombre 2.ext`,
+/// `nombre 3.ext`… (con `n == 1` devuelve el nombre tal cual). Dueña ÚNICA
+/// de la regla de nombres: la usan `free_name_in` (elegir un destino libre)
+/// y `find_trashed_entry` (buscar la copia trasteada), que deben generar
+/// siempre los mismos nombres.
+pub fn numbered_name(original: &Path, n: u32) -> String {
+    let name = original
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_owned());
+    if n <= 1 {
+        return name;
+    }
+    let stem = original
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or(name);
+    let ext = original
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{stem} {n}{ext}")
+}
+
+/// Tope del desambiguado: con 10 000 copias del mismo nombre en una carpeta
+/// de proyecto ya hay un problema mayor que el nombre.
+pub const MAX_NAME_SUFFIX: u32 = 10_000;
+
+/// Nombre libre dentro de `dir` para `original`: el mismo nombre si está
+/// libre, y si no `nombre 2.ext`, `nombre 3.ext`… (los `rename` de Windows
+/// SOBRESCRIBEN el destino, así que «mover» sin desambiguar destruiría lo
+/// que ya hubiera ahí). Compartido por la cuarentena y la papelera del
+/// proyecto: ambas apartan archivos con nombres que el usuario puede volver
+/// a crear.
+pub fn free_name_in(dir: &Path, original: &Path) -> PathBuf {
+    for n in 1..=MAX_NAME_SUFFIX {
+        let candidate = dir.join(numbered_name(original, n));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(numbered_name(original, MAX_NAME_SUFFIX))
+}
+
 /// Crea `<folder>/.canvas` si no existe y, en Windows, la marca oculta con
 /// `FILE_ATTRIBUTE_HIDDEN` — el prefijo `.` del nombre no oculta nada ahí, a
 /// diferencia de Unix. Solo marca el atributo justo cuando ACABA de crear la

@@ -51,6 +51,7 @@ impl AppInner {
         ws: &mut Workspace,
         path: PathBuf,
         result: Result<(), canvas_io::IoError>,
+        warning: Option<String>,
         open_after: &mut Option<Nav>,
     ) {
         let mut go_to_welcome = false;
@@ -122,6 +123,13 @@ impl AppInner {
                 failed_kind: None,
             };
         }
+        // El archivo se trasteó pero su sidecar no pudo acompañarlo: hay que
+        // decírselo, porque el deshacer solo traerá el archivo.
+        if let Some(warning) = warning {
+            if let View::Editor(state) = &mut ws.view {
+                state.save_error = Some(warning);
+            }
+        }
     }
 
     pub(super) fn on_document_restored(
@@ -129,6 +137,7 @@ impl AppInner {
         ws: &mut Workspace,
         path: PathBuf,
         result: Result<(), canvas_io::IoError>,
+        warning: Option<String>,
         ctx: &egui::Context,
     ) {
         match result {
@@ -158,6 +167,12 @@ impl AppInner {
                     state.save_error =
                         Some(format!("Could not restore \"{}\": {e}", path.display()));
                 }
+            }
+        }
+        // El archivo volvió; sus capas editables siguen en la papelera.
+        if let Some(warning) = warning {
+            if let View::Editor(state) = &mut ws.view {
+                state.save_error = Some(warning);
             }
         }
     }

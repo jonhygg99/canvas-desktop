@@ -63,8 +63,8 @@ use crate::gallery::ItemKind;
 use crate::settings::GallerySort;
 
 use super::{
-    bake_came_out_blank_or_incomplete, has_raster_layers, resolve_canvas_sidecar,
-    save_all_doc_count, should_warn_low_memory, start_save_all_flow,
+    bake_came_out_blank_or_incomplete, bakes_match, doc_needs_bake_verify, has_raster_layers,
+    resolve_canvas_sidecar, save_all_doc_count, should_warn_low_memory, start_save_all_flow,
 };
 
 /// Documento de 100×100 con una capa de imagen visible 50×50.
@@ -202,6 +202,84 @@ fn raster_layers_presence_by_table() {
     for (i, (doc, expected)) in cases.iter().enumerate() {
         assert_eq!(has_raster_layers(doc), *expected, "caso {i}");
     }
+}
+
+// ——— doc_needs_bake_verify + bakes_match: doble horneado solo con riesgo GPU ———
+
+/// Documento de 100×100 con una capa de imagen visible de `nw×nh` naturales.
+fn doc_with_sized_image(nw: u32, nh: u32) -> Document {
+    let mut doc = Document::new(100.0, 100.0);
+    doc.add_layer(
+        "img",
+        Transform::new(0.0, 0.0, 50.0, 50.0),
+        LayerContent::Image(ImageContent {
+            source_path: None,
+            natural_width: nw,
+            natural_height: nh,
+            crop: None,
+        }),
+    )
+    .expect("añadir capa");
+    doc
+}
+
+#[test]
+fn bake_verify_flag_by_table() {
+    // Blur activo en foto pequeña → sí (textura de efectos en el atlas).
+    let blur = {
+        let mut doc = doc_with_sized_image(4, 2);
+        doc.layer_mut(doc.page().unwrap().layers[0].id)
+            .unwrap()
+            .effects
+            .blur_radius = 50.0;
+        doc
+    };
+    // Ajuste de color sin blur → sí (también pasa por el pipeline GPU).
+    let color = {
+        let mut doc = doc_with_sized_image(4, 2);
+        doc.layer_mut(doc.page().unwrap().layers[0].id)
+            .unwrap()
+            .effects
+            .brightness = 0.5;
+        doc
+    };
+    // Foto grande sin efectos → sí (puede desbordar el atlas).
+    let big = doc_with_sized_image(2000, 2000);
+    // Foto pequeña sin efectos → no (no hay nada que vello pueda soltar).
+    let small = doc_with_sized_image(4, 2);
+    // Capa de riesgo pero oculta → no.
+    let hidden = {
+        let mut doc = doc_with_sized_image(2000, 2000);
+        doc.layer_mut(doc.page().unwrap().layers[0].id)
+            .unwrap()
+            .visible = false;
+        doc
+    };
+    // Solo vector → no.
+    let vector = Document::new(100.0, 100.0);
+
+    let cases = [
+        (&blur, true),
+        (&color, true),
+        (&big, true),
+        (&small, false),
+        (&hidden, false),
+        (&vector, false),
+    ];
+    for (i, (doc, expected)) in cases.iter().enumerate() {
+        assert_eq!(doc_needs_bake_verify(doc), *expected, "caso {i}");
+    }
+}
+
+#[test]
+fn bakes_match_needs_identical_bytes() {
+    let a = vec![1u8, 2, 3, 4];
+    assert!(bakes_match(&a, &a.clone()), "idénticos → sí");
+    let mut one_off = a.clone();
+    one_off[2] = 9;
+    assert!(!bakes_match(&a, &one_off), "1 byte distinto → no");
+    assert!(!bakes_match(&a, &[1, 2, 3]), "longitud distinta → no");
+    assert!(bakes_match(&[], &[]), "vacíos → sí");
 }
 
 // ——— Save All: aviso de poca RAM ———

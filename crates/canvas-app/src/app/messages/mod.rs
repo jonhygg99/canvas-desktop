@@ -218,12 +218,16 @@ impl AppInner {
             AppMsg::DocumentRenamed { old_path, result } => {
                 self.on_document_renamed(ws, old_path, result)
             }
-            AppMsg::DocumentDeleted { path, result } => {
-                self.on_document_deleted(ws, path, result, open_after)
-            }
-            AppMsg::DocumentRestored { path, result } => {
-                self.on_document_restored(ws, path, result, ctx)
-            }
+            AppMsg::DocumentDeleted {
+                path,
+                result,
+                warning,
+            } => self.on_document_deleted(ws, path, result, warning, open_after),
+            AppMsg::DocumentRestored {
+                path,
+                result,
+                warning,
+            } => self.on_document_restored(ws, path, result, warning, ctx),
             AppMsg::FocusWindow => self.on_focus_window(ctx),
             AppMsg::ShellIntegrationDone(result) => self.on_shell_integration_done(result),
             AppMsg::OpenPathExternal(path) => self.on_open_path_external(ctx, path),

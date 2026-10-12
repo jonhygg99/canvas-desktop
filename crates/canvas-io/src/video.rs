@@ -18,14 +18,9 @@ pub fn media_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-const HARDCODED_FFMPEG_DIR: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp";
-const HARDCODED_FFMPEG_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\ffmpeg.exe";
-const HARDCODED_FFPROBE_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\ffprobe.exe";
-
-fn exe_exists(p: &str) -> bool {
-    Path::new(p).is_file()
-}
-
+/// Variables de entorno que pueden apuntar al directorio de ffmpeg/ffprobe
+/// (o al propio ejecutable). Sin rutas fijas en el binario: en un build de
+/// release el único origen es el entorno del usuario o el PATH del sistema.
 fn env_ffmpeg_dir() -> Option<PathBuf> {
     for key in ["CANVAS_FFMPEG_DIR", "CANVAS_YTDLP_DIR", "YTDLP_PATH"] {
         if let Ok(v) = std::env::var(key) {
@@ -64,12 +59,6 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
             return Some(dir);
         }
     }
-    if exe_exists(HARDCODED_FFMPEG_EXE) {
-        return Some(PathBuf::from(HARDCODED_FFMPEG_EXE));
-    }
-    if exe_exists(&format!("{HARDCODED_FFMPEG_DIR}\\ffmpeg")) {
-        return Some(PathBuf::from(format!("{HARDCODED_FFMPEG_DIR}\\ffmpeg")));
-    }
     // Fallback a PATH
     let probe = media_command("ffmpeg").arg("-version").output();
     if probe.is_ok_and(|o| o.status.success()) {
@@ -89,7 +78,7 @@ pub fn ffprobe_path() -> Option<PathBuf> {
             return Some(cand2);
         }
         if dir.is_file() {
-            // env era ffmpeg.exe -> probar ffprobe en mismo dir
+            // env era ffprobe.exe/ffmpeg.exe -> probar ffprobe en mismo dir
             if let Some(parent) = dir.parent() {
                 let c = parent.join("ffprobe.exe");
                 if c.is_file() {
@@ -97,9 +86,6 @@ pub fn ffprobe_path() -> Option<PathBuf> {
                 }
             }
         }
-    }
-    if exe_exists(HARDCODED_FFPROBE_EXE) {
-        return Some(PathBuf::from(HARDCODED_FFPROBE_EXE));
     }
     let probe = media_command("ffprobe").arg("-version").output();
     if probe.is_ok_and(|o| o.status.success()) {
@@ -112,10 +98,9 @@ pub fn ffprobe_path() -> Option<PathBuf> {
 /// robustez ante rotación.
 pub fn probe_video_size(path: &Path) -> Result<(u32, u32, Option<f64>), IoError> {
     let ffprobe = ffprobe_path().ok_or_else(|| IoError::Message {
-        message: format!(
-            "ffprobe not found (tried {} and PATH). Install ffmpeg or set CANVAS_FFMPEG_DIR",
-            HARDCODED_FFPROBE_EXE
-        ),
+        message: "ffprobe not found (tried CANVAS_FFMPEG_DIR/CANVAS_YTDLP_DIR and PATH). \
+             Install ffmpeg or set CANVAS_FFMPEG_DIR"
+            .to_owned(),
     })?;
     let out = media_command(&ffprobe)
         .args([
@@ -211,10 +196,9 @@ pub fn probe_video_size(path: &Path) -> Result<(u32, u32, Option<f64>), IoError>
 /// Extrae un frame como `LoadedImage` vía `ffmpeg -ss t -i input -vframes 1 png pipe`.
 pub fn load_video_frame(path: &Path, time_secs: f64) -> Result<LoadedImage, IoError> {
     let ffmpeg = ffmpeg_path().ok_or_else(|| IoError::Message {
-        message: format!(
-            "ffmpeg not found (tried {} and PATH). Install ffmpeg or set CANVAS_FFMPEG_DIR",
-            HARDCODED_FFMPEG_EXE
-        ),
+        message: "ffmpeg not found (tried CANVAS_FFMPEG_DIR/CANVAS_YTDLP_DIR and PATH). \
+             Install ffmpeg or set CANVAS_FFMPEG_DIR"
+            .to_owned(),
     })?;
     let t = time_secs.max(0.0);
     let time_str = format!("{t:.3}");

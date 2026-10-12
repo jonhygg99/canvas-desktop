@@ -47,14 +47,16 @@ pub use io::{
     delete_sidecar, read_design, read_preview, read_sidecar, write_blank_canvas, write_design,
     write_sidecar,
 };
-pub use paths::{ensure_sidecar_dir, find_sidecar, sidecar_dir, sidecar_path, SIDECAR_DIR};
+pub use paths::{
+    ensure_sidecar_dir, find_sidecar, free_name_in, sidecar_dir, sidecar_path, SIDECAR_DIR,
+};
 pub use payload::{
     blank_design, fnv1a64, make_preview, preview_scale, CanvasPayload, LayerPixels,
     RestoredDocument,
 };
 pub use quarantine::{move_to_quarantine, quarantine_dir, restore_from_quarantine};
 pub use trash::{
-    local_trash_path, move_to_local_trash, purge_local_trash, restore_from_local_trash, trash_dir,
+    find_trashed_entry, move_to_local_trash, purge_local_trash, restore_from_local_trash, trash_dir,
 };
 
 /// Versión del formato. v2 añadió capas de texto/forma/SVG; v3 añade capas

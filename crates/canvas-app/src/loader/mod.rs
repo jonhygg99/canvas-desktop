@@ -88,6 +88,10 @@ pub struct GalleryOpOutcome {
     /// rescanear; ausente si la operación falló.
     pub created: Option<PathBuf>,
     pub result: Result<(), IoError>,
+    /// Aviso de una operación a medias: la principal salió bien, pero la
+    /// parte editable (sidecar de capas) no. La UI lo muestra para que el
+    /// usuario no crea que se llevó también las capas.
+    pub warning: Option<String>,
     /// Si venía de «✚ New design», abre el archivo recién creado.
     pub open: bool,
 }
@@ -312,12 +316,18 @@ pub enum AppMsg {
     DocumentDeleted {
         path: PathBuf,
         result: Result<(), IoError>,
+        /// El archivo se trasteó, pero su sidecar de capas editables no
+        /// pudo acompañarlo: el deshacer traerá solo el archivo.
+        warning: Option<String>,
     },
     /// Se restauró `path` desde la Papelera de reciclaje al deshacer un
     /// `GlobalStep::Delete` (`editor::EditorState::pending_restore`).
     DocumentRestored {
         path: PathBuf,
         result: Result<(), IoError>,
+        /// El archivo volvió, pero sus capas editables siguen en la
+        /// papelera (no se pudieron restaurar).
+        warning: Option<String>,
     },
     /// Respuesta del diálogo «¿guardar los cambios?» de una ventana o de
     /// una navegación. El modal corre en un hilo aparte a propósito:

@@ -4,10 +4,10 @@
 //! `SIDECAR_DIR` entero); a diferencia de `trash.rs`, NADA la purga al
 //! salir de la carpeta — solo el usuario la vacía o restaura.
 //!
-//! Difiere de `trash.rs` en un punto: si ya hay un archivo con ese nombre
-//! en cuarentena (se cuarentenó, se restauró una copia con el mismo
-//! nombre y volvió a fallar), se desambigua con `nombre 2.ext`, … en vez
-//! de fallar el `rename`.
+//! Difiere de `trash.rs` en un punto: la papelera se purga al salir de la
+//! carpeta y esta no. Ambas comparten la desambiguación de nombres
+//! (`free_name_in`), porque en las dos el usuario puede volver a crear un
+//! archivo con el mismo nombre y el `rename` sobrescribiría el antiguo.
 
 use std::path::{Path, PathBuf};
 
@@ -24,30 +24,7 @@ pub fn quarantine_dir(folder: &Path) -> PathBuf {
 /// `nombre 2.ext`, … si ya existe algo ahí. No crea nada.
 fn free_quarantine_path(original: &Path) -> PathBuf {
     let folder = original.parent().unwrap_or_else(|| Path::new(""));
-    let dir = quarantine_dir(folder);
-    let name = original
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".to_owned());
-    let candidate = dir.join(&name);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let stem = original
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| name.clone());
-    let ext = original
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
-    for n in 2..10_000u32 {
-        let candidate = dir.join(format!("{stem} {n}{ext}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    dir.join(format!("{stem} {}.{ext}", 10_000))
+    super::free_name_in(&quarantine_dir(folder), original)
 }
 
 /// Mueve `path` a la cuarentena del proyecto (creándola si hace falta) y

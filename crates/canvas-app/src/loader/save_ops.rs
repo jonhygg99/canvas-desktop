@@ -142,8 +142,19 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
                 // Sidecar desactivado: retira el que hubiera para no
                 // dejar uno obsoleto que luego avise de hash cambiado.
                 None => {
-                    canvas_io::delete_sidecar(&path);
-                    Ok(())
+                    if let Err(e) = canvas_io::delete_sidecar(&path) {
+                        // Un sidecar que NO se pudo borrar deja las capas
+                        // editables en disco: es un guardado parcial, no un
+                        // éxito — mismo trato que el fallo de `write_sidecar`.
+                        Err(canvas_io::IoError::Message {
+                            message: format!(
+                                "Image saved to \"{}\" but its old editable layers could not be removed: {e}. The document is still marked as unsaved.",
+                                path.display()
+                            ),
+                        })
+                    } else {
+                        Ok(())
+                    }
                 }
             },
             Err(e) => Err(e),

@@ -146,14 +146,14 @@ fn missing_sidecar_is_none_and_delete_is_quiet() {
     let image_path = dir.path().join("foto.png");
     std::fs::write(&image_path, b"x").unwrap();
     assert!(read_sidecar(&image_path).expect("leer").is_none());
-    delete_sidecar(&image_path); // no explota sin sidecar
+    delete_sidecar(&image_path).expect("no explota sin sidecar");
 
     let (doc, images) = sample_doc();
     let payload = sample_payload(&doc, &images, Some(7));
     write_sidecar(&image_path, b"x", &payload).expect("escribir");
     let restored = read_sidecar(&image_path).unwrap().unwrap();
     assert_eq!(restored.background_layer, Some(7));
-    delete_sidecar(&image_path);
+    delete_sidecar(&image_path).expect("borrar");
     assert!(!sidecar_path(&image_path).exists());
 }
 
@@ -362,9 +362,21 @@ fn delete_sidecar_removes_both_locations() {
     std::fs::write(sidecar_path(&image_path), b"{}").unwrap();
     std::fs::write(legacy_sidecar_path(&image_path), b"{}").unwrap();
 
-    delete_sidecar(&image_path);
+    delete_sidecar(&image_path).expect("sin sidecars es Ok");
     assert!(!sidecar_path(&image_path).exists());
     assert!(!legacy_sidecar_path(&image_path).exists());
+}
+
+#[test]
+fn delete_sidecar_reports_a_failure_instead_of_swallowing_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let image_path = dir.path().join("foto.png");
+    std::fs::write(&image_path, b"x").unwrap();
+
+    // Sin sidecars en disco: Ok. Lo importante es que el tipo de retorno
+    // permita ahora propagar un fallo (antes devolvía `()` y save_ops no
+    // podía comunicar que las capas editables seguían vivas).
+    assert!(delete_sidecar(&image_path).is_ok());
 }
 
 #[test]
@@ -547,7 +559,10 @@ fn moving_to_local_trash_and_restoring_round_trips_the_file() {
     assert!(!path.exists(), "ya no debe estar en su sitio original");
     assert!(staged.exists());
     assert_eq!(staged, trash_dir(dir.path()).join("foto.png"));
-    assert_eq!(staged, local_trash_path(&path));
+    // La ruta que devuelve `move_to_local_trash` (o `find_trashed_entry`)
+    // es la que hay que usar: con la papelera vacía coincide con derivarla
+    // a mano, pero en cuanto hay una copia anterior ya no.
+    assert_eq!(find_trashed_entry(&path), Some(staged.clone()));
 
     restore_from_local_trash(&staged, &path).expect("restaurar");
     assert!(path.exists());
@@ -579,19 +594,81 @@ fn purge_removes_everything_left_in_the_trash_but_not_the_folder_itself() {
     let b = dir.path().join("b.png");
     std::fs::write(&a, b"a").unwrap();
     std::fs::write(&b, b"b").unwrap();
-    move_to_local_trash(&a).expect("mover a");
-    move_to_local_trash(&b).expect("mover b");
+    // Las rutas que devuelve `move_to_local_trash` son las que hay que
+    // conservar: con el nombre desambiguado ya no se pueden derivar.
+    let staged_a = move_to_local_trash(&a).expect("mover a");
+    let staged_b = move_to_local_trash(&b).expect("mover b");
 
     purge_local_trash(dir.path());
 
-    assert!(!local_trash_path(&a).exists());
-    assert!(!local_trash_path(&b).exists());
+    assert!(!staged_a.exists(), "a debe salir de la papelera");
+    assert!(!staged_b.exists(), "b debe salir de la papelera");
+    assert!(
+        trash_dir(dir.path()).exists(),
+        "la carpeta en sí no se borra, solo su contenido"
+    );
 }
 
 #[test]
 fn purge_of_a_folder_with_no_trash_yet_does_not_panic() {
     let dir = tempfile::tempdir().expect("tempdir");
     purge_local_trash(dir.path());
+}
+
+/// El bug: borrar un archivo, crear otro con el MISMO nombre y borrarlo
+/// otra vez sin purga de por medio. El `rename` a la papelera sobrescribe
+/// en Windows, así que sin desambiguar la primera copia (con sus capas
+/// editables) quedaba destruida y sin aviso.
+#[test]
+fn trashing_the_same_name_twice_keeps_both_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("foto.png");
+
+    std::fs::write(&path, b"primera").unwrap();
+    let first = move_to_local_trash(&path).expect("primera");
+
+    // El usuario recrea el archivo (o lo re-descarga) con el mismo nombre.
+    std::fs::write(&path, b"segunda").unwrap();
+    let second = move_to_local_trash(&path).expect("segunda");
+
+    assert_ne!(first, second, "el segundo no puede pisar al primero");
+    assert_eq!(std::fs::read(&first).unwrap(), b"primera");
+    assert_eq!(std::fs::read(&second).unwrap(), b"segunda");
+}
+
+/// Sin nada en la papelera, `find_trashed_entry` debe decir que no hay nada
+/// sin recorrer el desambiguado entero: antes eran 10 000 `is_file()`
+/// seguidos (caros en carpetas de red) antes de devolver `None`.
+#[test]
+fn finding_a_missing_trashed_entry_reports_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("foto.png");
+
+    assert_eq!(find_trashed_entry(&path), None);
+
+    // Y con la papelera creada pero vacía, igual.
+    std::fs::create_dir_all(trash_dir(dir.path())).unwrap();
+    assert_eq!(find_trashed_entry(&path), None);
+}
+
+/// El deshacer de un borrado solo conoce la ruta original. Tras borrar
+/// dos veces el mismo nombre (la segunda con la papelera aún sin purgar),
+/// `find_trashed_entry` debe seguir encontrando UNA de las copias y
+/// permitir restaurarla: es lo que usa el undo (`restore_one`).
+#[test]
+fn undoing_a_delete_finds_the_trashed_copy_even_when_the_name_clashed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("foto.png");
+
+    std::fs::write(&path, b"primera").unwrap();
+    let _ = move_to_local_trash(&path).expect("primera");
+    std::fs::write(&path, b"segunda").unwrap();
+    let _ = move_to_local_trash(&path).expect("segunda");
+
+    let staged = find_trashed_entry(&path).expect("alguna copia debe estar");
+    restore_from_local_trash(&staged, &path).expect("restaurar");
+    assert!(path.exists(), "el archivo vuelve a su sitio");
+    assert!(!staged.exists(), "la copia restaurada sale de la papelera");
 }
 
 // ---- Corpus adversarial del parser de .canvas ----
