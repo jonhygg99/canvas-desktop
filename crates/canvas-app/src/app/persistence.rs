@@ -422,7 +422,22 @@ pub(super) fn start_save_design(
     state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
     *sctx.ignore_fs_events_until =
         Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-    loader::spawn_save_design(path, payload, new_source, sctx.tx.clone(), sctx.ctx.clone());
+    let reserve = state.canvas_name.is_some() && state.born_blank && !new_source;
+    loader::spawn_save_design(
+        loader::DesignSaveRequest {
+            target: loader::ImageInsertDest {
+                generation: sctx.scope,
+                slot_id: state.active_slot_id,
+            },
+            capture: state.saving_capture.expect("captured above"),
+            path,
+            payload,
+            reserve,
+            new_source,
+        },
+        sctx.tx.clone(),
+        sctx.ctx.clone(),
+    );
 }
 
 /// Lo pedido en el diálogo de exportación ya resuelto: destino, ajustes y

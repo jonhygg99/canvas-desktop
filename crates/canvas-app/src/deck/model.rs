@@ -42,6 +42,7 @@ pub enum SlotContent {
 /// a medias: `EditorState::is_idle()` garantiza que están vacíos en el
 /// instante del intercambio, así que no hace falta transportarlos.
 pub struct SlotDoc {
+    pub canvas_name: Option<String>,
     pub doc: Document,
     pub history: History,
     pub images: ImageMap,

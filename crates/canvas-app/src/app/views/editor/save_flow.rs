@@ -26,6 +26,9 @@ pub(super) fn handle_save(
     f: &mut EditorFrame<'_>,
     open_next: &mut Option<Nav>,
 ) {
+    if state.saving || state.exporting || f.save.save_path_dialog_open {
+        return;
+    }
     // Guardar / Guardar como: botones del panel o atajos de teclado (el
     // orden importa: Ctrl+Shift+S primero).
     let save_as = std::mem::take(&mut state.save_as_clicked)
@@ -90,7 +93,7 @@ pub(super) fn handle_save(
             // avisar, ni SVG/GIF que redirigir, así que se saltan ambos
             // modales.
             match state.doc.source_path.clone() {
-                Some(path) => {
+                Some(path) if canvas_io::is_canvas_file(&path) => {
                     let mut sctx = SaveContext {
                         renderer: f.renderer,
                         rs,
@@ -101,7 +104,7 @@ pub(super) fn handle_save(
                     };
                     start_save_design(state, &mut sctx, path, false);
                 }
-                None => {
+                _ => {
                     f.save.save_path_dialog_open = true;
                     loader::spawn_pick_design_path(
                         Some(state.file_name()),
@@ -221,8 +224,7 @@ pub(super) fn handle_save(
                 Some(request) => {
                     // Composición a un mp4 (nuevo o el propio origen): el
                     // diálogo ya eligió el destino. Mismo sello A04 que el
-                    // guardado raster para no marcar como guardadas las
-                    // ediciones que lleguen durante el renderizado.
+                    // guardado raster para conservar cambios posteriores.
                     render_video_composition_to(state, f, ctx, path, request);
                 }
                 None => {
@@ -314,10 +316,10 @@ fn is_video_document(state: &editor::EditorState) -> bool {
 /// ese nombre y se adopta. Un mp4 suelto abierto directo va por diálogo: es el
 /// único original y no se destruye sin avisar.
 fn video_save_in_place(state: &editor::EditorState, f: &EditorFrame<'_>) -> Option<PathBuf> {
-    f.deck.folder.as_ref()?;
     let slot = f.deck.slots.get(f.deck.active)?;
     let request = video_composition_request(state)?;
     if slot.is_placeholder {
+        f.deck.folder.as_ref()?;
         // Primer guardado: el nombre reservado es el destino y el temporal es
         // el origen. Sin origen en disco no hay nada que renderizar.
         if !request.src.is_file() || !canvas_io::is_video_file(&slot.path) {
@@ -326,6 +328,10 @@ fn video_save_in_place(state: &editor::EditorState, f: &EditorFrame<'_>) -> Opti
         return Some(slot.path.clone());
     }
     let src = state.doc.source_path.clone()?;
+    // Un vídeo suelto sin sidecar sigue siendo el único original: diálogo.
+    if f.deck.folder.is_none() && request.src == src {
+        return None;
+    }
     if slot.path != src || !src.is_file() {
         return None;
     }
@@ -379,19 +385,23 @@ fn render_video_composition_to(
     state.saving = true;
     state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
     state.save_error = None;
-    loader::spawn_render_video_composition(
-        canvas_io::VideoComposition {
-            src: request.src,
-            start_s: request.start_s,
-            end_s: request.end_s,
-            page_w: request.page_w,
-            page_h: request.page_h,
-            fg_x: request.fg_x,
-            fg_y: request.fg_y,
-            fg_w: request.fg_w,
-            fg_h: request.fg_h,
-            bg_blur: request.bg_blur,
-            dst,
+    let target = loader::ImageInsertDest {
+        generation: f.deck.generation(),
+        slot_id: f.deck.slots.get(f.deck.active).map_or(0, |s| s.id),
+    };
+    let reserve = f
+        .deck
+        .slots
+        .get(f.deck.active)
+        .is_some_and(|s| s.is_placeholder && s.path == dst)
+        && f.deck.folder.is_some();
+    loader::spawn_video_save(
+        loader::VideoSaveRequest {
+            target,
+            capture: state.saving_capture.expect("captured above"),
+            payload: state.sidecar_payload(),
+            reserve,
+            composition: request.into_composition(dst),
         },
         f.tx.clone(),
         ctx.clone(),

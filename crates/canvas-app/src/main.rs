@@ -29,6 +29,7 @@ mod layers_panel;
 mod loader;
 mod lock;
 mod menus;
+mod naming;
 mod paste_hook;
 mod serper;
 mod settings;

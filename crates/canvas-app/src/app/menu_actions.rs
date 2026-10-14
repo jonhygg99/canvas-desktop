@@ -185,7 +185,7 @@ impl AppInner {
             A::Paste => {
                 if let View::Editor(state) = &mut ws.view {
                     tracing::debug!("paste disparado por menú");
-                    if !clipboard::paste(state) {
+                    if !clipboard::paste(state, ws.deck.folder.as_deref()) {
                         state.save_error = Some(clipboard::PASTE_EMPTY_MSG.to_owned());
                     }
                 }

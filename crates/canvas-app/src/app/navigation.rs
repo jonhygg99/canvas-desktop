@@ -215,6 +215,14 @@ impl AppInner {
 
     /// Aplica una navegación diferida sobre un workspace.
     pub(crate) fn navigate(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
+        if matches!(&ws.view, View::Editor(state) if !state.is_idle())
+            || ws.save.save_path_dialog_open
+            || ws.save.pending_save_as.is_some()
+            || !ws.save.save_all_queue.is_empty()
+        {
+            ws.deferred_nav.push_back(nav);
+            return;
+        }
         match nav {
             Nav::Open(path) => self.open_path(ws, path, ctx),
             Nav::OpenGallery { path, navigation } => {
@@ -265,6 +273,19 @@ impl AppInner {
     /// navegación/cierre diferidos solo se ejecutan cuando la cola se vacía
     /// (A05): con varios sucios ya no se pierde el fondo en silencio.
     pub(crate) fn request_nav(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
+        if matches!(&ws.view, View::Editor(state) if !state.is_idle())
+            || ws.save.save_path_dialog_open
+            || ws.save.pending_save_as.is_some()
+            || !ws.save.save_all_queue.is_empty()
+        {
+            ws.deferred_nav.push_back(nav);
+            return;
+        }
+        // Añadir conserva todos los documentos: no es una salida destructiva.
+        if matches!(nav, Nav::OpenVideo { .. } | Nav::OpenVideos { .. }) {
+            self.navigate(ws, nav, ctx);
+            return;
+        }
         let names = ws.dirty_canvas_names();
         if names.is_empty() {
             self.navigate(ws, nav, ctx);

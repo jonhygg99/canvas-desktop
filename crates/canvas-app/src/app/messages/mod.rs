@@ -27,6 +27,7 @@ mod save;
 mod serper;
 mod shell;
 mod unsplash;
+mod video_save;
 mod ytdlp;
 
 impl AppInner {
@@ -107,15 +108,22 @@ impl AppInner {
             AppMsg::FilePicked(None) | AppMsg::FolderPicked(None) => {}
             AppMsg::SaveAsPicked(path) => {
                 ws.save.save_path_dialog_open = false;
+                if path.is_none() {
+                    ws.save.save_all_queue.clear();
+                    ws.save.save_all_attempted = false;
+                    ws.save.after_save = None;
+                    ws.save.close_after_save = false;
+                }
                 ws.save.pending_save_as = path;
             }
+            AppMsg::DesignSaved(done) => self.on_design_saved(ws, *done, ctx, open_after),
             AppMsg::Saved {
                 path,
                 result,
                 new_source,
             } => self.on_saved(ws, path, result, new_source, ctx, open_after),
-            AppMsg::VideoCompositionRendered { dst, result } => {
-                self.on_video_composition_rendered(ws, dst, result, ctx, open_after)
+            AppMsg::VideoCompositionRendered(done) => {
+                self.on_video_composition_rendered(ws, *done, ctx, open_after)
             }
             AppMsg::UnsavedDialogAnswer(decision) => {
                 self.on_unsaved_dialog_answer(ws, decision, open_after, ctx)

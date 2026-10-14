@@ -46,7 +46,7 @@ pub(super) fn show(
 fn actions(
     state: &mut editor::EditorState,
     ui: &mut egui::Ui,
-    f: &EditorFrame<'_>,
+    f: &mut EditorFrame<'_>,
 ) -> Option<menus::MenuAction> {
     let mut action = None;
     let busy = state.saving || state.exporting || state.framing.is_some();
@@ -61,6 +61,7 @@ fn actions(
             if state.is_design {
                 state.save_clicked = true;
             } else {
+                f.save.save_path_dialog_open = true;
                 loader::spawn_pick_design_path(
                     Some(state.file_name()),
                     f.tx.clone(),

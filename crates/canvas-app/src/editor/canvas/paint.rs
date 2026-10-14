@@ -93,8 +93,30 @@ pub(super) fn paint(
         renderer.evict_fx_to_budget(budget, FxScope(active_slot.scope));
     }
 
-    if let Err(e) = surface.render(rs, renderer, surface.scene_ref()) {
-        tracing::error!("fallo renderizando el lienzo: {e}");
+    // Cortacircuitos GPU (ver `CanvasSurface`): con la GPU muerta no se le
+    // envía más trabajo — se enseña la última textura buena y la barra de
+    // estado avisa. Sin esto, un device enfermo recibe envíos cada frame
+    // hasta que egui-wgpu aborta en su staging belt (crash del 2026-10-14).
+    // La sonda periódica reintenta un render real cada ~5 s: si la GPU se
+    // recuperó (hipo transitorio del driver), se reanuda solo.
+    if surface.gpu_dead() {
+        if surface.gpu_probe_due() {
+            match surface.render(rs, renderer, surface.scene_ref()) {
+                Ok(()) => surface.record_probe(true),
+                Err(e) => {
+                    tracing::debug!("sonda GPU tras el corte sigue fallando: {e}");
+                    surface.record_probe(false);
+                }
+            }
+        }
+    } else {
+        match surface.render(rs, renderer, surface.scene_ref()) {
+            Ok(()) => surface.record_render(true),
+            Err(e) => {
+                tracing::error!("fallo renderizando el lienzo: {e}");
+                surface.record_render(false);
+            }
+        }
     }
 
     ui.painter().image(

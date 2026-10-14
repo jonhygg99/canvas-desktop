@@ -335,7 +335,20 @@ pub fn export_video_composition(comp: &VideoComposition) -> Result<VideoRenderIn
             "128k".to_owned(),
         ]);
     }
-    let tmp = comp.dst.with_extension("exporting");
+    let dir = comp
+        .dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let tmp = tempfile::Builder::new()
+        .prefix(".canvas-video-")
+        .suffix(".exporting")
+        .tempfile_in(dir)
+        .map_err(|source| IoError::Io {
+            path: comp.dst.clone(),
+            source,
+        })?
+        .into_temp_path();
     args.push(tmp.to_string_lossy().into_owned());
     let out = media_command(&ffmpeg)
         .args(&args)

@@ -171,7 +171,7 @@ pub(super) fn encode_payload(
         image_hash,
         background_layer: payload.background_layer,
         preview_png,
-        document: payload.document.clone(),
+        document: crate::video_sources::portable_document(&payload.document, path),
         images: encoded,
     };
     let json = serde_json::to_vec_pretty(&file).map_err(|e| IoError::Encode {

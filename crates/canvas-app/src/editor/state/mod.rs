@@ -40,6 +40,8 @@ mod sidecar_tests;
 pub(crate) use history::{DeleteRecord, GlobalStep};
 
 pub struct EditorState {
+    /// Nombre del lienzo independiente de la fuente de lectura del vídeo.
+    pub(crate) canvas_name: Option<String>,
     pub(crate) framing: Option<crate::framing::Session>,
     pub(crate) framing_requested: bool,
     pub(crate) saved_framing: Option<canvas_core::framing::Framing>,
@@ -232,6 +234,9 @@ pub enum DeckNav {
 
 impl EditorState {
     pub fn file_name(&self) -> String {
+        if let Some(name) = &self.canvas_name {
+            return name.clone();
+        }
         self.doc
             .source_path
             .as_deref()
@@ -255,6 +260,10 @@ impl EditorState {
     /// llegue" — si eso cambiase a mitad de guardado, marcaría como
     /// guardado el documento EQUIVOCADO.
     pub(crate) fn is_idle(&self) -> bool {
+        !self.saving && self.is_idle_except_save()
+    }
+
+    pub(crate) fn is_idle_except_save(&self) -> bool {
         matches!(self.gesture, Gesture::None)
             && self.inline_text.is_none()
             && self
@@ -270,7 +279,6 @@ impl EditorState {
             && self.shadow_edit.is_none()
             && self.rename_edit.is_none()
             && self.file_rename_edit.is_none()
-            && !self.saving
             && !self.exporting
             && self.framing.as_ref().is_none_or(|session| !session.busy())
     }
@@ -297,6 +305,7 @@ impl EditorState {
             source_metadata: self.source_metadata.take(),
             saving: self.saving,
             saving_capture: self.saving_capture.take(),
+            canvas_name: self.canvas_name.take(),
             save_error: self.save_error.take(),
             external_change: self.external_change,
             born_blank: self.born_blank,
@@ -323,6 +332,7 @@ impl EditorState {
         self.source_metadata = slot.source_metadata;
         self.saving = slot.saving;
         self.saving_capture = slot.saving_capture;
+        self.canvas_name = slot.canvas_name;
         self.save_error = slot.save_error;
         self.external_change = slot.external_change;
         self.born_blank = slot.born_blank;

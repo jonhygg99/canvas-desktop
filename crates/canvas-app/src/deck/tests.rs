@@ -38,6 +38,7 @@ fn seed(paths: &[&str]) -> DeckSeed {
 
 fn blank_slot_doc(w: f64, h: f64) -> SlotDoc {
     SlotDoc {
+        canvas_name: None,
         doc: Document::new(w, h),
         history: History::default(),
         images: ImageMap::new(),

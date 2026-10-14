@@ -1,7 +1,7 @@
 //! Diálogo de exportación (File > Export…): formato, escala 1x/2x/3x y
 //! calidad JPEG. La orquestación (hornear/generar SVG, escribir a disco)
-//! vive en `main.rs` (`start_export`) y `loader.rs` (los hilos de trabajo),
-//! siguiendo el mismo reparto de trabajo que el guardado normal.
+//! vive en `app/persistence.rs` (`start_export`) y `loader/` (los hilos de
+//! trabajo), siguiendo el mismo reparto de trabajo que el guardado normal.
 
 use canvas_io::ExportFormat;
 use eframe::egui;

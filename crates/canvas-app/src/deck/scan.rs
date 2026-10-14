@@ -33,9 +33,16 @@ impl Deck {
             return None;
         }
         let is_design = ext == canvas_io::CANVAS_EXTENSION;
+        // En una carpeta con nombre la provisional ya enseña el esquema
+        // final (`edwin-luna-04.png`); sin carpeta, lo heredado.
         let path = self.folder.as_ref().map_or_else(
             || PathBuf::from(format!("Untitled {}.{ext}", self.next_id)),
-            |folder| canvas_io::peek_numbered_path(folder, ext, self.next_id),
+            |folder| {
+                crate::naming::folder_stem(Some(folder)).map_or_else(
+                    || canvas_io::peek_numbered_path(folder, ext, self.next_id),
+                    |stem| canvas_io::peek_stem_numbered_path(folder, &stem, ext, self.next_id),
+                )
+            },
         );
         let mut state = if is_design {
             crate::editor::EditorState::new_blank(page.0, page.1)

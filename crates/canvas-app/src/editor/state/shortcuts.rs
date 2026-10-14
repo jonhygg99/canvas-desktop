@@ -136,7 +136,8 @@ impl EditorState {
                 por_evento = event_paste,
                 "paste disparado por atajo"
             );
-            if !crate::clipboard::paste(self) {
+            let folder = self.from_gallery.clone();
+            if !crate::clipboard::paste(self, folder.as_deref()) {
                 self.save_error = Some(crate::clipboard::PASTE_EMPTY_MSG.to_owned());
             }
         }

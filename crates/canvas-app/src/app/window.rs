@@ -134,6 +134,10 @@ impl AppInner {
             }
             return;
         }
+        if matches!(&ws.view, View::Editor(state) if state.saving || state.exporting) {
+            ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::CancelClose);
+            return;
+        }
         let names = ws.dirty_canvas_names();
         if names.is_empty() {
             ws.save.allow_close = true;

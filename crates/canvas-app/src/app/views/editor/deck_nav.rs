@@ -21,7 +21,7 @@ pub(super) fn resolve(
     canvas_action: Option<editor::CanvasAction>,
     pending_menu_action: &mut Option<menus::MenuAction>,
 ) {
-    if state.ytdlp.edit.is_some() {
+    if state.ytdlp.edit.is_some() || state.saving || state.exporting {
         return;
     }
     let mut deck_target = state.deck_nav.take().and_then(|nav| match nav {
@@ -69,7 +69,11 @@ pub(super) fn resolve(
                 .and_then(|index| f.deck.slots.get(index))
                 .is_some_and(|slot| slot.is_placeholder);
             if is_placeholder {
-                f.deck.discard_placeholder(id, state);
+                if let Err(error) =
+                    crate::app::video_canvas_names::rename_provisional(f.deck, state, id, &new_stem)
+                {
+                    state.save_error = Some(error);
+                }
             } else if is_active {
                 state.file_rename_requested = Some(new_stem);
             } else if let Some(path) = f

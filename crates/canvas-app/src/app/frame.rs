@@ -18,6 +18,9 @@ use crate::{deck, settings, watcher};
 use super::{DeckOps, ExportFlow, SaveFlow};
 
 pub(super) struct EditorFrame<'a> {
+    /// Ventana a la que pertenece este frame: identifica la foto de estado
+    /// del informe de crash cuando hay varias ventanas abiertas.
+    pub(super) viewport: eframe::egui::ViewportId,
     pub(super) deck: &'a mut deck::Deck,
     pub(super) renderer: &'a mut CanvasRenderer,
     pub(super) surface: &'a mut Option<CanvasSurface>,

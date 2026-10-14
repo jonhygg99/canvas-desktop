@@ -279,7 +279,73 @@ fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
         ui.separator();
         ui.label(egui::RichText::new(crate::i18n::tr("FX GPU")).weak());
         ui.label(format!("{} / {}", fmt_bytes(used), fmt_bytes(budget)));
+        gpu_health_ui(f, ui);
     });
+    note_app_context(f);
+}
+
+/// Refresca la foto de estado para el informe de crash cada ~4 s (240
+/// frames a 60 fps): ventana, vista, baraja, FX, RAM y salud GPU. Fuera de
+/// ese tick no cuesta nada; si la app muere, el informe dice qué estaba
+/// cargado y en qué ventana (el contador es global: con varias ventanas la
+/// última en escribir gana, pero cada foto lleva su ventana).
+fn note_app_context(f: &EditorFrame<'_>) {
+    static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    if TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 240 != 0 {
+        return;
+    }
+    let loaded = f
+        .deck
+        .slots
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.content,
+                deck::SlotContent::Ready(_) | deck::SlotContent::Active
+            )
+        })
+        .count();
+    let gpu = f.surface.as_ref().map_or_else(
+        || "sin superficie".to_owned(),
+        |surface| {
+            format!(
+                "racha={} cortado={}",
+                surface.gpu_fail_streak(),
+                surface.gpu_dead()
+            )
+        },
+    );
+    crate::crash_log::set_app_context(format!(
+        "ventana={:?} vista=editor ranuras={} cargadas={} fx={}/{} ram_libre={:?} gpu={gpu}",
+        f.viewport,
+        f.deck.slots.len(),
+        loaded,
+        f.renderer.fx_total_bytes(),
+        canvas_render::resolve_fx_budget(deck::total_physical_ram_bytes(), deck::free_ram_bytes()),
+        deck::free_ram_bytes(),
+    ));
+}
+
+/// Salud del render vello en la barra de estado: en operación normal no
+/// pinta nada; con fallos seguidos avisa en ámbar y con el corte disparado
+/// en rojo (ver `CanvasSurface`: el lienzo enseña la última textura buena).
+fn gpu_health_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
+    let Some(surface) = f.surface.as_ref() else {
+        return;
+    };
+    if surface.gpu_dead() {
+        ui.separator();
+        ui.colored_label(
+            ui.visuals().error_fg_color,
+            "GPU renderer halted — save your work and restart the app",
+        );
+    } else if surface.gpu_fail_streak() > 0 {
+        ui.separator();
+        ui.colored_label(
+            egui::Color32::from_rgb(230, 170, 50),
+            format!("GPU errors ×{}", surface.gpu_fail_streak()),
+        );
+    }
 }
 
 /// Formatea bytes para la barra de estado: GiB con un decimal, MiB entero,

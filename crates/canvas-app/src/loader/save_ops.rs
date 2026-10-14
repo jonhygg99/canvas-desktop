@@ -9,43 +9,29 @@ use eframe::egui;
 
 use super::AppMsg;
 
-/// Reserva atómicamente (`create_new`, vía `canvas_io::reserve_numbered_path`)
-/// un nombre libre en `folder` para una ranura provisional que el usuario
-/// acaba de empezar a editar. En un hilo por disciplina: en una unidad de
-/// red con cientos de lienzos numerados ya creados, el bucle de reserva sí
-/// se nota, y la UI no espera nunca al disco.
+/// Reserva atómicamente (`create_new`) un nombre libre en `folder` para una
+/// ranura provisional que el usuario acaba de empezar a editar: con `stem`
+/// (slug de la carpeta) reserva `{stem}-NN.{ext}`; sin él, el `N.{ext}`
+/// heredado. En un hilo por disciplina: en una unidad de red con cientos
+/// de lienzos numerados ya creados, el bucle de reserva sí se nota, y la UI
+/// no espera nunca al disco.
 pub fn spawn_reserve_canvas_path(
     folder: PathBuf,
+    stem: Option<String>,
     slot: u64,
     ext: String,
     tx: Sender<AppMsg>,
     ctx: egui::Context,
 ) {
     std::thread::spawn(move || {
-        let result = canvas_io::reserve_numbered_path(&folder, &ext);
+        let result = stem.map_or_else(
+            || canvas_io::reserve_numbered_path(&folder, &ext),
+            |stem| canvas_io::reserve_stem_numbered_path(&folder, &stem, &ext),
+        );
         let _ = tx.send(AppMsg::CanvasPathReserved {
             folder,
             slot,
             result,
-        });
-        ctx.request_repaint();
-    });
-}
-
-/// Reescribe (atómico) un diseño autónomo en `path`, sin rasterizar nada.
-pub fn spawn_save_design(
-    path: PathBuf,
-    payload: CanvasPayload,
-    new_source: bool,
-    tx: Sender<AppMsg>,
-    ctx: egui::Context,
-) {
-    std::thread::spawn(move || {
-        let result = canvas_io::write_design(&path, &payload);
-        let _ = tx.send(AppMsg::Saved {
-            path,
-            result,
-            new_source,
         });
         ctx.request_repaint();
     });
@@ -233,26 +219,6 @@ pub fn spawn_pick_video_export_path(
         }
         let picked = dialog.save_file();
         let _ = tx.send(AppMsg::SaveAsPicked(picked));
-        ctx.request_repaint();
-    });
-}
-
-/// Renderiza la composición de un lienzo de vídeo en un hilo de trabajo; el
-/// resultado vuelve como `VideoCompositionRendered` con duración y tamaño
-/// (los necesita quien guarda en el sitio para resetear el trim y re-anclar
-/// la capa al archivo entero). Hilo de fondo por disciplina: renderizar tarda
-/// segundos y la UI no espera nunca ni al disco ni a ffmpeg.
-pub fn spawn_render_video_composition(
-    comp: canvas_io::VideoComposition,
-    tx: Sender<AppMsg>,
-    ctx: egui::Context,
-) {
-    std::thread::spawn(move || {
-        let result = canvas_io::export_video_composition(&comp);
-        let _ = tx.send(AppMsg::VideoCompositionRendered {
-            dst: comp.dst,
-            result,
-        });
         ctx.request_repaint();
     });
 }

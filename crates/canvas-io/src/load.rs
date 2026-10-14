@@ -199,6 +199,29 @@ pub fn reserve_bulk_path(
     ext: &str,
     start: usize,
 ) -> Result<PathBuf, IoError> {
+    reserve_stem_from(folder, stem, ext, start)
+}
+
+/// Como `reserve_numbered_path`, pero con el esquema `{stem}-{n:02}.{ext}`
+/// (`edwin-luna-01.png`, `edwin-luna-02.png`…): el `stem` es el slug de la
+/// carpeta del proyecto, así el archivo ya nace con el nombre que el
+/// usuario espera. Misma reserva atómica (`create_new`) que el resto.
+/// La búsqueda arranca en 1: el primer lienzo de una carpeta vacía es
+/// `{stem}-01.{ext}`.
+pub fn reserve_stem_numbered_path(
+    folder: &Path,
+    stem: &str,
+    ext: &str,
+) -> Result<PathBuf, IoError> {
+    reserve_stem_from(folder, stem, ext, 1)
+}
+
+fn reserve_stem_from(
+    folder: &Path,
+    stem: &str,
+    ext: &str,
+    start: usize,
+) -> Result<PathBuf, IoError> {
     for n in start.max(1)..=start.max(1).saturating_add(10_000) {
         let candidate = folder.join(format!("{stem}-{n:02}.{ext}"));
         match OpenOptions::new()
@@ -222,6 +245,58 @@ pub fn reserve_bulk_path(
     })
 }
 
+/// Reserva el destino de un primer guardado a partir de la ruta deseada con
+/// el esquema `{tallo}-NN.{ext}`: primero intenta la ruta tal cual con
+/// `create_new` (el caso común, ya ojeada; gana la carrera contra otra
+/// ventana o proceso) y, si está ocupada, itera el esquema desde el número
+/// deseado. Nunca devuelve el `nombre 2.ext` de `reserve_unique_path`, que
+/// ningún otro camino de la app genera ni enseña en la interfaz.
+pub fn reserve_dest_path(desired: &Path) -> Result<PathBuf, IoError> {
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(desired)
+    {
+        Ok(_) => return Ok(desired.to_owned()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(source) => {
+            return Err(IoError::Write {
+                path: desired.to_owned(),
+                message: source.to_string(),
+            });
+        }
+    }
+    let folder = desired.parent().unwrap_or_else(|| Path::new("."));
+    let stem = desired
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
+    let ext = desired
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("mp4");
+    let (base, start) = split_trailing_number(stem);
+    reserve_stem_from(folder, base, ext, start)
+}
+
+/// `clip-edwin-luna-01` → (`clip-edwin-luna`, 1): base y número con el que
+/// arranca la búsqueda tras una colisión. Sin `-NN` final, el tallo entero
+/// con arranque en 1 (`clip` → `clip-01…`).
+fn split_trailing_number(stem: &str) -> (&str, usize) {
+    if let Some((base, digits)) = stem.rsplit_once('-') {
+        let is_number =
+            !base.is_empty() && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+        if is_number {
+            if let Ok(n) = digits.parse::<usize>() {
+                if n > 0 {
+                    return (base, n);
+                }
+            }
+        }
+    }
+    (stem, 1)
+}
+
 /// Como `peek_unique_path`, pero numerado (ver `reserve_numbered_path`). La
 /// búsqueda arranca en `hint` (normalmente el `next_id` de la baraja) en vez
 /// de en 1: así, si el usuario crea varias ranuras provisionales seguidas
@@ -235,6 +310,21 @@ pub fn peek_numbered_path(folder: &Path, ext: &str, hint: u64) -> PathBuf {
         }
     }
     folder.join(format!("{hint}.{ext}"))
+}
+
+/// Como `peek_numbered_path`, pero con el esquema `{stem}-{n:02}.{ext}`
+/// (ver `reserve_stem_numbered_path`): el vistazo que enseña la interfaz
+/// para un lienzo nuevo en una carpeta con nombre. Solo mira, no reserva.
+/// La búsqueda arranca en `hint` (el `next_id` de la baraja) para que dos
+/// provisionales seguidas no enseñen el mismo número.
+pub fn peek_stem_numbered_path(folder: &Path, stem: &str, ext: &str, hint: u64) -> PathBuf {
+    for n in 0..10_000u64 {
+        let candidate = folder.join(format!("{stem}-{:02}.{ext}", hint + n));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    folder.join(format!("{stem}-{hint:02}.{ext}"))
 }
 
 /// ¿`Ctrl+S` puede sobrescribir este archivo? Un SVG es vectorial (un lienzo
@@ -261,7 +351,10 @@ pub struct LoadedImage {
 /// Carga una imagen de disco respetando su orientación EXIF. Los SVG se
 /// rasterizan a su tamaño natural; de un GIF animado se toma el primer
 /// fotograma (comportamiento por defecto de `image`). Los videos se cargan
-/// como poster vía ffmpeg (frame 0).
+/// como poster vía ffmpeg (frame 0). La decodificación lleva las cotas de
+/// `image_decode_limits` (misma política que los PNG de capas): un archivo
+/// con dimensiones mentirosas se rechaza de entrada en vez de pedir
+/// gigabytes de memoria.
 pub fn load_image(path: &Path) -> Result<LoadedImage, IoError> {
     if is_video_file(path) {
         return crate::video::load_video_frame(path, 0.0);
@@ -273,10 +366,11 @@ pub fn load_image(path: &Path) -> Result<LoadedImage, IoError> {
     if is_svg {
         return crate::load_svg(path);
     }
-    let reader = image::ImageReader::open(path).map_err(|source| IoError::Open {
+    let mut reader = image::ImageReader::open(path).map_err(|source| IoError::Open {
         path: path.to_owned(),
         source,
     })?;
+    reader.limits(crate::png_codec::image_decode_limits());
     let decoded = reader
         .with_guessed_format()
         .map_err(|source| IoError::Open {
@@ -360,6 +454,45 @@ mod tests {
     fn load_missing_file_reports_path() {
         let err = load_image(Path::new("Z:/no/existe.png")).unwrap_err();
         assert!(err.to_string().contains("existe.png"));
+    }
+
+    /// PNG mínimo con dimensiones mentirosas (100000×100000 ≈ 40 GiB de
+    /// RGBA) y CRCs válidos, sin IDAT: el decoder debe rechazarlo por cota
+    /// al leer la cabecera, no intentar asignarlo.
+    fn inflated_dims_png() -> Vec<u8> {
+        fn crc32(data: &[u8]) -> u32 {
+            let mut crc = 0xFFFF_FFFFu32;
+            for &b in data {
+                crc ^= u32::from(b);
+                for _ in 0..8 {
+                    crc = if crc & 1 == 1 {
+                        (crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            !crc
+        }
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(b"IHDR");
+        ihdr.extend_from_slice(&100_000u32.to_be_bytes());
+        ihdr.extend_from_slice(&100_000u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(&ihdr);
+        png.extend_from_slice(&crc32(&ihdr).to_be_bytes());
+        png
+    }
+
+    #[test]
+    fn rejects_image_with_inflated_dimensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bomba.png");
+        std::fs::write(&path, inflated_dims_png()).expect("sembrar png");
+        let err = load_image(&path).unwrap_err();
+        assert!(err.to_string().contains("bomba.png"), "{err}");
     }
 
     #[test]
@@ -483,6 +616,36 @@ mod tests {
         let peeked = peek_numbered_path(dir.path(), "png", 5);
         assert_eq!(peeked, dir.path().join("6.png"));
         assert!(!peeked.exists());
+    }
+
+    #[test]
+    fn stem_numbered_paths_use_the_folder_slug_scheme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let peeked = peek_stem_numbered_path(dir.path(), "edwin-luna", "png", 3);
+        assert_eq!(peeked, dir.path().join("edwin-luna-03.png"));
+        assert!(!peeked.exists());
+        let reserved =
+            reserve_stem_numbered_path(dir.path(), "edwin-luna", "png").expect("primero");
+        assert_eq!(reserved, dir.path().join("edwin-luna-01.png"));
+        assert!(reserved.is_file());
+        // El vistazo salta lo ya reservado en disco.
+        let next = peek_stem_numbered_path(dir.path(), "edwin-luna", "png", 1);
+        assert_eq!(next, dir.path().join("edwin-luna-02.png"));
+    }
+
+    #[test]
+    fn reserve_dest_prefers_desired_then_stays_in_stem_scheme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let desired = dir.path().join("clip-edwin-luna-01.mp4");
+        // Libre: la reserva es el deseado tal cual (lo que enseñó la ranura).
+        let first = reserve_dest_path(&desired).expect("libre");
+        assert_eq!(first, desired);
+        assert!(first.is_file());
+        // Ocupado (otra ventana ganó la carrera): el esquema `-NN`, nunca
+        // el `nombre 2.ext` de `reserve_unique_path`.
+        let second = reserve_dest_path(&desired).expect("colisión");
+        assert_eq!(second, dir.path().join("clip-edwin-luna-02.mp4"));
+        assert!(second.is_file());
     }
 
     #[test]

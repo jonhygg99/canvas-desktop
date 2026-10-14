@@ -231,11 +231,48 @@ pub fn write_sidecar(
     image_bytes: &[u8],
     payload: &CanvasPayload,
 ) -> Result<(), IoError> {
+    write_sidecar_hash(image_path, fnv1a64(image_bytes), payload)
+}
+
+/// Hash FNV-1a en streaming (bloques de 64 KiB, memoria constante): un MP4
+/// de gigabytes nunca se asigna entero ni para escribir ni para contrastar
+/// su sidecar al reabrir.
+fn file_hash(path: &Path) -> Result<u64, IoError> {
+    let mut file = std::fs::File::open(path).map_err(|source| IoError::Open {
+        path: path.to_owned(),
+        source,
+    })?;
+    let mut buffer = [0u8; 64 * 1024];
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    loop {
+        let count = file.read(&mut buffer).map_err(|source| IoError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+        if count == 0 {
+            break;
+        }
+        for byte in &buffer[..count] {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    Ok(hash)
+}
+
+/// Vídeos grandes: calcular el hash en streaming, sin asignar el MP4 entero.
+pub fn write_video_sidecar(path: &Path, payload: &CanvasPayload) -> Result<(), IoError> {
+    write_sidecar_hash(path, file_hash(path)?, payload)
+}
+
+fn write_sidecar_hash(
+    image_path: &Path,
+    hash: u64,
+    payload: &CanvasPayload,
+) -> Result<(), IoError> {
     let folder = image_path.parent().unwrap_or_else(|| Path::new(""));
     ensure_sidecar_dir(folder)?;
     let path = sidecar_path(image_path);
-    let hash = Some(format!("{:016x}", fnv1a64(image_bytes)));
-    let json = encode_payload(&path, hash, payload)?;
+    let json = encode_payload(&path, Some(format!("{hash:016x}")), payload)?;
     write_atomic(&path, &json)?;
     let legacy = legacy_sidecar_path(image_path);
     if legacy.is_file() {
@@ -251,6 +288,12 @@ pub fn write_sidecar(
 
 /// Escribe (atómico) un diseño autónomo en `path`: sin imagen que contrastar.
 pub fn write_design(path: &Path, payload: &CanvasPayload) -> Result<(), IoError> {
+    if !crate::is_canvas_file(path) {
+        return Err(IoError::Write {
+            path: path.to_owned(),
+            message: "Canvas designs require a .canvas destination; nothing was written".into(),
+        });
+    }
     let json = encode_payload(path, None, payload)?;
     write_atomic(path, &json)
 }
@@ -264,13 +307,20 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
     let Some(path) = find_sidecar(image_path) else {
         return Ok(None);
     };
-    let Some((file, images)) = read_canvas_file(&path)? else {
+    let Some((mut file, images)) = read_canvas_file(&path)? else {
         return Ok(None);
     };
+    crate::video_sources::resolve_sources(&mut file.document, image_path);
     let standalone = file.image_hash.is_none();
-    let hash_matches = match (&file.image_hash, std::fs::read(image_path)) {
-        (Some(h), Ok(bytes)) => format!("{:016x}", fnv1a64(&bytes)) == *h,
-        _ => true,
+    // En streaming: el hermano puede ser un MP4 de gigabytes y `read`
+    // lo asignaría entero. Si ya no está en disco no hay nada que
+    // contrastar y sale en `true`, como antes.
+    let hash_matches = match &file.image_hash {
+        Some(h) => match file_hash(image_path) {
+            Ok(hash) => format!("{hash:016x}") == *h,
+            Err(_) => true,
+        },
+        None => true,
     };
     Ok(Some(RestoredDocument {
         document: file.document,
@@ -285,12 +335,13 @@ pub fn read_sidecar(image_path: &Path) -> Result<Option<RestoredDocument>, IoErr
 /// diseño ausente es un error real (no hay imagen hermana que abrir en su
 /// lugar).
 pub fn read_design(path: &Path) -> Result<RestoredDocument, IoError> {
-    let Some((file, images)) = read_canvas_file(path)? else {
+    let Some((mut file, images)) = read_canvas_file(path)? else {
         return Err(IoError::Open {
             path: path.to_owned(),
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "design file not found"),
         });
     };
+    crate::video_sources::resolve_sources(&mut file.document, path);
     Ok(RestoredDocument {
         document: file.document,
         images,

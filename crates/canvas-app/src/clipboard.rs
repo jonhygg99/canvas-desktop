@@ -184,18 +184,20 @@ fn select_ids(state: &mut EditorState, ids: &[LayerId]) {
 /// sistema cambió desde la última copia interna, se prueba primero él (ver
 /// `prefer_system`) — si no, "copiar una capa, luego copiar una imagen en
 /// el navegador, Ctrl+V" seguiría pegando la capa vieja. Devuelve `false`
-/// si no había nada que pegar en ningún sitio.
-pub fn paste(state: &mut EditorState) -> bool {
+/// si no había nada que pegar en ningún sitio. `folder` es la carpeta del
+/// proyecto (para nombrar la capa `edwin-luna-04`); sin carpeta la capa
+/// conserva el nombre heredado (`Pasted Image`).
+pub fn paste(state: &mut EditorState, folder: Option<&std::path::Path>) -> bool {
     let internal = slot().lock().ok().and_then(|s| s.clone());
     if let Some((json, slot_seq)) = &internal {
-        if prefer_system(*slot_seq, clipboard_sequence()) && paste_system(state) {
+        if prefer_system(*slot_seq, clipboard_sequence()) && paste_system(state, folder) {
             return true;
         }
         if paste_internal(state, json) {
             return true;
         }
     }
-    paste_system(state)
+    paste_system(state, folder)
 }
 
 fn paste_internal(state: &mut EditorState, json: &str) -> bool {
@@ -232,7 +234,7 @@ fn paste_internal(state: &mut EditorState, json: &str) -> bool {
     true
 }
 
-fn paste_system(state: &mut EditorState) -> bool {
+fn paste_system(state: &mut EditorState, folder: Option<&std::path::Path>) -> bool {
     let Some(img) = system_image() else {
         return false;
     };
@@ -241,8 +243,20 @@ fn paste_system(state: &mut EditorState) -> bool {
         alto = img.height,
         "paste pega imagen del sistema"
     );
-    state.add_image_layer("Pasted Image", None, img);
+    // Solo nombres en memoria: leer el disco aquí pararía el hilo de UI en
+    // carpetas de red (ver `next_pasted_name`).
+    let name = crate::naming::next_pasted_name(folder, layer_names(state));
+    state.add_image_layer(name, None, img);
     true
+}
+
+/// Nombres de las capas del documento, para el siguiente `-NN` libre.
+fn layer_names(state: &EditorState) -> Vec<String> {
+    state
+        .doc
+        .page()
+        .map(|page| page.layers.iter().map(|layer| layer.name.clone()).collect())
+        .unwrap_or_default()
 }
 
 /// Duplica la selección: copia en memoria (sin tocar la ranura de sesión,

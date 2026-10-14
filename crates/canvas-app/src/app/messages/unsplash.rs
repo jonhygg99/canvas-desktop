@@ -141,16 +141,34 @@ impl AppInner {
         }
         match result {
             Ok(img) => {
+                // La capa nueva sigue el esquema de la carpeta
+                // (`edwin-luna-04`); sin carpeta conserva la etiqueta.
+                let name = ws.deck.folder.as_deref().map_or_else(
+                    || label.clone(),
+                    |folder| {
+                        let layers = state
+                            .doc
+                            .page()
+                            .map(|page| {
+                                page.layers
+                                    .iter()
+                                    .map(|layer| layer.name.clone())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        crate::naming::next_image_name(folder, layers)
+                    },
+                );
                 // Si la foto llegó tras un ARRASTRE soltado sobre el lienzo,
                 // cae en la posición de la soltada; si no, centrada (clic).
                 if let Some((drop_id, pos)) = state.unsplash.pending_drop.take() {
                     if drop_id == id {
-                        state.add_image_layer_at(label, pos, img);
+                        state.add_image_layer_at(name, pos, img);
                     } else {
-                        state.add_image_layer(label, None, img);
+                        state.add_image_layer(name, None, img);
                     }
                 } else {
-                    state.add_image_layer(label, None, img);
+                    state.add_image_layer(name, None, img);
                 }
             }
             Err(e) => state.save_error = Some(format!("Unsplash: {e}")),

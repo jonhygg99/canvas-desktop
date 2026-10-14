@@ -64,6 +64,8 @@ pub(crate) struct Workspace {
     /// Un modal SINCRÓNICO dentro del pase de un viewport diferido congela
     /// todo el event loop multi-ventana — de ahí el hilo + canal.
     pub(crate) unsaved_dialog: Option<super::UnsavedDialog>,
+    /// Peticiones preservadas mientras el documento no admite intercambio.
+    pub(crate) deferred_nav: std::collections::VecDeque<super::Nav>,
     /// Identidad de la VENTANA NATIVA de este workspace. La raíz es
     /// `ViewportId::ROOT`; las hijas, un id derivado estable del id de
     /// workspace — `show_viewport_deferred` exige el MISO id cada frame.
@@ -114,6 +116,7 @@ impl Workspace {
             rx,
             close_requested: false,
             unsaved_dialog: None,
+            deferred_nav: std::collections::VecDeque::new(),
             viewport,
             geometry: None,
             geometry_seeded: false,

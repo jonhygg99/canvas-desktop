@@ -17,8 +17,10 @@ mod thumbs;
 mod verify;
 mod video;
 mod video_rate;
+mod video_sources;
 mod video_stream;
 pub use video_rate::probe_video_fps;
+pub use video_sources::{preserve_video_sources, VideoSourceLinks};
 
 pub use clipboard::{
     decode_layer_png, encode_layer_png, read_clipboard, write_clipboard, ClipboardDoc,
@@ -30,15 +32,17 @@ pub use framing::{
 };
 pub use load::{
     can_overwrite, is_canvas_file, is_image_file, is_media_file, is_standalone_design,
-    is_video_file, load_image, open_document, peek_numbered_path, peek_unique_path,
-    reserve_bulk_path, reserve_numbered_path, reserve_unique_path, LoadedImage, OpenOutcome,
-    CANVAS_EXTENSION, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
+    is_video_file, load_image, open_document, peek_numbered_path, peek_stem_numbered_path,
+    peek_unique_path, reserve_bulk_path, reserve_dest_path, reserve_numbered_path,
+    reserve_stem_numbered_path, reserve_unique_path, LoadedImage, OpenOutcome, CANVAS_EXTENSION,
+    IMAGE_EXTENSIONS, VIDEO_EXTENSIONS,
 };
 pub use metadata::{
     extract_metadata, extract_metadata_from_file, patch_orientation_to_1, reinject_metadata,
     ImageMetadata,
 };
 pub use mounts::{describe_read_dir_error, is_cloud_storage_path, read_dir_resilient};
+pub use png_codec::image_decode_limits;
 pub use probe::{probe_page_size, probe_page_size_with};
 pub use repair::{repair_png, RepairError};
 pub use save::{replace_file_with_tmp, save_format_from_path, save_rgba, write_atomic};
@@ -47,7 +51,8 @@ pub use sidecar::{
     move_to_local_trash, move_to_quarantine, preview_scale, purge_local_trash, quarantine_dir,
     read_design, read_preview, read_sidecar, restore_from_local_trash, restore_from_quarantine,
     sidecar_dir, sidecar_path, trash_dir, write_blank_canvas, write_design, write_sidecar,
-    CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM, SIDECAR_DIR,
+    write_video_sidecar, CanvasPayload, LayerPixels, RestoredDocument, PREVIEW_MAX_DIM,
+    SIDECAR_DIR,
 };
 pub use svg::load_svg;
 pub use thumbs::thumbnail;

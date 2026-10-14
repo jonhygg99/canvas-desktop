@@ -15,9 +15,21 @@ pub(super) fn handle_file_ops(
     ctx: &egui::Context,
     f: &mut EditorFrame<'_>,
 ) {
+    if state.saving || state.exporting {
+        return;
+    }
     // Renombrar/borrar el archivo abierto (lápiz junto al nombre / botón
     // «Delete» del panel).
     if let Some(new_stem) = state.file_rename_requested.take() {
+        let id = f.deck.slots.get(f.deck.active).map_or(0, |s| s.id);
+        match crate::app::video_canvas_names::rename_provisional(f.deck, state, id, &new_stem) {
+            Ok(true) => return,
+            Err(error) => {
+                state.save_error = Some(error);
+                return;
+            }
+            Ok(false) => {}
+        }
         if let Some(path) = state.doc.source_path.clone() {
             // Misma ventana de gracia que un guardado (`Saved` de éxito, más
             // abajo): se abre ANTES de lanzar la operación, no solo al
@@ -80,7 +92,8 @@ pub(super) fn handle_file_ops(
         let has_canvas_content = state.doc.page().is_ok_and(|page| !page.layers.is_empty());
         // Un lienzo de clip no se auto-materializa (ni en mp4 ni como diseño
         // Canvas): la ranura ya tiene su nombre final reservado
-        // (`clip (8).mp4`) y el primer `Ctrl+S` lo rellena con el render
+        // (`clip-edwin-luna-01.mp4`) y el primer `Ctrl+S` lo rellena con el
+        // render
         // editado; reservar otro archivo aquí duplicaría la ranura y
         // reescribiría el origen. Se mira el tipo de ranura, no el origen del
         // documento: un diseño Canvas de clip no enlaza ningún vídeo.
@@ -98,7 +111,8 @@ pub(super) fn handle_file_ops(
         {
             if let Some(folder) = f.deck.folder.clone() {
                 f.deck_ops.materializing = Some(id);
-                loader::spawn_reserve_canvas_path(folder, id, ext, f.tx.clone(), ctx.clone());
+                let stem = crate::naming::folder_stem(Some(&folder));
+                loader::spawn_reserve_canvas_path(folder, stem, id, ext, f.tx.clone(), ctx.clone());
             }
         }
     }

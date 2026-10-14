@@ -30,6 +30,7 @@ impl EditorState {
             )
         });
         Self {
+            canvas_name: None,
             saved_framing: doc
                 .source_path
                 .as_deref()

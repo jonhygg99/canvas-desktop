@@ -359,6 +359,7 @@ fn seed(paths: &[&str]) -> DeckSeed {
 /// aplica de verdad — `push_applied` no llama a `apply`).
 fn slot_doc(dirty: bool) -> SlotDoc {
     let mut doc = SlotDoc {
+        canvas_name: None,
         doc: Document::new(10.0, 10.0),
         history: History::default(),
         images: ImageMap::new(),

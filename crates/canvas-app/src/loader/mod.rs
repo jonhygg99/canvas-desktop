@@ -9,6 +9,7 @@
 //! `unsplash_ops` (búsqueda de imágenes de Unsplash) y `serper_ops`
 //! (búsqueda de imágenes web vía Serper).
 
+mod design_save;
 mod export_ops;
 mod file_ops;
 mod gallery_ops;
@@ -16,6 +17,9 @@ mod image_import;
 mod load_ops;
 mod repair_ops;
 mod save_ops;
+pub use design_save::{spawn_save_design, DesignSaveDone, DesignSaveRequest};
+mod video_save;
+pub use video_save::{spawn_video_save, VideoSaveDone, VideoSaveRequest};
 mod serper_ops;
 mod unsplash_ops;
 mod ytdlp_download;
@@ -25,7 +29,7 @@ pub use ytdlp_download::{
     spawn_ytdlp_download, DownloadedClip, YtdlpDownloadRequest, YtdlpItemOutcome,
 };
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use canvas_core::LayerId;
 use canvas_io::{ImageMetadata, IoError, LoadedImage};
@@ -45,8 +49,7 @@ pub use load_ops::{
 pub use repair_ops::{auto_action_for, spawn_repair_png, AutoRepairAction};
 pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_pick_video_export_path,
-    spawn_render_video_composition, spawn_reserve_canvas_path, spawn_save, spawn_save_design,
-    SaveInput,
+    spawn_reserve_canvas_path, spawn_save, SaveInput,
 };
 pub use serper_ops::{
     begin_bulk_files, default_bulk_dir, resolve_bulk_page, spawn_serper_image, spawn_serper_search,
@@ -54,6 +57,14 @@ pub use serper_ops::{
 };
 pub use unsplash_ops::{spawn_unsplash_image, spawn_unsplash_search, spawn_unsplash_thumb};
 pub use ytdlp_ops::{spawn_ytdlp_delete, spawn_ytdlp_frames, YtdlpFramesOutcome};
+
+/// Retira una reserva propia todavía vacía tras un fallo o cancelación:
+/// nunca un render terminado cuyo sidecar falló ni un archivo ajeno.
+pub(super) fn drop_empty_reservation(path: &Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() == 0) {
+        let _ = std::fs::remove_file(path);
+    }
+}
 
 /// Resultado de abrir una imagen: mapa de bits plano, o documento con capas
 /// restaurado desde su sidecar `.canvas`. `Design` es un `.canvas` autónomo:
@@ -209,6 +220,7 @@ pub enum AppMsg {
         substituted: usize,
     },
     SaveAsPicked(Option<PathBuf>),
+    DesignSaved(Box<DesignSaveDone>),
     Saved {
         path: PathBuf,
         result: Result<(), IoError>,
@@ -216,13 +228,8 @@ pub enum AppMsg {
         new_source: bool,
     },
     /// Un lienzo de vídeo terminó de renderizar su composición (página +
-    /// fondo + clip recortado) a `dst`. En éxito, duración y tamaño del
-    /// archivo (siempre la página): quien guarda en el sitio los necesita
-    /// para resetear el trim y re-anclar la capa al archivo entero.
-    VideoCompositionRendered {
-        dst: PathBuf,
-        result: Result<canvas_io::VideoRenderInfo, IoError>,
-    },
+    /// fondo + clip recortado) a `dst`.
+    VideoCompositionRendered(Box<VideoSaveDone>),
     /// Ruta elegida para exportar (o `None` si se canceló el diálogo).
     ExportPathPicked(Option<PathBuf>),
     Exported {

@@ -1,18 +1,35 @@
 //! Miniatura y duración de tarjetas, con un único trabajo fuera de egui.
+//!
+//! La identidad es la huella del archivo, no su ruta: los nombres del
+//! staging se reciclan (`clip.mp4`, `clip (2).mp4`…), así que borrar el
+//! primero y descargar el segundo deja la MISMA ruta con OTRO clip. Sin
+//! huella, el worker del borrado entrega tarde y su miniatura queda
+//! archivada como la del nuevo para siempre (nunca se re-pide).
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::time::SystemTime;
+
+/// Huella del archivo (mtime + tamaño): `None` si ya no está en disco.
+type Fingerprint = Option<(SystemTime, u64)>;
+
+fn fingerprint(path: &Path) -> Fingerprint {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok().map(|mtime| (mtime, meta.len())))
+}
 
 #[derive(Default)]
 pub(crate) struct ClipPreviews {
     ready: HashMap<PathBuf, ClipPreview>,
-    pending: Option<(PathBuf, mpsc::Receiver<Decoded>)>,
+    pending: Option<(PathBuf, Fingerprint, mpsc::Receiver<Decoded>)>,
 }
 
 pub(super) struct ClipPreview {
     pub texture: Option<egui::TextureHandle>,
     pub duration: Option<f64>,
+    meta: Fingerprint,
 }
 
 struct Decoded {
@@ -22,11 +39,18 @@ struct Decoded {
 
 impl ClipPreviews {
     pub(super) fn update(&mut self, paths: &[PathBuf], ctx: &egui::Context) {
-        self.ready.retain(|path, _| paths.contains(path));
-        if let Some((path, rx)) = &self.pending {
+        // Fuera de la lista o con OTRO archivo bajo la misma ruta (ver
+        // `fingerprint`): se poda y abajo se pide el vigente.
+        self.ready
+            .retain(|path, preview| paths.contains(path) && fingerprint(path) == preview.meta);
+        if let Some((path, meta, rx)) = &self.pending {
             match rx.try_recv() {
                 Ok(frame) => {
-                    if paths.contains(path) {
+                    // Solo vale si el archivo sigue siendo el que se pidió:
+                    // el worker de un clip borrado puede entregar cuando su
+                    // ruta ya es de otro clip. Sin esto, esa miniatura vieja
+                    // quedaba archivada y la nueva no se pedía nunca.
+                    if paths.contains(path) && fingerprint(path) == *meta {
                         self.ready.insert(
                             path.clone(),
                             ClipPreview {
@@ -38,19 +62,27 @@ impl ClipPreviews {
                                         egui::TextureOptions::LINEAR,
                                     )
                                 }),
+                                meta: *meta,
                             },
                         );
                     }
                     self.pending = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.ready.insert(
-                        path.clone(),
-                        ClipPreview {
-                            texture: None,
-                            duration: None,
-                        },
-                    );
+                    // Terminal (no reintenta en bucle): solo para tarjetas
+                    // que siguen visibles. Con la meta PEDIDA, no la viva:
+                    // si la ruta ya es de otro clip, la poda la retira y se
+                    // pide el vigente en vez de clavar un vacío ajeno.
+                    if paths.contains(path) {
+                        self.ready.insert(
+                            path.clone(),
+                            ClipPreview {
+                                texture: None,
+                                duration: None,
+                                meta: *meta,
+                            },
+                        );
+                    }
                     self.pending = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => return,
@@ -67,8 +99,9 @@ impl ClipPreviews {
 
     fn request(&mut self, path: &Path, ctx: &egui::Context) {
         let path = path.to_owned();
+        let meta = fingerprint(&path);
         let (tx, rx) = mpsc::channel();
-        self.pending = Some((path.clone(), rx));
+        self.pending = Some((path.clone(), meta, rx));
         let ctx = ctx.clone();
         let viewport = ctx.viewport_id();
         std::thread::spawn(move || {
@@ -89,5 +122,107 @@ impl ClipPreviews {
                 ctx.request_repaint_of(viewport);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `clip.mp4` con un contenido: el tamaño distinto basta para que la
+    /// huella cambie aunque el mtime cayera en el mismo tick.
+    fn clip(dir: &Path, bytes: &[u8]) -> PathBuf {
+        let path = dir.join("clip.mp4");
+        std::fs::write(&path, bytes).expect("sembrar clip");
+        path
+    }
+
+    fn pending_with(previews: &mut ClipPreviews, path: &Path, meta: Fingerprint, frame: Decoded) {
+        let (tx, rx) = mpsc::channel();
+        tx.send(frame).expect("entregar");
+        previews.pending = Some((path.to_owned(), meta, rx));
+    }
+
+    fn empty_frame() -> Decoded {
+        Decoded {
+            image: None,
+            duration: Some(7.0),
+        }
+    }
+
+    #[test]
+    fn untouched_file_keeps_its_preview() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = clip(dir.path(), b"primer clip largo");
+        let ctx = egui::Context::default();
+        let mut previews = ClipPreviews::default();
+        pending_with(&mut previews, &path, fingerprint(&path), empty_frame());
+        previews.update(&[path.clone()], &ctx);
+        let preview = previews.get(&path).expect("vale");
+        assert_eq!(preview.duration, Some(7.0));
+    }
+
+    /// El caso del informe: se borra el primero y el segundo descarga con
+    /// el MISMO nombre antes de que el worker del primero entregue. Esa
+    /// miniatura vieja se suelta; la del vigente se pide de nuevo.
+    #[test]
+    fn replaced_file_drops_the_in_flight_preview() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = clip(dir.path(), b"primer clip largo");
+        let ctx = egui::Context::default();
+        let mut previews = ClipPreviews::default();
+        let old_meta = fingerprint(&path);
+        // Borrado + segundo download reciclando `clip.mp4`.
+        let path = clip(dir.path(), b"segundo");
+        assert_ne!(fingerprint(&path), old_meta);
+        // El worker del primero entrega tarde.
+        pending_with(&mut previews, &path, old_meta, empty_frame());
+        previews.update(&[path.clone()], &ctx);
+        assert!(
+            previews.get(&path).is_none(),
+            "la miniatura del clip borrado no vale para el nuevo"
+        );
+    }
+
+    /// Entrada ya archivada cuyo archivo cambió por debajo (p. ej. mensaje
+    /// de borrado perdido): se poda y se re-pide en vez de enseñar lo viejo.
+    #[test]
+    fn replaced_file_prunes_the_settled_preview() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = clip(dir.path(), b"primer clip largo");
+        let ctx = egui::Context::default();
+        let mut previews = ClipPreviews::default();
+        previews.ready.insert(
+            path.clone(),
+            ClipPreview {
+                texture: None,
+                duration: Some(7.0),
+                meta: fingerprint(&path),
+            },
+        );
+        let path = clip(dir.path(), b"segundo");
+        previews.update(&[path.clone()], &ctx);
+        assert!(
+            previews.get(&path).is_none(),
+            "la entrada vieja no sobrevive al reemplazo"
+        );
+    }
+
+    #[test]
+    fn departed_cards_leave_no_preview_behind() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = clip(dir.path(), b"primer clip largo");
+        let ctx = egui::Context::default();
+        let mut previews = ClipPreviews::default();
+        previews.ready.insert(
+            path.clone(),
+            ClipPreview {
+                texture: None,
+                duration: Some(7.0),
+                meta: fingerprint(&path),
+            },
+        );
+        previews.update(&[], &ctx);
+        assert!(previews.get(&path).is_none());
     }
 }

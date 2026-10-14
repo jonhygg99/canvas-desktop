@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) use io::read_page_size;
 pub use io::{
     delete_sidecar, read_design, read_preview, read_sidecar, write_blank_canvas, write_design,
-    write_sidecar,
+    write_sidecar, write_video_sidecar,
 };
 pub use paths::{ensure_sidecar_dir, find_sidecar, sidecar_dir, sidecar_path, SIDECAR_DIR};
 pub use payload::{

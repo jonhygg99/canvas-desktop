@@ -11,6 +11,8 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
+use crate::naming::slugify;
+
 use super::AppMsg;
 
 /// Una imagen elegida en la ventana masiva para crear su lienzo. Las dims
@@ -198,7 +200,9 @@ pub fn spawn_serper_bulk_files(
 ) {
     std::thread::spawn(move || {
         let total = items.len();
-        let stem = slugify(&keyword);
+        // El tallo es la carpeta del proyecto (`edwin-luna-01.png`…);
+        // solo sin carpeta usable se usa la keyword, como antes.
+        let stem = crate::naming::folder_stem(Some(&folder)).unwrap_or_else(|| slugify(&keyword));
         let mut created = Vec::new();
         let mut errors = Vec::new();
         // Lienzos cuyos píxeles vinieron de un rescate (`og:image`/thumb)
@@ -364,9 +368,16 @@ fn save_bulk_one(
         .ok_or_else(|| "decoded image has no pixels".to_owned())?;
     let (pw, ph) = (page.0.round().max(1.0), page.1.round().max(1.0));
     // Receta exacta de pegar: lienzo vacío + add_image_layer (contain +
-    // fondo desenfocado si no cubre).
+    // fondo desenfocado si no cubre). La capa hereda el tallo del archivo
+    // reservado (`edwin-luna-04`), no la etiqueta web: capa y archivo van
+    // juntos desde el nacimiento.
+    let layer_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&item.label)
+        .to_owned();
     let mut state = crate::editor::EditorState::new_blank_image(pw, ph);
-    state.add_image_layer(item.label.clone(), Some(path.clone()), img);
+    state.add_image_layer(layer_name, Some(path.clone()), img);
     state.doc.source_path = Some(path.clone());
     let mut payload = state.sidecar_payload();
     // Todo lo que falla a partir de aquí deja la reserva a medio escribir:
@@ -419,30 +430,6 @@ fn payload_bake(
             has_bg,
         },
     ))
-}
-
-/// Trocea la keyword a un tallo de archivo seguro (minúsculas, guiones).
-fn slugify(keyword: &str) -> String {
-    let mut out = String::new();
-    let mut dash = false;
-    for c in keyword.to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c);
-            dash = false;
-        } else if !dash && !out.is_empty() {
-            out.push('-');
-            dash = true;
-        }
-        if out.len() >= 30 {
-            break;
-        }
-    }
-    let slug = out.trim_matches('-').to_owned();
-    if slug.is_empty() {
-        "web".to_owned()
-    } else {
-        slug
-    }
 }
 
 #[cfg(test)]

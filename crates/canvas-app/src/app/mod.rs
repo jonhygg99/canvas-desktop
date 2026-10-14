@@ -44,6 +44,7 @@ pub(crate) mod persistence;
 mod switcher;
 mod ui_menu;
 mod ui_modals;
+mod video_canvas_names;
 mod video_canvases;
 mod views;
 mod window;

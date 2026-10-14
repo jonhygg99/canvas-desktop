@@ -18,6 +18,22 @@ const MAX_LAYER_PNG_DIM: u32 = 20_000;
 /// memoria en `to_rgba8` antes de que nadie mire el contenido.
 const MAX_LAYER_PNG_ALLOC: u64 = 512 * 1024 * 1024;
 
+/// Política de decodificación para imágenes arbitrarias: archivos que abre
+/// el usuario, miniaturas y descargas web. Misma cota que los PNG de capas
+/// para que todo el programa aplique una sola regla: sin cotas explícitas,
+/// un archivo con dimensiones mentirosas pediría gigabytes en `to_rgba8`
+/// (los valores por defecto del decoder solo topan el total en 512 MiB y
+/// no limitan dimensiones; las miniaturas de galería además decodifican en
+/// paralelo, multiplicando el pico). Límite explícito por formato vía
+/// `ImageReader::limits`.
+pub fn image_decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_LAYER_PNG_ALLOC);
+    limits.max_image_width = Some(MAX_LAYER_PNG_DIM);
+    limits.max_image_height = Some(MAX_LAYER_PNG_DIM);
+    limits
+}
+
 pub(crate) fn supported_rgba_bytes(width: u32, height: u32) -> Option<u64> {
     if width == 0 || height == 0 || width > MAX_LAYER_PNG_DIM || height > MAX_LAYER_PNG_DIM {
         return None;

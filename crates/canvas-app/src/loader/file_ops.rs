@@ -46,7 +46,7 @@ pub(super) fn duplicate_into(
             source,
         });
     }
-    if canvas_io::is_image_file(src) {
+    if canvas_io::is_media_file(src) {
         if let Some(src_sidecar) = canvas_io::find_sidecar(src) {
             // El destino de sidecar cae en la carpeta oculta de `folder`
             // (que puede no ser la de `src` — copiar entre carpetas): hay
@@ -105,7 +105,7 @@ pub(super) fn rename_with_sidecar(path: &Path, new_stem: &str) -> Result<PathBuf
         path: path.to_owned(),
         source,
     })?;
-    if canvas_io::is_image_file(path) {
+    if canvas_io::is_media_file(path) {
         if let Some(src_sidecar) = canvas_io::find_sidecar(path) {
             // Las capas editables tienen que acabar junto al archivo nuevo.
             // Cualquier fallo en el camino — crear `.canvas` o renombrar el

@@ -594,9 +594,17 @@ pub fn download(url: &str) -> Result<Vec<u8>, SerperError> {
 }
 
 /// Decodifica bytes (PNG/JPEG/WebP…) a `LoadedImage` RGBA8, listo para
-/// `add_image_layer` o para una textura de egui.
+/// `add_image_layer` o para una textura de egui. Con las cotas de
+/// `image_decode_limits`: los bytes vienen de la red y unas dimensiones
+/// mentirosas no deben poder pedir gigabytes de memoria.
 pub fn decode(bytes: &[u8]) -> Result<canvas_io::LoadedImage, SerperError> {
-    let img = image::load_from_memory(bytes).map_err(|e| SerperError::Decode(e.to_string()))?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    reader.limits(canvas_io::image_decode_limits());
+    let img = reader
+        .with_guessed_format()
+        .map_err(|e| SerperError::Decode(e.to_string()))?
+        .decode()
+        .map_err(|e| SerperError::Decode(e.to_string()))?;
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
     Ok(canvas_io::LoadedImage {

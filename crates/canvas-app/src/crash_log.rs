@@ -25,6 +25,11 @@ const KEEP_REPORTS: usize = 20;
 
 static RECENT_LOGS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 static SINCE_INSTALL: OnceLock<Instant> = OnceLock::new();
+/// Última foto del estado de la app (baraja, GPU, RAM) para el informe.
+/// La refresca la UI cada pocos segundos; el crash la vuelca tal cual.
+static APP_CONTEXT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+/// Tope de la foto: el informe debe seguir siendo legible.
+const MAX_CONTEXT_CHARS: usize = 1024;
 /// Archivo de log de la sesión (modo `windows_subsystem = "windows"`: sin
 /// consola, el stdout no va a ningún sitio y redirigir con `>` sale vacío).
 static DEBUG_LOG_FILE: OnceLock<Mutex<fs::File>> = OnceLock::new();
@@ -169,6 +174,25 @@ pub(crate) fn tee_writer() -> TeeWriter {
     TeeWriter
 }
 
+/// Guarda la última foto del estado de la app para el próximo informe.
+/// Sobrescribe sin crecer: lo que importa es el instante del crash, no el
+/// historial. Nunca entra en pánico (un informe no puede matar la UI).
+pub(crate) fn set_app_context(context: String) {
+    let kept: String = context.chars().take(MAX_CONTEXT_CHARS).collect();
+    let slot = APP_CONTEXT.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(kept);
+    }
+}
+
+fn app_context() -> String {
+    APP_CONTEXT
+        .get()
+        .and_then(|slot| slot.lock().ok())
+        .and_then(|guard| guard.clone())
+        .unwrap_or_else(|| "(sin contexto: el crash ocurrió antes del primer refresco)".to_owned())
+}
+
 // ─── Instalación ──────────────────────────────────────────────────────────
 
 /// Directorio real de informes: `<data_dir>/crashes` del perfil del usuario
@@ -294,6 +318,9 @@ fn format_report(now: u64, s: &PanicSummary) -> String {
          — Backtrace —\n\
          {}\n\
          \n\
+         — Contexto de la app —\n\
+         {}\n\
+         \n\
          — Últimas {REPORT_TAIL_LINES} líneas de log —\n\
          {}\n",
         format_utc(now),
@@ -304,6 +331,7 @@ fn format_report(now: u64, s: &PanicSummary) -> String {
         s.location.as_deref().unwrap_or("(desconocida)"),
         s.thread_label,
         s.backtrace,
+        app_context(),
         recent_logs_tail(REPORT_TAIL_LINES),
     )
 }
@@ -426,6 +454,24 @@ mod tests {
         // La primera línea ya fue descartada por el límite de capacidad.
         assert!(!tail.contains("línea-119"));
         assert!(tail.ends_with(&format!("línea-{last}")));
+    }
+
+    #[test]
+    fn app_context_reaches_the_report_and_is_bounded() {
+        set_app_context("vista=editor ranuras=17".to_owned());
+        let summary = PanicSummary {
+            thread_label: "main".to_owned(),
+            message: "boom".to_owned(),
+            location: None,
+            backtrace: "bt".to_owned(),
+        };
+        let report = format_report(0, &summary);
+        assert!(report.contains("vista=editor ranuras=17"));
+        assert!(report.contains("Contexto de la app"));
+        // El tope evita informes gigantes.
+        set_app_context("x".repeat(MAX_CONTEXT_CHARS + 500));
+        let stored = app_context();
+        assert_eq!(stored.chars().count(), MAX_CONTEXT_CHARS);
     }
 
     #[test]

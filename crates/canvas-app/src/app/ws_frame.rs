@@ -80,6 +80,7 @@ impl AppInner {
                 // feature wgpu siempre tiene `RenderState` (el fallback
                 // glow ni compila aquí).
                 let mut frame = EditorFrame {
+                    viewport: ws.viewport,
                     deck: &mut ws.deck,
                     renderer: &mut self.renderer,
                     surface: &mut ws.surface,
@@ -181,6 +182,15 @@ impl AppInner {
                 ws_idx,
                 ws,
             );
+        }
+        if open_next.is_none()
+            && ws.unsaved_dialog.is_none()
+            && !ws.save.save_path_dialog_open
+            && ws.save.pending_save_as.is_none()
+            && ws.save.save_all_queue.is_empty()
+            && matches!(&ws.view, View::Editor(state) if state.is_idle())
+        {
+            open_next = ws.deferred_nav.pop_front();
         }
         if let Some(nav) = open_next {
             // A05: TODA salida pasa por la política del workspace (mira el
