@@ -11,7 +11,8 @@ use super::cell::{
     gallery_add_cell, gallery_cell_size, gallery_cell_with_framing, CELL_GAP, ROW_GAP,
 };
 use crate::app_icons::{
-    draw_close_icon, draw_minus_icon, draw_plus_icon, icon_button_ui, icon_text_button_ui,
+    draw_close_icon, draw_images_icon, draw_layers_icon, draw_minus_icon, draw_plus_icon,
+    draw_video_icon, icon_button_ui, icon_text_button_ui,
 };
 use crate::settings::{GallerySort, MediaFilter};
 
@@ -113,11 +114,7 @@ fn folder_heading_ui(
     if renaming {
         let Some((_, text)) = state.folder_rename_edit.as_mut() else {
             ui.heading(&current_name);
-            ui.weak(format!(
-                "— {} {}",
-                state.items.len(),
-                crate::i18n::tr("items")
-            ));
+            counts_ui(state, ui, action);
             return false;
         };
         let id = egui::Id::new(("gallery_folder_rename_heading", &state.folder));
@@ -149,12 +146,77 @@ fn folder_heading_ui(
             );
         }
     }
-    ui.weak(format!(
-        "— {} {}",
-        state.items.len(),
-        crate::i18n::tr("items")
-    ));
+    counts_ui(state, ui, action);
     true
+}
+
+/// Contador de la cabecera: total, imágenes y vídeos ignorando SOLO el
+/// filtro de medio (son sus botones) y respetando búsqueda y framing, con
+/// iconos en vez de palabras. Cada grupo es clicable y aplica su filtro
+/// — igual que el menú
+/// de la toolbar (mismo campo, misma acción, así que ambos van siempre a
+/// la par). El grupo activo se pinta en color de acento.
+fn counts_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<GalleryAction>) {
+    let (total, images, videos) = state.visible_counts();
+    ui.weak("—");
+    count_ui(
+        state,
+        ui,
+        action,
+        draw_layers_icon,
+        total,
+        "All",
+        MediaFilter::All,
+    );
+    count_ui(
+        state,
+        ui,
+        action,
+        draw_images_icon,
+        images,
+        "Images",
+        MediaFilter::ImagesOnly,
+    );
+    count_ui(
+        state,
+        ui,
+        action,
+        draw_video_icon,
+        videos,
+        "Videos",
+        MediaFilter::VideosOnly,
+    );
+}
+
+fn count_ui(
+    state: &mut GalleryState,
+    ui: &mut egui::Ui,
+    action: &mut Option<GalleryAction>,
+    draw: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
+    n: usize,
+    hover: &str,
+    filter: MediaFilter,
+) {
+    let hover: &str = crate::i18n::tr(hover);
+    let color = if state.media_filter == filter {
+        ui.visuals().widgets.active.text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let size = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, icon_resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+    draw(ui.painter(), rect, color);
+    let num_resp = ui.add(
+        egui::Label::new(egui::RichText::new(n.to_string()).color(color))
+            .sense(egui::Sense::click()),
+    );
+    if (icon_resp.clicked() || num_resp.clicked()) && state.media_filter != filter {
+        state.media_filter = filter;
+        *action = Some(GalleryAction::MediaFilterChanged(filter));
+    }
+    icon_resp.on_hover_text(hover);
+    num_resp.on_hover_text(hover);
+    ui.add_space(2.0);
 }
 
 /// Orden de la galería (persistido), densidad de columnas y «New design».
@@ -349,10 +411,11 @@ fn grid_ui(state: &mut GalleryState, ui: &mut egui::Ui, action: &mut Option<Gall
             cell_size.y = (cell_size.x - 16.0) * 16.0 / 9.0 + 28.0;
         }
         ui.spacing_mut().item_spacing.y = ROW_GAP;
+        let needle = state.search_needle();
         let visible: Vec<_> = state
             .items
             .iter()
-            .filter(|item| state.matches_item(item))
+            .filter(|item| state.matches_item_with(item, &needle))
             .collect();
         if visible.is_empty() && state.scanned && state.scan_error.is_none() {
             let label = match state.media_filter {

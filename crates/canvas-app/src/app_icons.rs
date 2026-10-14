@@ -681,6 +681,28 @@ pub fn draw_images_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     );
 }
 
+/// Vídeo (contador de la galería): marco con triángulo de play — la
+/// pareja del icono de imagen, mismo trazo y proporciones.
+pub fn draw_video_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let s = rect.width().min(rect.height());
+    let frame = egui::Rect::from_center_size(rect.center(), egui::vec2(s * 0.84, s * 0.70));
+    painter.rect_stroke(
+        frame,
+        2.0,
+        egui::Stroke::new(1.4, color),
+        egui::StrokeKind::Inside,
+    );
+    let left = frame.left() + s * 0.22;
+    let right = frame.left() + s * 0.52;
+    let top = frame.top() + s * 0.16;
+    let bottom = frame.bottom() - s * 0.16;
+    let mid = (top + bottom) / 2.0;
+    let st = egui::Stroke::new(1.3, color);
+    painter.line_segment([egui::pos2(left, top), egui::pos2(left, bottom)], st);
+    painter.line_segment([egui::pos2(left, top), egui::pos2(right, mid)], st);
+    painter.line_segment([egui::pos2(left, bottom), egui::pos2(right, mid)], st);
+}
+
 /// Descarga (pestaña «Download», yt-dlp): flecha hacia abajo sobre una
 /// bandeja — mismo trazo que el resto de iconos de la tira.
 pub fn draw_download_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
