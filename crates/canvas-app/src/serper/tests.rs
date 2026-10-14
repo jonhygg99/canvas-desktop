@@ -698,6 +698,14 @@ fn decode_turns_png_bytes_into_loaded_image() {
 }
 
 #[test]
+fn decode_rejects_inflated_dimensions_without_allocating() {
+    // Los bytes vienen de la red y deben rechazarse por cota al leer la
+    // cabecera (fixture compartido en `crate::http::tests`).
+    let png = crate::http::tests::inflated_dims_png();
+    assert!(decode(&png).is_err());
+}
+
+#[test]
 fn per_call_constants_match_the_token_model() {
     assert_eq!(PER_CALL_RESULTS, 100);
     assert_eq!(super::api::SMALL_RESULTS, 10);

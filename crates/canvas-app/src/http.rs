@@ -120,9 +120,42 @@ pub fn read_response_string_bounded(resp: ureq::Response, max: usize) -> Result<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::test_server::{serve_and_capture, serve_response};
+
+    /// PNG mínimo con dimensiones mentirosas (100000×100000 ≈ 40 GiB de
+    /// RGBA) y CRC válido, sin IDAT: los bytes vienen de la red y el
+    /// decodificador debe rechazarlos por cota al leer la cabecera, sin
+    /// intentar asignarlos. Compartido por los tests de `serper` y
+    /// `unsplash` (gemelo del de `canvas-io::load`, que vive en otro crate
+    /// y no puede reutilizarlo).
+    pub(crate) fn inflated_dims_png() -> Vec<u8> {
+        fn crc32(data: &[u8]) -> u32 {
+            let mut crc = 0xFFFF_FFFFu32;
+            for &b in data {
+                crc ^= u32::from(b);
+                for _ in 0..8 {
+                    crc = if crc & 1 == 1 {
+                        (crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            !crc
+        }
+        let mut png = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(b"IHDR");
+        ihdr.extend_from_slice(&100_000u32.to_be_bytes());
+        ihdr.extend_from_slice(&100_000u32.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(&ihdr);
+        png.extend_from_slice(&crc32(&ihdr).to_be_bytes());
+        png
+    }
 
     #[test]
     fn downloads_a_small_body() {

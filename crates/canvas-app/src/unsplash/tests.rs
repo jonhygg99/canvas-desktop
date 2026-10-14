@@ -41,6 +41,14 @@ fn decode_rejects_garbage() {
 }
 
 #[test]
+fn decode_rejects_inflated_dimensions_without_allocating() {
+    // Los bytes vienen de la red y deben rechazarse por cota al leer la
+    // cabecera (fixture compartido en `crate::http::tests`).
+    let png = crate::http::tests::inflated_dims_png();
+    assert!(decode(&png).is_err());
+}
+
+#[test]
 fn search_without_key_is_an_error() {
     let had = std::env::var(ACCESS_KEY_ENV).ok();
     std::env::remove_var(ACCESS_KEY_ENV);
