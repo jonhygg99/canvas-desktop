@@ -22,7 +22,7 @@ pub struct Panel {
     pub clip_info: std::collections::HashMap<PathBuf, crate::loader::DownloadedClip>,
     /// Último error visible.
     pub error: Option<String>,
-    /// Rutas descargadas en la última tanda (para mostrarlas).
+    /// Clips descargados, el más reciente primero (así se pintan).
     pub done: Vec<PathBuf>,
     /// Clip pendiente de insertar al canvas (lo pide el botón Insertar; lo
     /// lanza `layers_panel` con el canal a mano).
@@ -83,9 +83,10 @@ impl Panel {
             self.retry_requests.remove(&outcome.url);
         }
         for clip in outcome.clips {
-            // Cada clip aparece al terminar, sin esperar al resto de la tanda.
+            // Cada clip aparece al terminar, sin esperar al resto de la tanda,
+            // y arriba del todo: lo más reciente primero.
             if !self.done.contains(&clip.path) {
-                self.done.push(clip.path.clone());
+                self.done.insert(0, clip.path.clone());
             }
             self.clip_info.insert(clip.path.clone(), clip);
         }
@@ -136,5 +137,39 @@ mod tests {
         assert_eq!(panel.clip_info[&target].title, "Original title");
         assert!(panel.failed.is_empty());
         assert!(!panel.retry_requests.contains_key(&url));
+    }
+
+    #[test]
+    fn newest_clip_lands_on_top() {
+        let mut panel = Panel::default();
+        for name in ["one.mp4", "two.mp4"] {
+            panel.finish_download_item(YtdlpItemOutcome {
+                url: format!("https://example.test/{name}"),
+                target: None,
+                clips: vec![DownloadedClip {
+                    path: PathBuf::from(name),
+                    title: name.to_owned(),
+                }],
+                error: None,
+            });
+        }
+        assert_eq!(
+            panel.done,
+            vec![PathBuf::from("two.mp4"), PathBuf::from("one.mp4")]
+        );
+        // Repetir el mismo clip no lo duplica ni lo mueve.
+        panel.finish_download_item(YtdlpItemOutcome {
+            url: "https://example.test/one.mp4".to_owned(),
+            target: None,
+            clips: vec![DownloadedClip {
+                path: PathBuf::from("one.mp4"),
+                title: "one.mp4".to_owned(),
+            }],
+            error: None,
+        });
+        assert_eq!(
+            panel.done,
+            vec![PathBuf::from("two.mp4"), PathBuf::from("one.mp4")]
+        );
     }
 }

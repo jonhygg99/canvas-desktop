@@ -166,15 +166,23 @@ impl super::AppInner {
     }
 }
 
-/// Junta la tanda nueva con la lista visible: conserva lo anterior que siga
-/// en disco y añade lo nuevo sin duplicar. Pura (testeable).
+/// Junta la tanda nueva con la lista visible: lo nuevo arriba del todo (el
+/// último en terminarse, primero) y lo anterior que siga en disco detrás,
+/// sin duplicar. `paths` llega en orden de terminación; pura (testeable).
 fn merge_done(old: &[PathBuf], paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = old.iter().filter(|p| p.is_file()).cloned().collect();
-    for p in paths {
+    let mut out: Vec<PathBuf> = Vec::with_capacity(old.len() + paths.len());
+    for p in paths.into_iter().rev() {
         if !out.contains(&p) {
             out.push(p);
         }
     }
+    let survivors: Vec<PathBuf> = old
+        .iter()
+        .filter(|p| p.is_file())
+        .filter(|&p| !out.contains(p))
+        .cloned()
+        .collect();
+    out.extend(survivors);
     out
 }
 
@@ -192,10 +200,11 @@ mod tests {
         std::fs::write(&a, [0u8; 2]).expect("a");
         let b = dir.path().join("b.mp4");
         std::fs::write(&b, [0u8; 2]).expect("b");
-        // `a` sigue, `gone` ya no existe, `b` es nuevo (y `a` no duplica).
+        // `a` sigue, `gone` ya no existe, `b` es nuevo (y `a` no duplica):
+        // `b` terminó el último, así que va arriba del todo.
         assert_eq!(
             merge_done(&[a.clone(), gone], vec![a.clone(), b.clone()]),
-            vec![a, b]
+            vec![b, a]
         );
     }
 
