@@ -55,7 +55,22 @@ fn main() -> Result<()> {
     // y otras variables de configuración viven en el proyecto, sin tocar el
     // shell. No pisa variables ya definidas en el entorno (comportamiento
     // por defecto de dotenvy); sin `.env` no pasa nada.
+    //
+    // Las rutas a ejecutables (`YTDLP_PATH`/`CANVAS_YTDLP_DIR`/
+    // `CANVAS_FFMPEG_DIR`, ver `ytdlp::api`) se congelan ANTES de cargarlo:
+    // abrir una carpeta descargada con un `.env` dentro no debe poder
+    // redirigir qué binario ejecuta la pestaña Download (los comandos van
+    // con argv, pero el binario en sí saldría del `.env`).
+    const EXE_PATH_VARS: [&str; 3] = ["YTDLP_PATH", "CANVAS_YTDLP_DIR", "CANVAS_FFMPEG_DIR"];
+    let guarded: [(String, Option<String>); 3] =
+        EXE_PATH_VARS.map(|k| (k.to_owned(), std::env::var(k).ok()));
     let _ = dotenvy::dotenv();
+    for (key, value) in guarded {
+        match value {
+            Some(v) => std::env::set_var(&key, v),
+            None => std::env::remove_var(&key),
+        }
+    }
 
     // Los informes de crash se instalan antes que nada: cualquier pánico
     // posterior (incluidos los de hilos worker) queda escrito en disco con
@@ -148,12 +163,18 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    // Limpieza del staging de Download una vez por arranque, en un hilo de
-    // fondo: los mp4 viejos son huérfanos de sesiones anteriores (la lista
-    // de Download no sobrevive al cierre) y el temporal no debe crecer sin
-    // cota. Lo reciente (esta sesión) no se toca.
+    // Limpieza de cachés una vez por arranque, en un hilo de fondo: los mp4
+    // del staging viejos son huérfanos de sesiones anteriores (la lista de
+    // Download no sobrevive al cierre), las miniaturas huérfanas (clave con
+    // mtime: cada versión de cada foto deja un PNG) y los JSONs de Serper
+    // más viejos que su TTL no deben crecer sin cota. Lo reciente (esta
+    // sesión) no se toca.
     std::thread::spawn(|| {
         ytdlp::api::sweep_stale_downloads(std::time::Duration::from_secs(30 * 24 * 3600));
+        serper::cache::sweep_stale_disk();
+        if let Some(dir) = app::window::thumbnail_cache_dir() {
+            canvas_io::prune_thumbnail_cache(&dir);
+        }
     });
 
     eframe::run_native(

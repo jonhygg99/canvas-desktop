@@ -47,7 +47,7 @@ mod ui_modals;
 mod video_canvas_names;
 mod video_canvases;
 mod views;
-mod window;
+pub(crate) mod window; // la poda de miniaturas de arranque (`main`) usa `thumbnail_cache_dir`
 mod workspace;
 mod workspace_lifecycle;
 mod ws_frame;

@@ -364,7 +364,7 @@
   "Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app.": "Obtén una clave gratuita en unsplash.com/developers,\nañádela al .env como UNSPLASH_ACCESS_KEY\ny reinicia la aplicación.",
   "Get a key at serper.dev and add it\nto the project .env as SERPER_API_KEY,\nthen restart the app.": "Obtén una clave en serper.dev,\nañádela al .env como SERPER_API_KEY\ny reinicia la aplicación.",
   "Blocked domains (one per line):\nhidden from results and excluded\nfrom the query when it fits.": "Dominios bloqueados (uno por línea):\nse ocultan de los resultados y se excluyen\nde la consulta cuando hay espacio.",
-  "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\nor set YTDLP_PATH and restart the app.": "Configura YTDLP_PATH con la ruta de yt-dlp\ny reinicia la aplicación.",
+  "Install yt-dlp and make sure it is on PATH,\nor set YTDLP_PATH and restart the app.": "Instala yt-dlp y asegúrate de que está en el PATH,\no configura YTDLP_PATH y reinicia la aplicación.",
   "All framing states": "Todos los encuadres",
   "Saved framings": "Encuadres guardados",
   "Without framing": "Sin encuadre",

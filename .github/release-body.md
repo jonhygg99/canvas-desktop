@@ -6,6 +6,13 @@
 - Primer guardado con nombre reservado atómicamente, etiquetas `{carpeta}-NN` compartidas por capas y lienzos, y fuentes de vídeo duraderas en `.download` que sobreviven al mover el proyecto.
 - Las imágenes de internet y los archivos con dimensiones imposibles ya no pueden pedir gigabytes de memoria al abrirlos.
 
+## Novedades de v0.7.7
+
+- Seguridad: las rutas a ejecutables (`YTDLP_PATH`/`CANVAS_YTDLP_DIR`/`CANVAS_FFMPEG_DIR`) se congelan antes de cargar el `.env` — abrir una carpeta con un `.env` ajeno ya no puede redirigir qué binario ejecuta la pestaña Download.
+- La resolución de yt-dlp ya no depende de una carpeta fija de desarrollo: variables de entorno o `PATH` (el aviso en el panel lo explica).
+- Las cachés de disco ya no crecen sin cota: las miniaturas huérfanas se podan al arrancar (tope de 1000 archivos / 128 MiB) y los JSONs de la pestaña Web más viejos que su TTL también.
+- La reserva de nombres de clip (`clip-Nombre (2).mp4`…) lista los parciales de reanudación una sola vez en vez de re-leer la carpeta por candidato.
+
 ## Novedades de v0.7.5
 
 - Los lienzos de vídeo se guardan como **mp4 renderizado** (página + fondo con blur + clip colocado y recortado): el primer `Ctrl+S` adopta el render como origen y «Guardar como…» ofrece el tramo recortado (`<origen>-trim.mp4`).

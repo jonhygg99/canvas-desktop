@@ -4,11 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const HARDCODED_YTDLP_DIR: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp";
-const HARDCODED_YTDLP_EXE: &str = r"C:\Users\jonhy\Documents\code-projects\yt-dlp\yt-dlp.exe";
-
-/// Localiza `yt-dlp.exe`: `YTDLP_PATH`/`CANVAS_YTDLP_DIR` → carpeta fijada
-/// del usuario → `PATH`. Devuelve la ruta al ejecutable.
+/// Localiza `yt-dlp.exe`: `YTDLP_PATH`/`CANVAS_YTDLP_DIR` → `PATH`.
+/// Devuelve la ruta al ejecutable.
 ///
 /// Se resuelve UNA vez por proceso (caché): el fallback a `PATH` lanza
 /// `yt-dlp --version` en un proceso hijo y esta función se llama en cada
@@ -37,9 +34,6 @@ fn resolve_ytdlp_path() -> Option<PathBuf> {
             }
         }
     }
-    if Path::new(HARDCODED_YTDLP_EXE).is_file() {
-        return Some(PathBuf::from(HARDCODED_YTDLP_EXE));
-    }
     if canvas_io::media_command("yt-dlp")
         .arg("--version")
         .output()
@@ -58,9 +52,6 @@ pub fn ffmpeg_location() -> Option<PathBuf> {
                 return Some(parent.to_owned());
             }
         }
-    }
-    if Path::new(HARDCODED_YTDLP_DIR).is_dir() {
-        return Some(PathBuf::from(HARDCODED_YTDLP_DIR));
     }
     None
 }
@@ -227,6 +218,19 @@ fn sweep_stale_downloads_in(dir: &Path, older_than: std::time::Duration) {
 /// Reserva `clip-Nombre.mp4`, `clip-Nombre (2).mp4`… con `create_new`
 /// (misma disciplina anti-TOCTOU que `reserve_unique_path`).
 pub fn reserve_clip_path(folder: &Path, stem: &str) -> Result<PathBuf, std::io::Error> {
+    // Un parcial pertenece a su URL: otra descarga no debe ocuparlo. Los
+    // parciales se listan UNA vez: re-leer la carpeta por candidato
+    // multiplicaba el coste con el staging lleno.
+    let partials: Vec<String> = std::fs::read_dir(folder)
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".part") || name.ends_with(".ytdl"))
+                .collect()
+        })
+        .unwrap_or_default();
     for n in 0..10_000u32 {
         let name = if n == 0 {
             format!("{stem}.mp4")
@@ -238,14 +242,7 @@ pub fn reserve_clip_path(folder: &Path, stem: &str) -> Result<PathBuf, std::io::
             "{}.",
             candidate.file_stem().unwrap_or_default().to_string_lossy()
         );
-        // Un parcial pertenece a su URL: otra descarga no debe ocuparlo.
-        let partial = std::fs::read_dir(folder).ok().is_some_and(|entries| {
-            entries.flatten().any(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                name.starts_with(&prefix) && (name.ends_with(".part") || name.ends_with(".ytdl"))
-            })
-        });
-        if partial {
+        if partials.iter().any(|name| name.starts_with(&prefix)) {
             continue;
         }
         match std::fs::OpenOptions::new()
@@ -298,6 +295,16 @@ mod tests {
         assert_eq!(p1, dir.path().join("clip-Joanna.mp4"));
         let p2 = reserve_clip_path(dir.path(), "clip-Joanna").expect("segundo");
         assert_eq!(p2, dir.path().join("clip-Joanna (2).mp4"));
+    }
+
+    #[test]
+    fn clip_naming_skips_names_with_resume_partials() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("clip-Joanna.mp4.part"), b"x").unwrap();
+        // El parcial pertenece a su URL: la reserva lo salta aunque el .mp4
+        // final aún no exista.
+        let p = reserve_clip_path(dir.path(), "clip-Joanna").expect("reserva");
+        assert_eq!(p, dir.path().join("clip-Joanna (2).mp4"));
     }
 
     #[test]

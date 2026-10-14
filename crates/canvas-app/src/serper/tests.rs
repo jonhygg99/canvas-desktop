@@ -1044,6 +1044,42 @@ fn disk_cache_round_trips_and_expires() {
 }
 
 #[test]
+fn sweep_prunes_expired_corrupt_but_keeps_fresh_and_other_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("SERPER_CACHE_DIR", dir.path());
+    let page = super::types::SearchPage {
+        photos: Vec::new(),
+        reached_end: true,
+        credits_charged: 2,
+        from_cache: false,
+        effective_query: "shakira".to_owned(),
+        exclusions_applied: 0,
+        exclusions_dropped: 0,
+        simplified: false,
+        filtered: super::filter::FilterCounts::default(),
+    };
+    super::cache::save_disk("fresh", &page);
+    let mut old = super::cache::CachedPage::from(&page);
+    old.saved_at = 0;
+    let old_bytes = serde_json::to_vec(&old).unwrap();
+    std::fs::write(dir.path().join("old.json"), old_bytes).unwrap();
+    std::fs::write(dir.path().join("roto.json"), b"{no json").unwrap();
+    std::fs::write(dir.path().join("notas.txt"), b"hola").unwrap();
+    super::cache::sweep_stale_disk();
+    assert!(dir.path().join("fresh.json").exists(), "la fresca se queda");
+    assert!(!dir.path().join("old.json").exists(), "la caducada se va");
+    assert!(
+        !dir.path().join("roto.json").exists(),
+        "la corrupta nunca se serviría"
+    );
+    assert!(
+        dir.path().join("notas.txt").exists(),
+        "lo que no es json no se toca"
+    );
+    std::env::remove_var("SERPER_CACHE_DIR");
+}
+
+#[test]
 fn memory_cache_holds_twenty_pages_max() {
     let mut p = Panel::default();
     for i in 0..25u32 {

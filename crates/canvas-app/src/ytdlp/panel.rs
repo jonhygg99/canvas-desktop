@@ -38,7 +38,7 @@ pub fn panel_ui(
                 ui.label(crate::i18n::tr("yt-dlp.exe not found"));
                 ui.add_space(4.0);
                 ui.weak(crate::i18n::tr(
-                    "Expected at C:\\Users\\jonhy\\Documents\\code-projects\\yt-dlp\\\n\
+                    "Install yt-dlp and make sure it is on PATH,\n\
                      or set YTDLP_PATH and restart the app.",
                 ));
             } else {

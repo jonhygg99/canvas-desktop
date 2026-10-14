@@ -188,8 +188,10 @@ impl AppInner {
     }
 }
 
-/// Directorio de caché de miniaturas del usuario (mejor esfuerzo).
-pub(super) fn thumbnail_cache_dir() -> Option<PathBuf> {
+/// Directorio de caché de miniaturas del usuario (mejor esfuerzo). Es
+/// `pub(crate)` (no `pub(super)`) porque la poda de arranque (`main`) lo
+/// necesita fuera de `app`.
+pub(crate) fn thumbnail_cache_dir() -> Option<PathBuf> {
     let dirs = directories::ProjectDirs::from("com", "canvas-desktop", "Canvas Desktop")?;
     let dir = dirs.cache_dir().join("thumbnails");
     match std::fs::create_dir_all(&dir) {

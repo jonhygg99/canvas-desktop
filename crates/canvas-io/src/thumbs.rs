@@ -90,9 +90,82 @@ fn read_cache(cache_path: &Path) -> Option<LoadedImage> {
     })
 }
 
+/// Tope de archivos de la caché de miniaturas en disco.
+/// Tope de bytes (128 MiB de PNGs de 256 px).
+pub const MAX_THUMB_FILES: usize = 1000;
+pub const MAX_THUMB_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Poda la caché de miniaturas: la clave incluye ruta + mtime + tamaño,
+/// así que cada versión de cada foto deja un PNG huérfano para siempre —
+/// sin esto el directorio crece sin cota. Borra los más viejos por mtime
+/// hasta quedar bajo `MAX_THUMB_FILES` Y `MAX_THUMB_BYTES`. Lo mejor
+/// posible, sin fallar: la caché se regenera sola. La app lo llama una vez
+/// al arrancar, en un hilo de fondo.
+pub fn prune_thumbnail_cache(dir: &Path) {
+    prune_thumbnail_cache_in(dir, MAX_THUMB_FILES, MAX_THUMB_BYTES);
+}
+
+fn prune_thumbnail_cache_in(dir: &Path, max_files: usize, max_bytes: u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            Some((meta.modified().ok()?, meta.len(), entry.path()))
+        })
+        .collect();
+    // Más viejos primero: ante el empate de mtime, los más grandes antes
+    // (liberan más por borrado).
+    files.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    let mut total: u64 = files.iter().map(|(_, len, _)| len).sum();
+    let mut count = files.len();
+    for (_, len, path) in files {
+        if count <= max_files && total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            count -= 1;
+            total = total.saturating_sub(len);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_evicts_oldest_first_under_both_caps() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (name, size) in [("a.png", 8usize), ("b.png", 8), ("c.png", 8)] {
+            std::fs::write(dir.path().join(name), vec![7u8; size]).expect("sembrar");
+        }
+        std::fs::create_dir(dir.path().join("sub")).expect("subdir");
+        // Tope de bytes: 24 > 20, sobra un archivo (el empate de mtime no
+        // importa: la aserción es de conteo y de total).
+        prune_thumbnail_cache_in(dir.path(), 10, 20);
+        let files: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("leer")
+            .flatten()
+            .filter(|e| e.metadata().is_ok_and(|m| m.is_file()))
+            .collect();
+        assert_eq!(files.len(), 2);
+        let total: u64 = files
+            .iter()
+            .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+            .sum();
+        assert!(total <= 20);
+        // Tope de archivos: queda uno; el subdirectorio no cuenta ni se toca.
+        prune_thumbnail_cache_in(dir.path(), 1, u64::MAX);
+        let files = std::fs::read_dir(dir.path()).expect("leer").count();
+        assert_eq!(files, 2, "un PNG + el subdirectorio intacto");
+        assert!(dir.path().join("sub").is_dir());
+    }
 
     #[test]
     fn fits_within_max_dimension() {

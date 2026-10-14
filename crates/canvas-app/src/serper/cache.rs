@@ -156,6 +156,33 @@ pub fn save_disk(key: &str, page: &SearchPage) {
     }
 }
 
+/// Poda los JSONs más viejos que el TTL: `fresh` solo filtra lecturas,
+/// sin esto los archivos se quedarían en disco para siempre. Lo mejor
+/// posible, sin fallar; la app lo llama una vez al arrancar, en un hilo de
+/// fondo (la caché se regenera sola con la siguiente búsqueda).
+pub(crate) fn sweep_stale_disk() {
+    let Some(dir) = cache_dir() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let now = now_secs();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let stale = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<CachedPage>(&bytes).ok())
+            .is_none_or(|page| !page.fresh(now));
+        if stale {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Inserta con tope LRU en un mapa + orden de inserción.
 pub fn lru_insert(
     map: &mut HashMap<String, CachedPage>,
