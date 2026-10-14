@@ -1,3 +1,11 @@
+## Novedades de v0.7.6
+
+- La cabecera de la galería muestra el total, las imágenes y los vídeos con **iconos en vez de palabras**, y cada grupo es clicable para filtrar (igual que el menú Todos/Imágenes/Vídeos, siempre sincronizados).
+- Si varios renders de la GPU fallan seguidos, el lienzo se congela en la última imagen buena y avisa en la barra de estado en vez de cerrar la app; cuando la GPU responde, se reanuda solo.
+- La tarjeta de un download ya no enseña nunca la miniatura de un clip borrado que reutilizó su nombre.
+- Primer guardado con nombre reservado atómicamente, etiquetas `{carpeta}-NN` compartidas por capas y lienzos, y fuentes de vídeo duraderas en `.download` que sobreviven al mover el proyecto.
+- Las imágenes de internet y los archivos con dimensiones imposibles ya no pueden pedir gigabytes de memoria al abrirlos.
+
 ## Novedades de v0.7.5
 
 - Los lienzos de vídeo se guardan como **mp4 renderizado** (página + fondo con blur + clip colocado y recortado): el primer `Ctrl+S` adopta el render como origen y «Guardar como…» ofrece el tramo recortado (`<origen>-trim.mp4`).
