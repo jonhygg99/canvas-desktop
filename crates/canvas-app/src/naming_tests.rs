@@ -58,10 +58,11 @@ fn disk_files_count_as_taken_numbers() {
 #[test]
 fn next_image_name_unions_layers_and_disk() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("edwin-luna-01.png"), b"x").unwrap();
     // La carpeta del test tiene un nombre temporal: el esquema manda,
-    // no el valor concreto del slug.
+    // no el valor concreto del slug. El disco aporta el 01 y las capas el
+    // 02, así que la unión ({1, 2}) promete el 03.
     let prefix = folder_stem(Some(dir.path())).unwrap();
+    std::fs::write(dir.path().join(format!("{prefix}-01.png")), b"x").unwrap();
     let name = next_image_name(dir.path(), ["Pasted Image", &format!("{prefix}-02")]);
     assert_eq!(name, format!("{prefix}-03"));
 }

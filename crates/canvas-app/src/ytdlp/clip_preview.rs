@@ -157,7 +157,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut previews = ClipPreviews::default();
         pending_with(&mut previews, &path, fingerprint(&path), empty_frame());
-        previews.update(&[path.clone()], &ctx);
+        previews.update(std::slice::from_ref(&path), &ctx);
         let preview = previews.get(&path).expect("vale");
         assert_eq!(preview.duration, Some(7.0));
     }
@@ -177,7 +177,7 @@ mod tests {
         assert_ne!(fingerprint(&path), old_meta);
         // El worker del primero entrega tarde.
         pending_with(&mut previews, &path, old_meta, empty_frame());
-        previews.update(&[path.clone()], &ctx);
+        previews.update(std::slice::from_ref(&path), &ctx);
         assert!(
             previews.get(&path).is_none(),
             "la miniatura del clip borrado no vale para el nuevo"
@@ -201,7 +201,7 @@ mod tests {
             },
         );
         let path = clip(dir.path(), b"segundo");
-        previews.update(&[path.clone()], &ctx);
+        previews.update(std::slice::from_ref(&path), &ctx);
         assert!(
             previews.get(&path).is_none(),
             "la entrada vieja no sobrevive al reemplazo"

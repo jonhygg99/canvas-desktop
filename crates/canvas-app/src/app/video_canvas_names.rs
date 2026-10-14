@@ -5,18 +5,35 @@ use std::path::{Path, PathBuf};
 
 use crate::{deck, editor, settings::NewCanvasFormat, ytdlp::VideoAccept};
 
+/// ¿Está libre `path` en disco y en las ranuras salvo `except`?
+fn slot_path_free(deck: &deck::Deck, except: Option<usize>, path: &Path) -> bool {
+    !path.exists()
+        && !deck
+            .slots
+            .iter()
+            .enumerate()
+            .any(|(i, s)| except != Some(i) && s.path.as_path() == path)
+}
+
 /// Reserva `{stem}-{n:02}.{ext}` (`clip-edwin-luna-01.mp4`…) libre en
-/// disco y en las ranuras del deck. Mismo esquema que el resto de la app;
-/// el disco solo se mira, la reserva real la hace el guardado.
+/// disco y en las ranuras del deck. El nombre sin número cuenta como el 01
+/// de la serie: si ya está ocupado, la serie empieza en el 02. Mismo
+/// esquema que el resto de la app; el disco solo se mira, la reserva real
+/// la hace el guardado.
 pub(super) fn reserve_clip_slot_path(
     deck: &deck::Deck,
     folder: &Path,
     stem: &str,
     ext: &str,
 ) -> Result<PathBuf, String> {
+    let bare = folder.join(format!("{stem}.{ext}"));
+    let bare_taken = !slot_path_free(deck, None, &bare);
     for n in 1..=10_000u32 {
+        if n == 1 && bare_taken {
+            continue;
+        }
         let candidate = folder.join(format!("{stem}-{n:02}.{ext}"));
-        if !candidate.exists() && !deck.slots.iter().any(|s| s.path == candidate) {
+        if slot_path_free(deck, None, &candidate) {
             return Ok(candidate);
         }
     }
@@ -48,7 +65,19 @@ pub(super) fn configure_video_slot(
     let stem =
         crate::naming::clip_prefix(deck.folder.as_deref()).unwrap_or_else(|| legacy.to_owned());
     let folder = deck.folder.clone().unwrap_or_default();
-    let path = reserve_clip_slot_path(deck, &folder, &stem, ext)?;
+    // Sin carpeta se conserva el nombre del clip tal cual cuando está
+    // libre; el número solo aparece al colisionar. Con carpeta manda la
+    // serie numerada (el tallo es la carpeta, no el clip).
+    let path = if deck.folder.is_none() {
+        let bare = folder.join(format!("{stem}.{ext}"));
+        if slot_path_free(deck, Some(index), &bare) {
+            bare
+        } else {
+            reserve_clip_slot_path(deck, &folder, &stem, ext)?
+        }
+    } else {
+        reserve_clip_slot_path(deck, &folder, &stem, ext)?
+    };
     let slot = &mut deck.slots[index];
     slot.name = path
         .file_name()
@@ -84,7 +113,16 @@ pub(crate) fn rename_provisional(
     let old = &deck.slots[index].path;
     let folder = old.parent().unwrap_or_else(|| Path::new(""));
     let ext = old.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
-    let path = reserve_clip_slot_path(deck, folder, stem.trim(), ext)?;
+    let stem = stem.trim();
+    // Un renombrado explícito conserva el nombre pelado cuando está libre;
+    // la serie numerada solo entra al colisionar (la propia ranura no
+    // cuenta: renombrar al mismo nombre lo conserva, no lo duplica).
+    let bare = folder.join(format!("{stem}.{ext}"));
+    let path = if slot_path_free(deck, Some(index), &bare) {
+        bare
+    } else {
+        reserve_clip_slot_path(deck, folder, stem, ext)?
+    };
     let slot = &mut deck.slots[index];
     slot.name = path
         .file_name()

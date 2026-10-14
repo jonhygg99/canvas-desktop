@@ -291,7 +291,10 @@ fn status_bar_ui(f: &EditorFrame<'_>, ui: &mut egui::Ui) {
 /// última en escribir gana, pero cada foto lleva su ventana).
 fn note_app_context(f: &EditorFrame<'_>) {
     static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    if TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 240 != 0 {
+    if !TICK
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .is_multiple_of(240)
+    {
         return;
     }
     let loaded = f
