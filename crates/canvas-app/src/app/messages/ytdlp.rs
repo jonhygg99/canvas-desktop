@@ -208,6 +208,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn item_and_batch_inserts_agree_on_newest_first() {
+        // El flujo real: cada clip entra por `finish_download_item` al
+        // terminar y la tanda se consolida con `merge_done` al final. Los
+        // dos puntos deben dejar lo mismo: el último en terminarse, primero.
+        // Sin este candado, un cambio en uno reordena la lista al cerrar la
+        // tanda sin que ningún test se queje.
+        let dir = tempfile::tempdir().expect("temp");
+        let mut panel = crate::ytdlp::Panel::default();
+        let mut batch = Vec::new();
+        for name in ["a.mp4", "b.mp4", "c.mp4"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, [0u8; 2]).expect("sembrar");
+            panel.finish_download_item(crate::loader::YtdlpItemOutcome {
+                url: format!("https://example.test/{name}"),
+                target: None,
+                clips: vec![crate::loader::DownloadedClip {
+                    path: path.clone(),
+                    title: name.to_owned(),
+                }],
+                error: None,
+            });
+            batch.push(path);
+        }
+        let newest_first = vec![batch[2].clone(), batch[1].clone(), batch[0].clone()];
+        assert_eq!(panel.done, newest_first);
+        // `paths` llega en orden de terminación; consolidar no reordena.
+        assert_eq!(merge_done(&panel.done, batch), newest_first);
+    }
+
     /// Editor con una sesión de edición viva para `clip_id` (esperando sus
     /// fotogramas, como recién abierto). Sin GPU: `EditorState` y
     /// `VideoEdit::open` son CPU puros.
