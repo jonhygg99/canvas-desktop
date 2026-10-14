@@ -137,7 +137,18 @@ jobs:
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
-            libfontconfig1-dev libasound2-dev
+            libfontconfig1-dev libasound2-dev \
+            ffmpeg
+
+      # Los tests de vídeo generan sus fixtures con ffmpeg/ffprobe
+      # (`lavfi_source…`, `fixture…`): sin esos binarios fallan con
+      # `expect`, en los tres sistemas. ffprobe viene en el mismo paquete.
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
 
       # `--all-targets` compila también los examples GPU de canvas-render
       # (bake_blur, bake_filters, save_roundtrip, export_probe, text_probe):
