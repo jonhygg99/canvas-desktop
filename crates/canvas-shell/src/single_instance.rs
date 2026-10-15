@@ -324,9 +324,12 @@ mod tests {
             .expect("nombre válido");
         let mut conn = Stream::connect(ns).expect("conectar");
         writeln!(conn, "ok.png").expect("línea normal");
-        writeln!(conn, "{}", "x".repeat(MAX_INSTANCE_LINE_BYTES + 1)).expect("línea gigante");
-        // Tras el corte el servidor ya cerró: este envío puede fallar con
-        // `BrokenPipe` y es parte de lo esperado.
+        // Este envío NO puede exigir éxito: al servidor le basta ver el primer
+        // exceso para cortar, y el corte puede alcanzarle a mitad de escritura
+        // (`BrokenPipe`) — sobre todo con el resto de la suite cargando la
+        // máquina, que es como fallaba de vez en cuando. Lo que se comprueba
+        // de verdad es que la gigante no se entrega (assert de abajo).
+        let _ = writeln!(conn, "{}", "x".repeat(MAX_INSTANCE_LINE_BYTES + 1));
         let _ = writeln!(conn, "late.png");
         drop(conn);
         let received = handle.join().expect("hilo");
