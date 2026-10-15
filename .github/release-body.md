@@ -1,3 +1,12 @@
+## Novedades de v0.7.8
+
+- La pestaña **Download** lista TODOS los clips que siguen en la carpeta temporal (los de sesiones anteriores incluidos) y, al quedarse sin clips al borrar el último (o todos), la propia carpeta desaparece. El escaneo rueda una vez por sesión: no toca el disco en cada frame.
+- El modo **Instagram/Facebook** de la pestaña Web vuelve a encontrar fotos de la red en cuentas **gratuitas** de Serper: el degradado sin `site:` (que la free rechaza — «Query pattern not allowed», medido en vivo) ahora nombra la red en la query; el perfil pelado traía 7/100 fuentes y con la red en la keyword llega a 45/100 por página.
+- Transparencia de créditos revisada con la API real: 1 token ≈ 10 imágenes/1 crédito, 2 tokens ≈ 100/2, 3 tokens ≈ 200/4 (la segunda página de «Bring more» también cobra 2).
+- El **Scale** del panel de propiedades quedó como un único slider logarítmico (mismo UI que Opacity, slider a lo ancho y etiqueta encima) y lo mostrado coincide con lo aplicado (1 decimal).
+- Botones rápidos `+4`/`+5`/`+6`/`+7` bajo el campo End del recorte por segmentos del Download: `End = Start + N segundos`, con Start vacío contando como 0; etiquetas Start/End encima de sus cajas y placeholder «00:00».
+- Textos de ayuda redundantes del sidebar fuera (el «Save to (temporary)», la nota del segmento y el bloque al pie del listado); no queda ningún aviso que repita lo que ya enseña el panel.
+
 ## Novedades de v0.7.6
 
 - La cabecera de la galería muestra el total, las imágenes y los vídeos con **iconos en vez de palabras**, y cada grupo es clicable para filtrar (igual que el menú Todos/Imágenes/Vídeos, siempre sincronizados).

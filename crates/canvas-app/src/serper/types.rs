@@ -106,6 +106,16 @@ impl SocialNetwork {
             Self::Facebook => "facebook.com",
         }
     }
+
+    /// Palabra de la red para el degradado gratuito: no hay `site:`
+    /// disponible (las cuentas free lo rechazan), así que la red se
+    /// nombra dentro de la query.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Instagram => "instagram",
+            Self::Facebook => "facebook",
+        }
+    }
 }
 
 /// Persona detectada en el modo social: link o nombre plano.

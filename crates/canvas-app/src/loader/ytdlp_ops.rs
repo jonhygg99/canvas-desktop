@@ -12,13 +12,76 @@ use crate::ytdlp::api;
 use super::AppMsg;
 
 /// Manda rutas a la papelera del SO (uno o todos los descargados) en un
-/// hilo aparte; el resultado vuelve como `YtdlpFilesDeleted`.
-pub fn spawn_ytdlp_delete(paths: Vec<PathBuf>, tx: Sender<AppMsg>, ctx: egui::Context) {
+/// hilo aparte; el resultado vuelve como `YtdlpFilesDeleted`. Con
+/// `allow_folder_removal` (la UI lo niega con una descarga en curso),
+/// si la carpeta de descargas queda sin clips también se elimina.
+pub fn spawn_ytdlp_delete(
+    paths: Vec<PathBuf>,
+    allow_folder_removal: bool,
+    tx: Sender<AppMsg>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
         let (removed, errors) = delete_to_trash(&paths);
+        if allow_folder_removal {
+            // Lectura sin crear: el staging ya no debe renacer por el
+            // camino del borrado. Nota: `staging_dir_path()` solo compone
+            // la ruta; la poda aplica SOLO si el parent queda vacío.
+            let folders = prune_emptied_download_folders(&removed, &api::staging_dir_path());
+            for folder in &folders {
+                tracing::info!("Download staging emptied and removed: {}", folder.display());
+            }
+        }
         let _ = tx.send(AppMsg::YtdlpFilesDeleted { removed, errors });
         ctx.request_repaint();
     });
+}
+
+/// La carpeta de descargas que quedó sin clips tras el borrado también se
+/// elimina («Move all» o el último de la lista): el staging es solo del
+/// Download y no debe acumularse como carpeta vacía en el temporal. Solo
+/// se poda `download_root` (el staging de la app) — nunca la carpeta padre
+/// de una ruta ajena que pasara por aquí — y solo si ya no queda ni un
+/// clip ni un `.part`/`.ytdl` (ese parcial puede ser de una descarga en
+/// vuelo de otra ventana y debe sobrevivir para reanudarse; la tabla de
+/// extensiones compartida con el listado es `api::is_download_name`).
+/// shortpit conocido: entre dos ventanas hay una carrera de milisegundos
+/// entre el fin del merge de yt-dlp y su mp4 final; el guard de extensión
+/// la estrecha y la descarga perdedora es reintenodable. Devuelve las
+/// carpetas eliminadas. Pura salvo el disco.
+pub(crate) fn prune_emptied_download_folders(
+    removed: &[PathBuf],
+    download_root: &Path,
+) -> Vec<PathBuf> {
+    // Al menos uno de los paths trasted debió caer dentro del staging
+    // (`download_root`): si ninguno lo hizo, nada que podar.
+    if !removed
+        .iter()
+        .any(|path| path.parent().is_some_and(|parent| parent == download_root))
+    {
+        return Vec::new();
+    }
+    if !folder_is_download_empty(download_root) {
+        return Vec::new();
+    }
+    match std::fs::remove_dir_all(download_root) {
+        Ok(()) => vec![download_root.to_path_buf()],
+        Err(_) => Vec::new(), // lo mejor posible: no rompe el borrado
+    }
+}
+
+/// La carpeta existe y ya puede eliminarse: la MISMA clasificación del
+/// listado (`api::is_download_name`) decide qué mantiene la carpeta
+/// viva — clips terminados (`.mp4`/`.webm`/`.m4a`, sin importar
+/// mayúsculas) y parciales de reanudación (`.part`/`.ytdl`).
+fn folder_is_download_empty(folder: &Path) -> bool {
+    std::fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .all(|entry| !api::is_download_name(&entry.path()))
+        })
+        .unwrap_or(false)
 }
 
 /// Borra a la papelera, tolerando lo que ya no exista. Pura salvo el disco.

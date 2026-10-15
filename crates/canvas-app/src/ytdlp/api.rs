@@ -168,19 +168,47 @@ pub fn section_arg(start: Option<f64>, end: Option<f64>) -> Option<String> {
 /// Carpeta temporal donde caen TODAS las descargas de yt-dlp
 /// (`clip(2).mp4`, con sus `.part` de reanudación): el proyecto nunca recibe
 /// el mp4 completo. La lista de Download es su dueña hasta que el clip se
-/// borra desde ahí (papelera del SO). Se crea al primer uso, lo mejor
-/// posible: si falla, la descarga lo informa con el error del SO.
-pub fn staging_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("canvas-desktop-downloads");
-    let _ = std::fs::create_dir_all(&dir);
-    dir
+/// borra desde ahí (papelera del SO).
+pub fn staging_dir_path() -> PathBuf {
+    std::env::temp_dir().join("canvas-desktop-downloads")
 }
 
 /// Destino del Download: siempre el temporal. Antes era el contexto vivo
 /// (baraja/archivo/galería) → última carpeta → Vídeos, y el mp4 completo
-/// acababa dentro del proyecto.
+/// acababa dentro del proyecto. SIN crear: un download real la vuelve a
+/// crear (`download_one`), y el panel no debe dejar una carpeta vacía
+/// tras cada «Move all».
 pub fn resolve_download_dir() -> PathBuf {
-    staging_dir()
+    staging_dir_path()
+}
+
+/// La única tabla de extensiones de descarga. La usa el LISTADO del
+/// sidebar (clips terminados) y la PODA de la carpeta (clips + parciales):
+/// una extensión nueva (`.webm` de un «mute» sin audio que fusionar) se da
+/// de alta aquí y ambos caminos dejan de ser copias que divergen.
+const CLIP_EXTS: [&str; 3] = ["mp4", "webm", "m4a"];
+const PART_EXTS: [&str; 2] = ["part", "ytdl"];
+
+/// ¿Listaría el sidebar esta ruta como clip descargado? Solo los
+/// contenedores de una descarga TERMINADA (los parciales no).
+pub fn is_clip_name(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| {
+        CLIP_EXTS
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    })
+}
+
+/// ¿Esta ruta mantiene viva la carpeta staging? Clips más parciales y
+/// `.ytdl` de reanudación (pueden pertenecer a una descarga en vuelo de
+/// otra ventana).
+pub fn is_download_name(path: &Path) -> bool {
+    is_clip_name(path)
+        || path.extension().is_some_and(|ext| {
+            PART_EXTS
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
+        })
 }
 
 /// Borra del staging los mp4 (y sus `.part`/`.ytdl` de reanudación) más
@@ -189,7 +217,7 @@ pub fn resolve_download_dir() -> PathBuf {
 /// sesión, así que lo viejo es por definición huérfano de sesiones
 /// anteriores — lo reciente (esta sesión) no se toca.
 pub fn sweep_stale_downloads(older_than: std::time::Duration) {
-    sweep_stale_downloads_in(&staging_dir(), older_than);
+    sweep_stale_downloads_in(&staging_dir_path(), older_than);
 }
 
 fn sweep_stale_downloads_in(dir: &Path, older_than: std::time::Duration) {

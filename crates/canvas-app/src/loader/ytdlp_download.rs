@@ -87,11 +87,16 @@ fn download_one(
     outcome: &mut YtdlpItemOutcome,
     progress: impl Fn(String),
 ) -> Result<(), String> {
+    // La poda pudo haber borrado la carpeta staging al vaciarse: esta
+    // descarga es su ÚNICO creador (panel, barrido y poda solo leen la
+    // ruta con `staging_dir_path`, sin crearla).
+    std::fs::create_dir_all(&request.dest).map_err(|error| error.to_string())?;
     let target = match &request.target {
         Some(target) => target.clone(),
         None => {
-            // El destino ya es el temporal (`staging_dir`): `clip.mp4`,
-            // `clip (2).mp4`…; el título real lo muestra la tarjeta.
+            // El destino ya es el temporal (`staging_dir_path`):
+            // `clip.mp4`, `clip (2).mp4`…; el título real lo muestra
+            // la tarjeta.
             let path =
                 api::reserve_clip_path(&request.dest, "clip").map_err(|error| error.to_string())?;
             std::fs::remove_file(&path).map_err(|error| error.to_string())?;

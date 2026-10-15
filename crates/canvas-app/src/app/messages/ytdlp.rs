@@ -80,7 +80,16 @@ impl super::AppInner {
         if let View::Editor(state) = &mut ws.view {
             state.ytdlp.done.retain(|p| !removed.contains(p));
             if !errors.is_empty() {
-                state.ytdlp.error = Some(errors.join("\n").chars().take(500).collect());
+                state.ytdlp.error = Some(
+                    errors
+                        .join(
+                            "
+",
+                        )
+                        .chars()
+                        .take(500)
+                        .collect(),
+                );
             }
         }
     }

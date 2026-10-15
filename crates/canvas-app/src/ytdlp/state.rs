@@ -1,6 +1,8 @@
 //! Estado del panel de descargas yt-dlp (pestaña «Download»).
 
-use std::path::PathBuf;
+use super::api;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Panel {
     /// URLs pegadas (una por línea o separadas por espacios).
@@ -22,8 +24,14 @@ pub struct Panel {
     pub clip_info: std::collections::HashMap<PathBuf, crate::loader::DownloadedClip>,
     /// Último error visible.
     pub error: Option<String>,
-    /// Clips descargados, el más reciente primero (así se pintan).
+    /// Clips visibles, el más reciente primero (así se pintan). Dueño de
+    /// TODA la carpeta staging: lo de sesiones anteriores sigue en disco
+    /// hasta borrarse desde aquí y entra con `sync_download_folder`.
     pub done: Vec<PathBuf>,
+    /// Escaneo de la carpeta pendiente: el listado arranca con lo que hay
+    /// en el disco, no vacío, pero solo se lee UNA vez por sesión (IO en
+    /// el hilo de UI no rueda cada frame).
+    pub needs_folder_rescan: bool,
     /// Clip pendiente de insertar al canvas (lo pide el botón Insertar; lo
     /// lanza `layers_panel` con el canal a mano).
     pub pending_insert: Option<PathBuf>,
@@ -53,6 +61,7 @@ impl Default for Panel {
             clip_info: std::collections::HashMap::new(),
             error: None,
             done: Vec::new(),
+            needs_folder_rescan: true,
             pending_insert: None,
             pending_edit: None,
             edit: None,
@@ -70,6 +79,20 @@ impl Drop for Panel {
 }
 
 impl Panel {
+    /// Refresca la lista con TODA la carpeta de descargas: lo que sigue en
+    /// disco de sesiones anteriores entra también, no solo lo bajado en
+    /// esta sesión. El IO rueda una vez por sesión (`needs_folder_rescan`);
+    /// los cambios posteriores los traen los mensajes de la tanda
+    /// (`merge_done`) y del borrado.
+    pub(crate) fn sync_download_folder(&mut self, folder: &Path) {
+        if !self.needs_folder_rescan {
+            return;
+        }
+        self.needs_folder_rescan = false;
+        self.done = merge_disk_and_session(disk_downloads(folder), &self.done);
+        self.clip_info.retain(|path, _| self.done.contains(path));
+    }
+
     pub(crate) fn finish_download_item(&mut self, outcome: crate::loader::YtdlpItemOutcome) {
         self.failed.retain(|(url, _)| *url != outcome.url);
         if let Some(error) = outcome.error {
@@ -93,10 +116,129 @@ impl Panel {
     }
 }
 
+/// Lo que hay en la carpeta de descargas: clips TERMINADOS (la tabla
+/// compartida `api::is_clip_name`: `.mp4`/`.webm`/`.m4a`) que sigan en el
+/// disco, el más nuevo primero (mtime). Pura salvo el IO de `read_dir`.
+fn disk_downloads(folder: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<(SystemTime, PathBuf)> = Vec::new();
+    if let Ok(read) = std::fs::read_dir(folder) {
+        for entry in read.flatten() {
+            let path = entry.path();
+            if !api::is_clip_name(&path) || !path.is_file() {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .unwrap_or(UNIX_EPOCH);
+            entries.push((modified, path));
+        }
+    }
+    // El más nuevo primero: la lista se pinta de arriba hacia abajo.
+    entries.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+    entries.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Une lo leído del disco con los paths de la sesión. El disco ya llega
+/// solo con lo que existe (el más nuevo primero); los paths de sesión que
+/// ya no están se caen — igual que `merge_done` poda en el hilo de
+/// mensajes — y los que sigan sin estar (tanda en vuelo durante el
+/// escaneo) entran al final.
+fn merge_disk_and_session(disk: Vec<PathBuf>, session: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = disk;
+    for path in session {
+        // La condición NO va en un filter de la iteración: ese closure
+        // mantiene prestada `out` y chocaría con el push. Así el borrow
+        // termina en la línea y el push es libre.
+        if path.is_file() && !out.contains(path) {
+            out.push(path.clone());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::loader::{DownloadedClip, YtdlpDownloadRequest, YtdlpItemOutcome};
+
+    #[test]
+    fn disk_scan_lists_only_mp4s_newest_first() {
+        let dir = tempfile::tempdir().expect("temp");
+        let old = dir.path().join("old.mp4");
+        let new = dir.path().join("new.mp4");
+        std::fs::write(&old, [0u8; 4]).expect("v");
+        std::fs::write(&new, [0u8; 4]).expect("v");
+        // mtime determinista. Un handle de LECTURA no puede tocar mtime en
+        // Windows: abiertos con acceso de escritura.
+        let base = UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(1_000_000))
+            .expect("epoch");
+        let stamp = |path: &Path, time: SystemTime| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(time))
+                .expect("mtime");
+        };
+        stamp(&old, base);
+        stamp(
+            &new,
+            base.checked_add(std::time::Duration::from_secs(60))
+                .expect("t"),
+        );
+        // Lo que NO es un clip descargado queda fuera del listado.
+        std::fs::write(dir.path().join("resume.mp4.part"), [0u8; 2]).expect("part");
+        std::fs::write(dir.path().join("thumb.png"), [0u8; 2]).expect("png");
+        // Un «mute» sin audio que fusionar puede terminar en `.webm`: es
+        // un clip terminado y entra (los parciales nunca).
+        let mute = dir.path().join("mute.webm");
+        std::fs::write(&mute, [0u8; 2]).expect("webm");
+        stamp(
+            &mute,
+            base.checked_add(std::time::Duration::from_secs(120))
+                .expect("t"),
+        );
+        assert_eq!(disk_downloads(dir.path()), vec![mute, new, old]);
+    }
+
+    #[test]
+    fn sidebar_lists_whole_folder_session_paths_survive_missing_drop() {
+        let dir = tempfile::tempdir().expect("temp");
+        let older = dir.path().join("older.mp4");
+        std::fs::write(&older, [0u8; 4]).expect("v");
+        let mut panel = Panel::default();
+        // Ruta de sesión de esta tanda y otra que ya no está: la viva se
+        // re-encuentra por el escaneo (es la más nueva) y la muerta se cae,
+        // igual que `merge_done` poda en el hilo de mensajes.
+        let in_flight = dir.path().join("in-flight.mp4");
+        std::fs::write(&in_flight, [0u8; 4]).expect("v");
+        let stamp = |path: &Path, time: SystemTime| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(time))
+                .expect("mtime");
+        };
+        let base = UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(1_000_000))
+            .expect("epoch");
+        stamp(&older, base);
+        stamp(
+            &in_flight,
+            base.checked_add(std::time::Duration::from_secs(60))
+                .expect("t"),
+        );
+        let gone = dir.path().join("gone.mp4");
+        panel.done = vec![in_flight.clone(), gone];
+        panel.sync_download_folder(dir.path());
+        assert_eq!(panel.done, vec![in_flight.clone(), older.clone()]);
+        // El escaneo rueda UNA vez por sesión: borrar el archivo fuera de la
+        // app no se re-lee aquí (los mensajes del borrado podan la lista).
+        std::fs::remove_file(&older).expect("rm");
+        panel.sync_download_folder(dir.path());
+        assert_eq!(panel.done, vec![in_flight, older]);
+    }
     #[test]
     fn clips_are_visible_before_the_batch_finishes_and_cancel_preserves_retry_target() {
         let mut panel = Panel::default();

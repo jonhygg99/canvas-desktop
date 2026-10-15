@@ -360,8 +360,9 @@ fn person_query_prefers_site_operator() {
         handle: "shakira".to_owned(),
     });
     assert_eq!(queries.full, "site:instagram.com \"shakira\"");
-    // El degradado gratuito no lleva ningún operador.
-    assert_eq!(queries.plain, "shakira");
+    // El degradado gratuito no lleva ningún operador y nombra la red
+    // (el handle pelado traía muy poquitas fotos de la red).
+    assert_eq!(queries.plain, "shakira instagram");
     assert!(!queries.plain.contains("site:"));
     let queries = filter::build_person_query(&PersonQuery {
         network: None,

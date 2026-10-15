@@ -32,6 +32,22 @@ pub(super) fn validated_section(start: &str, end: &str) -> Result<Section, &'sta
     Ok((start, end))
 }
 
+/// End a partir de un Start y unos segundos extra. Start vacío vale 0.
+/// El texto sale en segundos (los inputs del formulario también los
+/// aceptan: `validated_section` pasa por `api::parse_time`).
+fn end_from_start(start_text: &str, extra: f64) -> String {
+    let start = if start_text.trim().is_empty() {
+        0.0
+    } else {
+        super::api::parse_time(start_text.trim()).unwrap_or(0.0)
+    };
+    let total = ((start + extra) * 1000.0).round() / 1000.0;
+    format!("{total:.3}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_owned()
+}
+
 pub(super) fn show(panel: &mut Panel, ui: &mut egui::Ui) -> Result<Section, &'static str> {
     ui.checkbox(&mut panel.mute, "Download without audio")
         .on_hover_text(
@@ -40,14 +56,32 @@ pub(super) fn show(panel: &mut Panel, ui: &mut egui::Ui) -> Result<Section, &'st
     ui.collapsing("Advanced", |ui| {
         ui.checkbox(&mut panel.download_segment, "Download only a segment");
         ui.add_enabled_ui(panel.download_segment, |ui| {
+            // Layout vertical: Start arriba, End justo debajo, y los accesos
+            // rápidos de duración (+4/+5/+6/+7 s tras el Start) al final.
+            ui.label("Start");
+            ui.add(
+                egui::TextEdit::singleline(&mut panel.start)
+                    // El default útil es «desde el principio».
+                    .hint_text("00:00")
+                    .desired_width(100.0),
+            );
+            ui.label("End");
+            ui.add(
+                egui::TextEdit::singleline(&mut panel.end)
+                    .hint_text("End of video")
+                    .desired_width(100.0),
+            );
             ui.horizontal_wrapped(|ui| {
-                ui.label("Start");
-                ui.add(egui::TextEdit::singleline(&mut panel.start).hint_text("00:00:00.000").desired_width(100.0));
-                ui.label("End");
-                ui.add(egui::TextEdit::singleline(&mut panel.end).hint_text("End of video").desired_width(100.0));
+                for extra in [4.0f64, 5.0, 6.0, 7.0] {
+                    let button = ui
+                        .add(egui::Button::new(format!("+{}", extra as i32)))
+                        .on_hover_text(format!("End = Start + {extra:.0} s"));
+                    if button.clicked() {
+                        panel.end = end_from_start(&panel.start, extra);
+                    }
+                }
             });
         });
-        ui.weak("Only this segment is saved. You can trim it again in Edit video without changing the downloaded file.");
     });
     let result = if panel.download_segment {
         validated_section(&panel.start, &panel.end)
@@ -63,6 +97,20 @@ pub(super) fn show(panel: &mut Panel, ui: &mut egui::Ui) -> Result<Section, &'st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_duration_buttons_fill_end_from_start() {
+        // Start vacío cuenta como 0; los enteros no arrastran decimales.
+        assert_eq!(end_from_start("", 4.0), "4");
+        assert_eq!(end_from_start("00:00", 7.0), "7");
+        // «1:02» = 62 s → 62 + 6 = 68.
+        assert_eq!(end_from_start("1:02", 6.0), "68");
+        // Un Start con milisegundos conserva su fracción.
+        assert_eq!(end_from_start("3.5", 5.0), "8.5");
+        // Texto inválido no bloquea el botón: cae a 0 (la validación de la
+        // descarga es la que informa el error).
+        assert_eq!(end_from_start("garbage", 4.0), "4");
+    }
 
     #[test]
     fn download_segment_preserves_milliseconds_and_allows_open_end() {

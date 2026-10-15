@@ -28,6 +28,10 @@ pub fn panel_ui(
     ui: &mut egui::Ui,
     tx: &Sender<loader::AppMsg>,
 ) -> ScrollAreaOutput<()> {
+    // La lista es dueña de TODA la carpeta staging: lo que sigue en disco
+    // de sesiones anteriores entra también (escaneo UNA vez por sesión, no
+    // aquí cada frame). ANTES de pintar: la primera pasada ya está al día.
+    panel.sync_download_folder(&dest);
     egui::ScrollArea::vertical()
         .id_salt("download")
         .show(ui, |ui| {
@@ -63,9 +67,6 @@ fn download_form(panel: &mut Panel, dest: PathBuf, ui: &mut egui::Ui, tx: &Sende
 
     ui.add_space(6.0);
     let section = options::show(panel, ui);
-
-    ui.add_space(4.0);
-    ui.weak(format!("Save to (temporary): {}", dest.display()));
 
     ui.add_space(6.0);
     let urls = api::split_urls(&panel.urls);
@@ -112,17 +113,20 @@ fn downloaded_results(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<loader::
                 let clear =
                     ui.add_enabled(!panel.downloading, egui::Button::new("Move all to trash"));
                 if clear.clicked() {
-                    loader::spawn_ytdlp_delete(panel.done.clone(), tx.clone(), ui.ctx().clone());
+                    // Sin descarga en curso: la carpeta puede podarse si
+                    // queda sin clips (ver `spawn_ytdlp_delete`).
+                    loader::spawn_ytdlp_delete(
+                        panel.done.clone(),
+                        !panel.downloading,
+                        tx.clone(),
+                        ui.ctx().clone(),
+                    );
                 }
                 clear.on_hover_text(crate::i18n::tr("Move every downloaded file to the trash"));
             });
         });
         super::clip_cards::show(panel, ui, tx);
     }
-    ui.add_space(4.0);
-    ui.weak(crate::i18n::tr(
-        "Files are saved as clip(x).mp4 in a temporary folder.\nThey stay in Download until moved to trash.\nTrim uses times; .part resumes on retry.",
-    ));
 }
 
 #[cfg(test)]
@@ -137,10 +141,18 @@ mod tests {
     #[test]
     fn download_sidebar_scrolls_when_content_overflows() {
         let (tx, _rx) = std::sync::mpsc::channel();
-        let mut panel = Panel::default();
-        panel.done = (0..6)
-            .map(|i| PathBuf::from(format!("clip{i}.mp4")))
+        // Los clips viven DE VERDAD en el staging de la prueba: el escaneo
+        // del arranque podaría rutas que solo existen en la lista.
+        let staging = tempfile::tempdir().expect("temp");
+        let done: Vec<PathBuf> = (0..6)
+            .map(|i| {
+                let path = staging.path().join(format!("clip{i}.mp4"));
+                std::fs::write(&path, [0u8; 4]).expect("clip");
+                path
+            })
             .collect();
+        let mut panel = Panel::default();
+        panel.done = done;
         let ctx = egui::Context::default();
         ctx.set_fonts(egui::FontDefinitions::empty());
         let input = || egui::RawInput {
@@ -154,7 +166,12 @@ mod tests {
         // Dos frames: el tamaño del contenido se conoce tras el primero.
         for _ in 0..2 {
             let _ = ctx.run_ui(input(), |ui| {
-                last.set(Some(panel_ui(&mut panel, PathBuf::from("tmp"), ui, &tx)));
+                last.set(Some(panel_ui(
+                    &mut panel,
+                    staging.path().to_path_buf(),
+                    ui,
+                    &tx,
+                )));
             });
         }
         let out = last.take().expect("scroll area shown");

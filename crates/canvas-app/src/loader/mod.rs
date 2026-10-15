@@ -354,7 +354,8 @@ pub enum AppMsg {
         errors: Vec<String>,
     },
     /// Rutas mandadas a la papelera desde el Download (borrado unitario o
-    /// Clear): las que salieron y los fallos redactados.
+    /// Clear): las que salieron y los fallos redactados. La carpeta
+    /// staging, si quedó vacía, se podó en el hilo (queda en su log).
     YtdlpFilesDeleted {
         removed: Vec<PathBuf>,
         errors: Vec<String>,

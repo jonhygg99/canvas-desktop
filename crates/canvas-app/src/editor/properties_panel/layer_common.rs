@@ -146,10 +146,19 @@ pub(super) fn layer_properties_ui(
             }
         });
 
-        // Escala respecto al tamaño natural de la imagen.
+        // Escala respecto al tamaño natural de la imagen. El campo
+        // numérico queda arriba y el slider DEBAJO, en una línea nueva.
         if natural.0 > 0.0 && natural.1 > 0.0 {
             let mut scale = t.width / natural.0 * 100.0;
-            ui.horizontal(|ui| {
+            let mut apply = |changed: &mut bool, scale: f64| {
+                *changed = true;
+                t.width = (natural.0 * scale / 100.0).max(1.0);
+                t.height = (natural.1 * scale / 100.0).max(1.0);
+            };
+            // Mismo UI que Opacity: slider a lo ancho y etiqueta encima.
+            // En `scope` para no goteajar el width del slider a la rotación.
+            ui.scope(|ui| {
+                crate::sidebar::stretch_slider(ui);
                 ui.label(crate::i18n::tr(
                     if matches!(layer.content, LayerContent::Video(_)) {
                         "Zoom"
@@ -157,18 +166,20 @@ pub(super) fn layer_properties_ui(
                         "Scale"
                     },
                 ));
+                // Único punto de edición: slider logarítmico (con el rango
+                // real del campo, 0.1..=10 000 %, un lineal dejaría el
+                // 100 % pegado al borde izquierdo).
                 if track(
                     ui.add(
-                        egui::DragValue::new(&mut scale)
-                            .speed(0.5)
-                            .range(0.1..=10_000.0)
+                        // 1 decimal: lo mostrado ES lo aplicado (con 0
+                        // decimales un 100.4 % se leía «100 %»).
+                        egui::Slider::new(&mut scale, 0.1..=10_000.0)
+                            .logarithmic(true)
                             .suffix(" %")
                             .max_decimals(1),
                     ),
                 ) {
-                    changed = true;
-                    t.width = (natural.0 * scale / 100.0).max(1.0);
-                    t.height = (natural.1 * scale / 100.0).max(1.0);
+                    apply(&mut changed, scale);
                 }
             });
         }

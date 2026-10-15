@@ -286,7 +286,14 @@ pub fn build_person_query(person: &super::types::PersonQuery) -> PersonQueryStri
     match person.network {
         Some(network) => PersonQueryStrings {
             full: format!("site:{} \"{}\"", network.site(), person.handle),
-            plain: person.handle.clone(),
+            // El degradado gratuito cae aquí SIN `site:` (la cuenta
+            // free lo rechaza: «Query pattern not allowed»). El handle
+            // pelado trae MUY poco de la red — 7/100 fuentes de
+            // Instagram medido en vivo contra la API — así que se
+            // nombra la red en la query (mismo handle → 45/100). Sin
+            // operadores: `plain` queda capturado por la prueba del
+            // degradado.
+            plain: format!("{} {}", person.handle, network.keyword()),
         },
         None => {
             let handle = person.handle.clone();

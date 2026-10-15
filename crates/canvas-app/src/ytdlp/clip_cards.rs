@@ -41,9 +41,12 @@ pub(super) fn show(panel: &mut Panel, ui: &mut egui::Ui, tx: &Sender<AppMsg>) {
                     panel.error = Some(error);
                 }
             }
-            Some(Action::Trash) => {
-                loader::spawn_ytdlp_delete(vec![path], tx.clone(), ui.ctx().clone())
-            }
+            Some(Action::Trash) => loader::spawn_ytdlp_delete(
+                vec![path],
+                !panel.downloading,
+                tx.clone(),
+                ui.ctx().clone(),
+            ),
             None => {}
         }
     }
