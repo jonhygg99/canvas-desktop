@@ -384,11 +384,14 @@ mod tests {
     #[test]
     fn download_dir_is_always_the_staging_temp() {
         // El destino ya no depende del contexto: el proyecto nunca recibe el
-        // mp4. Estable entre llamadas y creado en disco.
+        // mp4. Estable entre llamadas y siempre bajo el temporal del usuario.
+        // `resolve_download_dir` NO crea la carpeta (lo hace el primer
+        // download real), así que aquí solo identidad, nunca existencia:
+        // en una máquina limpia (CI) staging aún no existe.
         let first = resolve_download_dir();
         let second = resolve_download_dir();
         assert_eq!(first, second);
-        assert!(first.is_dir(), "el temporal se crea al resolver");
+        assert_eq!(first, staging_dir_path());
         assert!(first
             .file_name()
             .is_some_and(|n| n == "canvas-desktop-downloads"));
