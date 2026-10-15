@@ -1,7 +1,8 @@
-//! UI de la pestaña «Images» del sidebar del editor: barra de búsqueda,
-//! fila de filtros, lista vertical de tarjetas de foto y pie con «Load
-//! more». El estado vive en `super::state::Panel`; la tarjeta individual en
-//! `super::card`.
+//! Cuerpo de la pestaña «Images» cuando la fuente elegida es Unsplash:
+//! barra de búsqueda, fila de filtros, lista vertical de tarjetas de foto y
+//! pie con «Load more». El selector de fuente no está aquí, sino en
+//! `layers_panel::source_selector`. El estado vive en `super::state::Panel`;
+//! la tarjeta individual en `super::card`.
 
 use std::sync::mpsc::Sender;
 
@@ -20,7 +21,7 @@ use super::ACCESS_KEY_ENV;
 /// lista: las imágenes quedan un poco más estrechas que el panel.
 const CARD_INSET: f32 = 12.0;
 
-/// Contenido de la pestaña «Images» del panel lateral izquierdo.
+/// Cuerpo de la pestaña «Images» cuando la fuente es Unsplash.
 /// `insert_dest` es la ranura que recibirá un clic de inserción (A07).
 pub fn panel_ui(
     state: &mut EditorState,

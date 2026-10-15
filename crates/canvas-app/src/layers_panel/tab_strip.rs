@@ -1,4 +1,5 @@
-//! La tira vertical de pestañas del panel (Page / Layers / Insert / Images):
+//! La tira vertical de pestañas del panel (Page / Layers / Insert / Images /
+//! Download):
 //! clic para activar o colapsar, arrastre geométrico para intercambiar el
 //! orden Page↔Layers con animación de intercambio. El clic y el arrastre NO
 //! usan el drag-and-drop de egui (dos widgets solapados peleándose por el
@@ -61,10 +62,11 @@ pub(super) struct TabSwapAnim {
     pub(super) release_pos: egui::Pos2,
 }
 
-/// Las seis pestañas: Page y Layers reordenables según los ajustes, e
-/// Insert, Web, Images y Download fijas detrás con un separador delante de
-/// Insert.
-pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 6] {
+/// Las cinco pestañas: Page y Layers reordenables según los ajustes, e
+/// Insert, Images y Download fijas detrás con un separador delante de
+/// Insert. Images absorbió la antigua pestaña Web: su buscador se elige
+/// dentro con el selector de fuente.
+pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 5] {
     let (first, second) = match order {
         LayersTabOrder::PageFirst => (LeftTab::Page, LeftTab::Layers),
         LayersTabOrder::LayersFirst => (LeftTab::Layers, LeftTab::Page),
@@ -73,7 +75,6 @@ pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 6] {
         first,
         second,
         LeftTab::Insert,
-        LeftTab::Web,
         LeftTab::Images,
         LeftTab::Download,
     ]
@@ -82,7 +83,7 @@ pub(super) fn ordered_tabs(order: LayersTabOrder) -> [LeftTab; 6] {
 /// Rects de las pestañas, en el orden de los ajustes (con el hueco extra
 /// como separador delante de Insert).
 fn tab_layout(strip_rect: egui::Rect, order: LayersTabOrder) -> Vec<(LeftTab, egui::Rect)> {
-    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(6);
+    let mut tab_rects: Vec<(LeftTab, egui::Rect)> = Vec::with_capacity(5);
     let mut y = strip_rect.top() + TOP_MARGIN;
     for tab in ordered_tabs(order).iter() {
         // Separador antes de Insert
@@ -358,7 +359,7 @@ fn keyboard_tabs(
                 egui::WidgetType::SelectableLabel,
                 ui.is_enabled(),
                 *active == *tab,
-                crate::i18n::tr(super::tab_draw::tab_tip(*tab)),
+                super::tab_draw::tab_info(*tab).tip,
             )
         });
         if response.has_focus() {

@@ -1,5 +1,6 @@
-//! Estado del panel «Images» que vive en `EditorState`: consulta, filtros,
-//! resultados y el arrastre en curso hacia el lienzo.
+//! Estado del buscador de Unsplash (la fuente «Unsplash» de la pestaña
+//! «Images») que vive en `EditorState`: consulta, filtros, resultados y el
+//! arrastre en curso hacia el lienzo.
 
 use std::sync::mpsc::Sender;
 
@@ -9,7 +10,7 @@ use crate::loader;
 
 use super::types::{Photo, SearchFilters};
 
-/// Estado del panel «Images» del sidebar del editor: consulta, filtros,
+/// Estado del buscador de Unsplash del sidebar del editor: consulta, filtros,
 /// resultados (con sus miniaturas ya subidas a GPU) y errores. Vive en
 /// `EditorState`.
 #[derive(Default)]

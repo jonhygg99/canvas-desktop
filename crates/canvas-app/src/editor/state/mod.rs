@@ -7,13 +7,14 @@ use std::path::PathBuf;
 use canvas_core::{Document, History, LayerContent, LayerId, Selection, Transform};
 use canvas_render::ImageMap;
 
-/// Pestaña activa en el panel lateral izquierdo.
+/// Pestaña activa en el panel lateral izquierdo. La pestaña «Web» (Serper)
+/// y la pestaña «Images» (Unsplash) se fusionaron en `Images`, que elige su
+/// buscador con `ImageSource`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LeftTab {
     Page,
     Layers,
     Insert,
-    Web,
     Images,
     Download,
 }
@@ -25,9 +26,14 @@ mod background;
 mod constructors;
 mod history;
 mod history_navigation;
+mod image_source;
 mod layer_factory;
 mod shortcuts;
 mod sidecar;
+
+#[cfg(test)]
+#[path = "image_source_tests.rs"]
+mod image_source_tests;
 
 #[cfg(test)]
 #[path = "shortcuts_tests.rs"]
@@ -38,6 +44,7 @@ mod shortcuts_tests;
 mod sidecar_tests;
 
 pub(crate) use history::{DeleteRecord, GlobalStep};
+pub(crate) use image_source::ImageSource;
 
 pub struct EditorState {
     /// Nombre del lienzo independiente de la fuente de lectura del vídeo.
@@ -110,11 +117,16 @@ pub struct EditorState {
     pub layers_panel_toggle: bool,
     /// Pestaña activa en el panel izquierdo.
     pub active_left_tab: LeftTab,
-    /// Estado del buscador de imágenes de Unsplash (pestaña «Images»).
+    /// Fuente que pinta la pestaña «Images» (Google / Instagram-Facebook /
+    /// Unsplash). Solo sesión, como `active_left_tab`: no se persiste.
+    pub image_source: ImageSource,
+    /// Estado del buscador de Unsplash (fuente «Unsplash» de la pestaña
+    /// «Images»).
     pub unsplash: crate::unsplash::Panel,
-    /// Estado del buscador de imágenes web vía Serper (pestaña «Web»).
-    /// El gasto en tokens es de sesión; bloqueados y presupuesto viven en
-    /// ajustes y el panel los espeja al pintarse.
+    /// Estado del buscador de imágenes web vía Serper (fuentes «Web images»
+    /// e «Instagram/Facebook» de la pestaña «Images»). El gasto en tokens es
+    /// de sesión; bloqueados y presupuesto viven en ajustes y el panel los
+    /// espeja al pintarse.
     pub serper: crate::serper::Panel,
     pub ytdlp: crate::ytdlp::Panel,
     /// Reproducción de vídeo: capa activa y decodificador de la sesión.

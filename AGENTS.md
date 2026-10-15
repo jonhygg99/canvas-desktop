@@ -349,7 +349,8 @@ canvas-app/src/
 ├─ gallery/          mod.rs · item.rs · ui/{mod,cell,shell,gallery_view}.rs
 │                 # ui/folder_panel/{mod,rows,content}.rs
 ├─ layers_panel/  mod.rs · tab_strip.rs · tab_draw.rs · insert.rs ·
-│                 # ops.rs · row.rs
+│                 # images_tab.rs (pestaña Images, que absorbió la antigua
+│                 # Web) · source_selector.rs · ops.rs · row.rs
 ├─ menus/         mod.rs · fallback.rs (non-Windows) · native/{mod,build}.rs
 ├─ unsplash/      mod.rs · types.rs · api.rs (Authorization header, download
 │                 # cap) · state.rs · panel.rs · card.rs

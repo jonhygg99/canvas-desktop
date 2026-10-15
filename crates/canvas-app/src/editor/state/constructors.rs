@@ -12,6 +12,7 @@ use canvas_render::{image_data_from_rgba, ImageMap};
 use super::super::interaction::Gesture;
 use super::super::Viewport;
 use super::EditorState;
+use super::ImageSource;
 use super::LeftTab;
 
 impl EditorState {
@@ -69,6 +70,7 @@ impl EditorState {
             settings_clicked: false,
             layers_panel_toggle: false,
             active_left_tab: LeftTab::Layers,
+            image_source: ImageSource::default(),
             unsplash: crate::unsplash::Panel::default(),
             serper: crate::serper::Panel::default(),
             ytdlp: crate::ytdlp::Panel::default(),

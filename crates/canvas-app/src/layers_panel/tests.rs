@@ -1,6 +1,7 @@
-//! Tests del panel lateral (Page / Layers / Insert): fila de capas,
-//! reordenado y creación por tile. Movidos del `mod.rs` para respetar
-//! la convención de un `tests.rs` por carpeta.
+//! Tests del panel lateral (Page / Layers / Insert / Images / Download):
+//! fila de capas, reordenado, creación por tile, tira de pestañas y el
+//! selector de fuente de la pestaña fusionada «Images». Movidos del `mod.rs`
+//! para respetar la convención de un `tests.rs` por carpeta.
 
 use super::*;
 use crate::settings::LayersTabOrder;
@@ -1258,7 +1259,6 @@ fn ordered_tabs_follows_the_setting() {
             LeftTab::Page,
             LeftTab::Layers,
             LeftTab::Insert,
-            LeftTab::Web,
             LeftTab::Images,
             LeftTab::Download
         ]
@@ -1269,20 +1269,87 @@ fn ordered_tabs_follows_the_setting() {
             LeftTab::Layers,
             LeftTab::Page,
             LeftTab::Insert,
-            LeftTab::Web,
             LeftTab::Images,
             LeftTab::Download
         ]
     );
 }
 
+/// La descripción de cada pestaña vive en un solo sitio
+/// (`tab_draw::tab_info`): un copia-pega al añadir una pestaña se ve aquí en
+/// forma de título o tooltip repetido, y un icono repetido deja al usuario sin
+/// saber qué pestaña es cuál.
+///
+/// Además de que sean distintos, se fija CUÁL le toca a cada pestaña: el
+/// copia-pega que este test busca comete el error al revés —intercambiar los
+/// iconos de dos pestañas— y el intercambio pasaba la comprobación de
+/// unicidad con las dos cambiadas.
+///
+/// Los dos textos van al catálogo porque los dos se traducen al pintarse (el
+/// título en `sidebar::title`, el tooltip en `paint_tabs`/`keyboard_tabs`): una
+/// clave renombrada en el código se queda en inglés sin que nadie se entere,
+/// que es lo que le pasó a «Web Images» → «Web images».
+#[test]
+fn every_tab_has_its_own_title_tip_and_icon() {
+    use crate::app_icons::{
+        draw_download_icon, draw_images_icon, draw_layers_icon, draw_page_icon, draw_sparkle_icon,
+    };
+
+    type DrawIcon = fn(&egui::Painter, egui::Rect, egui::Color32);
+    let catalog: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(include_str!("../i18n/es.json")).expect("catálogo válido");
+    let expected: [(LeftTab, DrawIcon); 5] = [
+        (LeftTab::Page, draw_page_icon),
+        (LeftTab::Layers, draw_layers_icon),
+        (LeftTab::Insert, draw_sparkle_icon),
+        (LeftTab::Images, draw_images_icon),
+        (LeftTab::Download, draw_download_icon),
+    ];
+    assert_eq!(
+        expected.len(),
+        ordered_tabs(LayersTabOrder::PageFirst).len(),
+        "toda pestaña está en la tabla de arriba"
+    );
+
+    for (i, (tab, icon)) in expected.iter().enumerate() {
+        let info = tab_info(*tab);
+        assert!(!info.title.is_empty(), "{tab:?} sin título");
+        assert!(!info.tip.is_empty(), "{tab:?} sin tooltip");
+        assert_eq!(
+            info.icon as usize, *icon as usize,
+            "{tab:?} dibuja el icono de otra pestaña"
+        );
+        for key in [info.title, info.tip] {
+            assert!(
+                catalog.contains_key(key),
+                "{tab:?}: {key:?} viaja a `tr` sin clave en es.json"
+            );
+        }
+        for (other, other_icon) in &expected[..i] {
+            let other_info = tab_info(*other);
+            assert_ne!(
+                info.title, other_info.title,
+                "{tab:?} repite el título de {other:?}"
+            );
+            assert_ne!(
+                info.tip, other_info.tip,
+                "{tab:?} repite el tooltip de {other:?}"
+            );
+            assert_ne!(
+                *icon as usize, *other_icon as usize,
+                "{tab:?} repite el icono de {other:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn each_tab_appears_exactly_once() {
     let order = ordered_tabs(LayersTabOrder::LayersFirst);
+    assert_eq!(order.len(), 5, "Web e Images son una sola pestaña");
     assert!(order.contains(&LeftTab::Page));
     assert!(order.contains(&LeftTab::Layers));
     assert!(order.contains(&LeftTab::Insert));
-    assert!(order.contains(&LeftTab::Web));
     assert!(order.contains(&LeftTab::Images));
     assert!(order.contains(&LeftTab::Download));
 }
@@ -1400,7 +1467,7 @@ fn the_tab_strip_paints_in_expanded_and_collapsed_states() {
     );
 }
 
-/// El panel COMPLETO (`left_panel_ui`) se renderiza headless en sus seis
+/// El panel COMPLETO (`left_panel_ui`) se renderiza headless en sus cinco
 /// pestañas sin pánico y pintando en cada una — humo de integración que
 /// ejercita la orquestación real (tira + cuerpo de la pestaña activa).
 #[test]
@@ -1415,7 +1482,6 @@ fn left_panel_renders_every_tab_without_panicking() {
         LeftTab::Page,
         LeftTab::Layers,
         LeftTab::Insert,
-        LeftTab::Web,
         LeftTab::Images,
         LeftTab::Download,
     ] {
@@ -1450,4 +1516,263 @@ fn left_panel_renders_every_tab_without_panicking() {
             "{tab:?}: el panel debe pintar algo en cada pestaña"
         );
     }
+}
+
+/// Una tarjeta de resultado de Serper sin miniatura: lo mínimo para probar
+/// la regla de cambio de fuente sin red ni GPU.
+fn serper_photo(id: &str) -> crate::serper::state::PhotoItem {
+    crate::serper::state::PhotoItem {
+        photo: crate::serper::types::SerperPhoto {
+            id: id.to_owned(),
+            title: id.to_owned(),
+            image_url: format!("https://example.com/{id}.jpg"),
+            width: None,
+            height: None,
+            source_url: "https://example.com/page".to_owned(),
+            thumb_url: None,
+        },
+        thumb: None,
+        thumb_error: None,
+        thumb_requested: false,
+    }
+}
+
+/// Alternar de fuente conserva lo que ya se buscó: pasar a Unsplash (y
+/// volver) no toca resultados, gasto, paginación, la búsqueda en vuelo ni la
+/// spec sellada que pagina «Bring more» (A09). El único salto que reinicia es
+/// entre los DOS corpus de Serper —Google ↔ Instagram/Facebook—, porque esa
+/// búsqueda ya no sirve.
+///
+/// El estado en vuelo importa: `reset_flight` limpia `searching`/`bulk_busy` y
+/// sube `search_seq` (descartando la página que está llegando) SIN tocar
+/// fotos, gasto ni paginación, así que una prueba que solo mirase esos tres
+/// campos seguiría verde si Unsplash cancelara una búsqueda viva.
+#[test]
+fn switching_source_keeps_serper_results_except_between_its_two_corpora() {
+    use crate::editor::state::ImageSource;
+    use crate::serper::state::ActiveSearch;
+    use crate::serper::SearchMode;
+
+    let mut panel = crate::serper::Panel {
+        mode: SearchMode::Web,
+        tokens_spent: 3,
+        page: 2,
+        searching: true,
+        search_seq: 7,
+        active_search: Some(ActiveSearch {
+            keyword: "gato".to_owned(),
+            mode: SearchMode::Web,
+            blocked: Vec::new(),
+            num: 100,
+        }),
+        ..Default::default()
+    };
+    panel.photos.push(serper_photo("a"));
+    panel.photos.push(serper_photo("b"));
+
+    apply_source(&mut panel, ImageSource::Unsplash);
+    assert_eq!(panel.mode, SearchMode::Web, "Unsplash no cambia el modo");
+    assert_eq!(panel.photos.len(), 2, "Unsplash conserva los resultados");
+    assert_eq!(panel.tokens_spent, 3, "ni el gasto de créditos");
+    assert_eq!(panel.page, 2, "ni la paginación");
+    assert!(panel.searching, "ni cancela la búsqueda en vuelo");
+    assert_eq!(
+        panel.search_seq, 7,
+        "ni descarta la respuesta que está llegando"
+    );
+    assert!(
+        panel.active_search.is_some(),
+        "ni pierde la spec que pagina «Bring more»"
+    );
+
+    apply_source(&mut panel, ImageSource::Web);
+    assert_eq!(panel.photos.len(), 2, "volver a Google conserva la lista");
+    assert_eq!(panel.tokens_spent, 3);
+    assert!(
+        panel.searching && panel.search_seq == 7 && panel.active_search.is_some(),
+        "y tampoco toca el vuelo ni la spec"
+    );
+
+    apply_source(&mut panel, ImageSource::Social);
+    assert_eq!(panel.mode, SearchMode::Social);
+    assert!(
+        panel.photos.is_empty(),
+        "Google ↔ Instagram/Facebook sí reinicia la búsqueda"
+    );
+    assert_eq!(panel.tokens_spent, 0);
+    assert_eq!(panel.page, 0);
+    assert!(!panel.searching, "y corta el vuelo de la búsqueda anterior");
+    assert!(panel.active_search.is_none(), "y su spec de paginación");
+    assert!(panel.search_seq > 7, "las respuestas caducas se ignoran");
+}
+
+/// La pestaña fusionada pinta el selector y el cuerpo de TODAS las fuentes
+/// sin pánico, y las tres etiquetas del selector están de verdad dibujadas.
+#[test]
+fn images_tab_paints_the_selector_and_every_source() {
+    use crate::editor::state::ImageSource;
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    for source in ImageSource::ALL {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut state = EditorState::new_blank(800.0, 600.0);
+        let mut settings = crate::settings::AppSettings::default();
+        state.active_left_tab = LeftTab::Images;
+        state.image_source = source;
+
+        let out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(420.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let insert_dest = crate::loader::ImageInsertDest {
+                    generation: 0,
+                    slot_id: 0,
+                };
+                let mut collapsed = settings.layers_collapsed;
+                let _ = left_panel_ui(
+                    &mut state,
+                    ui,
+                    &mut settings,
+                    None,
+                    insert_dest,
+                    &tx,
+                    &mut collapsed,
+                );
+            },
+        );
+
+        let text = out
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!out.shapes.is_empty(), "{source:?}: el panel pinta algo");
+        for option in ImageSource::ALL {
+            assert!(
+                text.contains(source_label(option)),
+                "{source:?}: falta la etiqueta {:?} del selector (pintado: {text})",
+                source_label(option)
+            );
+        }
+    }
+}
+
+/// Un frame del panel con la pestaña Images activa.
+fn run_images_panel(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    settings: &mut crate::settings::AppSettings,
+    tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(420.0, 600.0),
+            )),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            let insert_dest = crate::loader::ImageInsertDest {
+                generation: 0,
+                slot_id: 0,
+            };
+            let mut collapsed = settings.layers_collapsed;
+            let _ = left_panel_ui(state, ui, settings, None, insert_dest, tx, &mut collapsed);
+        },
+    )
+}
+
+/// Centro del texto pintado con esa etiqueta exacta (para pulsarlo de
+/// verdad, sin IDs inventados).
+fn label_center(out: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
+    out.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Text(t) if t.galley.text() == label => {
+            Some(egui::Rect::from_min_size(t.pos, t.galley.size()).center())
+        }
+        _ => None,
+    })
+}
+
+/// Un clic REAL sobre una opción del selector cambia la fuente de la
+/// pestaña (y volver a pulsar la otra la deja como estaba): no basta con
+/// que las tres etiquetas se pinten.
+#[test]
+fn clicking_an_option_switches_the_source() {
+    use crate::editor::state::ImageSource;
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut state = EditorState::new_blank(800.0, 600.0);
+    let mut settings = crate::settings::AppSettings::default();
+    state.active_left_tab = LeftTab::Images;
+    assert_eq!(state.image_source, ImageSource::Web, "arranca en Google");
+
+    click_label(&ctx, &mut state, &mut settings, &tx, ImageSource::Unsplash);
+    assert_eq!(
+        state.image_source,
+        ImageSource::Unsplash,
+        "el clic elige Unsplash"
+    );
+
+    click_label(&ctx, &mut state, &mut settings, &tx, ImageSource::Web);
+    assert_eq!(
+        state.image_source,
+        ImageSource::Web,
+        "y el clic de vuelta recupera Google"
+    );
+}
+
+/// Pulsa de verdad la opción `target` del selector: primero pinta para
+/// localizar su etiqueta, luego mueve, pulsa y suelta ahí.
+fn click_label(
+    ctx: &egui::Context,
+    state: &mut EditorState,
+    settings: &mut crate::settings::AppSettings,
+    tx: &std::sync::mpsc::Sender<crate::loader::AppMsg>,
+    target: crate::editor::state::ImageSource,
+) {
+    let out = run_images_panel(ctx, state, settings, tx, vec![]);
+    let pos = label_center(&out, source_label(target))
+        .unwrap_or_else(|| panic!("el selector pinta la opción {target:?}"));
+    for events in [
+        vec![egui::Event::PointerMoved(pos)],
+        vec![pointer_button(pos, true)],
+        vec![pointer_button(pos, false)],
+    ] {
+        let _ = run_images_panel(ctx, state, settings, tx, events);
+    }
+}
+
+/// Cada fuente tiene etiqueta y ayuda propias y no vacías: el selector es
+/// lo único que distingue tres buscadores en un mismo panel.
+#[test]
+fn every_source_has_a_label_and_a_tip() {
+    use crate::editor::state::ImageSource;
+
+    for source in ImageSource::ALL {
+        assert!(!source_label(source).is_empty(), "{source:?} sin etiqueta");
+        assert!(!source_tip(source).is_empty(), "{source:?} sin ayuda");
+    }
+    assert_ne!(
+        source_label(ImageSource::Web),
+        source_label(ImageSource::Unsplash)
+    );
+    assert_ne!(
+        source_tip(ImageSource::Web),
+        source_tip(ImageSource::Social)
+    );
 }

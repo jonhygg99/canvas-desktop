@@ -23,7 +23,8 @@
 //!
 //! Reparto: `types` (modos y resultados), `filter` (filtro
 //! puro, query y parseo de persona), `api` (cliente HTTP), `state` (estado
-//! del panel en `EditorState`), `panel` (UI de la pestaña Web), `bulk`
+//! del panel en `EditorState`), `panel` (cuerpo de la pestaña Images cuando
+//! la fuente es Serper), `bulk`
 //! (overlay de selección masiva e inserción de cada elegida como capa),
 //! `bulk_layout` (matemáticas puras del masonry), `cache` (respuestas
 //! guardadas en memoria y disco para no gastar créditos en repeticiones)

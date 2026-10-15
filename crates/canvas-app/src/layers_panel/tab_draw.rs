@@ -9,8 +9,7 @@
 use eframe::egui;
 
 use crate::app_icons::{
-    draw_download_icon, draw_globe_icon, draw_images_icon, draw_layers_icon, draw_page_icon,
-    draw_sparkle_icon,
+    draw_download_icon, draw_images_icon, draw_layers_icon, draw_page_icon, draw_sparkle_icon,
 };
 use crate::editor::state::LeftTab;
 
@@ -84,15 +83,51 @@ pub(super) fn draw_vertical_tab(
     draw_icon(painter, icon_rect, color);
 }
 
-/// Nombre de la pestaña (tooltip del icono).
-pub(super) fn tab_tip(tab: LeftTab) -> &'static str {
+/// Todo lo que describe una pestaña: el título del menú que se pinta debajo de
+/// la tira, el tooltip de su icono y el icono que la dibuja. Las tres cosas
+/// van juntas a propósito: antes eran tres `match` separados (el título vivía
+/// incluso en otro módulo) y añadir una pestaña obligaba a acordarse de los
+/// tres. El ORDEN no está aquí: eso es `tab_strip::ordered_tabs`, que es lo
+/// único que le importa al arrastre.
+pub(super) struct TabInfo {
+    /// Clave del catálogo del título del menú. Aquí va SIEMPRE el inglés: lo
+    /// traduce `sidebar::title`, que es quien lo pinta.
+    pub(super) title: &'static str,
+    /// Clave del catálogo del tooltip, también en inglés; lo traducen quienes
+    /// lo pintan (`paint_tabs` en el hover, `keyboard_tabs` en el widget info).
+    /// Traducirlo aquí y otra vez al pintar era un doble `tr`, y encima dejaba
+    /// sin traducir los tooltips que no pasaban por él.
+    pub(super) tip: &'static str,
+    pub(super) icon: fn(&egui::Painter, egui::Rect, egui::Color32),
+}
+
+pub(super) fn tab_info(tab: LeftTab) -> TabInfo {
     match tab {
-        LeftTab::Page => "Page settings",
-        LeftTab::Layers => "Layers",
-        LeftTab::Insert => crate::i18n::tr("Insert"),
-        LeftTab::Web => crate::i18n::tr("Web images (Google)"),
-        LeftTab::Images => crate::i18n::tr("Images (Unsplash)"),
-        LeftTab::Download => crate::i18n::tr("Download video (yt-dlp)"),
+        LeftTab::Page => TabInfo {
+            title: "Page",
+            tip: "Page settings",
+            icon: draw_page_icon,
+        },
+        LeftTab::Layers => TabInfo {
+            title: "Layers",
+            tip: "Layers",
+            icon: draw_layers_icon,
+        },
+        LeftTab::Insert => TabInfo {
+            title: "Insert",
+            tip: "Insert",
+            icon: draw_sparkle_icon,
+        },
+        LeftTab::Images => TabInfo {
+            title: "Images",
+            tip: "Images (Google, Instagram/Facebook, Unsplash)",
+            icon: draw_images_icon,
+        },
+        LeftTab::Download => TabInfo {
+            title: "Download",
+            tip: "Download video (yt-dlp)",
+            icon: draw_download_icon,
+        },
     }
 }
 
@@ -100,17 +135,6 @@ pub(super) fn tab_tip(tab: LeftTab) -> &'static str {
 /// el arrastre los gestiona la máquina de estados manual de `tab_strip`.
 pub(super) fn tab_hover_id(tab: LeftTab) -> egui::Id {
     egui::Id::new(("left_tab", tab)).with("hover")
-}
-
-pub(super) fn tab_icon(tab: LeftTab) -> fn(&egui::Painter, egui::Rect, egui::Color32) {
-    match tab {
-        LeftTab::Page => draw_page_icon,
-        LeftTab::Layers => draw_layers_icon,
-        LeftTab::Insert => draw_sparkle_icon,
-        LeftTab::Web => draw_globe_icon,
-        LeftTab::Images => draw_images_icon,
-        LeftTab::Download => draw_download_icon,
-    }
 }
 
 /// Lo que el pase de pintado necesita del frame en curso: agrupa los nueve
@@ -164,7 +188,7 @@ pub(super) fn paint_tabs(ui: &mut egui::Ui, p: PaintPass) {
             is_active,
             false,
             p.style,
-            tab_icon(*tab),
+            tab_info(*tab).icon,
             p.icon_fade,
         );
         if is_drop_target {
@@ -178,7 +202,8 @@ pub(super) fn paint_tabs(ui: &mut egui::Ui, p: PaintPass) {
             );
         }
         if p.drag.is_none() {
-            let _ = resp.on_hover_text(crate::i18n::tr(tab_tip(*tab)));
+            // El tooltip se traduce al pintarlo: en `TabInfo` viaja en inglés.
+            let _ = resp.on_hover_text(crate::i18n::tr(tab_info(*tab).tip));
         }
     }
 
@@ -217,7 +242,7 @@ fn paint_drag_ghost(ui: &egui::Ui, pos: egui::Pos2, tab: LeftTab, tab_h: f32, st
         false,
         false,
         &ghost_style,
-        tab_icon(tab),
+        tab_info(tab).icon,
         1.0,
     );
 }

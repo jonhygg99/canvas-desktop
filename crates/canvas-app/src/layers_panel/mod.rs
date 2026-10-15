@@ -7,7 +7,8 @@
 //! Reparto: `tab_strip` (la tira vertical de pestañas: clic, arrastre e
 //! intercambio animado), `tab_draw` (pintado de una pestaña), `insert`
 //! (pestaña Insert) y `row`/`ops` (lista de capas y sus operaciones).
-//! Las pestañas Web (Serper) e Images (Unsplash) delegan en sus módulos.
+//! La pestaña Images —que absorbió a la antigua pestaña Web— elige su
+//! buscador con `source_selector` y pinta el cuerpo en `images_tab`.
 
 use canvas_core::{LayerContent, LayerId, Page};
 use eframe::egui;
@@ -19,23 +20,29 @@ use crate::settings::LayersTabOrder;
 use crate::sidebar;
 
 mod browser;
+mod images_tab;
 mod insert;
 mod ops;
 mod preview;
 mod row;
+mod source_selector;
 mod tab_draw;
 mod tab_strip;
 
 pub(crate) use ops::{group_selection, ungroup_selection};
 
+use images_tab::images_tab_ui;
 use insert::insert_tab_ui;
 use ops::{apply_reorder, toolbar_ui};
 use row::row_ui;
+use tab_draw::tab_info;
 pub(crate) use tab_strip::vertical_tab_strip_ui;
 
 // Nombres que solo usan los tests (glob `use super::*` en `tests.rs`).
 #[cfg(test)]
 use insert::{insert_item, INSERT_ITEMS};
+#[cfg(test)]
+use source_selector::{apply_source, source_label, source_tip};
 #[cfg(test)]
 use tab_strip::ordered_tabs;
 
@@ -83,7 +90,7 @@ enum Drop {
 
 /// Devuelve el nuevo orden si una pestaña se soltó sobre la otra; el
 /// llamador persiste el cambio en los ajustes. `settings` concentra el
-/// colapsado, el orden y lo que la pestaña Web necesita (bloqueados,
+/// colapsado, el orden y lo que la pestaña Images necesita (bloqueados,
 /// presupuesto, créditos y última carpeta del buscador Serper).
 /// `deck_folder` alimenta el destino del bulk junto al archivo abierto.
 /// `insert_dest` es la ranura que recibirá un clic de inserción web/Unsplash
@@ -122,37 +129,18 @@ pub fn left_panel_ui(
             // de los elementos, con algo de aire arriba.
             ui.vertical(|ui| {
                 ui.add_space(8.0);
-                let tab_name = match state.active_left_tab {
-                    LeftTab::Page => "Page",
-                    LeftTab::Layers => "Layers",
-                    LeftTab::Insert => "Insert",
-                    LeftTab::Web => "Web",
-                    LeftTab::Images => "Images",
-                    LeftTab::Download => "Download",
-                };
-                sidebar::title(ui, tab_name);
+                // El título sale de la MISMA tabla que el tooltip y el icono
+                // (`tab_draw::tab_info`): una pestaña nueva se describe en un
+                // solo sitio.
+                sidebar::title(ui, tab_info(state.active_left_tab).title);
                 ui.add_space(6.0);
                 match state.active_left_tab {
                     LeftTab::Page => {
                         page_ui(state, ui);
                     }
-                    LeftTab::Web => {
-                        let dest = crate::serper::bulk::resolve_bulk_folder(
-                            deck_folder.clone(),
-                            state.doc.source_path.clone(),
-                            state.from_gallery.clone(),
-                            settings.serper_last_folder.clone(),
-                        );
-                        crate::serper::panel_ui(
-                            &mut state.serper,
-                            settings,
-                            dest,
-                            insert_dest,
-                            ui,
-                            tx,
-                        );
+                    LeftTab::Images => {
+                        images_tab_ui(state, settings, deck_folder.clone(), insert_dest, ui, tx)
                     }
-                    LeftTab::Images => crate::unsplash::panel_ui(state, insert_dest, ui, tx),
                     LeftTab::Download => {
                         // Siempre al temporal: el proyecto nunca recibe el mp4.
                         let dest = crate::ytdlp::api::resolve_download_dir();

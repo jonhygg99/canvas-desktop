@@ -1,9 +1,10 @@
-//! UI de la pestaña «Web» del sidebar del editor: barra de búsqueda con
-//! selector de tokens, sección Advanced (dominios bloqueados), lista
-//! vertical de tarjetas y pie con coste y transparencia del filtro. El
-//! estado vive en `super::state::Panel`; la lista de bloqueados, el
-//! presupuesto y el total histórico de créditos, en `AppSettings`. La
-//! ventana de selección masiva vive en `super::bulk`.
+//! Cuerpo de la pestaña «Images» cuando la fuente elegida la sirve Serper
+//! (Google o Instagram/Facebook): barra de búsqueda, sección Advanced
+//! (dominios bloqueados), lista vertical de tarjetas y pie con coste y
+//! transparencia del filtro. El selector de fuente no está aquí, sino en
+//! `layers_panel::source_selector`. El estado vive en `super::state::Panel`;
+//! la lista de bloqueados, el presupuesto y el total histórico de créditos,
+//! en `AppSettings`. La ventana de selección masiva vive en `super::bulk`.
 
 use std::sync::mpsc::Sender;
 
@@ -34,7 +35,7 @@ pub(super) fn bring_more_short() -> String {
     crate::i18n::tr(BRING_MORE).to_owned()
 }
 
-/// Contenido de la pestaña «Web» del panel lateral izquierdo. `dest` es la
+/// Cuerpo de la pestaña «Images» cuando la fuente es Serper. `dest` es la
 /// carpeta destino del bulk ya resuelta (baraja → archivo → galería →
 /// última usada; `None` = la ventana pedirá elegirla una vez).
 /// `insert_dest` es la ranura que recibirá un clic de inserción (A07).
@@ -73,7 +74,10 @@ fn sync_settings_once(panel: &mut Panel, settings: &AppSettings) {
     panel.blocked_text = settings.serper_blocked.join("\n");
 }
 
-/// Barra de búsqueda + selector de modo y de tokens 1–3.
+/// Barra de búsqueda de la fuente elegida. El selector de fuente (Google,
+/// Instagram/Facebook o Unsplash) NO vive aquí, sino en la pestaña que pinta
+/// este panel (`layers_panel::source_selector`): a este módulo solo le llega
+/// el modo ya decidido.
 fn search_bar_ui(
     panel: &mut Panel,
     settings: &mut AppSettings,
@@ -81,22 +85,6 @@ fn search_bar_ui(
     tx: &Sender<loader::AppMsg>,
 ) {
     let mut do_search = false;
-    ui.horizontal_wrapped(|ui| {
-        for m in SearchMode::ALL {
-            if ui
-                .selectable_label(panel.mode == m, m.label())
-                .on_hover_text(match m {
-                    SearchMode::Web => "General web image search",
-                    SearchMode::Social => {
-                        "Photos of a person on Instagram/Facebook — paste a profile link or a name"
-                    }
-                })
-                .clicked()
-            {
-                panel.switch_mode(m);
-            }
-        }
-    });
     if panel.mode == SearchMode::Social {
         ui.weak(crate::i18n::tr(
             "Instagram/Facebook · social filter off · links expire fast",

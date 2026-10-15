@@ -14,7 +14,8 @@
 //!
 //! Reparto: `types` (tipos de filtros y resultados de la API), `api`
 //! (cliente HTTP: búsqueda, descarga y decodificado), `state` (estado del
-//! panel en `EditorState`), `panel` (UI de la pestaña Images) y `card`
+//! panel en `EditorState`), `panel` (cuerpo de la pestaña Images cuando la
+//! fuente es Unsplash) y `card`
 //! (tarjeta de foto con clic suave y arrastre al lienzo).
 
 pub(crate) mod api;

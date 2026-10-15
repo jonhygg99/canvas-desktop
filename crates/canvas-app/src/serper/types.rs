@@ -2,8 +2,11 @@
 //! (`api`), el filtro (`filter`), el estado del panel (`state`) y la UI
 //! (`panel`/`card`): modos, resultados y páginas.
 
-/// Modo de la pestaña Web: imágenes generales o fotos de una persona en
-/// Instagram/Facebook. Solo sesión (no se persiste en ajustes).
+/// Corpus de una búsqueda de Serper: imágenes generales de la web o fotos de
+/// una persona en Instagram/Facebook. Solo sesión (no se persiste en
+/// ajustes). Qué buscador se ve lo decide la FUENTE de la pestaña
+/// (`editor::state::ImageSource`): este enum no tiene variante de Unsplash
+/// porque no describe esa API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchMode {
     #[default]
@@ -12,15 +15,6 @@ pub enum SearchMode {
 }
 
 impl SearchMode {
-    pub const ALL: [Self; 2] = [Self::Web, Self::Social];
-
-    pub fn label(self) -> &'static str {
-        crate::i18n::tr(match self {
-            Self::Web => "Web Images",
-            Self::Social => "Instagram/Facebook",
-        })
-    }
-
     /// En modo social se perdona el bloqueo de CDNs sociales (sus URLs
     /// caducan y a veces dan 403, pero son todo lo que hay).
     pub fn allow_social(self) -> bool {

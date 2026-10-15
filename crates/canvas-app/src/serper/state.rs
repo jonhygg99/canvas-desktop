@@ -1,5 +1,6 @@
-//! Estado del panel «Web» que vive en `EditorState`: consulta, presupuesto
-//! de tokens, resultados y el arrastre en curso hacia el lienzo.
+//! Estado del buscador de Serper (fuentes Google e Instagram/Facebook de la
+//! pestaña «Images») que vive en `EditorState`: consulta, presupuesto de
+//! tokens, resultados y el arrastre en curso hacia el lienzo.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Sender;
@@ -37,8 +38,8 @@ pub fn stalled(
     since.is_some_and(|t| now.duration_since(t).as_secs() >= timeout_secs)
 }
 
-/// Estado del panel «Web» del sidebar del editor: consulta, resultados (con
-/// sus miniaturas ya subidas a GPU) y errores. Gasto abierto: cada Search
+/// Estado del buscador de imágenes web del sidebar del editor: consulta,
+/// resultados (con sus miniaturas ya subidas a GPU) y errores. Gasto abierto: cada Search
 /// trae ~100 imágenes (~2 créditos Serper) y cada «Bring more» añade otra
 /// página por el mismo precio, sin tope — se para cuando el servidor no
 /// tiene más resultados.
@@ -47,8 +48,10 @@ pub fn stalled(
 #[derive(Default)]
 pub struct Panel {
     pub query: String,
-    /// Modo de búsqueda (Web Images o Instagram/Facebook). Solo sesión:
-    /// cambiarlo limpia resultados y gasto, como una búsqueda nueva.
+    /// Corpus de búsqueda (imágenes web o Instagram/Facebook). Solo sesión:
+    /// cambiarlo limpia resultados y gasto, como una búsqueda nueva. Lo
+    /// escribe la fuente elegida en la pestaña Images (`apply_source` en
+    /// `layers_panel::source_selector`).
     pub mode: SearchMode,
     /// Páginas cargadas en la keyword actual (1 token = 1 llamada). Con el
     /// gasto abierto crece sin techo: `u32` porque 256 páginas (~500cr) no
