@@ -118,10 +118,10 @@ pub struct AppSettings {
     /// exclusiones `-site:` de la query. Editable en el Advanced del panel.
     #[serde(default = "default_serper_blocked")]
     pub serper_blocked: Vec<String>,
-    /// Presupuesto de tokens por keyword del buscador web (1–3).
-    pub serper_budget: crate::serper::TokenBudget,
     /// Créditos Serper gastados en total (histórico persistido; la sesión
-    /// lleva su propio contador en el panel).
+    /// lleva su propio contador en el panel). El gasto por búsqueda es
+    /// abierto: ~100 imágenes (~2 créditos) por llamada y más si el usuario
+    /// pulsa «Bring more».
     pub serper_credits_total: u64,
     /// Última carpeta destino del bulk web (para no preguntar dos veces).
     pub serper_last_folder: Option<PathBuf>,
@@ -179,7 +179,6 @@ impl Default for AppSettings {
             layers_collapsed: false,
             layers_tab_order: LayersTabOrder::default(),
             serper_blocked: default_serper_blocked(),
-            serper_budget: crate::serper::TokenBudget::default(),
             serper_credits_total: 0,
             serper_last_folder: None,
             serper_bulk_size: BulkCanvasSize::default(),

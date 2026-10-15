@@ -127,7 +127,11 @@ pub fn canvas_ui(
         &mut state.viewport.pan,
     );
 
-    if state.ytdlp.edit.is_none() {
+    // El `Area` de la ventana masiva de selección flotaba sobre este Feed:
+    // un `Window` de egui no lo tapa (cada uno, su `Area`), y un botón
+    // "Fit page" detrás de una ventana manual desluce al usuario. Con el
+    // lote abierto, la barra de encuadre es ruido.
+    if state.ytdlp.edit.is_none() && !state.serper.bulk_open {
         navigation::show(state, deck, ui, rect);
     }
     let Camera {

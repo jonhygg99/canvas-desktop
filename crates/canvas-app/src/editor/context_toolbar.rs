@@ -12,7 +12,11 @@ pub(super) fn show(
     coord: egui::Rect,
     clip: egui::Rect,
 ) -> Option<LayerId> {
-    if state.inline_text.is_some()
+    // Con la ventana masiva de selección web flotando encima, la toolbar
+    // (Crop/Replace…) del lienzo de abajo es ruido que asoma por el borde
+    // de la ventana: fuera, igual que durante gestos o edición de texto.
+    if state.serper.bulk_open
+        || state.inline_text.is_some()
         || state.insert_tool.is_some()
         || !matches!(state.gesture, Gesture::None)
     {

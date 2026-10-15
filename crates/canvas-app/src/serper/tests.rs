@@ -28,41 +28,22 @@ fn no_block() -> Vec<String> {
     Vec::new()
 }
 
-// ---- Presupuesto de tokens ----
+// ---- Gasto por llamada ----
 
 #[test]
-fn token_budget_maps_to_calls_images_and_credits() {
-    // 1 token ≈ 10 imgs/1cr, 2 tokens ≈ 100 imgs/2cr, 3 tokens ≈ 200/4cr.
-    assert_eq!(TokenBudget::One.calls(), 1);
-    assert_eq!(TokenBudget::Two.calls(), 1);
-    assert_eq!(TokenBudget::Three.calls(), 2);
-    assert_eq!(TokenBudget::One.num(), 10);
-    assert_eq!(TokenBudget::Two.num(), 100);
-    assert_eq!(TokenBudget::One.max_images(), 10);
-    assert_eq!(TokenBudget::Two.max_images(), 100);
-    assert_eq!(TokenBudget::Three.max_images(), 200);
-    assert_eq!(TokenBudget::One.credits(), 1);
-    assert_eq!(TokenBudget::Two.credits(), 2);
-    assert_eq!(TokenBudget::Three.credits(), 4);
-    assert_eq!(TokenBudget::default(), TokenBudget::One);
-}
-
-#[test]
-fn panel_spending_is_capped_by_the_budget() {
+fn bring_more_is_open_but_needs_a_paid_page_and_more_results() {
     let mut p = Panel::default();
+    // Aún no hay búsqueda pagada: nada que traer.
+    assert!(!p.can_spend_more());
+    // Tras una búsqueda (un gasto) se puede traer más...
+    p.tokens_spent = 1;
     assert!(p.can_spend_more());
-    // Buscar una vez desactiva hasta que llegue la respuesta.
+    // ...excepto mientras hay una en vuelo.
     p.searching = true;
     assert!(!p.can_spend_more());
     p.searching = false;
-    // Con presupuesto 1 y un token gastado no hay más gasto posible.
-    p.tokens_spent = 1;
-    assert!(!p.can_spend_more());
-    // Con 3 tokens caben 2 llamadas: la segunda aún pasa, la tercera no.
-    p.budget = TokenBudget::Three;
-    p.tokens_spent = 1;
-    assert!(p.can_spend_more());
-    p.tokens_spent = 2;
+    // Y cuando el servidor no tiene más páginas para esta keyword.
+    p.reached_end = true;
     assert!(!p.can_spend_more());
 }
 
@@ -715,6 +696,19 @@ fn per_call_constants_match_the_token_model() {
 }
 
 #[test]
+fn page_is_only_over_when_serper_returns_zero_results() {
+    // La regla que activó doble fallo real: una página de 59 de 100 ya no
+    // corta la paginación; el fin es solo la respuesta sin resultados.
+    fn end(raw: usize) -> bool {
+        super::api::reached_end_rule(raw)
+    }
+    assert!(end(0));
+    assert!(!end(1));
+    assert!(!end(59), "la página corta de tu keyword sigue paginando");
+    assert!(!end(100));
+}
+
+#[test]
 fn request_stages_degrade_from_full_to_minimal() {
     let counts = build_query("gato", &["example.com".to_owned()]);
     let full = build_request("gato", &counts, QueryStage::Full, 1, 100);
@@ -903,7 +897,7 @@ fn bring_more_paginates_the_sealed_spec_not_the_draft() {
         query: "gatos".to_owned(),
         ..Panel::default()
     };
-    let num = panel.budget.num();
+    let num = super::api::PER_CALL_RESULTS;
     let mode = types::SearchMode::Web;
     fn page_with(url: &str) -> super::types::SearchPage {
         super::types::SearchPage {
@@ -949,7 +943,15 @@ fn bring_more_paginates_the_sealed_spec_not_the_draft() {
         !ids.iter().any(|id| id.contains("perros")),
         "nada de perros mezclado: {ids:?}"
     );
-    assert_eq!(panel.tokens_spent, 0, "de caché: sin gasto");
+    // Dos páginas cargadas sin gastar: la semántica de tokens_spent es
+    // «páginas cargadas de esta keyword» (vengan de red o de caché); el
+    // gasto real en créditos lo denuncian credits_last/credits_session.
+    assert_eq!(
+        panel.tokens_spent, 2,
+        "páginas 1+2 cargadas (de caché, sin red)"
+    );
+    assert_eq!(panel.credits_last, 0, "de caché: 0 créditos");
+    assert_eq!(panel.credits_session, 0, "de caché: 0 créditos de sesión");
 }
 
 #[test]
@@ -1016,6 +1018,10 @@ fn cache_key_ignores_case_order_and_whitespace() {
 
 #[test]
 fn disk_cache_round_trips_and_expires() {
+    // set_var/remove_var no es thread-safe: los dos tests que tocan esta
+    // env var corren en paralelo y se pisan mutuamente (la sweep podía
+    // barrer el tempdir del otro). Un mutex los serializa.
+    let _env_guard = std::sync::Mutex::lock(&CACHE_DIR_ENV_LOCK).unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("SERPER_CACHE_DIR", dir.path());
     let key = super::cache::cache_key("shakira", &[], 1, 100, types::SearchMode::Web);
@@ -1044,8 +1050,12 @@ fn disk_cache_round_trips_and_expires() {
     std::env::remove_var("SERPER_CACHE_DIR");
 }
 
+/// Serializa los tests que manipulan `SERPER_CACHE_DIR` (set_var global).
+static CACHE_DIR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn sweep_prunes_expired_corrupt_but_keeps_fresh_and_other_files() {
+    let _env_guard = std::sync::Mutex::lock(&CACHE_DIR_ENV_LOCK).unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("SERPER_CACHE_DIR", dir.path());
     let page = super::types::SearchPage {

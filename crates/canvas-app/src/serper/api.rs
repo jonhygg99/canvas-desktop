@@ -257,6 +257,16 @@ fn post_images(key: &str, body: &str) -> Result<String, SerperError> {
     read_search_bounded(resp)
 }
 
+/// La regla de «no hay más páginas». Pura y testeable: SOLO cero
+/// resultados brutos marcan fin. Antes era `raw < num` (menos que lo
+/// pedido) y una página real de 59 resultados, con los 100 pedidos,
+/// cortaba la paginación sin que quedaran páginas de verdad.
+/// Responder `false` en duda es seguro: la siguiente llamada de red dice
+/// el fin de verdad (y si trae 0, su propia regla lo marca).
+pub(super) fn reached_end_rule(raw: usize) -> bool {
+    raw == 0
+}
+
 /// Parsea la respuesta y aplica el filtro local (con la lista real de
 /// bloqueados, aunque la query viajase simplificada).
 fn parse_page(
@@ -286,7 +296,7 @@ fn parse_page(
     let (photos, filtered) = apply_filter(photos, blocked, allow_social);
     Ok(super::types::SearchPage {
         photos,
-        reached_end: raw < num as usize,
+        reached_end: reached_end_rule(raw),
         credits_charged: credits,
         from_cache: false,
         effective_query: req.effective_query.clone(),

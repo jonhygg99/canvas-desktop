@@ -66,8 +66,14 @@ pub(super) fn bulk_window_ui(
 /// quede visible sin scroll.
 const FOOTER_H: f32 = 88.0;
 
-/// Cabecera: título + Select all / Deselect + contador + ✕.
+/// Cabecera: título + Select all / Deselect + contador + ✕. El «Bring
+/// more» no va aquí (desbordaba el ancho de la ventana y egui lo
+/// recortaba fuera de vista); vive al final del masonry (`bulk_more_ui`).
 fn bulk_header(panel: &mut Panel, ui: &mut egui::Ui) {
+    // Cabecera en una fila: título a la izquierda, acciones y cierre a la
+    // derecha. El «Bring more» NO va aquí: era el botón que se desbordaba
+    // del ancho y egui lo recortaba fuera de vista; vive al final del
+    // masonry (`bulk_more_ui`), que es donde el usuario ya estaba mirando.
     ui.horizontal(|ui| {
         ui.heading(crate::i18n::tr("Select web images"));
         ui.separator();
@@ -78,8 +84,8 @@ fn bulk_header(panel: &mut Panel, ui: &mut egui::Ui) {
             if ui.button(crate::i18n::tr("Deselect")).clicked() {
                 panel.deselect_all_bulk();
             }
+            ui.weak(format!("{} selected", panel.bulk_selected.len()));
         });
-        ui.weak(format!("{} selected", panel.bulk_selected.len()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(!panel.bulk_busy, |ui| {
                 if ui
@@ -180,6 +186,23 @@ fn bulk_grid_at_height(
                     });
                 }
             });
+            // «Bring more» al FINAL de las imágenes, centrado: flotando
+            // tras la última tanda, que es donde el usuario decide si trae
+            // más sin salir del scroll ni ir al pie del panel. Se oculta
+            // cuando hay una llamada en vuelo o el servidor se agotó.
+            if panel.can_spend_more() {
+                ui.add_space(4.0);
+                ui.vertical_centered(|ui| {
+                    if ui
+                        .button(super::panel::bring_more_short())
+                        .on_hover_text(crate::i18n::tr(super::panel::BRING_MORE_TIP))
+                        .clicked()
+                    {
+                        super::panel::spend_token(panel, tx, ui.ctx());
+                    }
+                });
+                ui.add_space(10.0);
+            }
         });
 }
 

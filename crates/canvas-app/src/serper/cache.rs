@@ -29,7 +29,6 @@ const CACHE_DIR_ENV: &str = "SERPER_CACHE_DIR";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedPage {
     pub photos: Vec<SerperPhoto>,
-    pub reached_end: bool,
     pub effective_query: String,
     pub exclusions_applied: usize,
     pub exclusions_dropped: usize,
@@ -40,10 +39,14 @@ pub struct CachedPage {
 
 impl CachedPage {
     /// De vuelta a página viva: coste 0 y bandera de caché para la UI.
+    /// El `reached_end` no viaja aquí: las entradas guardadas con la regla
+    /// vieja (menos de `num` = fin) bloqueaban «Bring more» en caché. El
+    /// optimismo de `false` es seguro, que la llamada real siguiente lo
+    /// decidirá con la regla de cero resultados.
     pub fn into_page(self) -> SearchPage {
         SearchPage {
             photos: self.photos,
-            reached_end: self.reached_end,
+            reached_end: false,
             credits_charged: 0,
             from_cache: true,
             effective_query: self.effective_query,
@@ -64,7 +67,6 @@ impl From<&SearchPage> for CachedPage {
     fn from(page: &SearchPage) -> Self {
         Self {
             photos: page.photos.clone(),
-            reached_end: page.reached_end,
             effective_query: page.effective_query.clone(),
             exclusions_applied: page.exclusions_applied,
             exclusions_dropped: page.exclusions_dropped,

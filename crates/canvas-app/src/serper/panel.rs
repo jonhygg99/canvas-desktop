@@ -16,11 +16,23 @@ use super::api::access_key;
 use super::bulk::bulk_window_ui;
 use super::card::photo_card_ui;
 use super::state::{stalled, Panel, SEARCH_STALL_SECS, SHOW_STEP};
-use super::types::{SearchMode, TokenBudget};
+use super::types::SearchMode;
 use super::API_KEY_ENV;
 
 /// Margen lateral a cada lado de las tarjetas (igual que Unsplash).
 const CARD_INSET: f32 = 12.0;
+
+/// Etiqueta y tooltip del «Bring more»: los usan tres sitios (pie de la
+/// lista, final del Advanced y final del masonry de la ventana masiva) y
+/// deben cambiar juntos. La palabra clave compone: con keyword activa el
+/// pie la nombra (A09); en la ventana masiva va sola para no desbordar.
+pub(super) const BRING_MORE: &str = "Bring more";
+pub(super) const BRING_MORE_TIP: &str = "Loads ~100 more images";
+
+/// Etiqueta sin keyword (ventana masiva).
+pub(super) fn bring_more_short() -> String {
+    crate::i18n::tr(BRING_MORE).to_owned()
+}
 
 /// Contenido de la pestaña «Web» del panel lateral izquierdo. `dest` es la
 /// carpeta destino del bulk ya resuelta (baraja → archivo → galería →
@@ -45,7 +57,7 @@ pub fn panel_ui(
 
     ui.add_space(6.0);
     search_bar_ui(panel, settings, ui, tx);
-    advanced_ui(panel, settings, ui);
+    advanced_ui(panel, settings, ui, tx);
     results_ui(panel, settings, insert_dest, ui, tx);
     let ctx = ui.ctx().clone();
     bulk_window_ui(panel, dest, settings, &ctx, tx);
@@ -58,7 +70,6 @@ fn sync_settings_once(panel: &mut Panel, settings: &AppSettings) {
         return;
     }
     panel.synced_settings = true;
-    panel.budget = settings.serper_budget;
     panel.blocked_text = settings.serper_blocked.join("\n");
 }
 
@@ -111,35 +122,9 @@ fn search_bar_ui(
             do_search = (submit || clicked) && !panel.query.trim().is_empty();
         },
     );
-    budget_ui(panel, settings, ui);
     if do_search {
         start_search(panel, &settings.serper_blocked, tx, ui.ctx());
     }
-}
-
-/// Selector del presupuesto por keyword (1 token ≈ 10 imgs/1cr, 2 tokens ≈
-/// 100 imgs/2cr, 3 tokens ≈ 200 imgs/4cr). Escribe directo en ajustes
-/// (persiste con el gasto de la sesión aparte).
-fn budget_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.weak(crate::i18n::tr("Cost per keyword:"));
-        for b in TokenBudget::ALL {
-            if ui
-                .selectable_label(panel.budget == b, format!("{} ({})", b.label(), b.detail()))
-                .on_hover_text(format!(
-                    "Up to ~{} images for ~{} Serper credits",
-                    b.max_images(),
-                    b.credits()
-                ))
-                .clicked()
-            {
-                panel.budget = b;
-                settings.serper_budget = b;
-                settings.save_in_background();
-            }
-        }
-    });
 }
 
 /// Lanza una búsqueda nueva (página 1, gasta el primer token con el `num`
@@ -160,7 +145,7 @@ pub(super) fn start_search(
         keyword: panel.query.trim().to_owned(),
         mode: panel.mode,
         blocked: blocked.to_owned(),
-        num: panel.budget.num(),
+        num: super::api::PER_CALL_RESULTS,
     };
     let key = spec.cache_key(1);
     if let Some(page) = panel.cache_lookup(&key) {
@@ -168,7 +153,10 @@ pub(super) fn start_search(
         panel.searching = false;
         panel.search_started = None;
         panel.page = 1;
-        panel.tokens_spent = 0;
+        // La página 1 ya está cargada (de caché, 0 créditos): cuenta como
+        // página «gastada» a efectos de «Bring more», si no la repetición
+        // dejaría la paginación bloqueada.
+        panel.tokens_spent = 1;
         panel.pending_drop = None;
         panel.visible_count = SHOW_STEP;
         panel.active_search = Some(spec);
@@ -185,7 +173,6 @@ pub(super) fn start_search(
     panel.photos.clear();
     panel.error = None;
     panel.reached_end = false;
-    panel.budget_exhausted = false;
     panel.pending_drop = None;
     panel.visible_count = SHOW_STEP;
     panel.active_search = Some(spec.clone());
@@ -194,6 +181,18 @@ pub(super) fn start_search(
         tx.clone(),
         ctx.clone(),
     );
+}
+
+/// Etiqueta del botón «Bring more»: la comparten el pie de la lista, el
+/// final del Advanced y la ventana masiva (deben cambiar juntas si se
+/// renombra). La etiqueta nombra la búsqueda que se pagina (A09): si el
+/// borrador dice otra cosa, queda claro que continúa los resultados en
+/// pantalla, no los mezcla.
+pub(super) fn bring_more_label(panel: &Panel) -> String {
+    match panel.active_search.as_ref() {
+        Some(spec) => format!("{} “{}”", crate::i18n::tr(BRING_MORE), spec.keyword),
+        None => crate::i18n::tr(BRING_MORE).to_owned(),
+    }
 }
 
 /// Gasta un token más en la MISMA búsqueda («Bring more»): la página
@@ -215,6 +214,8 @@ pub(super) fn spend_token(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &
         panel.searching = false;
         panel.search_started = None;
         panel.page = next;
+        // La página se cuenta como cargada (de caché, 0 créditos).
+        panel.tokens_spent += 1;
         panel.apply_page(&page, next);
         panel.credits_last = 0;
         ctx.request_repaint();
@@ -237,7 +238,12 @@ pub(super) fn spend_token(panel: &mut Panel, tx: &Sender<loader::AppMsg>, ctx: &
 /// El `TextEdit` es multilínea con altura fija y scroll propio para las
 /// ~40 entradas por defecto; `clip_text` y ancho infinito evitan que tokens
 /// largos como `lookaside.instagram.com` sangren fuera del panel.
-fn advanced_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui) {
+fn advanced_ui(
+    panel: &mut Panel,
+    settings: &mut AppSettings,
+    ui: &mut egui::Ui,
+    tx: &Sender<loader::AppMsg>,
+) {
     ui.add_space(2.0);
     egui::CollapsingHeader::new(crate::i18n::tr("Advanced"))
         .default_open(false)
@@ -275,6 +281,25 @@ fn advanced_ui(panel: &mut Panel, settings: &mut AppSettings, ui: &mut egui::Ui)
                     settings.save_in_background();
                 }
             });
+            // «Bring more» también aquí, centrado al final de la sección:
+            // con el Advanced desplegado la lista se empuja hacia abajo y
+            // este hasta el pie de la sección es el punto de acceso visible
+            // a la misma paginación pagada que el pie de la lista.
+            if panel.can_spend_more() {
+                ui.add_space(4.0);
+                ui.vertical_centered(|ui| {
+                    let more_label = bring_more_label(panel);
+                    if ui
+                        .button(more_label)
+                        .on_hover_text(crate::i18n::tr(
+                            BRING_MORE_TIP,
+                        ))
+                        .clicked()
+                    {
+                        spend_token(panel, tx, ui.ctx());
+                    }
+                });
+            }
         });
 }
 
@@ -314,7 +339,7 @@ fn results_ui(
         }
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.weak(crate::i18n::tr("Searching… (1 token)"));
+            ui.weak(crate::i18n::tr("Searching…"));
         });
         return;
     }
@@ -391,29 +416,30 @@ fn results_ui(
     cost_footer_ui(panel, settings, ui);
 }
 
-/// Fila «Select…»: abre la ventana masiva (todo marcado por defecto).
+/// Botón de entrada de la ventana masiva: a todo el ancho del sidebar y con
+/// nombre claro (antes era un «Select…» diminuto que no se leía). Abre la
+/// ventana con todo marcado por defecto.
 fn select_row_ui(panel: &mut Panel, ui: &mut egui::Ui) {
     ui.add_enabled_ui(!panel.searching && !panel.photos.is_empty(), |ui| {
-        ui.horizontal(|ui| {
-            if ui
-                .button(format!("Select… ({})", panel.photos.len()))
-                .on_hover_text(crate::i18n::tr("Choose images and save one per canvas"))
-                .clicked()
-            {
-                panel.open_bulk();
-            }
-            if panel.bulk_busy {
-                ui.spinner();
-                ui.weak(crate::i18n::tr("Bulk saving…"));
-            } else if let Some(msg) = panel.bulk_done_msg.clone() {
-                ui.weak(msg);
-            }
-        });
+        let label = format!("{} ({})", crate::i18n::tr("Bulk add…"), panel.photos.len());
+        if ui
+            .add_sized([ui.available_width(), 26.0], egui::Button::new(label))
+            .on_hover_text(crate::i18n::tr("Choose images and save one per canvas"))
+            .clicked()
+        {
+            panel.open_bulk();
+        }
+        if panel.bulk_busy {
+            ui.spinner();
+            ui.weak(crate::i18n::tr("Bulk saving…"));
+        } else if let Some(msg) = panel.bulk_done_msg.clone() {
+            ui.weak(msg);
+        }
     });
 }
 
 /// Pie de la lista: spinner, error con reintento, «Show more» local (sin
-/// coste), «Bring more» (1 token) o avisos de fin/presupuesto.
+/// coste), «Bring more» (~100 imgs más) o avisos de fin de resultados.
 fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sender<loader::AppMsg>) {
     if panel.searching {
         let stuck = stalled(
@@ -454,28 +480,13 @@ fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sende
             panel.visible_count += SHOW_STEP;
         }
     }
-    if panel.budget_exhausted {
-        ui.weak(format!(
-            "Tokens used: {}/{} — change the query for a new search.",
-            panel.tokens_spent,
-            panel.budget.calls()
-        ));
-    } else if panel.reached_end {
+    if panel.reached_end {
         ui.weak(crate::i18n::tr("No more results for this search."));
     } else if panel.can_spend_more() {
-        let left = panel.budget.calls() - panel.tokens_spent;
-        // La etiqueta nombra la búsqueda que se pagina (A09): si el
-        // borrador dice otra cosa, queda claro que «Bring more» continúa
-        // los resultados en pantalla en vez de mezclar.
-        let more_label = match panel.active_search.as_ref() {
-            Some(spec) => format!("Bring more “{}” · 1 token ({left} left)", spec.keyword),
-            None => format!("Bring more · 1 token ({left} left)"),
-        };
+        let more_label = bring_more_label(panel);
         if ui
             .button(more_label)
-            .on_hover_text(crate::i18n::tr(
-                "Loads the next page (~100 images, ~2 credits)",
-            ))
+            .on_hover_text(crate::i18n::tr(BRING_MORE_TIP))
             .clicked()
         {
             spend_token(panel, tx, ui.ctx());
@@ -488,9 +499,8 @@ fn list_footer_ui(panel: &mut Panel, ui: &mut egui::Ui, shown: usize, tx: &Sende
 /// API: el botón abre el dashboard donde se ve.
 fn cost_footer_ui(panel: &Panel, settings: &AppSettings, ui: &mut egui::Ui) {
     ui.weak(format!(
-        "Searches {}/{} · last {}cr · session {}cr · total {}cr",
+        "Pages loaded {} · last {}cr · session {}cr · total {}cr",
         panel.tokens_spent,
-        panel.budget.calls(),
         panel.credits_last,
         panel.credits_session,
         settings.serper_credits_total,

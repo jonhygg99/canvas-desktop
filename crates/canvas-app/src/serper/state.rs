@@ -10,7 +10,7 @@ use crate::loader;
 
 use super::cache::{lru_insert, CachedPage, MEM_CAP};
 use super::filter::FilterCounts;
-use super::types::{SearchMode, SearchPage, SearchRequest, SerperPhoto, TokenBudget};
+use super::types::{SearchMode, SearchPage, SearchRequest, SerperPhoto};
 
 /// Tarjetas que revela cada pulsación de «Show more» local (sin coste: ya
 /// están descargadas, solo se muestran).
@@ -37,20 +37,23 @@ pub fn stalled(
     since.is_some_and(|t| now.duration_since(t).as_secs() >= timeout_secs)
 }
 
-/// Estado del panel «Web» del sidebar del editor: consulta, presupuesto de
-/// tokens, resultados (con sus miniaturas ya subidas a GPU) y errores.
+/// Estado del panel «Web» del sidebar del editor: consulta, resultados (con
+/// sus miniaturas ya subidas a GPU) y errores. Gasto abierto: cada Search
+/// trae ~100 imágenes (~2 créditos Serper) y cada «Bring more» añade otra
+/// página por el mismo precio, sin tope — se para cuando el servidor no
+/// tiene más resultados.
 /// Vive en `EditorState`; el gasto (`tokens_spent`) es de sesión y la lista
-/// de bloqueados y el presupuesto viven en `AppSettings`.
+/// de bloqueados y el total histórico de créditos viven en `AppSettings`.
 #[derive(Default)]
 pub struct Panel {
     pub query: String,
     /// Modo de búsqueda (Web Images o Instagram/Facebook). Solo sesión:
     /// cambiarlo limpia resultados y gasto, como una búsqueda nueva.
     pub mode: SearchMode,
-    /// Presupuesto elegido (1–3 tokens); espejo de `AppSettings`.
-    pub budget: TokenBudget,
-    /// Llamadas gastadas en la keyword actual (1 token = 1 llamada).
-    pub tokens_spent: u8,
+    /// Páginas cargadas en la keyword actual (1 token = 1 llamada). Con el
+    /// gasto abierto crece sin techo: `u32` porque 256 páginas (~500cr) no
+    /// desbordan ni en una maratón de «Bring more».
+    pub tokens_spent: u32,
     /// Última página cargada (1-based).
     pub page: u32,
     /// Hay una búsqueda o descarga de lote en vuelo (desactiva la UI).
@@ -59,10 +62,8 @@ pub struct Panel {
     pub search_started: Option<std::time::Instant>,
     pub photos: Vec<PhotoItem>,
     pub error: Option<String>,
-    /// El servidor no tiene más páginas tras esta…
+    /// El servidor no tiene más páginas tras esta llamada.
     pub reached_end: bool,
-    /// …o se agotó el presupuesto para esta keyword.
-    pub budget_exhausted: bool,
     /// Id de la foto cuya imagen completa se está descargando para insertar.
     pub inserting: Option<String>,
     /// Miniaturas con descarga en vuelo (reclamadas pero sin respuesta).
@@ -215,9 +216,11 @@ pub struct DragSerper {
 }
 
 impl Panel {
-    /// ¿Se puede gastar un token más en la keyword actual?
+    /// ¿Se puede gastar un token más en la keyword actual? Solo tras una
+    /// búsqueda ya pagada y mientras el servidor tenga más páginas: el
+    /// gasto es abierto, sin techo de presupuesto.
     pub fn can_spend_more(&self) -> bool {
-        !self.searching && self.tokens_spent < self.budget.calls()
+        !self.searching && self.tokens_spent > 0 && !self.reached_end
     }
 
     /// Cambia de modo de búsqueda: limpia resultados, gasto de keyword,
@@ -235,7 +238,6 @@ impl Panel {
         self.photos.clear();
         self.error = None;
         self.reached_end = false;
-        self.budget_exhausted = false;
         self.pending_drop = None;
         self.visible_count = SHOW_STEP;
         self.last_query.clear();
@@ -371,8 +373,6 @@ impl Panel {
         }
         self.error = None;
         self.reached_end = page_result.reached_end;
-        self.budget_exhausted =
-            !page_result.reached_end && self.tokens_spent >= self.budget.calls();
         self.last_query = page_result.effective_query.clone();
         self.exclusions_applied = page_result.exclusions_applied;
         self.exclusions_dropped = page_result.exclusions_dropped;
