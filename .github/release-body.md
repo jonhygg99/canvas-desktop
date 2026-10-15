@@ -1,3 +1,11 @@
+## Novedades de v0.7.9
+
+- La pestaña **Web** y la de **Images** son una sola pestaña **Images**, con un selector de fuente (Google / Instagram-Facebook / Unsplash) encima de la barra de búsqueda: la barra y los resultados son los de la fuente elegida, y cambiar de fuente no pierde lo ya buscado —resultados, paginación, créditos y la búsqueda en vuelo sobreviven al ir y volver—; solo alternar entre Google e Instagram/Facebook reinicia, porque el corpus es otro.
+- «Bring more» ya no tiene tope: cada búsqueda trae ~100 imágenes y las páginas se añaden hasta que Serper no tenga nada más (el selector de tokens desaparece; los ajustes guardados de antes siguen leyéndose).
+- «Bring more» queda al final del mosaico de la ventana de selección múltiple, y su botón de entrada («Bulk add…») ocupa el ancho completo con el texto traducido; las cifras de créditos salen de los textos de la pestaña.
+- Mientras la ventana de selección múltiple está abierta, el lienzo oculta la barra de navegación y la barra de selección (Crop/Replace…) para no tapar el trabajo.
+- Los tooltips de las pestañas del panel (Page, Layers, Insert, Images y Download) se traducen todos: antes solo tres lo hacían y los otros dos se quedaban en inglés.
+
 ## Novedades de v0.7.8
 
 - La pestaña **Download** lista TODOS los clips que siguen en la carpeta temporal (los de sesiones anteriores incluidos) y, al quedarse sin clips al borrar el último (o todos), la propia carpeta desaparece. El escaneo rueda una vez por sesión: no toca el disco en cada frame.
