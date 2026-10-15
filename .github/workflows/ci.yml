@@ -129,6 +129,12 @@ jobs:
       # estas cabeceras de desarrollo en Linux; muda (menus nativos) es
       # Windows-only y no necesita GTK. rodio (audio de vídeo) necesita
       # además libasound2-dev (ALSA).
+      #
+      # mesa-vulkan-drivers aporta lavapipe (Vulkan de CPU): los tests que
+      # renderizan con vello (p. ej. app::messages::video_save) necesitan un
+      # adaptador con storage buffers de compute; el único que ofrece el
+      # runner sin este paquete reporta max_storage_buffers_per_shader_stage
+      # = 0 y vello revienta al crear los bind group layouts.
       - name: Install Linux GUI + audio (ALSA) dependencies
         if: runner.os == 'Linux'
         run: |
@@ -138,6 +144,7 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libdbus-1-dev pkg-config libgl1-mesa-dev libegl1-mesa-dev \
             libfontconfig1-dev libasound2-dev \
+            mesa-vulkan-drivers \
             ffmpeg
 
       # Los tests de vídeo generan sus fixtures con ffmpeg/ffprobe
