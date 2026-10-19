@@ -30,8 +30,14 @@ impl AppInner {
             return;
         };
         match decision {
-            DialogDecision::Cancel => {}
+            DialogDecision::Cancel => {
+                // Traza: el «Back no hace nada» puede ser exactamente esto —
+                // un diálogo que se cancela (o se cierra) y una navegación
+                // que muere con él.
+                tracing::info!("diálogo de cambios sin guardar: Cancel → no se navega");
+            }
             DialogDecision::Save => {
+                tracing::info!("diálogo de cambios sin guardar: Save → Save all + salida diferida");
                 // A05: «Save» guarda TODOS los lienzos sucios, no solo el
                 // activo: se arma la cola de «Save all» (el activo se guarda
                 // de inmediato con `save_requested`; el fondo lo salta y
@@ -52,23 +58,30 @@ impl AppInner {
                     }
                 }
             }
-            DialogDecision::Discard => match dialog {
-                UnsavedDialog::WindowClose => {
-                    ws.save.allow_close = true;
-                    if ws.viewport == egui::ViewportId::ROOT {
-                        // La raíz se cierra con la app entera.
-                        ctx.send_viewport_cmd_to(
-                            egui::ViewportId::ROOT,
-                            egui::ViewportCommand::Close,
-                        );
-                    } else {
-                        ws.close_requested = true;
+            DialogDecision::Discard => {
+                tracing::info!("diálogo de cambios sin guardar: Discard → se sale sin guardar");
+                // La navegación se aplica DESPUÉS del frame del editor: sin
+                // desarmar el autoguardado, escribiría en ese único frame lo
+                // que el usuario acaba de descartar.
+                ws.save.autosave.on_discarded();
+                match dialog {
+                    UnsavedDialog::WindowClose => {
+                        ws.save.allow_close = true;
+                        if ws.viewport == egui::ViewportId::ROOT {
+                            // La raíz se cierra con la app entera.
+                            ctx.send_viewport_cmd_to(
+                                egui::ViewportId::ROOT,
+                                egui::ViewportCommand::Close,
+                            );
+                        } else {
+                            ws.close_requested = true;
+                        }
+                    }
+                    UnsavedDialog::Navigate(nav) => {
+                        *open_after = Some(nav);
                     }
                 }
-                UnsavedDialog::Navigate(nav) => {
-                    *open_after = Some(nav);
-                }
-            },
+            }
         }
     }
 
@@ -83,9 +96,28 @@ impl AppInner {
     ) {
         if let View::Editor(state) = &mut ws.view {
             state.saving = false;
+            // Solo el autoguardado necesita el resultado para su backoff: un
+            // fallo de un `Ctrl+S` manual no debe anunciarse como fallo del
+            // autoguardado (el banner ya lo explica).
+            let autosave_own = std::mem::take(&mut ws.save.autosave_in_flight);
             match result {
                 Ok(()) => {
+                    if autosave_own {
+                        ws.save.autosave.on_saved();
+                    }
                     tracing::info!("guardado OK: {}", path.display());
+                    // El disco contiene por construcción lo que se acaba de
+                    // escribir, así que un banner de «cambió fuera» previo
+                    // (típico: un evento propio del guardado anterior que
+                    // cayó fuera de la ventana de gracia) es obsoleto aquí.
+                    // Nada más lo limpiaba: el aviso se quedaba pegado para
+                    // siempre en el mismo lienzo (`messages/document.rs`).
+                    if state.external_change {
+                        tracing::info!(
+                            "guardado OK: se limpia el banner de cambio externo obsoleto"
+                        );
+                        state.external_change = false;
+                    }
                     let captured = state.saving_capture.take();
                     // A partir de este guardado ya hay píxeles
                     // del usuario en disco: el próximo `Ctrl+S`
@@ -125,6 +157,11 @@ impl AppInner {
                             true
                         }
                     };
+                    tracing::info!(
+                        marcado = marked,
+                        sucio = state.is_dirty(),
+                        "guardado: estado del historial tras la escritura"
+                    );
                     if !marked {
                         // El archivo contiene la captura anterior; los cambios
                         // nuevos siguen sin guardar y NO se ejecuta ningún
@@ -179,6 +216,14 @@ impl AppInner {
                     }
                 }
                 Err(e) => {
+                    if autosave_own {
+                        ws.save.autosave.on_failed(std::time::Instant::now());
+                    }
+                    tracing::warn!(
+                        ruta = %path.display(),
+                        error = %e,
+                        "guardado FALLÓ: se cancelan cierre y navegación diferidos"
+                    );
                     state.saving_capture = None;
                     ws.save.close_after_save = false;
                     ws.save.after_save = None;

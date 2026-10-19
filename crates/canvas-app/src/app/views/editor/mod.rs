@@ -91,6 +91,14 @@ pub(in crate::app) fn editor_view_ui(
         pending_menu_action = Some(action);
     }
     let (strip_action, canvas_action) = panels::show_panels(state, ui, rs, f);
+    // Autoguardado silencioso: DESPUÉS del guardado manual (Ctrl+S manda) y
+    // DESPUÉS del lienzo y los paneles, para que una edición hecha en ESTE
+    // frame ya cuente como cambio; si se decidiera antes, la última edición
+    // antes de que egui se duerma se quedaría sin ver. También pide el
+    // repintado que le falta al temporizador (ver `autosave::tick`).
+    if state.framing.is_none() {
+        crate::app::autosave::tick(state, ctx, rs, f);
+    }
     crate::ytdlp::retry_pending_frames(&mut state.ytdlp, f.tx, ctx);
     if let Some(accept) = crate::ytdlp::edit_window_ui(&mut state.ytdlp, f.settings, ui) {
         let _ = f.tx.send(loader::AppMsg::YtdlpEditsAccepted(accept));

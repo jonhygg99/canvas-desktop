@@ -31,6 +31,10 @@ pub(super) struct EditorFrame<'a> {
     pub(super) ignore_fs_events_until: &'a mut Option<Instant>,
     /// Estado del camino de guardado.
     pub(super) save: &'a mut SaveFlow,
+    /// ¿Hay un diálogo de «cambios sin guardar» abierto en esta ventana? El
+    /// autoguardado no escribe mientras el usuario decide: si elige
+    /// «Discard», guardar por detrás convertiría esa decisión en una mentira.
+    pub(super) unsaved_dialog_open: bool,
     /// Estado del camino de exportacion.
     pub(super) export: &'a mut ExportFlow,
     /// Contabilidad de la baraja que cruza con el disco.

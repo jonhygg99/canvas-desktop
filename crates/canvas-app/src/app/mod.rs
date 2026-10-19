@@ -35,6 +35,7 @@ use crate::loader::AppMsg;
 use crate::lock::LockExt;
 use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
+mod autosave;
 mod bootstrap;
 mod frame;
 mod menu_actions;
@@ -204,6 +205,13 @@ pub(super) struct SaveFlow {
     /// imagen en esta sesión (mismo criterio que `overwrite_confirmed`): no
     /// volver a avisar en guardados posteriores.
     pub(super) discard_raster_confirmed: bool,
+    /// Temporizador del autoguardado silencioso del lienzo activo (ver
+    /// `app/autosave.rs`): un contador por ventana.
+    pub(super) autosave: autosave::Autosave,
+    /// El guardado en vuelo lo lanzó el autoguardado: su resultado alimenta el
+    /// backoff del temporizador. Un `Ctrl+S` manual no toca este estado, para
+    /// que un fallo suyo no se anuncie como «fallo del autoguardado».
+    pub(super) autosave_in_flight: bool,
     /// «Save all»: ids (estables) de las ranuras sucias que faltan por
     /// guardar, el activo excluido.
     pub(super) save_all_queue: Vec<u64>,
@@ -246,6 +254,12 @@ pub(super) struct DeckOps {
     /// el reescaneo lo incorpora a la baraja se salta a él (si no, el usuario
     /// no vería dónde cayeron).
     pub(super) bulk_jump: Option<PathBuf>,
+    /// Tanda entera creada por el último bulk web: el reescaneo final
+    /// conserva la marca `thumb_failed` de un archivo que un escaneo
+    /// intermedio vio vacío (reserva previa al bake) si el `mtime` no
+    /// cambió, así que tras el `merge_scan` se reintentan una vez los
+    /// creados que sigan sin miniatura.
+    pub(super) bulk_created: Vec<PathBuf>,
 }
 
 /// Último estado comunicado a los menús nativos, para no reenviarlo cada

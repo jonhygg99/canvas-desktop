@@ -268,6 +268,7 @@
   "Unsaved changes": "Cambios sin guardar",
   "Not saved yet": "Todavía sin guardar",
   "Save failed": "Error al guardar",
+  "Save failed — retrying…": "Error al guardar — reintentando…",
   "Exporting…": "Exportando…",
   "Processing framing…": "Procesando encuadre…",
   "Framing not saved": "Encuadre sin guardar",

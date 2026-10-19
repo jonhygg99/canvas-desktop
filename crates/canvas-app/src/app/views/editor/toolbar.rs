@@ -1,4 +1,5 @@
 //! Navegación y acciones del documento, independientes del inspector.
+use super::super::super::autosave::AutosaveStatus;
 use super::super::super::frame::EditorFrame;
 use crate::{editor, loader, menus};
 use eframe::egui;
@@ -9,6 +10,9 @@ pub(super) fn show(
     f: &mut EditorFrame<'_>,
 ) -> Option<menus::MenuAction> {
     let mut action = None;
+    // Estado del autoguardado ANTES del cierre: dentro del panel `f` se presta
+    // mutable otra vez para las acciones.
+    let autosave_status = f.save.autosave.status();
     egui::Panel::top("document_toolbar").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             if state.from_gallery.is_some()
@@ -18,7 +22,7 @@ pub(super) fn show(
             }
             crate::editor::properties_panel::file_name_ui(state, ui);
             ui.separator();
-            ui.label(crate::i18n::tr(save_status(state)));
+            ui.label(crate::i18n::tr(save_status(state, autosave_status)));
             if ui.button(crate::i18n::tr("Settings")).clicked() {
                 state.settings_clicked = true;
             }
@@ -111,7 +115,7 @@ fn help(state: &editor::EditorState, ui: &mut egui::Ui) {
     }
 }
 
-fn save_status(state: &editor::EditorState) -> &'static str {
+fn save_status(state: &editor::EditorState, autosave: AutosaveStatus) -> &'static str {
     if let Some(session) = &state.framing {
         return if session.busy() {
             "Processing framing…"
@@ -126,7 +130,14 @@ fn save_status(state: &editor::EditorState) -> &'static str {
     } else if state.exporting {
         "Exporting…"
     } else if state.save_error.is_some() {
-        "Save failed"
+        // Un autoguardado que falló no se queda en «Error al guardar»: si hay
+        // reintento programado, el usuario ve que la app sigue intentándolo
+        // sola (el detalle del error está en el banner del inspector).
+        if autosave == AutosaveStatus::Retrying {
+            "Save failed — retrying…"
+        } else {
+            "Save failed"
+        }
     } else if state.is_dirty() {
         "Unsaved changes"
     } else if state.doc.source_path.is_none() {
@@ -139,18 +150,31 @@ fn save_status(state: &editor::EditorState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::autosave::AutosaveStatus;
     #[test]
     fn unsaved_new_document_is_not_reported_as_saved() {
         let state = editor::EditorState::new_blank(800.0, 600.0);
-        assert_ne!(save_status(&state), "Saved");
+        assert_ne!(save_status(&state, AutosaveStatus::Idle), "Saved");
     }
     #[test]
     fn ongoing_save_takes_precedence_over_previous_error() {
         let mut state = editor::EditorState::new_blank(800.0, 600.0);
         state.save_error = Some("previous failure".into());
         state.saving = true;
-        assert_eq!(save_status(&state), "Saving…");
+        assert_eq!(save_status(&state, AutosaveStatus::Idle), "Saving…");
         state.saving = false;
-        assert_eq!(save_status(&state), "Save failed");
+        assert_eq!(save_status(&state, AutosaveStatus::Idle), "Save failed");
+    }
+
+    /// Un fallo del autoguardado con reintento programado lo dice: el usuario
+    /// no tiene que adivinar si la app sigue intentándolo sola.
+    #[test]
+    fn a_retrying_autosave_is_not_reported_as_a_plain_failure() {
+        let mut state = editor::EditorState::new_blank(800.0, 600.0);
+        state.save_error = Some("transient failure".into());
+        assert_eq!(
+            save_status(&state, AutosaveStatus::Retrying),
+            "Save failed — retrying…"
+        );
     }
 }
