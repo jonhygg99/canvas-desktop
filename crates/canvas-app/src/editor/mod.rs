@@ -56,3 +56,34 @@ pub(crate) mod state;
 
 pub use state::{DeckNav, EditorState};
 pub(crate) use state::{DeleteRecord, GlobalStep};
+
+/// Deja el documento en un estado coherente antes de ABANDONAR el editor
+/// (Back a la galería, abrir otro archivo, cerrar el proyecto):
+///
+/// - consolida las ediciones de panel a medias (`panel_edit`, sliders,
+///   contenido, página) para que sean pasos de deshacer y el documento
+///   cuente como sucio — así la comprobación de «cambios sin guardar» las
+///   ve y nunca se pierden en silencio;
+/// - confirma la edición de texto inline (sin esto, un texto a medio
+///   escribir se descartaría al destruir la vista);
+/// - cancela un gesto de ratón a medias (deja el documento como estaba) y
+///   descarta los renombrados que solo eran texto de UI.
+///
+/// No toca un guardado/exportación en curso: quien llama comprueba antes
+/// `EditorState::blocks_leaving`. Es idempotente y barata cuando no hay
+/// nada abierto.
+pub(crate) fn prepare_for_navigation(state: &mut EditorState) {
+    if let Some(blocker) = state.idle_blocker() {
+        // Traza de diagnóstico: si alguna vez una bandera se queda pegada,
+        // el log dice CUÁL (el aviso vería «operación en curso» sin nombre).
+        tracing::info!(
+            bloqueo = blocker,
+            "saliendo del editor: se consolidan o descartan ediciones transitorias"
+        );
+    }
+    gesture_cancel::cancel_single_gesture(state);
+    inline_text::finish(state, false);
+    properties_panel::commit_all_panel_edits(state);
+    state.rename_edit = None;
+    state.file_rename_edit = None;
+}

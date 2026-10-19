@@ -42,8 +42,13 @@ fn saved_exit_allows_a_clean_session_but_waits_for_the_queue() {
     assert!(!saved_exit_ready(&mut state, &deck, &mut save));
 }
 
+/// Contrato NUEVO (bug «Back esperando para siempre»): una bandera de UI a
+/// medias — aquí un renombrado de capa — ya NO cancela la salida guardada;
+/// `editor::prepare_for_navigation` la descarta al abandonar la vista, así
+/// que no puede dejar la salida clavada. Lo que sí bloquea es un guardado
+/// todavía en vuelo.
 #[test]
-fn saved_exit_keeps_an_uncommitted_edit_open() {
+fn saved_exit_is_not_blocked_by_transient_ui_state() {
     let deck = Deck::single("a.png".into());
     let mut state = EditorState::new_blank_image(10.0, 10.0);
     state.doc = doc_with_visible_image();
@@ -53,6 +58,13 @@ fn saved_exit_keeps_an_uncommitted_edit_open() {
         ..Default::default()
     };
     assert!(!state.is_dirty());
+    assert!(
+        saved_exit_ready(&mut state, &deck, &mut save),
+        "un renombrado a medio escribir no debe cancelar la salida"
+    );
+    assert!(save.close_after_save);
+
+    state.saving = true;
     assert!(!saved_exit_ready(&mut state, &deck, &mut save));
     assert!(!save.close_after_save);
 }

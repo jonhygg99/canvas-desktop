@@ -36,6 +36,10 @@ mod sidecar;
 mod image_source_tests;
 
 #[cfg(test)]
+#[path = "idle_tests.rs"]
+mod idle_tests;
+
+#[cfg(test)]
 #[path = "shortcuts_tests.rs"]
 mod shortcuts_tests;
 
@@ -272,27 +276,81 @@ impl EditorState {
     /// llegue" — si eso cambiase a mitad de guardado, marcaría como
     /// guardado el documento EQUIVOCADO.
     pub(crate) fn is_idle(&self) -> bool {
-        !self.saving && self.is_idle_except_save()
+        self.idle_blocker().is_none()
+    }
+
+    /// Nombre de la PRIMERA condición que impide `is_idle`. Existe para que
+    /// los avisos y las trazas digan qué está esperando: un «hay una
+    /// operación en curso» genérico dejaba al usuario (y al log) sin saber
+    /// cuál de las doce banderas está atascada.
+    pub(crate) fn idle_blocker(&self) -> Option<&'static str> {
+        if self.saving {
+            Some("a save that is still writing")
+        } else {
+            self.idle_blocker_except_save()
+        }
     }
 
     pub(crate) fn is_idle_except_save(&self) -> bool {
-        matches!(self.gesture, Gesture::None)
-            && self.inline_text.is_none()
-            && self
-                .insert_tool
-                .as_ref()
-                .is_none_or(|tool| !tool.dragging())
-            && self.panel_edit.is_none()
-            && self.page_edit.is_none()
-            && self.opacity_edit.is_none()
-            && self.blur_edit.is_none()
-            && self.color_edit.is_none()
-            && self.content_edit.is_none()
-            && self.shadow_edit.is_none()
-            && self.rename_edit.is_none()
-            && self.file_rename_edit.is_none()
-            && !self.exporting
-            && self.framing.as_ref().is_none_or(|session| !session.busy())
+        self.idle_blocker_except_save().is_none()
+    }
+
+    fn idle_blocker_except_save(&self) -> Option<&'static str> {
+        if !matches!(self.gesture, Gesture::None) {
+            Some("a canvas gesture still in progress")
+        } else if self.inline_text.is_some() {
+            Some("an open inline text edit")
+        } else if self
+            .insert_tool
+            .as_ref()
+            .is_some_and(|tool| tool.dragging())
+        {
+            Some("an insert tool still dragging")
+        } else if self.panel_edit.is_some() {
+            Some("an uncommitted transform field")
+        } else if self.page_edit.is_some() {
+            Some("an uncommitted page-size field")
+        } else if self.opacity_edit.is_some() {
+            Some("an opacity slider still held")
+        } else if self.blur_edit.is_some() {
+            Some("a blur slider still held")
+        } else if self.color_edit.is_some() {
+            Some("a color adjustment still held")
+        } else if self.content_edit.is_some() {
+            Some("an uncommitted content field")
+        } else if self.shadow_edit.is_some() {
+            Some("a shadow adjustment still held")
+        } else if self.rename_edit.is_some() {
+            Some("a layer rename being typed")
+        } else if self.file_rename_edit.is_some() {
+            Some("a file rename being typed")
+        } else if self.exporting {
+            Some("an export that is still running")
+        } else if self.framing.as_ref().is_some_and(|session| session.busy()) {
+            Some("a framing job that is still running")
+        } else {
+            None
+        }
+    }
+
+    /// ¿Qué impide DE VERDAD abandonar el editor ahora mismo? Un gesto, un
+    /// renombrado o una edición de panel a medias se consolidan o se
+    /// descartan al salir (`editor::prepare_for_navigation`), así que no
+    /// bloquean Back; solo lo hace un guardado o una exportación en vuelo
+    /// (su `Saved` opera sobre el documento que esté activo: cambiar de
+    /// vista lo marcaría mal) y un trabajo de framing. Antes se exigía
+    /// `is_idle()` para navegar, y cualquier bandera de UI atascada dejaba
+    /// «Back to gallery» esperando para siempre con un aviso genérico.
+    pub(crate) fn blocks_leaving(&self) -> Option<&'static str> {
+        if self.saving {
+            Some("a save that is still writing")
+        } else if self.exporting {
+            Some("an export that is still running")
+        } else if self.framing.as_ref().is_some_and(|session| session.busy()) {
+            Some("a framing job that is still running")
+        } else {
+            None
+        }
     }
 
     /// Extrae el lienzo activo a un `SlotDoc` para guardarlo en su ranura de

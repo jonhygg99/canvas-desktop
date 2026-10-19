@@ -2,7 +2,7 @@
 //! renombrar, borrar, restaurar de la papelera, y el aviso del watcher de que
 //! cambio en disco.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
@@ -178,14 +178,33 @@ impl AppInner {
         let own_save = ws
             .ignore_fs_events_until
             .is_some_and(|t| std::time::Instant::now() < t);
-        if !own_save {
-            if let View::Editor(state) = &mut ws.view {
-                if state.doc.source_path.as_deref() == Some(path.as_path()) {
-                    state.external_change = true;
-                }
+        if let View::Editor(state) = &mut ws.view {
+            // Traza de diagnóstico (Task 1 del plan): el bug del banner ⚠ es
+            // justo la discriminación entre «lo escribí yo» y «alguien más
+            // tocó el archivo», así que el log deja las tres piezas: qué
+            // evento llegó, qué documento está abierto y si caía dentro de
+            // la ventana de gracia.
+            tracing::info!(
+                evento = %path.display(),
+                abierto = ?state.doc.source_path.as_deref().map(|p| p.display().to_string()),
+                propio = own_save,
+                "watcher: evento de disco sobre el archivo del editor"
+            );
+            if should_flag_external_change(state.doc.source_path.as_deref(), &path, own_save) {
+                state.external_change = true;
+                tracing::info!("watcher: se levanta el banner de cambio externo");
             }
         }
     }
+}
+
+/// Decide si un evento de disco debe levantar el banner de «este archivo
+/// cambió fuera de Canvas Desktop»: solo el documento ABIERTO, y solo si el
+/// evento no cae en la ventana de gracia del propio guardado (la sustitución
+/// atómica y el reescaneo de miniaturas generan eventos propios). Pura para
+/// probarla sin watcher, disco ni reloj.
+fn should_flag_external_change(open: Option<&Path>, event: &Path, own_save: bool) -> bool {
+    !own_save && open == Some(event)
 }
 
 fn rename_slot(slot: &mut deck::Slot, path: &std::path::Path) {
@@ -205,6 +224,25 @@ fn rename_slot(slot: &mut deck::Slot, path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_change_only_flags_the_open_document_outside_own_save() {
+        let open = Path::new("fotos/a.png");
+        // (documento abierto, evento, ¿dentro del guardado propio?, esperado)
+        let cases = [
+            (Some(open), Path::new("fotos/a.png"), false, true),
+            (Some(open), Path::new("fotos/a.png"), true, false),
+            (Some(open), Path::new("fotos/b.png"), false, false),
+            (None, Path::new("fotos/a.png"), false, false),
+        ];
+        for (open, event, own_save, expected) in cases {
+            assert_eq!(
+                should_flag_external_change(open, event, own_save),
+                expected,
+                "abierto={open:?} evento={event:?} propio={own_save}"
+            );
+        }
+    }
 
     #[test]
     fn renaming_a_loaded_slot_updates_the_path_used_by_its_next_save() {

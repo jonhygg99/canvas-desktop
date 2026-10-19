@@ -95,7 +95,16 @@ pub(in crate::app) fn saved_exit_ready(
     if !save.save_all_queue.is_empty() {
         return false;
     }
-    if !state.is_idle() || save_all_doc_count(deck, state) > 0 {
+    if state.blocks_leaving().is_some() || save_all_doc_count(deck, state) > 0 {
+        // Traza del motivo: esto CANCELA la salida diferida y deja el aviso
+        // visible en `save_error` (Task 4), para que Back/cierre nunca
+        // termine en silencio.
+        tracing::warn!(
+            cola = save.save_all_queue.len(),
+            bloqueo = ?state.blocks_leaving(),
+            pendientes = save_all_doc_count(deck, state),
+            "salida diferida rechazada: quedan cambios o ediciones pendientes"
+        );
         save.close_after_save = false;
         save.after_save = None;
         save.allow_close = false;
@@ -191,6 +200,15 @@ pub(crate) fn build_slot_doc(
     match outcome {
         loader::LoadOutcome::Restored(restored) => {
             let external_change = !restored.hash_matches;
+            // Traza: esta es la otra vía por la que aparece el banner ⚠ (el
+            // PNG cambió respecto al hash del sidecar). Sin la traza, un
+            // banner «sin causa» no se distingue del evento del watcher.
+            if external_change {
+                tracing::info!(
+                    ruta = %path.display(),
+                    "sidecar: el hash de la imagen no coincide; se marca cambio externo"
+                );
+            }
             let mut state = editor::EditorState::from_restored(path, restored);
             state.sidecar_enabled = sidecar_default;
             state.source_metadata = metadata;
@@ -268,6 +286,17 @@ pub(super) fn raster_target_error(path: &std::path::Path) -> Option<canvas_io::I
     }
 }
 
+/// Resultado de INTENTAR lanzar un guardado. `Refused` = no se llegó a
+/// escribir nada (RAM crítica, destino sin codificador, horneado rechazado);
+/// el autoguardado lo usa para programar un reintento en vez de esperar a que
+/// el usuario edite otra vez. `Started` = hay un worker escribiendo y el
+/// resultado llegará como `AppMsg::Saved`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SaveStart {
+    Started,
+    Refused,
+}
+
 pub(super) fn start_save(
     state: &mut editor::EditorState,
     sctx: &mut SaveContext,
@@ -275,13 +304,13 @@ pub(super) fn start_save(
     path: PathBuf,
     new_source: bool,
     jpeg_quality: u8,
-) {
+) -> SaveStart {
     if state.saving {
-        return;
+        return SaveStart::Refused;
     }
     if let Some(error) = raster_target_error(&path) {
         state.save_error = Some(error.to_string());
-        return;
+        return SaveStart::Refused;
     }
     // RAM crítica: no se intenta el bake (podría salir incompleto o matar la
     // app). Falla rápido con el archivo intacto y el mensaje en el banner de
@@ -296,7 +325,7 @@ pub(super) fn start_save(
              Close other apps to free memory and try again."
                 .into(),
         );
-        return;
+        return SaveStart::Refused;
     }
     // Sitio en el atlas para el bake: expulsa ranuras lejanas (protege la activa).
     free_far_slot_scopes(deck, sctx.renderer);
@@ -336,7 +365,7 @@ pub(super) fn start_save(
                      the file was not overwritten. Close other apps to free memory and try again."
                         .into(),
                 );
-                return;
+                return SaveStart::Refused;
             }
             if doc_needs_bake_verify(&state.doc)
                 && !rebake_matches_first(&mut *sctx, scope, &state.doc, &state.images, 1.0, &rgba)
@@ -350,7 +379,7 @@ pub(super) fn start_save(
                      Try saving again."
                         .into(),
                 );
-                return;
+                return SaveStart::Refused;
             }
             state.saving = true;
             state.save_error = None;
@@ -375,10 +404,12 @@ pub(super) fn start_save(
                 sctx.tx.clone(),
                 sctx.ctx.clone(),
             );
+            SaveStart::Started
         }
         Err(e) => {
             tracing::error!("horneado falló: {e}");
             state.save_error = Some(format!("Could not prepare the save: {e}"));
+            SaveStart::Refused
         }
     }
 }
@@ -389,9 +420,9 @@ pub(super) fn start_save_design(
     sctx: &mut SaveContext,
     path: PathBuf,
     new_source: bool,
-) {
+) -> SaveStart {
     if state.saving {
-        return;
+        return SaveStart::Refused;
     }
     tracing::info!("guardando diseño en {}", path.display());
     let mut payload = state.sidecar_payload();
@@ -438,6 +469,7 @@ pub(super) fn start_save_design(
         sctx.tx.clone(),
         sctx.ctx.clone(),
     );
+    SaveStart::Started
 }
 
 /// Lo pedido en el diálogo de exportación ya resuelto: destino, ajustes y

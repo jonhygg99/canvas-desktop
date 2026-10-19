@@ -65,26 +65,35 @@ pub(crate) fn page_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         }
     }
     if commit {
-        if let Some(before) = state.page_edit.take() {
-            let after = state
-                .doc
-                .page()
-                .map(|p| (p.width, p.height))
-                .unwrap_or(before);
-            if after != before {
-                // El fondo desenfocado (si lo hay) se recoloca para seguir
-                // cubriendo la página nueva, todo en UN paso de deshacer.
-                let mut commands: Vec<Box<dyn canvas_core::Command>> =
-                    vec![Box::new(SetPageSize { before, after })];
-                if let Some(cmd) = state.resync_background_cover() {
-                    commands.push(cmd);
-                }
-                state.push_undo_step(Box::new(canvas_core::Composite::new(
-                    "Resize page",
-                    commands,
-                )));
-            }
+        commit_page_edit(state);
+    }
+}
+
+/// Cierra la edición de tamaño de página a medias como UN paso de deshacer.
+/// `pub(in crate::editor)` porque también la llama la salida del editor
+/// (`prepare_for_navigation`): un tamaño a medio escribir no debe perderse
+/// —ni quedarse como bandera de UI— al volver a la galería.
+pub(in crate::editor) fn commit_page_edit(state: &mut EditorState) {
+    let Some(before) = state.page_edit.take() else {
+        return;
+    };
+    let after = state
+        .doc
+        .page()
+        .map(|p| (p.width, p.height))
+        .unwrap_or(before);
+    if after != before {
+        // El fondo desenfocado (si lo hay) se recoloca para seguir
+        // cubriendo la página nueva, todo en UN paso de deshacer.
+        let mut commands: Vec<Box<dyn canvas_core::Command>> =
+            vec![Box::new(SetPageSize { before, after })];
+        if let Some(cmd) = state.resync_background_cover() {
+            commands.push(cmd);
         }
+        state.push_undo_step(Box::new(canvas_core::Composite::new(
+            "Resize page",
+            commands,
+        )));
     }
 }
 

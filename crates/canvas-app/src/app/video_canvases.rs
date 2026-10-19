@@ -15,10 +15,27 @@ impl AppInner {
         if accepts.is_empty() {
             return;
         }
-        if matches!(&ws.view, View::Editor(state) if !state.is_idle()) {
+        // Solo un guardado/exportación en vuelo obliga a esperar (`blocks_leaving`):
+        // una edición de UI a medias se consolida abajo, y esperar por ella
+        // aparcaba los lienzos de vídeo para siempre.
+        if matches!(&ws.view, View::Editor(state) if state.blocks_leaving().is_some()) {
+            if let View::Editor(state) = &mut ws.view {
+                if state.save_error.is_none() {
+                    state.save_error = Some(
+                        "Creating canvases is waiting on a save that is still writing. \
+                         It will continue as soon as that finishes."
+                            .to_owned(),
+                    );
+                }
+            }
             ws.deferred_nav
                 .push_back(super::Nav::OpenVideos { accepts });
             return;
+        }
+        // Fuera del camino de espera: consolida un texto inline o un campo de
+        // panel a medias antes de tocar la baraja.
+        if let View::Editor(state) = &mut ws.view {
+            editor::prepare_for_navigation(state);
         }
         // El formato de los lienzos nuevos es el de Ajustes, igual que
         // «✚ New design»: un clip no tiene por qué acabar en PNG.

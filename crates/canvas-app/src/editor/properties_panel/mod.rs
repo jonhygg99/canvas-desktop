@@ -27,6 +27,8 @@ mod framing_tests;
 mod tests;
 use eframe::egui;
 
+use canvas_core::LayerId;
+
 use crate::app_icons::{draw_pencil_icon, icon_button_ui};
 
 use super::EditorState;
@@ -47,6 +49,16 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
         });
 }
 
+/// Consolida TODAS las ediciones de panel a medias, sea cual sea la capa
+/// seleccionada. Lo usa la salida del editor (`editor::prepare_for_navigation`):
+/// al abandonar el lienzo, un campo a medio escribir tiene que quedar en el
+/// historial (y marcar el documento como sucio) en vez de desaparecer sin
+/// aviso — y, de paso, deja de ser una bandera de UI que bloquea la salida.
+pub(in crate::editor) fn commit_all_panel_edits(state: &mut EditorState) {
+    commit_panel_edits(state, None);
+    page::commit_page_edit(state);
+}
+
 /// Consolida cualquier edición de panel a medias (`panel_edit`/`blur_edit`/
 /// `color_edit`/`content_edit`/`shadow_edit`) cuya capa ya no es la
 /// seleccionada. Esos campos solo se limpian solos cuando el control que los
@@ -60,9 +72,13 @@ pub fn properties_ui(state: &mut EditorState, ui: &mut egui::Ui) {
 /// (`handle_shortcuts` se los cede a un `TextEdit` con foco propio mientras
 /// `content_edit.is_some()`).
 fn commit_stale_panel_edits(state: &mut EditorState) {
-    let current = state.selection.primary();
+    commit_panel_edits(state, state.selection.primary());
+}
 
-    if matches!(&state.panel_edit, Some((id, _)) if Some(*id) != current) {
+/// `keep` = la capa cuyo control puede seguir vivo y cerrarse solo: con
+/// `Some(id)` no se toca. Con `None` se consolidan todas.
+fn commit_panel_edits(state: &mut EditorState, keep: Option<LayerId>) {
+    if matches!(&state.panel_edit, Some((id, _)) if Some(*id) != keep) {
         if let Some((id, before)) = state.panel_edit.take() {
             if let Ok(l) = state.doc.layer(id) {
                 let after = l.transform;
@@ -76,10 +92,10 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
             }
         }
     }
-    if matches!(&state.opacity_edit, Some((id, _)) if Some(*id) != current) {
+    if matches!(&state.opacity_edit, Some((id, _)) if Some(*id) != keep) {
         effects::commit_opacity(state);
     }
-    if matches!(&state.blur_edit, Some((id, _)) if Some(*id) != current) {
+    if matches!(&state.blur_edit, Some((id, _)) if Some(*id) != keep) {
         if let Some((id, before)) = state.blur_edit.take() {
             let after = state
                 .doc
@@ -95,7 +111,7 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
             }
         }
     }
-    if matches!(&state.color_edit, Some((id, _)) if Some(*id) != current) {
+    if matches!(&state.color_edit, Some((id, _)) if Some(*id) != keep) {
         if let Some((id, before)) = state.color_edit.take() {
             let after = state.doc.layer(id).map(|l| l.effects).unwrap_or(before);
             if after != before {
@@ -107,7 +123,7 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
             }
         }
     }
-    if matches!(&state.content_edit, Some((id, _)) if Some(*id) != current) {
+    if matches!(&state.content_edit, Some((id, _)) if Some(*id) != keep) {
         if let Some((id, before)) = state.content_edit.take() {
             let after = state
                 .doc
@@ -123,7 +139,7 @@ fn commit_stale_panel_edits(state: &mut EditorState) {
             }
         }
     }
-    if matches!(&state.shadow_edit, Some((id, _)) if Some(*id) != current) {
+    if matches!(&state.shadow_edit, Some((id, _)) if Some(*id) != keep) {
         if let Some((id, before)) = state.shadow_edit.take() {
             let after = state.doc.layer(id).ok().and_then(|l| l.effects.shadow);
             if after != before {

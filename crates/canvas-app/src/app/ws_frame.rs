@@ -90,6 +90,7 @@ impl AppInner {
                     watcher: &mut ws.watcher,
                     ignore_fs_events_until: &mut ws.ignore_fs_events_until,
                     save: &mut ws.save,
+                    unsaved_dialog_open: ws.unsaved_dialog.is_some(),
                     export: &mut ws.export,
                     deck_ops: &mut ws.deck_ops,
                 };
@@ -188,7 +189,10 @@ impl AppInner {
             && !ws.save.save_path_dialog_open
             && ws.save.pending_save_as.is_none()
             && ws.save.save_all_queue.is_empty()
-            && matches!(&ws.view, View::Editor(state) if state.is_idle())
+            // Misma compuerta que `navigation::nav_block_reason`: si aquí se
+            // exigiera `is_idle()`, una bandera de UI atascada dejaría la cola
+            // sin drenar para siempre (el reintento nunca dispararía).
+            && matches!(&ws.view, View::Editor(state) if state.blocks_leaving().is_none())
         {
             open_next = ws.deferred_nav.pop_front();
         }

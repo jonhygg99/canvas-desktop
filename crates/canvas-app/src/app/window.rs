@@ -138,6 +138,12 @@ impl AppInner {
             ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::CancelClose);
             return;
         }
+        // Consolida las ediciones transitorias ANTES de decidir si hay algo
+        // sucio: un texto inline o un campo de panel a medias cuenta como
+        // cambio, así que el diálogo lo protege en vez de perderlo al cerrar.
+        if let View::Editor(state) = &mut ws.view {
+            crate::editor::prepare_for_navigation(state);
+        }
         let names = ws.dirty_canvas_names();
         if names.is_empty() {
             ws.save.allow_close = true;

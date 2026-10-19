@@ -215,12 +215,15 @@ impl AppInner {
 
     /// Aplica una navegación diferida sobre un workspace.
     pub(crate) fn navigate(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
-        if matches!(&ws.view, View::Editor(state) if !state.is_idle())
-            || ws.save.save_path_dialog_open
-            || ws.save.pending_save_as.is_some()
-            || !ws.save.save_all_queue.is_empty()
-        {
-            ws.deferred_nav.push_back(nav);
+        let blocked = nav_block_reason(
+            match &ws.view {
+                View::Editor(state) => Some(&**state),
+                _ => None,
+            },
+            &ws.save,
+        );
+        if let Some(reason) = blocked {
+            self.park_nav(ws, nav, reason);
             return;
         }
         match nav {
@@ -273,13 +276,23 @@ impl AppInner {
     /// navegación/cierre diferidos solo se ejecutan cuando la cola se vacía
     /// (A05): con varios sucios ya no se pierde el fondo en silencio.
     pub(crate) fn request_nav(&mut self, ws: &mut Workspace, nav: Nav, ctx: &egui::Context) {
-        if matches!(&ws.view, View::Editor(state) if !state.is_idle())
-            || ws.save.save_path_dialog_open
-            || ws.save.pending_save_as.is_some()
-            || !ws.save.save_all_queue.is_empty()
-        {
-            ws.deferred_nav.push_back(nav);
+        let blocked = nav_block_reason(
+            match &ws.view {
+                View::Editor(state) => Some(&**state),
+                _ => None,
+            },
+            &ws.save,
+        );
+        if let Some(reason) = blocked {
+            self.park_nav(ws, nav, reason);
             return;
+        }
+        // Nada en vuelo que deba terminar: se consolidan las ediciones
+        // transitorias ANTES del chequeo de «cambios sin guardar», para que
+        // cuenten como cambios y el diálogo las proteja en vez de perderse
+        // al destruir la vista.
+        if let View::Editor(state) = &mut ws.view {
+            editor::prepare_for_navigation(state);
         }
         // Añadir conserva todos los documentos: no es una salida destructiva.
         if matches!(nav, Nav::OpenVideo { .. } | Nav::OpenVideos { .. }) {
@@ -287,12 +300,25 @@ impl AppInner {
             return;
         }
         let names = ws.dirty_canvas_names();
+        tracing::info!(
+            sucios = names.len(),
+            nombres = ?names,
+            "navegación: revisión de cambios sin guardar"
+        );
         if names.is_empty() {
             self.navigate(ws, nav, ctx);
             return;
         }
         if ws.unsaved_dialog.is_some() {
-            return; // ya hay un diálogo en vuelo para esta ventana
+            // Ya hay un diálogo en vuelo para esta ventana: no se apila otro
+            // (el nativo se quedaría detrás del primero, invisible). Se
+            // repinta para refrescar la UI y se deja constancia: antes esto
+            // era un `return` mudo y el clic de Back «no hacía nada».
+            tracing::info!(
+                "navegación ignorada: ya hay un diálogo de cambios sin guardar en vuelo"
+            );
+            ctx.request_repaint();
+            return;
         }
         ws.unsaved_dialog = Some(super::UnsavedDialog::Navigate(nav.clone()));
         let target = match &nav {
@@ -345,6 +371,86 @@ impl AppInner {
     }
 }
 
+impl AppInner {
+    /// Aparca una navegación SIN perderla (el drenaje de `ws_frame` la
+    /// reintenta en cuanto el editor queda ocioso) y deja el motivo visible
+    /// una vez: el usuario ve que su clic no se perdió y qué lo está
+    /// esperando. No pisa un error de guardado ya visible — ese también es
+    /// feedback, y es más importante que el aviso de espera.
+    fn park_nav(&self, ws: &mut Workspace, nav: Nav, reason: &str) {
+        tracing::info!(
+            motivo = reason,
+            cola = ws.deferred_nav.len(),
+            "navegación aparcada; se reintenta al quedar ocioso"
+        );
+        // Volver a pulsar Back mientras la primera petición espera no debe
+        // apilar otra salida idéntica: la cola ya tiene ese destino y se
+        // ejecutará igual (antes se encolaba una por clic y el log lo
+        // mostraba como cola=4, 5, 6…).
+        if !ws
+            .deferred_nav
+            .back()
+            .is_some_and(|queued| same_nav_target(queued, &nav))
+        {
+            ws.deferred_nav.push_back(nav);
+        }
+        if let View::Editor(state) = &mut ws.view {
+            if state.save_error.is_none() {
+                state.save_error = Some(park_notice(reason));
+            }
+        }
+    }
+}
+
+/// ¿Las dos peticiones llevan al MISMO destino, de forma que repetir el clic
+/// no aporta nada? Pura (tabla de tests). Las navegaciones ADITIVAS —crear un
+/// lienzo de vídeo o un diseño nuevo— nunca se deduplican: dos peticiones
+/// seguidas crean dos lienzos, no uno.
+fn same_nav_target(a: &Nav, b: &Nav) -> bool {
+    match (a, b) {
+        (Nav::Open(x), Nav::Open(y)) => x == y,
+        (Nav::OpenGallery { path: x, .. }, Nav::OpenGallery { path: y, .. }) => x == y,
+        (Nav::OpenVideo { .. }, _)
+        | (Nav::OpenVideos { .. }, _)
+        | (Nav::NewDesignInFolder { .. }, _) => false,
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+    }
+}
+
+/// Motivo por el que una navegación no puede ejecutarse AHORA, o `None` si
+/// puede. Pura: la tabla de tests fija el orden de prioridad y que solo haya
+/// un motivo cuando de verdad hay un bloqueo. El último brazo es el de
+/// «Save all» (si ninguno de los anteriores aplica, es esa cola).
+fn nav_block_reason(
+    state: Option<&editor::EditorState>,
+    save: &super::SaveFlow,
+) -> Option<&'static str> {
+    // Solo bloquea lo que de verdad debe terminar antes de cambiar de vista
+    // (guardado/exportación en vuelo, framing ocupado). Un gesto, un
+    // renombrado o una edición de panel a medias se consolidan o descartan
+    // en `editor::prepare_for_navigation`: exigir `is_idle()` aquí dejaba
+    // «Back to gallery» esperando para siempre con cualquier bandera de UI
+    // atascada, sin forma de saber cuál era.
+    if let Some(reason) = state.and_then(editor::EditorState::blocks_leaving) {
+        return Some(reason);
+    }
+    if save.save_path_dialog_open {
+        Some("the save-path dialog, which is still open")
+    } else if save.pending_save_as.is_some() {
+        Some("a pending “Save as…”")
+    } else if !save.save_all_queue.is_empty() {
+        Some("the “Save all” queue, which is still running")
+    } else {
+        None
+    }
+}
+
+/// Texto visible cuando una navegación queda aparcada (`park_nav`). Pura:
+/// un solo sitio para que el aviso diga siempre lo mismo.
+fn park_notice(reason: &str) -> String {
+    format!("Leaving is waiting on {reason}. It will continue as soon as that finishes.")
+}
+
 /// Texto del diálogo «cambios sin guardar», compartido por la navegación
 /// (`request_nav`) y el cierre de ventana (`confirm_window_close`): un solo
 /// sitio para que ambos avisen lo mismo (A05). Con un lienzo sucio nombra al
@@ -370,7 +476,105 @@ pub(crate) fn unsaved_dialog_description(names: &[String], target: &str) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::unsaved_dialog_description;
+    use std::path::PathBuf;
+
+    use canvas_core::LayerId;
+
+    use crate::app::SaveFlow;
+    use crate::editor;
+
+    use super::{nav_block_reason, park_notice, unsaved_dialog_description};
+
+    /// La compuerta del editor ya no es «no estar ocioso»: guardar en vuelo sí
+    /// bloquea, pero un campo de panel a medias (la bandera atascada que dejó
+    /// Back esperando) NO.
+    #[test]
+    fn only_an_in_flight_save_blocks_navigation_from_the_editor() {
+        let save = SaveFlow::default();
+        let mut state = editor::EditorState::new_blank_image(10.0, 10.0);
+        assert_eq!(nav_block_reason(Some(&state), &save), None);
+
+        // `rename_edit` es una de las banderas de UI que antes bloqueaban
+        // Back (la cobertura de `panel_edit` y compañía vive en
+        // `editor::state::idle_tests`, que sí ve los campos privados).
+        state.rename_edit = Some((LayerId::from_raw(1), "a".to_owned(), "b".to_owned()));
+        state.file_rename_edit = Some("b".to_owned());
+        assert_eq!(
+            nav_block_reason(Some(&state), &save),
+            None,
+            "las banderas de UI se consolidan al salir, no bloquean"
+        );
+
+        state.saving = true;
+        assert_eq!(
+            nav_block_reason(Some(&state), &save),
+            Some("a save that is still writing")
+        );
+    }
+
+    #[test]
+    fn nav_block_reason_prefers_the_first_gate_and_never_invents_one() {
+        // (path_dialog, pending_save_as, save_all_pending, esperado)
+        let cases = [
+            (false, false, false, None),
+            (true, false, false, Some("save-path dialog")),
+            (false, true, false, Some("Save as")),
+            (false, false, true, Some("Save all")),
+            // Varias compuertas a la vez: manda la primera en el orden.
+            (true, true, true, Some("save-path dialog")),
+        ];
+        for (dialog, save_as, save_all, expected) in cases {
+            let save = SaveFlow {
+                save_path_dialog_open: dialog,
+                pending_save_as: save_as.then(|| PathBuf::from("x.png")),
+                save_all_queue: if save_all { vec![1] } else { Vec::new() },
+                ..SaveFlow::default()
+            };
+            let reason = nav_block_reason(None, &save);
+            assert_eq!(
+                reason.is_some(),
+                expected.is_some(),
+                "dialog={dialog} save_as={save_as} save_all={save_all}"
+            );
+            if let Some(fragment) = expected {
+                let reason = reason.expect("debe haber motivo");
+                assert!(
+                    reason.contains(fragment),
+                    "motivo {reason:?} no nombra {fragment:?}"
+                );
+            }
+        }
+    }
+
+    /// Volver a pulsar Back mientras la primera petición espera no apila
+    /// salidas idénticas; las navegaciones que CREAN lienzos sí se apilan.
+    #[test]
+    fn repeating_a_parked_navigation_does_not_queue_it_twice() {
+        use super::{same_nav_target, Nav};
+        assert!(same_nav_target(&Nav::CloseProject, &Nav::CloseProject));
+        assert!(same_nav_target(&Nav::NewDesign, &Nav::NewDesign));
+        assert!(same_nav_target(
+            &Nav::Open("a.png".into()),
+            &Nav::Open("a.png".into())
+        ));
+        assert!(!same_nav_target(
+            &Nav::Open("a.png".into()),
+            &Nav::Open("b.png".into())
+        ));
+        assert!(!same_nav_target(&Nav::CloseProject, &Nav::NewDesign));
+        // Aditivas: dos peticiones = dos lienzos, nunca una.
+        assert!(!same_nav_target(
+            &Nav::OpenVideos { accepts: vec![] },
+            &Nav::OpenVideos { accepts: vec![] }
+        ));
+    }
+
+    #[test]
+    fn park_notice_names_the_reason_and_promises_continuation() {
+        let text = park_notice("the “Save all” queue, which is still running");
+        assert!(text.contains("Save all"), "{text}");
+        assert!(text.contains("will continue"), "{text}");
+    }
 
     #[test]
     fn single_dirty_names_the_canvas() {
