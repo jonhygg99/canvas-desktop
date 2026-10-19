@@ -35,6 +35,11 @@ impl AppInner {
                 // un diálogo que se cancela (o se cierra) y una navegación
                 // que muere con él.
                 tracing::info!("diálogo de cambios sin guardar: Cancel → no se navega");
+                // El usuario acaba de quedarse: el aviso de «salir está
+                // esperando a…» ya no describe nada.
+                if let View::Editor(state) = &mut ws.view {
+                    state.notice = None;
+                }
             }
             DialogDecision::Save => {
                 tracing::info!("diálogo de cambios sin guardar: Save → Save all + salida diferida");

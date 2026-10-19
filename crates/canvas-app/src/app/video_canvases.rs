@@ -18,15 +18,18 @@ impl AppInner {
         // Solo un guardado/exportación en vuelo obliga a esperar (`blocks_leaving`):
         // una edición de UI a medias se consolida abajo, y esperar por ella
         // aparcaba los lienzos de vídeo para siempre.
-        if matches!(&ws.view, View::Editor(state) if state.blocks_leaving().is_some()) {
+        if let Some(reason) = match &ws.view {
+            View::Editor(state) => state.blocks_leaving(),
+            _ => None,
+        } {
+            // El motivo real (un guardado, una exportación o un framing), no
+            // «un guardado» fijo: antes cualquier espera se anunciaba como
+            // guardado, y encima en el canal de errores.
             if let View::Editor(state) = &mut ws.view {
-                if state.save_error.is_none() {
-                    state.save_error = Some(
-                        "Creating canvases is waiting on a save that is still writing. \
-                         It will continue as soon as that finishes."
-                            .to_owned(),
-                    );
-                }
+                state.notice = Some(super::navigation::park_notice_with(
+                    reason,
+                    "Creating canvases",
+                ));
             }
             ws.deferred_nav
                 .push_back(super::Nav::OpenVideos { accepts });

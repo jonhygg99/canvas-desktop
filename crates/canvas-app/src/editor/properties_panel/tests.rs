@@ -1285,3 +1285,54 @@ fn drawing_the_panel_does_not_turn_a_rounded_scale_into_an_unsaved_change() {
     assert_eq!(state.doc.layer(id).unwrap().transform, before);
     assert!(!state.is_dirty(), "un lienzo intacto no puede quedar sucio");
 }
+
+/// Aviso de espera (`notice`): se pinta como texto y su botón lo descarta.
+/// No es `save_error` — antes una navegación aparcada aparecía con ⚠ y la
+/// barra decía «Error al guardar» con el guardado funcionando.
+#[test]
+fn notice_banner_renders_the_waiting_message_and_is_not_a_save_error() {
+    let ctx = egui::Context::default();
+    let mut state = EditorState::new_blank(400.0, 400.0);
+    state.notice = Some("Leaving is waiting on a save that is still writing.".to_owned());
+    let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(340.0, 200.0));
+
+    let mut had_button = false;
+    let output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+        |ui| {
+            had_button = notice_banner(&mut state, ui).is_some();
+        },
+    );
+    let mut drawn = String::new();
+    for clipped in &output.shapes {
+        if let egui::Shape::Text(text) = &clipped.shape {
+            drawn.push_str(text.galley.text());
+        }
+    }
+    assert!(had_button, "el aviso debe pintar su botón Dismiss");
+    assert!(
+        drawn.contains("waiting on a save"),
+        "el aviso debe dibujarse: {drawn:?}"
+    );
+    assert!(
+        state.save_error.is_none(),
+        "un aviso de espera no puede convertirse en error de guardado"
+    );
+
+    // Sin aviso pendiente no se pinta nada.
+    state.notice = None;
+    let mut nothing = false;
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(screen_rect),
+            ..Default::default()
+        },
+        |ui| {
+            nothing = notice_banner(&mut state, ui).is_none();
+        },
+    );
+    assert!(nothing, "sin aviso el banner no debe aparecer");
+}

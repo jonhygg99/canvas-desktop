@@ -375,8 +375,8 @@ impl AppInner {
     /// Aparca una navegación SIN perderla (el drenaje de `ws_frame` la
     /// reintenta en cuanto el editor queda ocioso) y deja el motivo visible
     /// una vez: el usuario ve que su clic no se perdió y qué lo está
-    /// esperando. No pisa un error de guardado ya visible — ese también es
-    /// feedback, y es más importante que el aviso de espera.
+    /// esperando. Va al canal de avisos (`EditorState::notice`), no al de
+    /// errores: no hay nada roto, solo algo que terminar.
     fn park_nav(&self, ws: &mut Workspace, nav: Nav, reason: &str) {
         tracing::info!(
             motivo = reason,
@@ -395,9 +395,10 @@ impl AppInner {
             ws.deferred_nav.push_back(nav);
         }
         if let View::Editor(state) = &mut ws.view {
-            if state.save_error.is_none() {
-                state.save_error = Some(park_notice(reason));
-            }
+            // Canal de AVISOS, no de errores: la barra de estado decía «Error
+            // al guardar» (y el banner pintaba un ⚠) mientras el guardado iba
+            // perfectamente y lo único que pasaba era que había que esperar.
+            state.notice = Some(park_notice(reason));
         }
     }
 }
@@ -448,7 +449,14 @@ fn nav_block_reason(
 /// Texto visible cuando una navegación queda aparcada (`park_nav`). Pura:
 /// un solo sitio para que el aviso diga siempre lo mismo.
 fn park_notice(reason: &str) -> String {
-    format!("Leaving is waiting on {reason}. It will continue as soon as that finishes.")
+    park_notice_with(reason, "Leaving")
+}
+
+/// Mismo aviso para las otras salidas que esperan (los lienzos de vídeo).
+/// `action` es lo que el usuario pidió, para que el texto no invente un
+/// guardado cuando lo que está en vuelo es una exportación o un framing.
+pub(super) fn park_notice_with(reason: &str, action: &str) -> String {
+    format!("{action} is waiting on {reason}. It will continue as soon as that finishes.")
 }
 
 /// Texto del diálogo «cambios sin guardar», compartido por la navegación

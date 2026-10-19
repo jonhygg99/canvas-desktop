@@ -166,6 +166,16 @@ mod tests {
         assert_eq!(save_status(&state, AutosaveStatus::Idle), "Save failed");
     }
 
+    /// Un aviso de espera (`notice`) no es un fallo: la barra no puede decir
+    /// «Error al guardar» mientras el guardado va bien y solo hay que esperar.
+    #[test]
+    fn a_waiting_notice_is_not_reported_as_a_save_failure() {
+        let mut state = editor::EditorState::new_blank(800.0, 600.0);
+        state.notice = Some("Leaving is waiting on a save that is still writing.".to_owned());
+        assert_ne!(save_status(&state, AutosaveStatus::Idle), "Save failed");
+        assert_eq!(save_status(&state, AutosaveStatus::Idle), "Not saved yet");
+    }
+
     /// Un fallo del autoguardado con reintento programado lo dice: el usuario
     /// no tiene que adivinar si la app sigue intentándolo sola.
     #[test]

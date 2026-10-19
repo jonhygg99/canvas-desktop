@@ -179,6 +179,9 @@ fn properties_ui_inner(state: &mut EditorState, ui: &mut egui::Ui) {
     // vacío… Se descarta con el botón; la siguiente operación con éxito
     // también lo limpia (`save_error = None` en `start_save`/`start_export`).
     let _ = save_error_banner(state, ui);
+    // Aviso de espera («salir está esperando a…»): mismo sitio, sin ⚠ y sin
+    // disfrazarse de error de guardado.
+    let _ = notice_banner(state, ui);
 
     if let Some(video) = state.video_layer() {
         video::video_controls_ui(state, ui, video);
@@ -315,6 +318,20 @@ pub(crate) fn file_name_ui(state: &mut EditorState, ui: &mut egui::Ui) {
 /// botón «Dismiss» lo descarta. Devuelve la `Response` del botón (su rect
 /// permite al test clicar sobre él sin adivinar posiciones). `None` sin
 /// error pendiente.
+/// Aviso de espera, no de error: una navegación aparcada espera a que
+/// termine un guardado/exportación. Se pinta tal cual (sin ⚠) y su botón lo
+/// descarta; la barra de estado no lo confunde con un fallo.
+pub(super) fn notice_banner(state: &mut EditorState, ui: &mut egui::Ui) -> Option<egui::Response> {
+    let text = state.notice.clone()?;
+    ui.label(text);
+    let resp = ui.button(crate::i18n::tr("Dismiss"));
+    if resp.clicked() {
+        state.notice = None;
+    }
+    ui.separator();
+    Some(resp)
+}
+
 pub(super) fn save_error_banner(
     state: &mut EditorState,
     ui: &mut egui::Ui,

@@ -63,6 +63,7 @@ impl EditorState {
             saving_capture: None,
             exporting: false,
             save_error: None,
+            notice: None,
             from_gallery: None,
             return_requested: false,
             save_clicked: false,

@@ -107,6 +107,11 @@ pub struct EditorState {
     pub exporting: bool,
     /// Último error de guardado, visible hasta descartarlo.
     pub save_error: Option<String>,
+    /// Aviso de ESPERA (no de error): «salir está esperando a que termine
+    /// X». Viaja aparte de `save_error` porque no lo es — la barra de estado
+    /// decía «Error al guardar» mientras el guardado iba perfectamente — y
+    /// porque no debe pisar un error real ya visible.
+    pub notice: Option<String>,
     /// Galería de la que se abrió este documento, si procede de una.
     pub from_gallery: Option<PathBuf>,
     /// El usuario ha pulsado «Volver a la galería»; la app decide cómo.
