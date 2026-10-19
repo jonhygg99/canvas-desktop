@@ -17,10 +17,12 @@
 //!   el usuario todavía está moviendo.
 //! - Nunca un formato que no se puede sobrescribir (SVG/GIF) ni un vídeo
 //!   (renderizar el mp4 es caro y no es «guardar el diseño»).
-//! - Nunca el PRIMER guardado destructivo sin confirmar: las mismas dos
-//!   compuertas que el `Ctrl+S` manual (aplanar un documento sin capas de
-//!   imagen y la sobrescritura destructiva del original). Sin ellas, el
-//!   autoguardado escribiría justo lo que esos avisos existen para frenar.
+//! - Nunca el PRIMER guardado destructivo sin confirmar, con las mismas dos
+//!   compuertas que el `Ctrl+S` manual. La sobrescritura del original se
+//!   PREGUNTA una vez por archivo (si no, un lienzo abierto del disco no se
+//!   autoguardaba nunca); aplanar un documento sin capas de imagen se queda
+//!   bloqueando, porque perder la copia editable no es algo que un
+//!   temporizador deba proponer.
 //!
 //! «Siempre» exige dos cosas que el temporizador resuelve aquí:
 //!
@@ -87,6 +89,11 @@ pub(crate) struct Autosave {
     retry_at: Option<Instant>,
     /// Intentos fallidos de la revisión actual (se reinicia con cada edición).
     attempts: usize,
+    /// Ya se pidió a este documento la confirmación destructiva que pide
+    /// `Ctrl+S`. Sin esto, «Cancelar» en ese aviso lo reabriría cada 1,5 s.
+    /// Se rearma cuando el documento se guarda de otra forma (queda limpio)
+    /// o se abre otro archivo: ahí la respuesta anterior ya no aplica.
+    asked_overwrite: bool,
 }
 
 impl Autosave {
@@ -106,6 +113,7 @@ impl Autosave {
             self.armed_at = None;
             self.retry_at = None;
             self.attempts = 0;
+            self.asked_overwrite = false;
         }
         if !dirty {
             // Limpio = el último guardado cuajó (o el usuario deshizo hasta el
@@ -113,6 +121,7 @@ impl Autosave {
             self.armed_at = None;
             self.retry_at = None;
             self.attempts = 0;
+            self.asked_overwrite = false;
             return false;
         }
         if self.seen_revision != revision {
@@ -166,6 +175,15 @@ impl Autosave {
         self.armed_at.get_or_insert(now);
     }
 
+    /// ¿Toca preguntar la confirmación destructiva de ESTE documento?
+    /// Devuelve `true` una sola vez por ciclo: el aviso se enseña, y si el
+    /// usuario lo cancela no vuelve a aparecer solo.
+    pub(super) fn take_overwrite_question(&mut self) -> bool {
+        let first = !self.asked_overwrite;
+        self.asked_overwrite = true;
+        first
+    }
+
     /// El usuario eligió «Discard»: esta revisión no se escribe. La vista se
     /// destruye justo después, pero entre la respuesta del diálogo y la
     /// navegación todavía corre un frame del editor en el que el temporizador
@@ -193,25 +211,40 @@ fn retry_delay(attempt: usize) -> Option<Duration> {
     RETRY_BACKOFF.get(attempt.checked_sub(1)?).copied()
 }
 
-/// Ruta que el autoguardado escribiría ahora mismo, o `None` si no debe
-/// tocar nada (ver reglas en el doc del módulo). Pura.
-fn autosave_path(
+/// Qué le toca hacer al autoguardado en este frame (ver reglas en el doc del
+/// módulo). Pura: la decide `autosave_action`, sin relojes ni GPU.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AutosaveAction {
+    /// Escribir este archivo.
+    Save(PathBuf),
+    /// El primer guardado de este archivo necesita la misma confirmación
+    /// destructiva que pide `Ctrl+S`. Antes se negaba en silencio y un archivo
+    /// abierto desde el disco no se autoguardaba NUNCA; ahora se pregunta una
+    /// vez y, si acepta, se guarda como cualquier otro.
+    AskOverwrite(PathBuf),
+    /// No tocar nada (diálogo abierto, gesto a medias, formato sin escritura,
+    /// aviso de «se borró la última foto» sin responder…).
+    Skip,
+}
+
+/// Qué debe hacer el autoguardado ahora con el lienzo activo. Pura.
+fn autosave_action(
     state: &EditorState,
     save: &SaveFlow,
     skip_overwrite_warning: bool,
     dialog_open: bool,
-) -> Option<PathBuf> {
+) -> AutosaveAction {
     if !state.is_dirty() || state.saving || state.exporting {
-        return None;
+        return AutosaveAction::Skip;
     }
     // Decisiones del usuario pendientes: el banner de cambio externo
     // (Reload / Keep mine) y el diálogo de «cambios sin guardar» (Save /
     // Discard). Escribir por detrás resolvería ambas por el usuario.
     if state.external_change || dialog_open {
-        return None;
+        return AutosaveAction::Skip;
     }
     if !state.is_idle_except_save() || state.framing.is_some() || state.ytdlp.edit.is_some() {
-        return None;
+        return AutosaveAction::Skip;
     }
     if save.save_path_dialog_open
         || save.pending_save_as.is_some()
@@ -221,29 +254,37 @@ fn autosave_path(
         || save.discard_raster_prompt.is_some()
         || save.low_memory_prompt.is_some()
     {
-        return None;
+        return AutosaveAction::Skip;
     }
-    let path = state.doc.source_path.clone()?;
+    let Some(path) = state.doc.source_path.clone() else {
+        return AutosaveAction::Skip;
+    };
     // SVG/GIF solo lectura y vídeos (sin escritura en el sitio): `Ctrl+S`
     // tampoco los sobrescribe, así que el autoguardado no puede hacerlo.
     if !canvas_io::can_overwrite(&path) {
-        return None;
+        return AutosaveAction::Skip;
     }
     if state.is_design {
-        return canvas_io::is_canvas_file(&path).then_some(path);
+        return if canvas_io::is_canvas_file(&path) {
+            AutosaveAction::Save(path)
+        } else {
+            AutosaveAction::Skip
+        };
     }
-    // Las dos compuertas destructivas del guardado manual, sin confirmar para
-    // ESTE archivo: el primer guardado de cada ruta se pregunta. Autoguardar
-    // saltándolas sería justo lo contrario de su motivo, y la confirmación de
-    // otro canvas no vale aquí (escribiría sin aviso sobre un original que
-    // nadie autorizó a pisar).
+    // El aviso de «se borró la última foto» no se pregunta solo: aplanar el
+    // documento y descartar la copia editable es una decisión del usuario, y
+    // dos avisos seguidos desde un temporizador no son «guardar solo». Se
+    // queda bloqueando hasta que lo responda un `Ctrl+S`.
     if !state.born_blank && !save.discard_raster_ok(&path) && !has_raster_layers(&state.doc) {
-        return None;
+        return AutosaveAction::Skip;
     }
+    // Sobrescritura del original: la misma confirmación que pide `Ctrl+S`,
+    // por ARCHIVO (la de otro canvas no vale). Se pregunta una vez en vez de
+    // no guardar nunca.
     if !state.born_blank && !save.overwrite_ok(&path) && !skip_overwrite_warning {
-        return None;
+        return AutosaveAction::AskOverwrite(path);
     }
-    Some(path)
+    AutosaveAction::Save(path)
 }
 
 /// Punto de entrada del frame: mueve el temporizador y, si toca, lanza el
@@ -261,13 +302,16 @@ pub(super) fn tick(
     f: &mut EditorFrame<'_>,
 ) {
     let now = Instant::now();
-    let target = autosave_path(
+    let action = autosave_action(
         state,
         f.save,
         f.settings.skip_overwrite_warning,
         f.unsaved_dialog_open,
     );
-    let allowed = target.is_some();
+    // `Skip` es lo único que además apaga el reloj: pedir la confirmación
+    // destructiva sí es parte del ciclo (el temporizador tiene que llegar a
+    // vencer el silencio antes de enseñar el aviso).
+    let allowed = !matches!(action, AutosaveAction::Skip);
     let fire = f.save.autosave.tick(
         now,
         state.doc.source_path.as_deref(),
@@ -288,8 +332,24 @@ pub(super) fn tick(
         }
         return;
     }
-    let Some(path) = target else {
-        return;
+    let path = match action {
+        AutosaveAction::Save(path) => path,
+        AutosaveAction::AskOverwrite(path) => {
+            // Una pregunta por documento: «Cancelar» deja el lienzo sin
+            // guardar (como cualquier cancelación), pero el aviso no vuelve a
+            // aparecer solo en cada silencio.
+            if f.save.autosave.take_overwrite_question() {
+                tracing::info!(
+                    ruta = %path.display(),
+                    "autoguardado: primer guardado de este archivo, se pide la confirmación"
+                );
+                f.save.overwrite_dont_ask = false;
+                f.save.overwrite_prompt = Some(path);
+                ctx.request_repaint();
+            }
+            return;
+        }
+        AutosaveAction::Skip => return,
     };
     tracing::info!(
         ruta = %path.display(),

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::SaveFlow;
-use super::{autosave_path, retry_delay, Autosave, AutosaveStatus, QUIET, RETRY_BACKOFF};
+use super::{
+    autosave_action, retry_delay, Autosave, AutosaveAction, AutosaveStatus, QUIET, RETRY_BACKOFF,
+};
 use crate::editor;
 
 /// Documento del caso normal.
@@ -14,6 +16,22 @@ fn doc() -> Option<&'static Path> {
 }
 fn other() -> Option<&'static Path> {
     Some(Path::new("otra.png"))
+}
+
+/// Lo que el autoguardado escribiría (None si no escribe). La pregunta de
+/// sobrescritura se prueba aparte con `autosave_action`, porque no es «no
+/// guardar»: es el aviso que el `Ctrl+S` también pide.
+fn autosave_target(
+    state: &editor::EditorState,
+    save: &SaveFlow,
+    skip_warning: bool,
+    dialog_open: bool,
+) -> Option<PathBuf> {
+    match autosave_action(state, save, skip_warning, dialog_open) {
+        AutosaveAction::Save(path) => Some(path),
+        AutosaveAction::AskOverwrite(_) => None,
+        AutosaveAction::Skip => None,
+    }
 }
 
 /// Estado sucio con destino PNG ya escrito alguna vez en esta sesión: el
@@ -33,14 +51,14 @@ fn editable() -> (editor::EditorState, SaveFlow) {
 fn a_clean_document_never_autosaves() {
     let (mut state, save) = editable();
     state.history.mark_saved();
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(autosave_target(&state, &save, false, false), None);
 }
 
 #[test]
 fn a_dirty_saved_png_autosaves_in_place() {
     let (state, save) = editable();
     assert_eq!(
-        autosave_path(&state, &save, false, false),
+        autosave_target(&state, &save, false, false),
         Some(PathBuf::from("foto.png"))
     );
 }
@@ -53,28 +71,40 @@ fn a_dirty_saved_png_autosaves_in_place() {
 fn a_pending_user_decision_disables_autosave() {
     let (mut state, save) = editable();
     state.external_change = true;
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(autosave_target(&state, &save, false, false), None);
     state.external_change = false;
-    assert_eq!(autosave_path(&state, &save, false, true), None);
+    assert_eq!(autosave_target(&state, &save, false, true), None);
     // Sin decisión pendiente, escribe.
-    assert!(autosave_path(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, false, false).is_some());
 }
 
 #[test]
 fn the_destructive_first_save_gates_are_respected() {
-    // Sobrescritura del original sin confirmar: el Ctrl+S manual pregunta, así
-    // que el autoguardado no puede escribir por detrás.
+    // Sobrescritura del original sin confirmar: se PIDE la confirmación (la
+    // misma que `Ctrl+S`) en vez de escribir por detrás…
     let (state, mut save) = editable();
     save.overwrite_confirmed.clear();
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_action(&state, &save, false, false),
+        AutosaveAction::AskOverwrite(PathBuf::from("foto.png"))
+    );
+    // …salvo que el usuario pidiera no volver a preguntar.
+    assert_eq!(
+        autosave_action(&state, &save, true, false),
+        AutosaveAction::Save(PathBuf::from("foto.png"))
+    );
 
-    // Documento sin capas de imagen (el usuario borró la última foto).
+    // Documento sin capas de imagen (el usuario borró la última foto): ese
+    // aviso no se pregunta solo, se queda bloqueando hasta un `Ctrl+S`.
     let (mut state, mut save) = editable();
     save.discard_raster_confirmed.clear();
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_action(&state, &save, false, false),
+        AutosaveAction::Skip
+    );
     // …salvo en un lienzo que nació en blanco: no hay foto que destruir.
     state.born_blank = true;
-    assert!(autosave_path(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, false, false).is_some());
 }
 
 /// La confirmación vale para el ARCHIVO que se confirmó, no para la sesión:
@@ -83,22 +113,24 @@ fn the_destructive_first_save_gates_are_respected() {
 /// preguntar.
 #[test]
 fn a_confirmation_for_one_file_does_not_authorize_another() {
-    let (mut state, save) = editable();
-    assert!(autosave_path(&state, &save, false, false).is_some());
+    let (mut state, mut save) = editable();
+    assert!(autosave_target(&state, &save, false, false).is_some());
 
+    // Otro archivo: se le da la confirmación de «aplanar» (este fixture no
+    // tiene capas de imagen y esa compuerta va primero) pero NO la de
+    // sobrescritura, que es la que este test mira.
     state.doc.source_path = Some(PathBuf::from("retrato.jpg"));
+    save.confirm_discard_raster(Path::new("retrato.jpg"));
     assert_eq!(
-        autosave_path(&state, &save, false, false),
-        None,
+        autosave_action(&state, &save, false, false),
+        AutosaveAction::AskOverwrite(PathBuf::from("retrato.jpg")),
         "la confirmación de foto.png no puede autorizar a pisar retrato.jpg"
     );
 
     // Confirmado ese archivo, sí escribe.
-    let mut save = save;
     save.confirm_overwrite(Path::new("retrato.jpg"));
-    save.confirm_discard_raster(Path::new("retrato.jpg"));
     assert_eq!(
-        autosave_path(&state, &save, false, false),
+        autosave_target(&state, &save, false, false),
         Some(PathBuf::from("retrato.jpg"))
     );
 }
@@ -121,7 +153,11 @@ fn open_dialogs_and_in_flight_work_disable_autosave() {
     for (label, break_it) in cases {
         let (mut state, mut save) = editable();
         break_it(&mut state, &mut save);
-        assert_eq!(autosave_path(&state, &save, false, false), None, "{label}");
+        assert_eq!(
+            autosave_target(&state, &save, false, false),
+            None,
+            "{label}"
+        );
     }
 }
 
@@ -134,20 +170,20 @@ fn expensive_or_unwritable_targets_disable_autosave() {
     for path in ["dibujo.svg", "anim.gif", "clip.mp4"] {
         let (mut state, save) = editable();
         state.doc.source_path = Some(PathBuf::from(path));
-        assert_eq!(autosave_path(&state, &save, false, false), None, "{path}");
+        assert_eq!(autosave_target(&state, &save, false, false), None, "{path}");
     }
 
     // Sin destino en disco no hay nada que escribir en el sitio.
     let (mut state, save) = editable();
     state.doc.source_path = None;
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(autosave_target(&state, &save, false, false), None);
 
     // Un diseño se autoguarda en su `.canvas`, no en un PNG prestado.
     let (mut state, save) = editable();
     state.is_design = true;
-    assert_eq!(autosave_path(&state, &save, false, false), None);
+    assert_eq!(autosave_target(&state, &save, false, false), None);
     state.doc.source_path = Some(PathBuf::from("diseno.canvas"));
-    assert!(autosave_path(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, false, false).is_some());
 }
 
 #[test]
@@ -207,6 +243,35 @@ fn a_failed_attempt_retries_with_backoff_and_then_gives_up() {
     let edit = retry2 + Duration::from_secs(3700);
     assert!(!auto.tick(edit, doc(), 10, true, true));
     assert!(auto.tick(edit + QUIET, doc(), 10, true, true));
+}
+
+/// El aviso de sobrescritura se pide UNA vez por ciclo: si el usuario lo
+/// cancela, el autoguardado no lo reabre cada 1,5 s. Se rearma cuando el
+/// documento queda limpio (se guardó de otra forma) o se abre otro archivo.
+#[test]
+fn the_overwrite_question_is_asked_once_per_cycle() {
+    let mut auto = Autosave::default();
+    let t0 = Instant::now();
+    assert!(!auto.tick(t0, doc(), 1, true, true));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
+    assert!(auto.take_overwrite_question(), "la primera vez se pregunta");
+    assert!(
+        !auto.take_overwrite_question(),
+        "cancelar no puede reabrir el aviso en el mismo ciclo"
+    );
+    // Guardado manual: queda limpio, así que la próxima edición vuelve a
+    // preguntar lo suyo.
+    assert!(!auto.tick(t0 + QUIET, doc(), 1, false, true));
+    assert!(
+        auto.take_overwrite_question(),
+        "tras guardar de otra forma, se pregunta otra vez"
+    );
+    // Otro archivo: ciclo nuevo y pregunta propia (la confirmación es por ruta).
+    assert!(!auto.tick(t0 + QUIET, other(), 1, true, true));
+    assert!(
+        auto.take_overwrite_question(),
+        "otro archivo pregunta lo suyo"
+    );
 }
 
 #[test]
