@@ -337,9 +337,9 @@ impl Deck {
 
     /// Creados del último bulk que siguen sin miniatura tras el reescaneo:
     /// `merge_scan` conserva `thumb_failed` si el `mtime` no cambió (la
-    /// reserva vacía y el bake final pueden compartirlo), así que el
-    /// llamador los reintenta una vez vía `spawn_single_thumb`. Pura: no
-    /// toca GPU ni red.
+    /// reserva vacía y el bake final pueden compartirlo), así que el llamador
+    /// pide la miniatura de cada uno una vez y lo olvida de la tanda. Pura:
+    /// no toca GPU ni red.
     pub fn bulk_thumb_retries(&self, created: &[PathBuf]) -> Vec<PathBuf> {
         created
             .iter()

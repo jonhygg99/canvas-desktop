@@ -48,16 +48,17 @@ impl AppInner {
             }
             // Reintento de miniaturas pegajosas del último bulk: un escaneo
             // intermedio pudo ver una reserva aún vacía y `merge_scan`
-            // conserva ese `thumb_failed` si el `mtime` no cambió. Un hilo
-            // por path pendiente y escaneo (los escaneos los disparan
-            // eventos de disco, no hay bucle); la tanda se libera en cuanto
-            // un escaneo ya no deja pendientes.
+            // conserva ese `thumb_failed` si el `mtime` no cambió. Cada path
+            // pendiente se pide UNA vez y se olvida de la tanda: un archivo
+            // que nunca puede dar miniatura (corrupto, bloqueado) no vuelve a
+            // lanzar un hilo en cada reescaneo de la carpeta.
             let retries = ws.deck.bulk_thumb_retries(&ws.deck_ops.bulk_created);
             if retries.is_empty() {
                 ws.deck_ops.bulk_created.clear();
             } else {
                 tracing::info!("bulk: reintentando {} miniaturas", retries.len());
                 for path in retries {
+                    ws.deck_ops.bulk_created.retain(|pending| *pending != path);
                     loader::spawn_single_thumb(
                         folder.clone(),
                         path,

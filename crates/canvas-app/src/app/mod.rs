@@ -282,8 +282,9 @@ pub(super) struct DeckOps {
     /// Tanda entera creada por el último bulk web: el reescaneo final
     /// conserva la marca `thumb_failed` de un archivo que un escaneo
     /// intermedio vio vacío (reserva previa al bake) si el `mtime` no
-    /// cambió, así que tras el `merge_scan` se reintentan una vez los
-    /// creados que sigan sin miniatura.
+    /// cambió, así que tras el `merge_scan` se reintenta UNA vez cada creado
+    /// que siga sin miniatura, y se le olvida (un archivo que nunca podrá
+    /// tenerla no debe spawnear un hilo en cada escaneo).
     pub(super) bulk_created: Vec<PathBuf>,
 }
 
