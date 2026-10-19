@@ -1,3 +1,12 @@
+## Novedades de v0.7.10
+
+- **Autoguardado silencioso**: el lienzo activo se guarda solo tras 1,5 s sin cambios, sin diálogos ni avisos de «operación en curso». Respeta todo lo que el usuario todavía está decidiendo (el aviso de «cambió en disco», el diálogo de cambios sin guardar, cualquier modal, «Guardar como…», un arrastre o un texto a medio escribir) y las dos confirmaciones destructivas del `Ctrl+S`; SVG/GIF y los vídeos se quedan como estaban. Si un guardado falla, reintenta solo a los 5 s, 15 s y 60 s y el estado dice «Error al guardar — reintentando…».
+- **«Back to gallery» ya no se queda mudo**: navega o explica qué está esperando, con el motivo en pantalla. Al salir del editor se consolidan el texto inline y los campos del panel (cuentan como cambios, no se pierden) y se descartan los renombrados que solo eran UI.
+- **Se acabó el banner ⚠ pegado**: un guardado propio limpia el aviso de «cambió en disco» que dejaba un evento anterior de la propia app; antes se quedaba pegado al lienzo toda la sesión.
+- **Lienzo mucho más rápido con fotos grandes**: la copia reducida de cada capa se materializa UNA vez en lugar de re-copiarse y reducirse en cada frame y por capa (medido con una foto de 12 MP: 103 ms por capa y frame → 0 ms en reposo), una sola vista de textura por tamaño y los presupuestos de RAM del render medidos una vez por segundo. Sonda reproducible: `CANVAS_DEBUG_PERF=1` y `cargo run -p canvas-render --example fx_hotpath_probe`.
+- **El primer lienzo de un bulk ya no sale en blanco**: si un escaneo intermedio marcó su miniatura como fallida, la app la vuelve a pedir una vez al terminar el reescaneo.
+- **El panel de propiedades ya no ensucia una imagen intacta**: abrir una capa cuya escala no cae en un decimal (33,333 %) dejaba el documento como modificado y «Back» pedía guardar; ahora lo mostrado coincide con lo aplicado.
+
 ## Novedades de v0.7.9
 
 - La pestaña **Web** y la de **Images** son una sola pestaña **Images**, con un selector de fuente (Google / Instagram-Facebook / Unsplash) encima de la barra de búsqueda: la barra y los resultados son los de la fuente elegida, y cambiar de fuente no pierde lo ya buscado —resultados, paginación, créditos y la búsqueda en vuelo sobreviven al ir y volver—; solo alternar entre Google e Instagram/Facebook reinicia, porque el corpus es otro.
