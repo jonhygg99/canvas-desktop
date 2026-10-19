@@ -31,6 +31,7 @@ mod lock;
 mod menus;
 mod naming;
 mod paste_hook;
+mod perf_probe;
 mod serper;
 mod settings;
 mod sidebar;

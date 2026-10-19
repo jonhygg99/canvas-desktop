@@ -71,8 +71,39 @@ impl GpuHealth {
     }
 }
 
+/// Cachea por viewport un presupuesto medido del sistema, con caducidad
+/// (`deck::ram_probe_due`). Lo usan el presupuesto GPU de efectos y el de la
+/// baraja, que corren en CADA frame: medir la RAM en cada frame es una
+/// syscall por frame sin ganancia (la presión no cambia a 60 Hz). El gate de
+/// guardado/exportación NO pasa por aquí: mide en vivo, en el momento del
+/// bake (`app::persistence`).
+pub(crate) fn cached_render_budget<T>(
+    ctx: &egui::Context,
+    key: &'static str,
+    measure: fn() -> T,
+) -> T
+where
+    T: Copy + Send + Sync + 'static,
+{
+    let id = egui::Id::new((key, ctx.viewport_id()));
+    let now = std::time::Instant::now();
+    if let Some((at, value)) = ctx.data(|d| d.get_temp::<(std::time::Instant, T)>(id)) {
+        if !crate::deck::ram_probe_due(Some(at), now, crate::deck::RAM_PROBE_INTERVAL) {
+            return value;
+        }
+    }
+    let value = measure();
+    ctx.data_mut(|d| d.insert_temp(id, (now, value)));
+    value
+}
+
 pub struct CanvasSurface {
-    texture: wgpu::Texture,
+    /// Vista de la textura de destino, creada UNA vez por tamaño. La vista
+    /// mantiene viva la textura (wgpu la referencia desde dentro), así que no
+    /// hace falta guardar el `Texture` aparte. `render` creaba una vista
+    /// nueva en cada frame: un objeto wgpu por frame sin ninguna razón, ya
+    /// que la textura solo cambia al redimensionar (ver `ensure`).
+    view: wgpu::TextureView,
     egui_id: egui::TextureId,
     size: [u32; 2],
     health: GpuHealth,
@@ -120,7 +151,7 @@ impl CanvasSurface {
             };
             drop(egui_renderer);
             *slot = Some(CanvasSurface {
-                texture,
+                view,
                 egui_id,
                 size: [width, height],
                 health: GpuHealth {
@@ -154,14 +185,11 @@ impl CanvasSurface {
         renderer: &mut CanvasRenderer,
         scene: &vello::Scene,
     ) -> Result<(), RenderError> {
-        let view = self
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render_to_texture(
             &rs.device,
             &rs.queue,
             scene,
-            &view,
+            &self.view,
             self.size[0],
             self.size[1],
         )
@@ -213,7 +241,32 @@ impl CanvasSurface {
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuHealth, GPU_FAIL_TRIP, GPU_PROBE_EVERY};
+    use eframe::egui;
+
+    use super::{cached_render_budget, GpuHealth, GPU_FAIL_TRIP, GPU_PROBE_EVERY};
+
+    /// El presupuesto de render se mide UNA vez por intervalo: el segundo
+    /// frame dentro del mismo segundo reutiliza el valor (cero syscalls).
+    #[test]
+    fn render_budget_is_measured_once_per_interval() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        fn measure() -> usize {
+            CALLS.fetch_add(1, Ordering::Relaxed);
+            42
+        }
+        let ctx = egui::Context::default();
+        assert_eq!(cached_render_budget(&ctx, "test_budget", measure), 42);
+        assert_eq!(cached_render_budget(&ctx, "test_budget", measure), 42);
+        assert_eq!(
+            CALLS.load(Ordering::Relaxed),
+            1,
+            "midió dos veces en el intervalo"
+        );
+        // Clave distinta (otro presupuesto): mide por su cuenta.
+        assert_eq!(cached_render_budget(&ctx, "test_budget_2", measure), 42);
+        assert_eq!(CALLS.load(Ordering::Relaxed), 2);
+    }
 
     #[test]
     fn isolated_failures_do_not_trip_the_breaker() {

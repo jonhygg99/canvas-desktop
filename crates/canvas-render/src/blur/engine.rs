@@ -96,8 +96,16 @@ impl BlurEngine {
             sampler,
             cache: HashMap::new(),
             display: HashMap::new(),
+            display_rebuilds: 0,
             tick: 0,
         }
+    }
+
+    /// Copias reducidas (`display`) materializadas desde el arranque. La
+    /// sonda de rendimiento la usa como prueba de que un frame en reposo no
+    /// re-copia píxeles (ver `DisplayPlan`).
+    pub(crate) fn display_rebuilds(&self) -> u64 {
+        self.display_rebuilds
     }
 
     /// Bytes GPU totales en la caché de efectos: todas las texturas de todos

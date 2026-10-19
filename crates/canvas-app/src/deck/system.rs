@@ -16,6 +16,7 @@
 //!   con el sistema al 78 % de RAM libre y sin swap.
 
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 /// Umbral de «poca RAM»: por debajo de 2 GiB libres, la caché de la baraja
 /// reduce su presupuesto dinámicamente (ver `budget_under_free_ram` en
@@ -54,6 +55,19 @@ pub(crate) fn total_physical_ram_bytes() -> Option<u64> {
 /// antes de «Save all».
 pub(crate) fn free_ram_bytes() -> Option<u64> {
     detect_free_ram_bytes()
+}
+
+/// Cadencia mínima de las mediciones de RAM del BUCLE DE RENDER (presupuesto
+/// GPU de efectos y presupuesto de la baraja): `free_ram_bytes()` es una
+/// syscall y esas rutas corren en cada frame. NO afecta al gate de
+/// guardado/exportación, que debe medir en vivo en el momento del bake.
+pub(crate) const RAM_PROBE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// ¿Toca volver a medir la RAM para un presupuesto de render? Pura (tabla de
+/// tests): sin medición previa sí, y nunca dos veces dentro del intervalo.
+/// `Instant` es monótono, así que `duration_since` no retrocede.
+pub(crate) fn ram_probe_due(last: Option<Instant>, now: Instant, interval: Duration) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= interval)
 }
 
 /// ¿Está el sistema en RAM crítica (por debajo de `CRITICAL_FREE_RAM_BYTES`
@@ -329,6 +343,19 @@ mod tests {
         let reported = apply_pressure_ceiling(bytes, 1);
         assert!(reported >= FREE_RAM_REDUCTION_THRESHOLD_BYTES);
         assert!(!is_critical_free_ram(Some(reported)));
+    }
+
+    /// Cadencia del presupuesto de render: la primera vez mide, y dentro del
+    /// intervalo no vuelve a tocar el sistema.
+    #[test]
+    fn ram_probe_cadence_table() {
+        let interval = RAM_PROBE_INTERVAL;
+        let t0 = Instant::now();
+        assert!(ram_probe_due(None, t0, interval));
+        assert!(!ram_probe_due(Some(t0), t0, interval));
+        assert!(!ram_probe_due(Some(t0), t0 + interval / 2, interval));
+        assert!(ram_probe_due(Some(t0), t0 + interval, interval));
+        assert!(ram_probe_due(Some(t0), t0 + interval * 3, interval));
     }
 
     #[test]

@@ -48,6 +48,10 @@ pub(super) fn paint(
     renderer: &mut CanvasRenderer,
     action: &mut Option<CanvasAction>,
 ) {
+    // Cronómetro de la sonda `CANVAS_DEBUG_PERF` (ver `perf_probe`): dos
+    // lecturas de reloj monótono por frame, sin efecto si está apagada.
+    let timer = crate::perf_probe::Timer::start();
+    let mut layers_synced = 0usize;
     // Reutiliza la `Scene` del surface entre frames (evita una allocación
     // por frame — el buffer interno de vello puede crecer a varios KB).
     // Se separa el préstamo mutable de `scene_mut` del inmutable de
@@ -74,12 +78,15 @@ pub(super) fn paint(
             let view = geo.base_view * Affine::translate(slot.rect.origin());
             let mut rref = RenderRefs { renderer, rs };
             if idx == deck.active {
+                layers_synced += layer_count(&state.doc);
                 sync_and_append(scene, &mut rref, &state.doc, &state.images, scope, view);
             } else if let SlotContent::Ready(doc) = &slot.content {
+                layers_synced += layer_count(&doc.doc);
                 sync_and_append(scene, &mut rref, &doc.doc, &doc.images, scope, view);
             }
         }
     }
+    let encode_ms = timer.split();
     // Presupuesto GPU del documento activo (Task 6 del plan de memoria):
     // tras sincronizar las ranuras visibles, si la caché de efectos supera
     // el presupuesto (1/16 de RAM, reducido por RAM libre) se expulsan los
@@ -89,7 +96,13 @@ pub(super) fn paint(
     // scope expulsado reaparece al volver a sincronizarse. Inofensivo por
     // frame: `evict_fx_to_budget` vuelve sin tocar nada bajo presupuesto.
     if let Some(active_slot) = deck.slots.get(deck.active) {
-        let budget = canvas_render::resolve_fx_budget(total_physical_ram_bytes(), free_ram_bytes());
+        // El presupuesto se mide como mucho una vez por segundo: `free_ram_bytes`
+        // es una syscall y esto corre en cada frame (ver
+        // `surface::cached_render_budget`). El gate de guardado sigue midiendo
+        // en vivo, en el momento del bake.
+        let budget = crate::surface::cached_render_budget(ui.ctx(), "fx_ram_budget", || {
+            canvas_render::resolve_fx_budget(total_physical_ram_bytes(), free_ram_bytes())
+        });
         renderer.evict_fx_to_budget(budget, FxScope(active_slot.scope));
     }
 
@@ -118,6 +131,16 @@ pub(super) fn paint(
             }
         }
     }
+
+    let render_ms = timer.split() - encode_ms;
+    crate::perf_probe::report(crate::perf_probe::FrameStats {
+        total_ms: timer.split(),
+        encode_ms,
+        render_ms,
+        visible_slots: geo.visible.len(),
+        layers_synced,
+        display_rebuilds: renderer.display_rebuilds(),
+    });
 
     ui.painter().image(
         surface.egui_id(),
@@ -153,6 +176,12 @@ pub(super) fn paint(
         *action = Some(a);
     }
     size_popup_ui(state, ui.ctx());
+}
+
+/// Capas de un documento (solo para el desglose de la sonda de rendimiento:
+/// `page()` no clona y `layers.len()` es O(1)).
+fn layer_count(doc: &Document) -> usize {
+    doc.page().map_or(0, |page| page.layers.len())
 }
 
 /// Sincroniza los efectos GPU de un documento y lo añade a `scene` con su

@@ -240,8 +240,15 @@ pub fn canvas_ui(
         }
     }
     // Descarte: libera memoria de ranuras lejanas, limpias y sin guardado en
-    // curso, por encima del presupuesto.
-    for scope in deck.evict() {
+    // curso, por encima del presupuesto. El presupuesto se mide como mucho
+    // una vez por segundo (`surface::cached_render_budget`): la política de
+    // RAM del render no necesita refrescarse a 60 Hz.
+    let evict_budget = crate::surface::cached_render_budget(
+        ui.ctx(),
+        "deck_ram_budget",
+        crate::deck::adaptive_evict_budget,
+    );
+    for scope in deck.evict_with_budget(evict_budget) {
         ctx.renderer.forget_scope(scope);
     }
 

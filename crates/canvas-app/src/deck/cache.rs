@@ -28,6 +28,11 @@ impl Deck {
     /// renderer — el llamador, que tiene el `CanvasRenderer`, hace el
     /// `forget_scope` (aquí no se acopla `Deck` a `canvas-render` más que
     /// por el tipo del scope).
+    /// Variante con el presupuesto adaptativo del momento. Solo la usan los
+    /// tests que simulan un frame completo: el render real pasa un
+    /// presupuesto ya cacheado (`surface::cached_render_budget`), para no
+    /// medir la RAM del sistema en cada frame.
+    #[cfg(test)]
     pub fn evict(&mut self) -> Vec<FxScope> {
         self.evict_with_budget(adaptive_evict_budget())
     }
@@ -170,7 +175,7 @@ pub(super) fn resolve_evict_budget_with_pressure(
 /// `budget_under_free_ram`): el escalado por RAM total fija el techo, la
 /// RAM libre lo baja bajo presión. El clamp evita valores que inutilicen
 /// la caché o comprometan la aplicación.
-pub(super) fn adaptive_evict_budget() -> usize {
+pub(crate) fn adaptive_evict_budget() -> usize {
     let configured = std::env::var("CANVAS_PRELOAD_BUDGET_MB")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())

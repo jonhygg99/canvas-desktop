@@ -52,11 +52,48 @@ pub(super) const MAX_FX_DIM: u32 = 2048;
 /// descartaría en silencio. Es un `ImageData` CPU normal (no una textura
 /// registrada), así que la escena la dibuja como cualquier imagen — solo
 /// cambia de qué píxeles se alimenta.
+#[derive(Clone)]
 struct DisplayEntry {
     /// `Blob::id()` del ORIGINAL: si cambia (la imagen se editó o reemplazó),
     /// hay que volver a reducir.
     src_blob_id: u64,
     image: ImageData,
+}
+
+/// Qué hacer con la copia reducida de una capa SIN efectos.
+///
+/// Existe porque el hot path del render llama a `sync_display` en CADA
+/// frame, por CADA capa visible, y `capped_image` es caro (copia el RGBA
+/// completo y aplica un filtro de caja). Antes se materializaba la copia
+/// primero y se comparaba después, tirando el resultado: una foto de 12 MP
+/// (4032×3024, ~49 MB) se copiaba y reducía en cada frame y por capa, y el
+/// lienzo se arrastraba con varias capas grandes a la vista. Decidir por
+/// `Blob::id()` (barato) antes de tocar píxeles deja el coste en el primer
+/// frame de cada imagen y nada más.
+#[derive(Debug, PartialEq, Eq)]
+enum DisplayPlan {
+    /// La caché ya tiene la copia vigente de estos píxeles: no tocar nada.
+    Keep,
+    /// Hace falta (re)materializar la copia reducida.
+    Rebuild,
+    /// La imagen no necesita reducción: si había copia, sobra.
+    Drop,
+}
+
+/// Decisión pura de la copia reducida (ver `DisplayPlan`). `needs_cap` sale
+/// de `exceeds_fx_dim`, que compara dimensiones sin materializar nada.
+fn display_plan(existing: Option<&DisplayEntry>, blob_id: u64, needs_cap: bool) -> DisplayPlan {
+    match (needs_cap, existing) {
+        (false, _) => DisplayPlan::Drop,
+        (true, Some(entry)) if entry.src_blob_id == blob_id => DisplayPlan::Keep,
+        (true, _) => DisplayPlan::Rebuild,
+    }
+}
+
+/// ¿La imagen supera el tope del atlas y necesita copia reducida? Solo mira
+/// dimensiones: es el criterio barato que usa `display_plan` en el hot path.
+fn exceeds_fx_dim(source: &ImageData) -> bool {
+    source.width.max(source.height) > MAX_FX_DIM
 }
 
 /// Reduce `source` si su lado mayor supera `max_dim`; `None` si no hace
@@ -129,6 +166,11 @@ pub struct BlurEngine {
     /// `DisplayEntry`). Fuera de `cache` a propósito: no son texturas de
     /// efectos y no necesitan registro en vello.
     display: HashMap<(FxScope, LayerId), DisplayEntry>,
+    /// Cuántas copias `display` se han materializado desde que arrancó el
+    /// proceso. En reposo NO debe crecer: es la señal de la sonda
+    /// `CANVAS_DEBUG_PERF` y la regresión del lienzo lento (una copia por
+    /// frame y por capa grande que se descartaba).
+    display_rebuilds: u64,
     /// Reloj monótono de uso de la caché: cada `sync_layer` con efectos
     /// anota `tick` en la entrada y avanza. Alimenta `last_used(scope)`,
     /// el orden LRU del presupuesto GPU (Task 6 del plan de memoria).
@@ -255,6 +297,54 @@ mod tests {
         // chocaba con la textura de 2000 px del informe de crash.
         let img = crate::image_data_from_rgba(vec![0u8; 2154 * 2170 * 4], 2154, 2170);
         assert_eq!(capped_dims(&img), (2033, 2048));
+    }
+
+    #[test]
+    fn display_plan_only_rebuilds_when_pixels_or_presence_change() {
+        // Tabla del hot path: la decisión se toma por `Blob::id()` y
+        // dimensiones, sin copiar ni reducir píxeles.
+        let entry = DisplayEntry {
+            src_blob_id: 7,
+            image: crate::image_data_from_rgba(vec![0u8; 4], 1, 1),
+        };
+        // (¿hay entrada?, blob de la entrada, blob del original, ¿necesita tope?, esperado)
+        let cases: [(bool, u64, u64, bool, DisplayPlan); 5] = [
+            // Grande y ya cacheada con los MISMOS píxeles: no hacer nada.
+            (true, 7, 7, true, DisplayPlan::Keep),
+            // Grande y la caché es de otros píxeles (edición/reemplazo).
+            (true, 7, 8, true, DisplayPlan::Rebuild),
+            // Grande y sin copia todavía.
+            (false, 0, 9, true, DisplayPlan::Rebuild),
+            // Pequeña: nunca necesita copia, y si había una se retira.
+            (true, 7, 7, false, DisplayPlan::Drop),
+            (false, 0, 7, false, DisplayPlan::Drop),
+        ];
+        for (has, entry_blob, blob, needs_cap, expected) in cases {
+            let existing = has.then_some(entry.clone());
+            assert_eq!(
+                display_plan(existing.as_ref(), blob, needs_cap),
+                expected,
+                "entrada={has} entry_blob={entry_blob} blob={blob} tope={needs_cap}"
+            );
+        }
+    }
+
+    #[test]
+    fn exceeds_fx_dim_matches_the_capping_criterion() {
+        let img =
+            |w: u32, h: u32| crate::image_data_from_rgba(vec![0u8; (w * h * 4) as usize], w, h);
+        assert!(!exceeds_fx_dim(&img(2048, 1024)));
+        assert!(!exceeds_fx_dim(&img(1024, 2048)));
+        assert!(exceeds_fx_dim(&img(2049, 1024)));
+        assert!(exceeds_fx_dim(&img(1024, 2049)));
+        // Coincide con la reducción real: si dice que hace falta, la hay.
+        for (w, h) in [(3000u32, 2000u32), (4032, 3024), (2154, 2170)] {
+            let image = img(w, h);
+            assert_eq!(
+                exceeds_fx_dim(&image),
+                capped_image(&image, MAX_FX_DIM).is_some()
+            );
+        }
     }
 
     #[test]

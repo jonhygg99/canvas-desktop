@@ -6,7 +6,8 @@ use vello::wgpu;
 
 use super::params::{blur_params_bytes, BlurParams, ColorParams, MAX_RADIUS};
 use super::{
-    capped_dims, capped_image, BlurEngine, DisplayEntry, FxScope, FxSync, LayerFx, MAX_FX_DIM,
+    capped_dims, capped_image, display_plan, exceeds_fx_dim, BlurEngine, DisplayEntry, DisplayPlan,
+    FxScope, FxSync, LayerFx, MAX_FX_DIM,
 };
 
 pub struct SyncLayerRequest<'a> {
@@ -27,27 +28,39 @@ pub(super) struct PassInput<'a> {
 }
 
 impl BlurEngine {
+    /// Mantiene la copia reducida de una capa sin efectos. DECIDE primero
+    /// (comparar `Blob::id()` y dimensiones) y solo materializa en `Rebuild`:
+    /// `capped_image` copia el RGBA completo y lo filtra, y esto corre en
+    /// cada frame por cada capa visible — reducir antes de decidir era una
+    /// copia de ~49 MB por capa y por frame (foto de 12 MP) tirada a la
+    /// basura inmediatamente, la causa del lienzo lentísimo.
     fn sync_display(&mut self, request: &SyncLayerRequest<'_>) {
         let key = (request.scope, request.layer);
-        match capped_image(request.source, MAX_FX_DIM) {
-            Some(capped) => {
-                let stale = self
-                    .display
-                    .get(&key)
-                    .is_none_or(|e| e.src_blob_id != request.source.data.id());
-                if stale {
+        let blob_id = request.source.data.id();
+        match display_plan(
+            self.display.get(&key),
+            blob_id,
+            exceeds_fx_dim(request.source),
+        ) {
+            DisplayPlan::Keep => {}
+            DisplayPlan::Drop => {
+                self.display.remove(&key);
+            }
+            DisplayPlan::Rebuild => match capped_image(request.source, MAX_FX_DIM) {
+                Some(capped) => {
+                    self.display_rebuilds = self.display_rebuilds.saturating_add(1);
                     self.display.insert(
                         key,
                         DisplayEntry {
-                            src_blob_id: request.source.data.id(),
+                            src_blob_id: blob_id,
                             image: capped,
                         },
                     );
                 }
-            }
-            None => {
-                self.display.remove(&key);
-            }
+                None => {
+                    self.display.remove(&key);
+                }
+            },
         }
     }
 

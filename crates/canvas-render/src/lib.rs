@@ -231,6 +231,14 @@ impl CanvasRenderer {
         self.blur.bytes_in_scope(scope)
     }
 
+    /// Cuántas copias reducidas (`display`) se han materializado desde que
+    /// arrancó el proceso. La sonda `CANVAS_DEBUG_PERF` la usa como prueba de
+    /// que el hot path no re-copia píxeles en reposo: en un frame sin
+    /// ediciones no debe crecer.
+    pub fn display_rebuilds(&self) -> u64 {
+        self.blur.display_rebuilds()
+    }
+
     /// Tick del último uso de un scope — el orden LRU para la evicción del
     /// presupuesto GPU (ver `BlurEngine::last_used`). `None` si el scope no
     /// tiene texturas de efectos.
