@@ -46,6 +46,27 @@ impl AppInner {
                     ws.deck.jump_reframe = true;
                 }
             }
+            // Reintento de miniaturas pegajosas del último bulk: un escaneo
+            // intermedio pudo ver una reserva aún vacía y `merge_scan`
+            // conserva ese `thumb_failed` si el `mtime` no cambió. Un hilo
+            // por path pendiente y escaneo (los escaneos los disparan
+            // eventos de disco, no hay bucle); la tanda se libera en cuanto
+            // un escaneo ya no deja pendientes.
+            let retries = ws.deck.bulk_thumb_retries(&ws.deck_ops.bulk_created);
+            if retries.is_empty() {
+                ws.deck_ops.bulk_created.clear();
+            } else {
+                tracing::info!("bulk: reintentando {} miniaturas", retries.len());
+                for path in retries {
+                    loader::spawn_single_thumb(
+                        folder.clone(),
+                        path,
+                        self.thumb_cache.clone(),
+                        ws.tx.clone(),
+                        ctx.clone(),
+                    );
+                }
+            }
         }
     }
 

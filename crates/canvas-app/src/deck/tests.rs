@@ -1278,3 +1278,38 @@ fn merge_scan_retries_failed_slots_whose_file_changed() {
         .expect("ranura b tras el reescaneo");
     assert!(matches!(b.content, SlotContent::Failed { .. }));
 }
+
+#[test]
+fn bulk_thumb_retries_only_failed_without_thumb() {
+    let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
+    // a: fallido sin miniatura → candidato.
+    deck.set_thumb(Path::new("a.png"), None);
+    // b: sin fallo → no candidato (su thumb llegará por el flujo normal).
+    let created = vec![
+        PathBuf::from("a.png"),
+        PathBuf::from("b.png"),
+        PathBuf::from("z.png"),
+    ];
+    assert_eq!(
+        deck.bulk_thumb_retries(&created),
+        vec![PathBuf::from("a.png")]
+    );
+}
+
+#[test]
+fn bulk_thumb_retries_catches_sticky_failures_after_rescan() {
+    use std::time::{Duration, SystemTime};
+
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    // Un escaneo intermedio vio la reserva vacía y marcó el fallo; el
+    // reescaneo final trae el MISMO mtime y conserva la marca pegajosa.
+    let mut deck = Deck::from_seed(seed(&["stem-01.png"]), Path::new("stem-01.png"));
+    deck.set_thumb(Path::new("stem-01.png"), None);
+    deck.slots[0].mtime = Some(t0);
+    deck.merge_scan(vec![(PathBuf::from("stem-01.png"), Some(t0))]);
+    assert!(deck.slots[0].thumb_failed);
+    assert_eq!(
+        deck.bulk_thumb_retries(&[PathBuf::from("stem-01.png")]),
+        vec![PathBuf::from("stem-01.png")]
+    );
+}
