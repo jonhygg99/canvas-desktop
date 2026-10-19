@@ -184,6 +184,14 @@ impl Autosave {
         first
     }
 
+    /// El fallo no se va a arreglar solo (destino de solo lectura, formato
+    /// que no se puede escribir): se deja de reintentar y el banner ya
+    /// explica el motivo. Una edición nueva vuelve a armar el ciclo.
+    pub(super) fn give_up(&mut self) {
+        self.attempts = RETRY_BACKOFF.len();
+        self.retry_at = None;
+    }
+
     /// El usuario eligió «Discard»: esta revisión no se escribe. La vista se
     /// destruye justo después, pero entre la respuesta del diálogo y la
     /// navegación todavía corre un frame del editor en el que el temporizador
@@ -203,6 +211,21 @@ impl Autosave {
             AutosaveStatus::Idle
         }
     }
+}
+
+/// ¿Un fallo que no se arregla reintentando? `canvas-io` ya reintenta las
+/// violaciones de compartición (el archivo lo tiene abierto otro programa)
+/// dentro de `replace_with_retry`, así que lo que llega aquí es un destino
+/// que no admite la escritura (permisos, solo lectura, disco lleno) o un
+/// problema de formato/codificación: reintentarlo solo repite un horneado
+/// completo y otro banner igual. Pura (tabla de tests).
+pub(super) fn is_permanent_save_error(error: &canvas_io::IoError) -> bool {
+    matches!(
+        error,
+        canvas_io::IoError::Write { .. }
+            | canvas_io::IoError::Encode { .. }
+            | canvas_io::IoError::UnsupportedFormat { .. }
+    )
 }
 
 /// Espera antes del intento número `attempt` (1 → 5 s, 2 → 15 s, 3 → 60 s;
@@ -379,9 +402,11 @@ pub(super) fn tick(
     };
     match started {
         SaveStart::Started => f.save.autosave_in_flight = true,
-        // Rechazo antes de escribir (RAM crítica, formato, horneado vacío):
-        // no habrá mensaje `Saved`, así que el reintento se programa aquí.
+        // Rechazo antes de escribir (RAM crítica, horneado vacío): no habrá
+        // mensaje `Saved`, así que el reintento se programa aquí.
         SaveStart::Refused => f.save.autosave.on_failed(now),
+        // Destino sin codificador: reintentar solo repite el horneado.
+        SaveStart::RefusedPermanent => f.save.autosave.give_up(),
     }
     // El estado («Saving…» o el error del banner) se dibujó antes en este
     // frame: un repintado lo enseña ya, sin esperar a que el worker termine.

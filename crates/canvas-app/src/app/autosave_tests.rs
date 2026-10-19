@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use super::SaveFlow;
 use super::{
-    autosave_action, retry_delay, Autosave, AutosaveAction, AutosaveStatus, QUIET, RETRY_BACKOFF,
+    autosave_action, is_permanent_save_error, retry_delay, Autosave, AutosaveAction,
+    AutosaveStatus, QUIET, RETRY_BACKOFF,
 };
 use crate::editor;
 
@@ -315,6 +316,70 @@ fn discard_disarms_the_frame_between_the_dialog_and_navigation() {
     let edit = t0 + QUIET + Duration::from_secs(1);
     assert!(!auto.tick(edit, doc(), 2, true, true));
     assert!(auto.tick(edit + QUIET, doc(), 2, true, true));
+}
+
+/// Rendirse no puede dejar el reloj armado: si no, el aviso de «reintentando»
+/// seguiría girando para un destino que nunca va a admitir la escritura.
+#[test]
+fn giving_up_stops_the_retries_until_a_new_edit() {
+    let mut auto = Autosave::default();
+    let t0 = Instant::now();
+    assert!(!auto.tick(t0, doc(), 1, true, true));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
+    auto.give_up();
+    assert_eq!(
+        auto.status(),
+        AutosaveStatus::Idle,
+        "no hay reintento pendiente"
+    );
+    assert_eq!(auto.next_wake(t0 + QUIET), None);
+    assert!(!auto.tick(t0 + QUIET + Duration::from_secs(3600), doc(), 1, true, true));
+    // Una edición nueva vuelve a armar el ciclo.
+    let edit = t0 + QUIET + Duration::from_secs(3601);
+    assert!(!auto.tick(edit, doc(), 2, true, true));
+    assert!(auto.tick(edit + QUIET, doc(), 2, true, true));
+}
+
+/// Qué fallos se reintentan solos y cuáles no. `canvas-io` ya reintenta las
+/// violaciones de compartición por dentro, así que un `Write` que llega aquí
+/// es un destino que no admite la escritura.
+#[test]
+fn permanent_save_errors_are_not_retried() {
+    use canvas_io::IoError;
+    let path = || PathBuf::from("foto.png");
+    let cases: Vec<(IoError, bool)> = vec![
+        (
+            IoError::Write {
+                path: path(),
+                message: "Access is denied. (os error 5)".into(),
+            },
+            true,
+        ),
+        (
+            IoError::Encode {
+                path: path(),
+                message: "out of memory".into(),
+            },
+            true,
+        ),
+        (IoError::UnsupportedFormat { path: path() }, true),
+        (
+            IoError::Io {
+                path: path(),
+                source: std::io::Error::other("locked"),
+            },
+            false,
+        ),
+        (
+            IoError::Message {
+                message: "GPU busy".into(),
+            },
+            false,
+        ),
+    ];
+    for (error, expected) in cases {
+        assert_eq!(is_permanent_save_error(&error), expected, "{error:?}");
+    }
 }
 
 #[test]

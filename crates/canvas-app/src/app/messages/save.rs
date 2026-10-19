@@ -222,7 +222,16 @@ impl AppInner {
                 }
                 Err(e) => {
                     if autosave_own {
-                        ws.save.autosave.on_failed(std::time::Instant::now());
+                        // Reintentar un destino que no admite escritura (solo
+                        // lectura, permisos, disco lleno) cuesta un horneado
+                        // completo y otro banner por intento, y no lo arregla:
+                        // solo se reintenta lo transitorio (RAM, GPU, horneado
+                        // inestable).
+                        if crate::app::autosave::is_permanent_save_error(&e) {
+                            ws.save.autosave.give_up();
+                        } else {
+                            ws.save.autosave.on_failed(std::time::Instant::now());
+                        }
                     }
                     tracing::warn!(
                         ruta = %path.display(),

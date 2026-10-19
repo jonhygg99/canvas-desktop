@@ -295,6 +295,11 @@ pub(super) fn raster_target_error(path: &std::path::Path) -> Option<canvas_io::I
 pub(super) enum SaveStart {
     Started,
     Refused,
+    /// Rechazo que no mejora reintentando (destino sin codificador): el
+    /// autoguardado se rinde en vez de repetir el horneado cada pocos
+    /// segundos. Los rechazos transitorios (RAM crítica, horneado inestable)
+    /// siguen siendo `Refused`.
+    RefusedPermanent,
 }
 
 pub(super) fn start_save(
@@ -310,7 +315,7 @@ pub(super) fn start_save(
     }
     if let Some(error) = raster_target_error(&path) {
         state.save_error = Some(error.to_string());
-        return SaveStart::Refused;
+        return SaveStart::RefusedPermanent;
     }
     // RAM crítica: no se intenta el bake (podría salir incompleto o matar la
     // app). Falla rápido con el archivo intacto y el mensaje en el banner de
