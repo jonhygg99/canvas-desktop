@@ -28,15 +28,6 @@ impl Deck {
     /// renderer — el llamador, que tiene el `CanvasRenderer`, hace el
     /// `forget_scope` (aquí no se acopla `Deck` a `canvas-render` más que
     /// por el tipo del scope).
-    /// Variante con el presupuesto adaptativo del momento. Solo la usan los
-    /// tests que simulan un frame completo: el render real pasa un
-    /// presupuesto ya cacheado (`surface::cached_render_budget`), para no
-    /// medir la RAM del sistema en cada frame.
-    #[cfg(test)]
-    pub fn evict(&mut self) -> Vec<FxScope> {
-        self.evict_with_budget(adaptive_evict_budget())
-    }
-
     pub fn evict_with_budget(&mut self, budget: usize) -> Vec<FxScope> {
         // Una sesión sin carpeta no tiene conductor de recargas desde disco.
         if self.unsaved_session {

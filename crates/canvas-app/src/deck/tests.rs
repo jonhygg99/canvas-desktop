@@ -928,8 +928,9 @@ fn preload_all_does_not_reload_what_evict_just_dropped() {
         deck.slots[idx].content = SlotContent::Ready(Box::new(blank_slot_doc(10.0, 10.0)));
         deck.loading_finished();
     }
-    // `evict` descarta lo que exceda MAX_LOADED_SLOTS.
-    let _ = deck.evict();
+    // La evicción descarta lo que exceda MAX_LOADED_SLOTS (mismo presupuesto
+    // adaptativo que usa un frame completo).
+    let _ = deck.evict_with_budget(crate::deck::adaptive_evict_budget());
     let second_batch = deck.request_loads(&[]);
 
     // El segundo frame no debe re-pedido nada que ya estaba cargado.
