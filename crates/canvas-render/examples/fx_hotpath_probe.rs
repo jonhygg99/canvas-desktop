@@ -13,6 +13,18 @@
 //! coste es despreciable frente a codificar la escena.
 //!
 //! Uso: cargo run -p canvas-render --example fx_hotpath_probe
+//!
+//! Números de referencia (portátil Windows, foto sintética de 4032x3024):
+//!
+//! ```text
+//! antes: cada frame y capa pagaba 103 ms de copia reducida (y la tiraba)
+//! después: primer frame 111,26 ms (paga la reducción, 1 vez)
+//!          frame en reposo 0,000 ms | codificar la escena 0,001 ms
+//!          copias reducidas materializadas: 1
+//! ```
+//!
+//! En la app real (`CANVAS_DEBUG_PERF=1`, PNG de 3000x2000): `frame=1
+//! total_ms=82,15 encode_ms=75,86 render_ms=6,29 display_rebuilds=1`.
 
 use std::time::{Duration, Instant};
 
