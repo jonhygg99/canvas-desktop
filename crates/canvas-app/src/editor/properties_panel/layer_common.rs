@@ -149,7 +149,14 @@ pub(super) fn layer_properties_ui(
         // Escala respecto al tamaño natural de la imagen. El campo
         // numérico queda arriba y el slider DEBAJO, en una línea nueva.
         if natural.0 > 0.0 && natural.1 > 0.0 {
-            let mut scale = t.width / natural.0 * 100.0;
+            // `SliderClamping::Always` (el de por defecto) redondea a
+            // `max_decimals` y escribe el valor en CADA frame: si el valor
+            // real no cae en un decimal, ese redondeo se lee como `changed()`
+            // y arma `panel_edit` sin que el usuario toque nada (una escala de
+            // 33,333 % se escribía como 33,3 %, el documento quedaba sucio y
+            // «Back to gallery» pedía guardar una imagen intacta). Se le da el
+            // valor YA redondeado a lo que muestra: mostrado == aplicado.
+            let mut scale = egui::emath::round_to_decimals(t.width / natural.0 * 100.0, 1);
             let mut apply = |changed: &mut bool, scale: f64| {
                 *changed = true;
                 t.width = (natural.0 * scale / 100.0).max(1.0);

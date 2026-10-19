@@ -1241,3 +1241,47 @@ fn assert_crop_drag(video: bool) {
         "el undo debe restaurar el crop original en un solo paso"
     );
 }
+
+/// Abrir una imagen cuya escala no cae en un decimal (333,33 px sobre 1000
+/// naturales = 33,333… %) armaba `panel_edit` y marcaba el lienzo sucio sin
+/// que el usuario tocara nada: el `Slider` de escala redondea a 0,1 % (lo que
+/// muestra) y, con `SliderClamping::Always` (el de por defecto), escribe el
+/// valor redondeado en CADA frame — un `changed()` fantasma que mutaba el
+/// transform. Síntoma: «Back to gallery» pedía guardar una imagen intacta.
+#[test]
+fn drawing_the_panel_does_not_turn_a_rounded_scale_into_an_unsaved_change() {
+    let mut state = EditorState::new_blank(1000.0, 1000.0);
+    state.insert_layer_centered(
+        "photo",
+        333.33,
+        333.33,
+        LayerContent::Image(ImageContent {
+            source_path: None,
+            natural_width: 1000,
+            natural_height: 1000,
+            crop: None,
+        }),
+    );
+    let id = state.selection.primary().unwrap();
+    let before = state.doc.layer(id).unwrap().transform;
+    state.history.mark_saved();
+    assert!(!state.is_dirty());
+
+    let ctx = egui::Context::default();
+    for _ in 0..2 {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(420.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| properties_ui(&mut state, ui),
+        );
+    }
+
+    assert_eq!(state.panel_edit, None, "dibujar el panel no es editar");
+    assert_eq!(state.doc.layer(id).unwrap().transform, before);
+    assert!(!state.is_dirty(), "un lienzo intacto no puede quedar sucio");
+}
