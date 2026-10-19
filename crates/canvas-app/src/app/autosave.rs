@@ -232,13 +232,15 @@ fn autosave_path(
     if state.is_design {
         return canvas_io::is_canvas_file(&path).then_some(path);
     }
-    // Las dos compuertas destructivas del guardado manual, sin confirmar: el
-    // primer guardado de esta sesión se pregunta. Autoguardar saltándolas
-    // sería justo lo contrario de su motivo.
-    if !state.born_blank && !save.discard_raster_confirmed && !has_raster_layers(&state.doc) {
+    // Las dos compuertas destructivas del guardado manual, sin confirmar para
+    // ESTE archivo: el primer guardado de cada ruta se pregunta. Autoguardar
+    // saltándolas sería justo lo contrario de su motivo, y la confirmación de
+    // otro canvas no vale aquí (escribiría sin aviso sobre un original que
+    // nadie autorizó a pisar).
+    if !state.born_blank && !save.discard_raster_ok(&path) && !has_raster_layers(&state.doc) {
         return None;
     }
-    if !state.born_blank && !save.overwrite_confirmed && !skip_overwrite_warning {
+    if !state.born_blank && !save.overwrite_ok(&path) && !skip_overwrite_warning {
         return None;
     }
     Some(path)

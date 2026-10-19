@@ -151,7 +151,7 @@ pub(super) fn overwrite_modal_ui(
         Choice::None => {}
         Choice::Overwrite => {
             save.overwrite_prompt = None;
-            save.overwrite_confirmed = true;
+            save.confirm_overwrite(&path);
             if save.overwrite_dont_ask && !settings.skip_overwrite_warning {
                 settings.skip_overwrite_warning = true;
                 settings.save_in_background();
@@ -162,7 +162,7 @@ pub(super) fn overwrite_modal_ui(
             // acaba de confirmar PISAR el archivo, no necesariamente
             // descartar la copia editable del `borrado`.
             if !state.born_blank
-                && !save.discard_raster_confirmed
+                && !save.discard_raster_ok(&path)
                 && !super::persistence::has_raster_layers(&state.doc)
             {
                 save.discard_raster_prompt = Some(path);
@@ -325,7 +325,7 @@ pub(super) fn discard_raster_modal_ui(
         Choice::None => {}
         Choice::Flatten => {
             save.discard_raster_prompt = None;
-            save.discard_raster_confirmed = true;
+            save.confirm_discard_raster(&path);
             start_save(state, sctx, deck, path, false, jpeg_quality);
         }
         Choice::Design => {

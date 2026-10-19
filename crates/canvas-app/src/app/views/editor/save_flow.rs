@@ -171,20 +171,20 @@ pub(super) fn handle_save(
                 // sin foto que pudo borrarse— no recibe el aviso.
                 Some(path)
                     if !state.born_blank
-                        && !f.save.discard_raster_confirmed
+                        && !f.save.discard_raster_ok(&path)
                         && !crate::app::persistence::has_raster_layers(&state.doc) =>
                 {
                     f.save.discard_raster_prompt = Some(path);
                 }
                 Some(path) => {
                     // Aviso de sobrescritura destructiva: la primera vez de
-                    // cada sesión (salvo que el usuario pidiera no volver a
+                    // cada ARCHIVO (salvo que el usuario pidiera no volver a
                     // preguntar), y NUNCA para un lienzo `born_blank` — lo
                     // creó la propia app en blanco, no hay píxeles del
                     // usuario que este primer guardado pudiera destruir.
                     if !state.born_blank
                         && !f.settings.skip_overwrite_warning
-                        && !f.save.overwrite_confirmed
+                        && !f.save.overwrite_ok(&path)
                     {
                         f.save.overwrite_dont_ask = false;
                         f.save.overwrite_prompt = Some(path);

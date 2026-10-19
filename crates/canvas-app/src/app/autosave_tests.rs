@@ -23,11 +23,9 @@ fn editable() -> (editor::EditorState, SaveFlow) {
     state.doc.source_path = Some(PathBuf::from("foto.png"));
     state.born_blank = false;
     state.history.mark_unsaved();
-    let save = SaveFlow {
-        overwrite_confirmed: true,
-        discard_raster_confirmed: true,
-        ..SaveFlow::default()
-    };
+    let mut save = SaveFlow::default();
+    save.confirm_overwrite(Path::new("foto.png"));
+    save.confirm_discard_raster(Path::new("foto.png"));
     (state, save)
 }
 
@@ -67,16 +65,42 @@ fn the_destructive_first_save_gates_are_respected() {
     // Sobrescritura del original sin confirmar: el Ctrl+S manual pregunta, así
     // que el autoguardado no puede escribir por detrás.
     let (state, mut save) = editable();
-    save.overwrite_confirmed = false;
+    save.overwrite_confirmed.clear();
     assert_eq!(autosave_path(&state, &save, false, false), None);
 
     // Documento sin capas de imagen (el usuario borró la última foto).
     let (mut state, mut save) = editable();
-    save.discard_raster_confirmed = false;
+    save.discard_raster_confirmed.clear();
     assert_eq!(autosave_path(&state, &save, false, false), None);
     // …salvo en un lienzo que nació en blanco: no hay foto que destruir.
     state.born_blank = true;
     assert!(autosave_path(&state, &save, false, false).is_some());
+}
+
+/// La confirmación vale para el ARCHIVO que se confirmó, no para la sesión:
+/// con una bandera global, guardar `foto.png` autorizaba a que el
+/// autoguardado pisara `retrato.jpg` (otro original, nunca confirmado) sin
+/// preguntar.
+#[test]
+fn a_confirmation_for_one_file_does_not_authorize_another() {
+    let (mut state, save) = editable();
+    assert!(autosave_path(&state, &save, false, false).is_some());
+
+    state.doc.source_path = Some(PathBuf::from("retrato.jpg"));
+    assert_eq!(
+        autosave_path(&state, &save, false, false),
+        None,
+        "la confirmación de foto.png no puede autorizar a pisar retrato.jpg"
+    );
+
+    // Confirmado ese archivo, sí escribe.
+    let mut save = save;
+    save.confirm_overwrite(Path::new("retrato.jpg"));
+    save.confirm_discard_raster(Path::new("retrato.jpg"));
+    assert_eq!(
+        autosave_path(&state, &save, false, false),
+        Some(PathBuf::from("retrato.jpg"))
+    );
 }
 
 #[test]

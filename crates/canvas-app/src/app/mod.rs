@@ -24,7 +24,8 @@
 //!   `styleMask`, y ocultar la barra de una ventana en un grupo dispara la
 //!   misma excepción.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -187,8 +188,11 @@ pub(super) struct SaveFlow {
     pub(super) allow_close: bool,
     /// Navegación pendiente para cuando termine el guardado en curso.
     pub(super) after_save: Option<Nav>,
-    /// El usuario ya confirmó la sobrescritura destructiva en esta sesión.
-    pub(super) overwrite_confirmed: bool,
+    /// Rutas cuya sobrescritura destructiva ya confirmó el usuario. Por
+    /// ARCHIVO, no por sesión: confirmar «Overwrite» en `foto.png` no autoriza
+    /// a pisar `retrato.jpg`, y el autoguardado escribe sin preguntar, así que
+    /// una bandera de sesión se convertiría en un borrado sin aviso.
+    pub(super) overwrite_confirmed: HashSet<PathBuf>,
     /// Sobrescritura pendiente de confirmar en el modal (ruta del original).
     pub(super) overwrite_prompt: Option<PathBuf>,
     /// Estado del checkbox «Don't ask again» mientras el modal está abierto.
@@ -201,10 +205,9 @@ pub(super) struct SaveFlow {
     /// la última foto): pide confirmación antes de aplanar y descartar la
     /// copia editable. `Some(ruta)` mientras el modal está abierto.
     pub(super) discard_raster_prompt: Option<PathBuf>,
-    /// El usuario ya confirmó «Save anyway» para un documento sin capas de
-    /// imagen en esta sesión (mismo criterio que `overwrite_confirmed`): no
-    /// volver a avisar en guardados posteriores.
-    pub(super) discard_raster_confirmed: bool,
+    /// Rutas donde el usuario ya confirmó «Save anyway» para un documento sin
+    /// capas de imagen (mismo criterio que `overwrite_confirmed`: por archivo).
+    pub(super) discard_raster_confirmed: HashSet<PathBuf>,
     /// Temporizador del autoguardado silencioso del lienzo activo (ver
     /// `app/autosave.rs`): un contador por ventana.
     pub(super) autosave: autosave::Autosave,
@@ -222,6 +225,28 @@ pub(super) struct SaveFlow {
     /// «Save all anyway» lo limpia y arranca la cola, «Cancel» lo limpia y
     /// descarta el lote.
     pub(super) low_memory_prompt: Option<usize>,
+}
+
+impl SaveFlow {
+    /// ¿El usuario ya autorizó sobrescribir ESTE archivo? Los dos avisos
+    /// destructivos se preguntan una vez por ruta: la respuesta no viaja a
+    /// otro canvas (el autoguardado la aplicaría sin preguntar).
+    pub(super) fn overwrite_ok(&self, path: &Path) -> bool {
+        self.overwrite_confirmed.contains(path)
+    }
+
+    /// Igual que `overwrite_ok`, para el aviso de «se borró la última foto».
+    pub(super) fn discard_raster_ok(&self, path: &Path) -> bool {
+        self.discard_raster_confirmed.contains(path)
+    }
+
+    pub(super) fn confirm_overwrite(&mut self, path: &Path) {
+        self.overwrite_confirmed.insert(path.to_path_buf());
+    }
+
+    pub(super) fn confirm_discard_raster(&mut self, path: &Path) {
+        self.discard_raster_confirmed.insert(path.to_path_buf());
+    }
 }
 
 /// El diálogo de exportación y lo que queda pendiente de él. Uno por
