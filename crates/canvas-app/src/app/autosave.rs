@@ -33,7 +33,20 @@
 //! - **Que un fallo transitorio no espere a otra edición.** Un rechazo (RAM
 //!   crítica, GPU ocupada, horneado inestable) o un fallo de escritura se
 //!   reintenta solo con backoff; solo se rinde tras `RETRY_BACKOFF.len()`
-//!   intentos y una revisión nueva lo rearma.
+//!   intentos y una revisión nueva lo rearma. Un fallo permanente (destino
+//!   sin permisos, formato sin codificador) se rinde a la primera.
+//!
+//! **Coste del horneado, y por qué el silencio es fijo.** El guardado que
+//! lanza el temporizador hornea la página en el hilo de UI, igual que el
+//! `Ctrl+S` manual (`start_save`): en un documento grande esa pausa cuesta lo
+//! que cueste el horneado, y `doc_needs_bake_verify` puede añadir una segunda
+//! pasada. El silencio es 1,5 s para TODOS los documentos a propósito: una
+//! ventana mayor para documentos pesados se probó y se descartó —cuánto
+//! esperar a tener el trabajo en disco lo decide el usuario, no el número de
+//! megapíxeles—, y mover el horneado a un hilo aparte exige sacar de la UI el
+//! renderer y sus cachés (refactor que no entra aquí). Cuando no toca
+//! guardar, el temporizador no cuesta nada: solo pide un repintado para el
+//! instante en que vence.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
