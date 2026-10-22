@@ -56,7 +56,12 @@ pub fn thumbnail(
     })
 }
 
-pub(crate) fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
+/// Encaja `w × h` en un cuadrado de `max_dim` por el lado mayor sin deformar
+/// y sin agrandar (un original más pequeño se queda como está). La comparten
+/// las miniaturas de galería y las tarjetas de clip de `canvas-app`: las dos
+/// piden fotogramas de forma arbitraria (9:16, 21:9…) con el mismo
+/// presupuesto de memoria.
+pub fn fit_within(w: u32, h: u32, max_dim: u32) -> (u32, u32) {
     let max = w.max(h).max(1);
     if max <= max_dim {
         return (w.max(1), h.max(1));

@@ -14,6 +14,14 @@ use std::time::SystemTime;
 /// Huella del archivo (mtime + tamaño): `None` si ya no está en disco.
 type Fingerprint = Option<(SystemTime, u64)>;
 
+/// Lado mayor de la textura de una tarjeta (presupuesto de memoria fijo).
+/// El tamaño lo calcula `canvas_io::fit_within`, que conserva la FORMA del
+/// vídeo: antes se pedía `192×108` fijo y el clip se aplastaba —
+/// `image::imageops::thumbnail` de la versión del workspace redimensiona
+/// EXACTO al tamaño pedido (no conserva la proporción, pese al nombre), así
+/// que un 9:16 acababa con la misma forma que un 16:9.
+const PREVIEW_MAX_DIM: u32 = 192;
+
 fn fingerprint(path: &Path) -> Fingerprint {
     std::fs::metadata(path)
         .ok()
@@ -111,8 +119,10 @@ impl ClipPreviews {
             let image = canvas_io::load_video_frame(&path, 0.0)
                 .ok()
                 .and_then(|image| {
+                    let (tw, th) =
+                        canvas_io::fit_within(image.width, image.height, PREVIEW_MAX_DIM);
                     let pixels = image::RgbaImage::from_raw(image.width, image.height, image.rgba)?;
-                    let small = image::imageops::thumbnail(&pixels, 192, 108);
+                    let small = image::imageops::thumbnail(&pixels, tw, th);
                     Some(egui::ColorImage::from_rgba_unmultiplied(
                         [small.width() as usize, small.height() as usize],
                         small.as_raw(),
@@ -206,6 +216,56 @@ mod tests {
             previews.get(&path).is_none(),
             "la entrada vieja no sobrevive al reemplazo"
         );
+    }
+
+    /// La textura de la tarjeta conserva la forma del vídeo: el 9:16 que se
+    /// descarga no llega ya aplastado a un lienzo de 16:9 (la tarjeta decide
+    /// su marco con `clip_cards::thumb_size`).
+    #[test]
+    fn a_vertical_frame_keeps_its_shape_in_the_card_texture() {
+        let pixels = image::RgbaImage::from_pixel(1080, 1920, image::Rgba([1, 2, 3, 255]));
+        let (tw, th) = canvas_io::fit_within(1080, 1920, PREVIEW_MAX_DIM);
+        let small = image::imageops::thumbnail(&pixels, tw, th);
+        let aspect = small.width() as f32 / small.height() as f32;
+        assert!(
+            (aspect - 1080.0 / 1920.0).abs() < 0.01,
+            "la miniatura {0}x{1} no conserva el 9:16",
+            small.width(),
+            small.height()
+        );
+        assert!(small.height() > small.width(), "un 9:16 se ve vertical");
+        assert_eq!(
+            small.height(),
+            PREVIEW_MAX_DIM,
+            "el lado mayor sigue siendo el presupuesto"
+        );
+    }
+
+    /// Formatos que la tarjeta tiene que servir sin deformar ni dispararse de
+    /// memoria: el lado MAYOR siempre es 192 y la forma no cambia.
+    #[test]
+    fn card_textures_keep_every_format_within_the_budget() {
+        let cases = [
+            ((1920, 1080), (192, 108)),
+            ((1080, 1920), (108, 192)),
+            ((1080, 1080), (192, 192)),
+            ((1080, 1350), (154, 192)),
+            ((1080, 1440), (144, 192)),
+        ];
+        for ((w, h), expected) in cases {
+            let dims = canvas_io::fit_within(w, h, PREVIEW_MAX_DIM);
+            assert_eq!(dims, expected, "{w}x{h}");
+            assert_eq!(dims.0.max(dims.1), PREVIEW_MAX_DIM);
+            let aspect = f64::from(dims.0) / f64::from(dims.1);
+            let real = f64::from(w) / f64::from(h);
+            assert!(
+                (aspect / real - 1.0).abs() < 0.01,
+                "{w}x{h}: forma {aspect:.3} vs {real:.3}"
+            );
+        }
+        // Un clip diminuto no se agranda (el presupuesto es un TECHO).
+        assert_eq!(canvas_io::fit_within(96, 54, PREVIEW_MAX_DIM), (96, 54));
+        assert_eq!(canvas_io::fit_within(0, 0, PREVIEW_MAX_DIM), (1, 1));
     }
 
     #[test]

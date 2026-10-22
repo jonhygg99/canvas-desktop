@@ -97,9 +97,11 @@ fn exceeds_fx_dim(source: &ImageData) -> bool {
 }
 
 /// Reduce `source` si su lado mayor supera `max_dim`; `None` si no hace
-/// falta. `thumbnail` (filtro de caja) conserva la proporción y la calidad.
-/// El resultado es lo que entra en la GPU (pasadas de efectos o atlas de
-/// vello), nunca los píxeles del documento.
+/// falta. Los `w`/`h` de destino se calculan aquí con la escala del lado
+/// mayor y `thumbnail` (filtro de caja) redimensiona EXACTO a ese tamaño —
+/// no conserva la proporción por sí solo, así que pasársela con una caja fija
+/// (p. ej. `192, 108`) aplasta la imagen. El resultado es lo que entra en la
+/// GPU (pasadas de efectos o atlas de vello), nunca los píxeles del documento.
 fn capped_image(source: &ImageData, max_dim: u32) -> Option<ImageData> {
     let long = source.width.max(source.height);
     if long <= max_dim {

@@ -55,7 +55,7 @@ pub use sidecar::{
     SIDECAR_DIR,
 };
 pub use svg::load_svg;
-pub use thumbs::{prune_thumbnail_cache, thumbnail, MAX_THUMB_BYTES, MAX_THUMB_FILES};
+pub use thumbs::{fit_within, prune_thumbnail_cache, thumbnail, MAX_THUMB_BYTES, MAX_THUMB_FILES};
 pub use verify::{classify, CorruptionKind};
 pub use video::{
     export_video_composition, ffmpeg_path, ffprobe_path, load_video_frame, media_command,
