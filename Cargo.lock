@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-app"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "arboard",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-core"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -768,7 +768,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-io"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "base64",
  "canvas-core",
@@ -788,7 +788,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-render"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "canvas-core",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "canvas-shell"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "interprocess",
  "thiserror 2.0.18",

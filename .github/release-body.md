@@ -1,3 +1,14 @@
+## Novedades de v0.7.11
+
+- **Todos los lienzos se guardan solos**: al cambiar de lienzo, lo que se deja atrás ya no espera a «Save all» — y los clips de una tanda de Download se escriben aunque queden de fondo, sin cambiar de lienzo ni pulsar `Ctrl+S`. Sus ediciones posteriores se re-renderizan solas a los 5 s.
+- **Nada pregunta desde el fondo**: una escritura de fondo solo pisa lo que escribió la propia app, lo que el usuario ya autorizó o un diseño `.canvas`; el resto espera a «Save all» o al `Ctrl+S` de su lienzo, que sí pueden preguntar.
+- **Salir ya no deja un mp4 a medias**: «Back to gallery» y la X esperan a la cola de escritura y explican qué están esperando en la barra, en vez de quedarse mudas o cerrar con un render en vuelo.
+- **Cancelar el aviso de sobrescritura no silencia el autoguardado**: el ciclo se rearma con la próxima edición, así que el lienzo no se queda en «Unsaved changes» para siempre.
+- **Un cliente de sincronización no pausa el autoguardado**: si Drive o OneDrive tocan el archivo después de guardarlo (mismo tamaño, otro `mtime`), ya no se levanta el aviso de «cambió fuera».
+- **Las tarjetas de clip conservan su formato**: un 9:16 se ve vertical (y lo dice junto a la duración), igual que el 4:5, 1:1, 4:3, 16:9 y 21:9; la miniatura nunca se estira dentro del marco.
+- **La ventana de selección múltiple abre por la primera fila**: se acabó el «el bulk empieza desde abajo» y el heredar el desplazamiento de la apertura anterior.
+- **El primer lienzo de un bulk recupera su miniatura**: el nombre se reserva después de hornear (no antes) y la tira reintenta sola las miniaturas que faltan, con tope.
+
 ## Novedades de v0.7.10
 
 - **Autoguardado silencioso**: el lienzo activo se guarda solo tras 1,5 s sin cambios, sin diálogos ni avisos de «operación en curso». Respeta todo lo que el usuario todavía está decidiendo (el aviso de «cambió en disco», el diálogo de cambios sin guardar, cualquier modal, «Guardar como…», un arrastre o un texto a medio escribir) y las dos confirmaciones destructivas del `Ctrl+S`; SVG/GIF y los vídeos se quedan como estaban. Si un guardado falla, reintenta solo a los 5 s, 15 s y 60 s y el estado dice «Error al guardar — reintentando…».
