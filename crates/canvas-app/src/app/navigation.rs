@@ -221,6 +221,7 @@ impl AppInner {
                 _ => None,
             },
             &ws.save,
+            ws.deck.generation(),
         );
         if let Some(reason) = blocked {
             self.park_nav(ws, nav, reason);
@@ -282,6 +283,7 @@ impl AppInner {
                 _ => None,
             },
             &ws.save,
+            ws.deck.generation(),
         );
         if let Some(reason) = blocked {
             self.park_nav(ws, nav, reason);
@@ -425,6 +427,7 @@ fn same_nav_target(a: &Nav, b: &Nav) -> bool {
 fn nav_block_reason(
     state: Option<&editor::EditorState>,
     save: &super::SaveFlow,
+    deck_generation: u64,
 ) -> Option<&'static str> {
     // Solo bloquea lo que de verdad debe terminar antes de cambiar de vista
     // (guardado/exportación en vuelo, framing ocupado). Un gesto, un
@@ -439,6 +442,13 @@ fn nav_block_reason(
         Some("the save-path dialog, which is still open")
     } else if save.pending_save_as.is_some() {
         Some("a pending “Save as…”")
+    } else if save.writes.busy(deck_generation) {
+        // La cola única de escritura tiene un lienzo en vuelo (un clip
+        // recién añadido o una ranura de fondo que quedó sucia): cambiar de
+        // vista tiraría el worker y el archivo se quedaría a medias (el mp4 y
+        // el PNG se reemplazan al final). Se espera, como con un guardado en
+        // curso.
+        Some("the canvases that are still being saved")
     } else if !save.save_all_queue.is_empty() {
         Some("the “Save all” queue, which is still running")
     } else {
@@ -500,7 +510,7 @@ mod tests {
     fn only_an_in_flight_save_blocks_navigation_from_the_editor() {
         let save = SaveFlow::default();
         let mut state = editor::EditorState::new_blank_image(10.0, 10.0);
-        assert_eq!(nav_block_reason(Some(&state), &save), None);
+        assert_eq!(nav_block_reason(Some(&state), &save, 0), None);
 
         // `rename_edit` es una de las banderas de UI que antes bloqueaban
         // Back (la cobertura de `panel_edit` y compañía vive en
@@ -508,14 +518,14 @@ mod tests {
         state.rename_edit = Some((LayerId::from_raw(1), "a".to_owned(), "b".to_owned()));
         state.file_rename_edit = Some("b".to_owned());
         assert_eq!(
-            nav_block_reason(Some(&state), &save),
+            nav_block_reason(Some(&state), &save, 0),
             None,
             "las banderas de UI se consolidan al salir, no bloquean"
         );
 
         state.saving = true;
         assert_eq!(
-            nav_block_reason(Some(&state), &save),
+            nav_block_reason(Some(&state), &save, 0),
             Some("a save that is still writing")
         );
     }
@@ -538,7 +548,7 @@ mod tests {
                 save_all_queue: if save_all { vec![1] } else { Vec::new() },
                 ..SaveFlow::default()
             };
-            let reason = nav_block_reason(None, &save);
+            let reason = nav_block_reason(None, &save, 0);
             assert_eq!(
                 reason.is_some(),
                 expected.is_some(),
@@ -552,6 +562,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Salir mientras un lienzo se escribe (un clip o una ranura de fondo
+    /// sucia) tiraría su worker y dejaría el archivo a medias: se aparca como
+    /// un guardado en curso. La cola de OTRA baraja no bloquea nada (sus ids
+    /// ya no existen).
+    #[test]
+    fn canvases_still_being_written_block_leaving_the_editor() {
+        let mut save = SaveFlow::default();
+        save.writes.enqueue(7, [1, 2]);
+        let state = editor::EditorState::new_blank_image(10.0, 10.0);
+        let reason = nav_block_reason(Some(&state), &save, 7).expect("motivo");
+        assert!(reason.contains("canvases"), "{reason}");
+        assert_eq!(
+            nav_block_reason(Some(&state), &save, 8),
+            None,
+            "otra baraja no hereda la cola de escritura"
+        );
+        save.writes.next();
+        save.writes.finished(1);
+        assert!(
+            nav_block_reason(Some(&state), &save, 7).is_some(),
+            "el segundo lienzo aún espera"
+        );
+        save.writes.next();
+        save.writes.finished(2);
+        assert_eq!(nav_block_reason(Some(&state), &save, 7), None);
     }
 
     /// Volver a pulsar Back mientras la primera petición espera no apila

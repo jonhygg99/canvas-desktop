@@ -1,10 +1,10 @@
-//! Tests de `capture_geometry` (`ws_frame.rs`), el contrato de la
-//! geometría persistida de una ventana: posición del rect EXTERIOR
-//! (fallback al interior) y tamaño SIEMPRE del rect INTERIOR — lo que
-//! `with_inner_size`/`StoredWorkspace::size` entienden. Mezclar el rect
-//! exterior como tamaño (como hacía `outer_rect.or(inner_rect)`) era la
-//! mitad del bucle de redimensionado en Windows (ver
-//! `spawn_child_viewports` y `tasks/plan.md`).
+//! Reglas del frame de una ventana que se pueden fijar sin UI: el contrato de
+//! la geometría persistida (`capture_geometry`: posición del rect EXTERIOR
+//! con fallback al interior y tamaño SIEMPRE del interior, lo que
+//! `with_inner_size`/`StoredWorkspace::size` entienden — mezclar el exterior
+//! como tamaño era la mitad del bucle de redimensionado en Windows, ver
+//! `spawn_child_viewports`) y las compuertas de la navegación aparcada
+//! (`can_drain_deferred_nav`).
 
 use eframe::egui;
 
@@ -73,4 +73,36 @@ fn no_rects_is_none() {
 fn size_never_comes_from_outer() {
     let outer = rect((0.0, 0.0), (1000.0, 800.0));
     assert_eq!(capture_geometry(Some(outer), None), None);
+}
+
+/// La navegación aparcada no se saca mientras un clip de FONDO se escribe: su
+/// render no bloquea el lienzo activo, así que sin esta compuerta se sacaba y
+/// se volvía a aparcar en cada frame (y dos destinos distintos se
+/// intercambiaban el orden). Con la cola libre sí se drena.
+#[test]
+fn a_background_clip_render_holds_the_parked_navigation() {
+    use crate::app::{View, Workspace};
+    let mut ws = Workspace::new(egui::ViewportId::ROOT);
+    ws.view = View::Editor(Box::new(crate::editor::EditorState::new_blank_image(
+        100.0, 100.0,
+    )));
+    ws.deck = crate::deck::Deck::new_design((1080.0, 1920.0));
+    assert!(
+        super::can_drain_deferred_nav(&ws),
+        "un editor ocioso reintenta la navegación"
+    );
+
+    let generation = ws.deck.generation();
+    ws.save.writes.enqueue(generation, [ws.deck.slots[0].id]);
+    assert!(
+        !super::can_drain_deferred_nav(&ws),
+        "un clip escribiéndose no debe sacar la navegación de la cola"
+    );
+
+    ws.save.writes.next();
+    ws.save.writes.finished(ws.deck.slots[0].id);
+    assert!(
+        super::can_drain_deferred_nav(&ws),
+        "terminado el render, la navegación vuelve a intentarse"
+    );
 }

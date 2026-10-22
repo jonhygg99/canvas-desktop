@@ -317,23 +317,10 @@ pub(super) fn start_save(
         state.save_error = Some(error.to_string());
         return SaveStart::RefusedPermanent;
     }
-    // RAM crítica: no se intenta el bake (podría salir incompleto o matar la
-    // app). Falla rápido con el archivo intacto y el mensaje en el banner de
-    // `save_error`. Cierra también el hueco temporal del aviso de «Save all»:
-    // aquí la medición es en el momento del bake, no solo en el clic del menú.
-    // Primero se suelta la caché propia (ver `critical_after_freeing_own_memory`)
-    //: solo aborta si sigue crítico tras liberar lo suyo.
-    if critical_after_freeing_own_memory(deck, sctx.renderer) {
-        tracing::error!("guardado abortado por RAM crítica; no se toca el archivo");
-        state.save_error = Some(
-            "Not enough available memory to save safely — nothing was written. \
-             Close other apps to free memory and try again."
-                .into(),
-        );
+    if let Err(message) = prepare_bake(deck, sctx.renderer) {
+        state.save_error = Some(message);
         return SaveStart::Refused;
     }
-    // Sitio en el atlas para el bake: expulsa ranuras lejanas (protege la activa).
-    free_far_slot_scopes(deck, sctx.renderer);
     let capas = state
         .doc
         .page()
@@ -349,72 +336,123 @@ pub(super) fn start_save(
     // Sin `forget_scope`: el bake reutiliza las texturas asentadas del
     // preview (su propio re-sync garantiza frescura); olvidar aquí re-subía
     // todo al atlas lleno y vello soltaba capas en silencio (17.png).
-    let scope = canvas_render::FxScope(sctx.scope);
-    match sctx.renderer.bake_page_counting(
-        &sctx.rs.device,
-        &sctx.rs.queue,
-        scope,
+    let (rgba, width, height) = match bake_for_save(
+        sctx.renderer,
+        sctx.rs,
+        sctx.scope,
         &state.doc,
         &state.images,
-        1.0,
     ) {
+        Ok(baked) => baked,
+        Err(message) => {
+            state.save_error = Some(message);
+            return SaveStart::Refused;
+        }
+    };
+    state.saving = true;
+    state.save_error = None;
+    // A04: el worker escribe una CAPTURA del documento; se sella la
+    // revisión del historial para que `on_saved` solo marque como
+    // guardado si no hubo ediciones durante la escritura.
+    let capture = (state.history.undo_depth(), state.history.revision());
+    state.saving_capture = Some(capture);
+    *sctx.ignore_fs_events_until =
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+    let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
+    loader::spawn_save(
+        loader::SaveInput {
+            path,
+            rgba,
+            width,
+            height,
+            jpeg_quality,
+            metadata: state.source_metadata.clone(),
+            new_source,
+            sidecar,
+            ticket: loader::SaveTicket {
+                target: loader::ImageInsertDest {
+                    generation: deck.generation(),
+                    slot_id: state.active_slot_id,
+                },
+                capture,
+            },
+        },
+        sctx.tx.clone(),
+        sctx.ctx.clone(),
+    );
+    SaveStart::Started
+}
+
+/// Rechazos ANTES de hornear que no miran el documento: RAM crítica (tras
+/// soltar la propia caché, ver `critical_after_freeing_own_memory`) y sitio en
+/// el atlas para el horneado. Devuelve el mensaje de usuario del rechazo. Muta
+/// la baraja (expulsa ranuras lejanas y protege la activa). Compartido por el
+/// guardado del lienzo activo y el de una ranura de fondo.
+pub(super) fn prepare_bake(
+    deck: &mut crate::deck::Deck,
+    renderer: &mut CanvasRenderer,
+) -> Result<(), String> {
+    // RAM crítica: no se intenta el bake (podría salir incompleto o matar la
+    // app). Falla rápido con el archivo intacto. Cierra también el hueco
+    // temporal del aviso de «Save all»: aquí la medición es en el momento del
+    // bake, no solo en el clic del menú.
+    if critical_after_freeing_own_memory(deck, renderer) {
+        tracing::error!("guardado abortado por RAM crítica; no se toca el archivo");
+        return Err(
+            "Not enough available memory to save safely — nothing was written. \
+             Close other apps to free memory and try again."
+                .into(),
+        );
+    }
+    // Sitio en el atlas para el bake: expulsa ranuras lejanas (protege la activa).
+    free_far_slot_scopes(deck, renderer);
+    Ok(())
+}
+
+/// Hornea la página con las comprobaciones de seguridad del guardado: un
+/// horneado en blanco/incompleto (17.png) o inestable se rechaza AQUÍ, así que
+/// quien llama no escribe nada. No toca estado del lienzo ni disco: sirve igual
+/// para el documento activo y para el de una ranura de fondo.
+pub(super) fn bake_for_save(
+    renderer: &mut CanvasRenderer,
+    rs: &RenderState,
+    scope: u64,
+    doc: &Document,
+    images: &canvas_render::ImageMap,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    let scope = canvas_render::FxScope(scope);
+    match renderer.bake_page_counting(&rs.device, &rs.queue, scope, doc, images, 1.0) {
         Ok((rgba, width, height, skipped)) => {
-            if bake_came_out_blank_or_incomplete(&state.doc, &rgba, skipped) {
+            if bake_came_out_blank_or_incomplete(doc, &rgba, skipped) {
                 tracing::error!(
                     "horneado en blanco o incompleto ({} capa(s) omitida(s)); \
                      no se sobrescribe el archivo",
                     skipped
                 );
-                state.save_error = Some(
+                return Err(
                     "The save was refused because the image came out blank or incomplete — \
                      the file was not overwritten. Close other apps to free memory and try again."
                         .into(),
                 );
-                return SaveStart::Refused;
             }
-            if doc_needs_bake_verify(&state.doc)
-                && !rebake_matches_first(&mut *sctx, scope, &state.doc, &state.images, 1.0, &rgba)
+            if doc_needs_bake_verify(doc)
+                && !rebake_matches_first(renderer, rs, scope, doc, images, 1.0, &rgba)
             {
                 tracing::error!(
                     "horneado inestable (el segundo horneado difiere); \
                      no se sobrescribe el archivo"
                 );
-                state.save_error = Some(
+                return Err(
                     "The image rendered inconsistently — the file was not overwritten. \
                      Try saving again."
                         .into(),
                 );
-                return SaveStart::Refused;
             }
-            state.saving = true;
-            state.save_error = None;
-            // A04: el worker escribe una CAPTURA del documento; se sella la
-            // revisión del historial para que `on_saved` solo marque como
-            // guardado si no hubo ediciones durante la escritura.
-            state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
-            *sctx.ignore_fs_events_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-            let sidecar = state.sidecar_enabled.then(|| state.sidecar_payload());
-            loader::spawn_save(
-                loader::SaveInput {
-                    path,
-                    rgba,
-                    width,
-                    height,
-                    jpeg_quality,
-                    metadata: state.source_metadata.clone(),
-                    new_source,
-                    sidecar,
-                },
-                sctx.tx.clone(),
-                sctx.ctx.clone(),
-            );
-            SaveStart::Started
+            Ok((rgba, width, height))
         }
         Err(e) => {
             tracing::error!("horneado falló: {e}");
-            state.save_error = Some(format!("Could not prepare the save: {e}"));
-            SaveStart::Refused
+            Err(format!("Could not prepare the save: {e}"))
         }
     }
 }
@@ -547,7 +585,8 @@ pub(super) fn start_export(
                 }
                 if doc_needs_bake_verify(&state.doc)
                     && !rebake_matches_first(
-                        &mut *sctx,
+                        &mut *sctx.renderer,
+                        sctx.rs,
                         scope,
                         &state.doc,
                         &state.images,
@@ -701,21 +740,15 @@ pub(super) fn bakes_match(first: &[u8], second: &[u8]) -> bool {
 /// primero. Quien llama rechaza sin escribir (ver
 /// plan-partial-bake-guard.md).
 fn rebake_matches_first(
-    sctx: &mut SaveContext,
+    renderer: &mut CanvasRenderer,
+    rs: &RenderState,
     scope: canvas_render::FxScope,
     doc: &Document,
     images: &canvas_render::ImageMap,
     scale: f64,
     first: &[u8],
 ) -> bool {
-    match sctx.renderer.bake_page_counting(
-        &sctx.rs.device,
-        &sctx.rs.queue,
-        scope,
-        doc,
-        images,
-        scale,
-    ) {
+    match renderer.bake_page_counting(&rs.device, &rs.queue, scope, doc, images, scale) {
         Ok((second, _, _, _)) => bakes_match(first, &second),
         Err(e) => {
             tracing::error!("verificación sin segundo horneado ({e}); no se escribe");

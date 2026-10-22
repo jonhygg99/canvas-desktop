@@ -175,24 +175,52 @@ impl AppInner {
     }
 
     pub(super) fn on_source_changed_on_disk(&mut self, ws: &mut Workspace, path: PathBuf) {
-        let own_save = ws
+        let within_grace = ws
             .ignore_fs_events_until
             .is_some_and(|t| std::time::Instant::now() < t);
+        // Fuera de la ventana de gracia, un evento con EXACTAMENTE los bytes
+        // que dejó nuestro último guardado no es una edición ajena: es un
+        // toque de metadatos (el cliente de sincronización de la carpeta, que
+        // sube el archivo y le cambia el `mtime`) o un evento propio que llegó
+        // tarde. Antes eso levantaba el banner de «cambió fuera» y, con él, el
+        // autoguardado quedaba pausado para siempre (ver `Workspace::saved_len`
+        // y el aviso del banner).
+        let same_size = same_saved_size(
+            ws.saved_len.as_ref(),
+            &path,
+            std::fs::metadata(&path).ok().map(|meta| meta.len()),
+        );
+        let own_save = within_grace || same_size;
         if let View::Editor(state) = &mut ws.view {
             // Traza de diagnóstico (Task 1 del plan): el bug del banner ⚠ es
             // justo la discriminación entre «lo escribí yo» y «alguien más
-            // tocó el archivo», así que el log deja las tres piezas: qué
-            // evento llegó, qué documento está abierto y si caía dentro de
-            // la ventana de gracia.
+            // tocó el archivo», así que el log deja las piezas: qué evento
+            // llegó, qué documento está abierto, si caía dentro de la ventana
+            // de gracia y si el tamaño es el que dejó nuestro guardado.
             tracing::info!(
                 evento = %path.display(),
                 abierto = ?state.doc.source_path.as_deref().map(|p| p.display().to_string()),
+                gracia = within_grace,
+                mismo_tamano = same_size,
                 propio = own_save,
                 "watcher: evento de disco sobre el archivo del editor"
             );
             if should_flag_external_change(state.doc.source_path.as_deref(), &path, own_save) {
                 state.external_change = true;
                 tracing::info!("watcher: se levanta el banner de cambio externo");
+            } else if same_size
+                && state.external_change
+                && state.doc.source_path.as_deref() == Some(path.as_path())
+            {
+                // El archivo en disco vuelve a tener exactamente los bytes del
+                // último guardado: el aviso que hubiera levantado un evento
+                // anterior (propio, o del cliente de sincronización) ya no
+                // describe nada. Se retira sin preguntar, y con él vuelve el
+                // autoguardado.
+                state.external_change = false;
+                tracing::info!(
+                    "watcher: el archivo tiene los bytes del último guardado; se retira el banner"
+                );
             }
         }
     }
@@ -200,11 +228,20 @@ impl AppInner {
 
 /// Decide si un evento de disco debe levantar el banner de «este archivo
 /// cambió fuera de Canvas Desktop»: solo el documento ABIERTO, y solo si el
-/// evento no cae en la ventana de gracia del propio guardado (la sustitución
-/// atómica y el reescaneo de miniaturas generan eventos propios). Pura para
-/// probarla sin watcher, disco ni reloj.
-fn should_flag_external_change(open: Option<&Path>, event: &Path, own_save: bool) -> bool {
-    !own_save && open == Some(event)
+/// evento no es nuestro (ventana de gracia o mismo tamaño que el último
+/// guardado propio: la sustitución atómica, el reescaneo de miniaturas y el
+/// cliente de sincronización de la carpeta generan eventos propios o de
+/// metadatos). Pura para probarla sin watcher, disco ni reloj.
+fn should_flag_external_change(open: Option<&Path>, event: &Path, own_write: bool) -> bool {
+    !own_write && open == Some(event)
+}
+
+/// ¿El archivo en disco tiene EXACTAMENTE los bytes que dejó el último
+/// guardado propio de este documento? `saved` es (ruta guardada, tamaño) y
+/// `disk_len` el tamaño actual leído del disco (`None` si no se pudo leer).
+/// Pura (tabla de tests): separa la DECISIÓN de la lectura del disco.
+fn same_saved_size(saved: Option<&(PathBuf, u64)>, event: &Path, disk_len: Option<u64>) -> bool {
+    saved.is_some_and(|(saved_path, len)| saved_path == event && Some(*len) == disk_len)
 }
 
 fn rename_slot(slot: &mut deck::Slot, path: &std::path::Path) {
@@ -242,6 +279,31 @@ mod tests {
                 "abierto={open:?} evento={event:?} propio={own_save}"
             );
         }
+    }
+
+    /// Un toque del cliente de sincronización de la nube deja el MISMO tamaño
+    /// que escribió la app: no es un cambio de contenido y no debe levantar el
+    /// banner (que además pausa el autoguardado). Un tamaño distinto sí.
+    #[test]
+    fn an_event_with_the_bytes_we_wrote_is_not_an_external_change() {
+        let saved_path = PathBuf::from("fotos/a.png");
+        let other = PathBuf::from("fotos/b.png");
+        let saved = Some((saved_path.clone(), 8_192_u64));
+        // (ruta del evento, bytes en disco, esperado)
+        let cases = [
+            (&saved_path, Some(8_192_u64), true),
+            (&saved_path, Some(8_193_u64), false),
+            (&saved_path, None, false),
+            (&other, Some(8_192_u64), false),
+        ];
+        for (event, disk_len, expected) in cases {
+            assert_eq!(
+                same_saved_size(saved.as_ref(), event, disk_len),
+                expected,
+                "evento={event:?} bytes={disk_len:?}"
+            );
+        }
+        assert!(!same_saved_size(None, &saved_path, Some(8_192)));
     }
 
     #[test]

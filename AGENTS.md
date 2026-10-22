@@ -327,10 +327,16 @@ canvas-app/src/
 │  ├─ switcher.rs             # Ctrl+Tab / Ctrl+` window switcher
 │  ├─ frame.rs    # EditorFrame<'a>: the borrows the editor view needs
 │  ├─ messages/   # mod.rs = the rx loop + one-line dispatch per AppMsg;
-│  │              # load/save/export/gallery/document/shell/unsplash.rs = bodies
+│  │              # load/save/saved/background_saved/export/gallery/
+│  │              # document/shell/unsplash.rs = bodies
 │  ├─ views/      # welcome.rs · loading.rs · gallery.rs
 │  │  └─ editor/  # mod.rs = orchestration only; save_flow · file_ops ·
 │  │              # modals · panels · deck_nav
+│  ├─ autosave.rs  clip_save.rs  # autoguardado por ritmo · política de
+│  │                             # clip (composición, destino)
+│  ├─ write_queue.rs  write_jobs.rs  write_target.rs
+│  │                             # cola única de escritura · trabajos de
+│  │                             # fondo · qué se escribe sin preguntar
 │  └─ menu_actions.rs  navigation.rs  persistence.rs  ui_menu.rs
 │     ui_modals.rs  window.rs
 ├─ deck/          # mod.rs (Deck) · model.rs · geometry.rs · layout.rs
@@ -462,6 +468,36 @@ canvas-app/src/
   means the bake failed (vello dropped a texture, a layer had no pixels) —
   the file is **not** overwritten and the banner explains it. A legitimately
   monochrome vector design has no pending/skipped layers, so it still saves.
+- **One write queue for the whole window** (`app/write_queue.rs` +
+  `app/write_jobs.rs`). `SaveFlow::writes` (`WriteQueue`: stable slot ids +
+  deck generation) holds every canvas that still has to reach disk — the
+  clips just added from Download **and** any background canvas left dirty
+  when the user switched canvases — and writes **one at a time**, the active
+  canvas included. `write_queue::tick` runs after `autosave::tick`; the
+  active canvas keeps its own quiet timer (`QUIET` 1.5 s, `VIDEO_QUIET` 5 s
+  for clips) but waits while the queue is busy, so a window never has two
+  bakes/renders in flight. Background jobs (`write_jobs.rs`) bake the
+  slot's own `SlotDoc` (no activation, no jump) or render its clip; the
+  result lands in **its** slot through `on_background_saved`
+  (`messages/background_saved.rs`) without touching the active document or
+  the deferred navigation, and `nav_block_reason` / `confirm_window_close`
+  wait for the queue so a half-written file is never abandoned.
+- **Background writes never ask.** `write_target::background_target` (pure,
+  table-tested) only writes what the app can write silently: a file it wrote
+  itself, an overwrite the user already authorised, `Don't ask again`, or a
+  `.canvas` design. Originals that would need the destructive confirmation,
+  read-only formats (SVG/GIF/video), externally-changed files, placeholders
+  and canvases that lost their last raster layer stay pending for «Save all»
+  or for their own `Ctrl+S`, which can ask. A failed background write is
+  recorded in `SaveFlow::blocked_writes` as `(slot, revision)` and is **not**
+  retried until the user edits that canvas (no bake per frame).
+- **The history capture is the only judge of «edited during a save»** (A04).
+  `VideoSaveDone` / `DesignSaveDone` / `SaveTicket` carry
+  `(undo_depth, revision)` and `mark_saved_at` decides; never compare whole
+  documents. The video preview rewrites `poster_time` in the document every
+  frame (no command), so a document comparison always reported «edited
+  during the save», kept the clip dirty forever and re-rendered it every
+  `VIDEO_QUIET` — that loop is what the capture replaced.
 - **Deleting layers has exactly one implementation**:
   `editor::delete_selected` (`editor/layer_ops.rs`). Menu, context menu,
   `Delete`, `Ctrl+X` and the layers-panel button all call it, and it skips

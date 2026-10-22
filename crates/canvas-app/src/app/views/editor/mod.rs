@@ -98,6 +98,10 @@ pub(in crate::app) fn editor_view_ui(
     // repintado que le falta al temporizador (ver `autosave::tick`).
     if state.framing.is_none() {
         crate::app::autosave::tick(state, ctx, rs, f);
+        // Cola única de escritura: los clips recién añadidos desde Download y
+        // cualquier lienzo de fondo que quedó sucio se escriben solos, uno a
+        // uno, sin cambiar de lienzo (ver `app/write_queue.rs`).
+        crate::app::write_queue::tick(state, ctx, rs, f);
     }
     crate::ytdlp::retry_pending_frames(&mut state.ytdlp, f.tx, ctx);
     if let Some(accept) = crate::ytdlp::edit_window_ui(&mut state.ytdlp, f.settings, ui) {

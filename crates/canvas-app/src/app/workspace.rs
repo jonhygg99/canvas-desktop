@@ -34,6 +34,14 @@ pub(crate) struct Workspace {
     /// Ventana de gracia tras un guardado propio (eventos del watcher hasta
     /// este instante son nuestros y se descartan).
     pub(crate) ignore_fs_events_until: Option<Instant>,
+    /// Tamaño que dejó en disco el último guardado propio de esta ventana:
+    /// (ruta, bytes). Un cliente de sincronización (Drive, OneDrive) toca el
+    /// archivo después de subirlo — `mtime` cambia, el contenido no — y ese
+    /// evento llegaba fuera de la ventana de gracia y levantaba el banner de
+    /// «cambió fuera», que además pausa el autoguardado. Comparar el tamaño
+    /// distingue un toque de metadatos de una edición real (un PNG reescrito
+    /// por otro programa casi nunca conserva el tamaño exacto).
+    pub(crate) saved_len: Option<(PathBuf, u64)>,
     /// Estado del camino de guardado de esta ventana.
     pub(crate) save: SaveFlow,
     /// Estado del camino de exportación de esta ventana.
@@ -105,6 +113,7 @@ impl Workspace {
             deck: deck::Deck::default(),
             watcher: None,
             ignore_fs_events_until: None,
+            saved_len: None,
             save: SaveFlow::default(),
             export: ExportFlow::default(),
             deck_ops: DeckOps::default(),

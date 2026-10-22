@@ -186,6 +186,11 @@ pub(super) fn overwrite_modal_ui(
             save.overwrite_prompt = None;
             save.close_after_save = false;
             save.after_save = None;
+            // El autoguardado no puede quedarse disparando contra una pregunta
+            // ya contestada: desarma este ciclo. La próxima edición lo arma
+            // otra vez (y vuelve a preguntar) en vez de callarse para
+            // siempre con el lienzo en «Unsaved changes».
+            save.autosave.on_overwrite_declined();
         }
     }
 }

@@ -18,8 +18,9 @@ pub struct DesignSaveRequest {
 
 pub struct DesignSaveDone {
     pub target: ImageInsertDest,
+    /// Captura del historial al lanzar la escritura: el único juez de «hubo
+    /// ediciones mientras se escribía» (ver `on_design_saved`).
     pub capture: (usize, u64),
-    pub document: canvas_core::Document,
     pub path: PathBuf,
     pub result: Result<(), IoError>,
     pub new_source: bool,
@@ -28,7 +29,6 @@ pub struct DesignSaveDone {
 
 pub fn spawn_save_design(mut request: DesignSaveRequest, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let document = request.payload.document.clone();
         let mut reserved = None;
         let mut links = Vec::new();
         let result = (|| {
@@ -57,7 +57,6 @@ pub fn spawn_save_design(mut request: DesignSaveRequest, tx: Sender<AppMsg>, ctx
         let _ = tx.send(AppMsg::DesignSaved(Box::new(DesignSaveDone {
             target: request.target,
             capture: request.capture,
-            document,
             path: request.path,
             result,
             new_source: request.new_source || request.reserve,

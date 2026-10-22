@@ -134,8 +134,28 @@ impl AppInner {
             }
             return;
         }
-        if matches!(&ws.view, View::Editor(state) if state.saving || state.exporting) {
+        // Una escritura de fondo (un clip o un lienzo sucio de la baraja)
+        // cuenta como un guardado en curso: cerrar tiraría el worker y el
+        // archivo se quedaría a medias.
+        let write_busy = ws.save.writes.busy(ws.deck.generation());
+        let saving = matches!(&ws.view, View::Editor(state) if state.saving || state.exporting);
+        if write_busy || saving {
             ctx.send_viewport_cmd_to(ws.viewport, egui::ViewportCommand::CancelClose);
+            // Una X que no hace nada parece un botón roto y empuja a matar el
+            // proceso — justo el mp4 a medias que esto protege. Se explica en
+            // el canal de avisos (no es un error) y se pide el repintado para
+            // que el aviso se vea.
+            if let View::Editor(state) = &mut ws.view {
+                let reason = if write_busy {
+                    "the canvases that are still being saved"
+                } else {
+                    "the save that is still running"
+                };
+                state.notice = Some(format!(
+                    "Closing is waiting on {reason}. Close again when it finishes."
+                ));
+            }
+            ctx.request_repaint();
             return;
         }
         // Consolida las ediciones transitorias ANTES de decidir si hay algo
@@ -193,6 +213,10 @@ impl AppInner {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "window_tests.rs"]
+mod tests;
 
 /// Directorio de caché de miniaturas del usuario (mejor esfuerzo). Es
 /// `pub(crate)` (no `pub(super)`) porque la poda de arranque (`main`) lo

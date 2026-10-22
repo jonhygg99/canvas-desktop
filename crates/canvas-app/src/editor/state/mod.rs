@@ -49,6 +49,7 @@ mod sidecar_tests;
 
 pub(crate) use history::{DeleteRecord, GlobalStep};
 pub(crate) use image_source::ImageSource;
+pub(crate) use sidecar::payload_of;
 
 pub struct EditorState {
     /// Nombre del lienzo independiente de la fuente de lectura del vídeo.
@@ -298,6 +299,14 @@ impl EditorState {
 
     pub(crate) fn is_idle_except_save(&self) -> bool {
         self.idle_blocker_except_save().is_none()
+    }
+
+    /// Motivo por el que el autoguardado no puede escribir ahora mismo, en
+    /// inglés para la barra de estado. `None` = puede. Existir separado de
+    /// `is_idle_except_save` es lo que permite decir «¿por qué?» en vez de
+    /// dejar al usuario mirando «Unsaved changes» sin explicación.
+    pub(crate) fn autosave_blocker(&self) -> Option<&'static str> {
+        self.idle_blocker_except_save()
     }
 
     fn idle_blocker_except_save(&self) -> Option<&'static str> {

@@ -24,7 +24,7 @@
 //!   `styleMask`, y ocultar la barra de una ventana en un grupo dispara la
 //!   misma excepción.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -38,6 +38,9 @@ use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
 mod autosave;
 mod bootstrap;
+#[cfg(test)]
+mod clip_fixture;
+mod clip_save;
 #[cfg(test)]
 #[path = "deck_ops_tests.rs"]
 mod deck_ops_tests;
@@ -55,6 +58,9 @@ mod views;
 pub(crate) mod window; // la poda de miniaturas de arranque (`main`) usa `thumbnail_cache_dir`
 mod workspace;
 mod workspace_lifecycle;
+mod write_jobs;
+mod write_queue;
+mod write_target;
 mod ws_frame;
 
 pub(crate) use workspace::Workspace;
@@ -211,9 +217,31 @@ pub(super) struct SaveFlow {
     /// Rutas donde el usuario ya confirmó «Save anyway» para un documento sin
     /// capas de imagen (mismo criterio que `overwrite_confirmed`: por archivo).
     pub(super) discard_raster_confirmed: HashSet<PathBuf>,
+    /// Archivos que escribió la PROPIA app en esta sesión (una imagen del bulk,
+    /// un «Save as», un lienzo nuevo materializado, un duplicado): no hay
+    /// píxeles originales del usuario que un guardado en el sitio pueda
+    /// destruir, así que el primer guardado no pide la confirmación
+    /// destructiva. Por ruta y por sesión: un archivo que ya existía antes no
+    /// está aquí y se sigue preguntando una vez.
+    pub(super) app_written: HashSet<PathBuf>,
+    /// Por qué el autoguardado no está escribiendo ahora mismo (motivo ya en
+    /// inglés para la barra de estado). `None` = nada lo bloquea; se limpia
+    /// sola cada frame en `autosave::tick`.
+    pub(super) autosave_blocked: Option<&'static str>,
     /// Temporizador del autoguardado silencioso del lienzo activo (ver
     /// `app/autosave.rs`): un contador por ventana.
     pub(super) autosave: autosave::Autosave,
+    /// La cola ÚNICA de escritura (ver `app/write_queue.rs`): los clips
+    /// recién añadidos y cualquier lienzo de fondo que quedó sucio al cambiar
+    /// de baraja. Uno a uno, sin cambiar de lienzo ni esperar a `Ctrl+S`.
+    pub(super) writes: write_queue::WriteQueue,
+    /// Ranuras que fallaron al escribirse de fondo, con la revisión del
+    /// historial en la que fallaron: no se reintentan hasta que el usuario
+    /// edite algo (`app/write_queue.rs`).
+    pub(super) blocked_writes: HashMap<u64, u64>,
+    /// Cuándo arrancó la última escritura de la cola: el margen entre dos
+    /// escrituras de fondo consecutivas (`write_queue::MIN_GAP`).
+    pub(super) last_write: Option<std::time::Instant>,
     /// El guardado en vuelo lo lanzó el autoguardado: su resultado alimenta el
     /// backoff del temporizador. Un `Ctrl+S` manual no toca este estado, para
     /// que un fallo suyo no se anuncie como «fallo del autoguardado».
@@ -248,6 +276,16 @@ impl SaveFlow {
     }
     pub(super) fn confirm_discard_raster(&mut self, path: &Path) {
         self.discard_raster_confirmed.insert(path.to_path_buf());
+    }
+
+    /// ¿Este archivo lo escribió la app? Entonces no hay original que
+    /// proteger: el autoguardado (y el primer `Ctrl+S`) no pregunta.
+    pub(super) fn is_app_written(&self, path: &Path) -> bool {
+        self.app_written.contains(path)
+    }
+
+    pub(super) fn mark_app_written(&mut self, path: &Path) {
+        self.app_written.insert(path.to_path_buf());
     }
 }
 

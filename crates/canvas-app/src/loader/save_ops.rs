@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 use canvas_io::{CanvasPayload, ImageMetadata};
 use eframe::egui;
 
-use super::AppMsg;
+use super::{AppMsg, ImageInsertDest};
 
 /// Reserva atómicamente (`create_new`) un nombre libre en `folder` para una
 /// ranura provisional que el usuario acaba de empezar a editar: con `stem`
@@ -74,6 +74,20 @@ pub struct SaveInput {
     pub metadata: Option<ImageMetadata>,
     pub new_source: bool,
     pub sidecar: Option<CanvasPayload>,
+    /// Ranura dueña de esta escritura (no siempre la activa: la cola de
+    /// escritura guarda también lienzos de fondo) y captura del historial con
+    /// la que se lanzó, para no marcar como guardadas las ediciones que
+    /// lleguen durante la escritura.
+    pub ticket: SaveTicket,
+}
+
+/// A quién pertenece una escritura y en qué revisión se lanzó. Viaja de ida
+/// (petición) y de vuelta (respuesta) para que el resultado se aplique a SU
+/// ranura aunque el usuario haya cambiado de lienzo entre medias.
+#[derive(Debug, Clone, Copy)]
+pub struct SaveTicket {
+    pub target: ImageInsertDest,
+    pub capture: (usize, u64),
 }
 
 /// Codifica y escribe (atómico) en un hilo de trabajo; el RGBA ya viene
@@ -89,6 +103,7 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
             metadata,
             new_source,
             sidecar,
+            ticket,
         } = input;
         if let Some(payload) = &sidecar {
             if let Err(error) = payload.validate_for_save(&path) {
@@ -96,6 +111,7 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
                     path,
                     result: Err(error),
                     new_source,
+                    ticket,
                 });
                 ctx.request_repaint();
                 return;
@@ -160,6 +176,7 @@ pub fn spawn_save(input: SaveInput, tx: Sender<AppMsg>, ctx: egui::Context) {
             path,
             result,
             new_source,
+            ticket,
         });
         ctx.request_repaint();
     });
@@ -291,6 +308,13 @@ mod tests {
                 metadata: None,
                 new_source: false,
                 sidecar: Some(payload),
+                ticket: SaveTicket {
+                    target: ImageInsertDest {
+                        generation: 0,
+                        slot_id: 0,
+                    },
+                    capture: (0, 0),
+                },
             },
             tx,
             egui::Context::default(),

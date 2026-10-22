@@ -4,11 +4,13 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::super::clip_fixture::{clip_canvas, clip_deck};
 use super::SaveFlow;
 use super::{
     autosave_action, is_permanent_save_error, retry_delay, Autosave, AutosaveAction,
-    AutosaveStatus, QUIET, RETRY_BACKOFF,
+    AutosaveStatus, QUIET, RETRY_BACKOFF, VIDEO_QUIET,
 };
+use crate::deck;
 use crate::editor;
 
 /// Documento del caso normal.
@@ -19,19 +21,25 @@ fn other() -> Option<&'static Path> {
     Some(Path::new("otra.png"))
 }
 
+/// Baraja vacía: las tablas que no miran clips no necesitan ranuras.
+fn no_deck() -> deck::Deck {
+    deck::Deck::default()
+}
+
 /// Lo que el autoguardado escribiría (None si no escribe). La pregunta de
 /// sobrescritura se prueba aparte con `autosave_action`, porque no es «no
 /// guardar»: es el aviso que el `Ctrl+S` también pide.
 fn autosave_target(
     state: &editor::EditorState,
     save: &SaveFlow,
+    deck: &crate::deck::Deck,
     skip_warning: bool,
     dialog_open: bool,
 ) -> Option<PathBuf> {
-    match autosave_action(state, save, skip_warning, dialog_open) {
+    match autosave_action(state, save, deck, skip_warning, dialog_open) {
         AutosaveAction::Save(path) => Some(path),
         AutosaveAction::AskOverwrite(_) => None,
-        AutosaveAction::Skip => None,
+        AutosaveAction::Skip(_) => None,
     }
 }
 
@@ -52,14 +60,17 @@ fn editable() -> (editor::EditorState, SaveFlow) {
 fn a_clean_document_never_autosaves() {
     let (mut state, save) = editable();
     state.history.mark_saved();
-    assert_eq!(autosave_target(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_target(&state, &save, &no_deck(), false, false),
+        None
+    );
 }
 
 #[test]
 fn a_dirty_saved_png_autosaves_in_place() {
     let (state, save) = editable();
     assert_eq!(
-        autosave_target(&state, &save, false, false),
+        autosave_target(&state, &save, &no_deck(), false, false),
         Some(PathBuf::from("foto.png"))
     );
 }
@@ -72,11 +83,23 @@ fn a_dirty_saved_png_autosaves_in_place() {
 fn a_pending_user_decision_disables_autosave() {
     let (mut state, save) = editable();
     state.external_change = true;
-    assert_eq!(autosave_target(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_target(&state, &save, &no_deck(), false, false),
+        None
+    );
+    // Y dice POR QUÉ: la barra de estado no puede quedarse en «Unsaved
+    // changes» sin explicar que hay un aviso esperando respuesta.
+    assert_eq!(
+        autosave_action(&state, &save, &no_deck(), false, false),
+        AutosaveAction::Skip("the ⚠ file-changed-on-disk banner")
+    );
     state.external_change = false;
-    assert_eq!(autosave_target(&state, &save, false, true), None);
+    assert_eq!(
+        autosave_target(&state, &save, &no_deck(), false, true),
+        None
+    );
     // Sin decisión pendiente, escribe.
-    assert!(autosave_target(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, &no_deck(), false, false).is_some());
 }
 
 #[test]
@@ -86,12 +109,12 @@ fn the_destructive_first_save_gates_are_respected() {
     let (state, mut save) = editable();
     save.overwrite_confirmed.clear();
     assert_eq!(
-        autosave_action(&state, &save, false, false),
+        autosave_action(&state, &save, &no_deck(), false, false),
         AutosaveAction::AskOverwrite(PathBuf::from("foto.png"))
     );
     // …salvo que el usuario pidiera no volver a preguntar.
     assert_eq!(
-        autosave_action(&state, &save, true, false),
+        autosave_action(&state, &save, &no_deck(), true, false),
         AutosaveAction::Save(PathBuf::from("foto.png"))
     );
 
@@ -100,12 +123,41 @@ fn the_destructive_first_save_gates_are_respected() {
     let (mut state, mut save) = editable();
     save.discard_raster_confirmed.clear();
     assert_eq!(
-        autosave_action(&state, &save, false, false),
-        AutosaveAction::Skip
+        autosave_action(&state, &save, &no_deck(), false, false),
+        AutosaveAction::Skip("the “no image layers left” decision")
     );
     // …salvo en un lienzo que nació en blanco: no hay foto que destruir.
     state.born_blank = true;
-    assert!(autosave_target(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, &no_deck(), false, false).is_some());
+}
+
+/// Un archivo que escribió la propia app (una imagen del bulk, un «Save as»,
+/// un lienzo nuevo materializado) no tiene original del usuario que
+/// proteger: el autoguardado escribe sin abrir el aviso de sobrescritura.
+/// Antes preguntaba, y cancelar ese aviso dejaba el lienzo sin autoguardar.
+#[test]
+fn a_file_the_app_wrote_itself_never_asks_to_be_overwritten() {
+    let (mut state, mut save) = editable();
+    save.overwrite_confirmed.clear();
+    assert_eq!(
+        autosave_action(&state, &save, &no_deck(), false, false),
+        AutosaveAction::AskOverwrite(PathBuf::from("foto.png"))
+    );
+    save.mark_app_written(Path::new("foto.png"));
+    assert_eq!(
+        autosave_action(&state, &save, &no_deck(), false, false),
+        AutosaveAction::Save(PathBuf::from("foto.png")),
+        "un archivo creado por la app se autoguarda sin preguntar"
+    );
+    // La autorización es POR ARCHIVO: otro original sigue preguntando (con
+    // su propio «se borró la última foto» confirmado, para aislar la
+    // compuerta que se está probando).
+    state.doc.source_path = Some(PathBuf::from("retrato.jpg"));
+    save.confirm_discard_raster(Path::new("retrato.jpg"));
+    assert_eq!(
+        autosave_action(&state, &save, &no_deck(), false, false),
+        AutosaveAction::AskOverwrite(PathBuf::from("retrato.jpg"))
+    );
 }
 
 /// La confirmación vale para el ARCHIVO que se confirmó, no para la sesión:
@@ -115,7 +167,7 @@ fn the_destructive_first_save_gates_are_respected() {
 #[test]
 fn a_confirmation_for_one_file_does_not_authorize_another() {
     let (mut state, mut save) = editable();
-    assert!(autosave_target(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, &no_deck(), false, false).is_some());
 
     // Otro archivo: se le da la confirmación de «aplanar» (este fixture no
     // tiene capas de imagen y esa compuerta va primero) pero NO la de
@@ -123,7 +175,7 @@ fn a_confirmation_for_one_file_does_not_authorize_another() {
     state.doc.source_path = Some(PathBuf::from("retrato.jpg"));
     save.confirm_discard_raster(Path::new("retrato.jpg"));
     assert_eq!(
-        autosave_action(&state, &save, false, false),
+        autosave_action(&state, &save, &no_deck(), false, false),
         AutosaveAction::AskOverwrite(PathBuf::from("retrato.jpg")),
         "la confirmación de foto.png no puede autorizar a pisar retrato.jpg"
     );
@@ -131,7 +183,7 @@ fn a_confirmation_for_one_file_does_not_authorize_another() {
     // Confirmado ese archivo, sí escribe.
     save.confirm_overwrite(Path::new("retrato.jpg"));
     assert_eq!(
-        autosave_target(&state, &save, false, false),
+        autosave_target(&state, &save, &no_deck(), false, false),
         Some(PathBuf::from("retrato.jpg"))
     );
 }
@@ -155,7 +207,7 @@ fn open_dialogs_and_in_flight_work_disable_autosave() {
         let (mut state, mut save) = editable();
         break_it(&mut state, &mut save);
         assert_eq!(
-            autosave_target(&state, &save, false, false),
+            autosave_target(&state, &save, &no_deck(), false, false),
             None,
             "{label}"
         );
@@ -171,20 +223,30 @@ fn expensive_or_unwritable_targets_disable_autosave() {
     for path in ["dibujo.svg", "anim.gif", "clip.mp4"] {
         let (mut state, save) = editable();
         state.doc.source_path = Some(PathBuf::from(path));
-        assert_eq!(autosave_target(&state, &save, false, false), None, "{path}");
+        assert_eq!(
+            autosave_target(&state, &save, &no_deck(), false, false),
+            None,
+            "{path}"
+        );
     }
 
     // Sin destino en disco no hay nada que escribir en el sitio.
     let (mut state, save) = editable();
     state.doc.source_path = None;
-    assert_eq!(autosave_target(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_target(&state, &save, &no_deck(), false, false),
+        None
+    );
 
     // Un diseño se autoguarda en su `.canvas`, no en un PNG prestado.
     let (mut state, save) = editable();
     state.is_design = true;
-    assert_eq!(autosave_target(&state, &save, false, false), None);
+    assert_eq!(
+        autosave_target(&state, &save, &no_deck(), false, false),
+        None
+    );
     state.doc.source_path = Some(PathBuf::from("diseno.canvas"));
-    assert!(autosave_target(&state, &save, false, false).is_some());
+    assert!(autosave_target(&state, &save, &no_deck(), false, false).is_some());
 }
 
 #[test]
@@ -193,31 +255,39 @@ fn the_timer_waits_for_quiet_and_fires() {
     let t0 = Instant::now();
     let revision = 7;
     // Primer aviso: arma la espera, no guarda.
-    assert!(!auto.tick(t0, doc(), revision, true, true));
+    assert!(!auto.tick(t0, doc(), revision, true, true, QUIET));
     assert!(!auto.tick(
         t0 + QUIET - Duration::from_millis(1),
         doc(),
         revision,
         true,
-        true
+        true,
+        QUIET
     ));
     // Cumplido el silencio, guarda.
-    assert!(auto.tick(t0 + QUIET, doc(), revision, true, true));
+    assert!(auto.tick(t0 + QUIET, doc(), revision, true, true, QUIET));
 }
 
 #[test]
 fn a_new_revision_rearms_the_wait_and_clears_the_backoff() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 3, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 3, true, true));
+    assert!(!auto.tick(t0, doc(), 3, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 3, true, true, QUIET));
     auto.on_failed(t0 + QUIET);
     // Sin edición nueva, el reintento espera su backoff.
-    assert!(!auto.tick(t0 + QUIET + Duration::from_secs(1), doc(), 3, true, true));
+    assert!(!auto.tick(
+        t0 + QUIET + Duration::from_secs(1),
+        doc(),
+        3,
+        true,
+        true,
+        QUIET
+    ));
     // Edición nueva: se rearma desde cero y no hereda el backoff.
     let edit = t0 + QUIET + Duration::from_secs(2);
-    assert!(!auto.tick(edit, doc(), 4, true, true));
-    assert!(auto.tick(edit + QUIET, doc(), 4, true, true));
+    assert!(!auto.tick(edit, doc(), 4, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET, doc(), 4, true, true, QUIET));
 }
 
 /// «Siempre» no significa «una vez y a esperar otra edición»: un fallo
@@ -227,64 +297,95 @@ fn a_new_revision_rearms_the_wait_and_clears_the_backoff() {
 fn a_failed_attempt_retries_with_backoff_and_then_gives_up() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 9, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 9, true, true));
+    assert!(!auto.tick(t0, doc(), 9, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 9, true, true, QUIET));
     auto.on_failed(t0 + QUIET);
     let retry1 = t0 + QUIET + RETRY_BACKOFF[0];
-    assert!(!auto.tick(retry1 - Duration::from_millis(1), doc(), 9, true, true));
-    assert!(auto.tick(retry1, doc(), 9, true, true));
+    assert!(!auto.tick(
+        retry1 - Duration::from_millis(1),
+        doc(),
+        9,
+        true,
+        true,
+        QUIET
+    ));
+    assert!(auto.tick(retry1, doc(), 9, true, true, QUIET));
     auto.on_failed(retry1);
     let retry2 = retry1 + RETRY_BACKOFF[1];
-    assert!(!auto.tick(retry2 - Duration::from_millis(1), doc(), 9, true, true));
-    assert!(auto.tick(retry2, doc(), 9, true, true));
+    assert!(!auto.tick(
+        retry2 - Duration::from_millis(1),
+        doc(),
+        9,
+        true,
+        true,
+        QUIET
+    ));
+    assert!(auto.tick(retry2, doc(), 9, true, true, QUIET));
     auto.on_failed(retry2);
     // Agotados los intentos: ni el tiempo ni un frame lejano lo relanzan.
-    assert!(!auto.tick(retry2 + Duration::from_secs(3600), doc(), 9, true, true));
+    assert!(!auto.tick(
+        retry2 + Duration::from_secs(3600),
+        doc(),
+        9,
+        true,
+        true,
+        QUIET
+    ));
     // Pero una edición nueva sí.
     let edit = retry2 + Duration::from_secs(3700);
-    assert!(!auto.tick(edit, doc(), 10, true, true));
-    assert!(auto.tick(edit + QUIET, doc(), 10, true, true));
+    assert!(!auto.tick(edit, doc(), 10, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET, doc(), 10, true, true, QUIET));
 }
 
-/// El aviso de sobrescritura se pide UNA vez por ciclo: si el usuario lo
-/// cancela, el autoguardado no lo reabre cada 1,5 s. Se rearma cuando el
-/// documento queda limpio (se guardó de otra forma) o se abre otro archivo.
+/// Cancelar el aviso de sobrescritura desarma el ciclo: el lienzo no se
+/// escribe y el aviso no salta cada 1,5 s. La próxima EDICIÓN lo vuelve a
+/// armar y a preguntar — antes no se rearmaba nunca, así que tras un «Cancel»
+/// el autoguardado se quedaba llamando a una pregunta ya contestada y el
+/// lienzo vivía en «Unsaved changes» para siempre, sin ningún aviso.
 #[test]
-fn the_overwrite_question_is_asked_once_per_cycle() {
+fn declining_the_overwrite_question_rearms_on_the_next_edit() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 1, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
-    assert!(auto.take_overwrite_question(), "la primera vez se pregunta");
-    assert!(
-        !auto.take_overwrite_question(),
-        "cancelar no puede reabrir el aviso en el mismo ciclo"
-    );
-    // Guardado manual: queda limpio, así que la próxima edición vuelve a
-    // preguntar lo suyo.
-    assert!(!auto.tick(t0 + QUIET, doc(), 1, false, true));
-    assert!(
-        auto.take_overwrite_question(),
-        "tras guardar de otra forma, se pregunta otra vez"
-    );
+    assert!(!auto.tick(t0, doc(), 1, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
+    // «Cancel» en el aviso: ni más disparos ni más preguntas en este ciclo.
+    auto.on_overwrite_declined();
+    assert!(!auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
+    assert!(!auto.tick(t0 + Duration::from_secs(60), doc(), 1, true, true, QUIET));
+    // Una edición nueva arma el ciclo otra vez (y con él la pregunta).
+    let edit = t0 + Duration::from_secs(61);
+    assert!(!auto.tick(edit, doc(), 2, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET, doc(), 2, true, true, QUIET));
     // Otro archivo: ciclo nuevo y pregunta propia (la confirmación es por ruta).
-    assert!(!auto.tick(t0 + QUIET, other(), 1, true, true));
-    assert!(
-        auto.take_overwrite_question(),
-        "otro archivo pregunta lo suyo"
-    );
+    auto.on_overwrite_declined();
+    assert!(!auto.tick(edit + QUIET, other(), 3, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET + QUIET, other(), 3, true, true, QUIET));
 }
 
 #[test]
 fn a_success_clears_the_backoff() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 2, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 2, true, true));
+    assert!(!auto.tick(t0, doc(), 2, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 2, true, true, QUIET));
     auto.on_failed(t0 + QUIET);
-    assert!(!auto.tick(t0 + QUIET + Duration::from_secs(1), doc(), 2, true, true));
+    assert!(!auto.tick(
+        t0 + QUIET + Duration::from_secs(1),
+        doc(),
+        2,
+        true,
+        true,
+        QUIET
+    ));
     auto.on_saved();
-    assert!(auto.tick(t0 + QUIET + Duration::from_secs(1), doc(), 2, true, true));
+    assert!(auto.tick(
+        t0 + QUIET + Duration::from_secs(1),
+        doc(),
+        2,
+        true,
+        true,
+        QUIET
+    ));
 }
 
 /// Abrir otro lienzo no hereda la espera ni el backoff del anterior: las
@@ -293,14 +394,14 @@ fn a_success_clears_the_backoff() {
 fn changing_documents_resets_the_wait_and_the_attempts() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 1, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
+    assert!(!auto.tick(t0, doc(), 1, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
     auto.on_failed(t0 + QUIET);
     assert_eq!(auto.status(), AutosaveStatus::Retrying);
     // Misma revisión, otro documento: ciclo nuevo y sin backoff heredado.
-    assert!(!auto.tick(t0 + QUIET, other(), 1, true, true));
+    assert!(!auto.tick(t0 + QUIET, other(), 1, true, true, QUIET));
     assert_eq!(auto.status(), AutosaveStatus::Idle);
-    assert!(auto.tick(t0 + QUIET + QUIET, other(), 1, true, true));
+    assert!(auto.tick(t0 + QUIET + QUIET, other(), 1, true, true, QUIET));
 }
 
 /// «Discard» llega antes del frame del editor y la navegación se aplica
@@ -309,13 +410,13 @@ fn changing_documents_resets_the_wait_and_the_attempts() {
 fn discard_disarms_the_frame_between_the_dialog_and_navigation() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 1, true, true));
+    assert!(!auto.tick(t0, doc(), 1, true, true, QUIET));
     auto.on_discarded();
-    assert!(!auto.tick(t0 + QUIET, doc(), 1, true, true));
+    assert!(!auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
     // La siguiente edición arma el ciclo con normalidad.
     let edit = t0 + QUIET + Duration::from_secs(1);
-    assert!(!auto.tick(edit, doc(), 2, true, true));
-    assert!(auto.tick(edit + QUIET, doc(), 2, true, true));
+    assert!(!auto.tick(edit, doc(), 2, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET, doc(), 2, true, true, QUIET));
 }
 
 /// Rendirse no puede dejar el reloj armado: si no, el aviso de «reintentando»
@@ -324,8 +425,8 @@ fn discard_disarms_the_frame_between_the_dialog_and_navigation() {
 fn giving_up_stops_the_retries_until_a_new_edit() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 1, true, true));
-    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
+    assert!(!auto.tick(t0, doc(), 1, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
     auto.give_up();
     assert_eq!(
         auto.status(),
@@ -333,11 +434,18 @@ fn giving_up_stops_the_retries_until_a_new_edit() {
         "no hay reintento pendiente"
     );
     assert_eq!(auto.next_wake(t0 + QUIET), None);
-    assert!(!auto.tick(t0 + QUIET + Duration::from_secs(3600), doc(), 1, true, true));
+    assert!(!auto.tick(
+        t0 + QUIET + Duration::from_secs(3600),
+        doc(),
+        1,
+        true,
+        true,
+        QUIET
+    ));
     // Una edición nueva vuelve a armar el ciclo.
     let edit = t0 + QUIET + Duration::from_secs(3601);
-    assert!(!auto.tick(edit, doc(), 2, true, true));
-    assert!(auto.tick(edit + QUIET, doc(), 2, true, true));
+    assert!(!auto.tick(edit, doc(), 2, true, true, QUIET));
+    assert!(auto.tick(edit + QUIET, doc(), 2, true, true, QUIET));
 }
 
 /// Qué fallos se reintentan solos y cuáles no. `canvas-io` ya reintenta las
@@ -398,15 +506,15 @@ fn next_wake_points_at_the_quiet_then_at_the_retry() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
     assert_eq!(auto.next_wake(t0), None);
-    assert!(!auto.tick(t0, doc(), 1, true, true));
+    assert!(!auto.tick(t0, doc(), 1, true, true, QUIET));
     assert_eq!(auto.next_wake(t0), Some(QUIET));
     assert_eq!(auto.next_wake(t0 + QUIET / 2), Some(QUIET - QUIET / 2));
     // Tras fallar, el próximo aviso es el reintento (el silencio ya cumplido).
-    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true));
+    assert!(auto.tick(t0 + QUIET, doc(), 1, true, true, QUIET));
     auto.on_failed(t0 + QUIET);
     assert_eq!(auto.next_wake(t0 + QUIET), Some(RETRY_BACKOFF[0]));
     // Limpio: nada que despertar.
-    assert!(!auto.tick(t0 + QUIET, doc(), 1, false, true));
+    assert!(!auto.tick(t0 + QUIET, doc(), 1, false, true, QUIET));
     assert_eq!(auto.next_wake(t0 + QUIET), None);
 }
 
@@ -425,13 +533,140 @@ fn status_reports_only_a_pending_retry() {
 fn disallowed_never_fires_and_a_clean_document_resets() {
     let mut auto = Autosave::default();
     let t0 = Instant::now();
-    assert!(!auto.tick(t0, doc(), 3, true, false));
-    assert!(!auto.tick(t0 + QUIET * 2, doc(), 3, true, false));
+    assert!(!auto.tick(t0, doc(), 3, true, false, QUIET));
+    assert!(!auto.tick(t0 + QUIET * 2, doc(), 3, true, false, QUIET));
     // En cuanto se permite, el silencio ya estaba cumplido: guarda.
-    assert!(auto.tick(t0 + QUIET * 2, doc(), 3, true, true));
+    assert!(auto.tick(t0 + QUIET * 2, doc(), 3, true, true, QUIET));
     // Limpio: se desarma (el próximo cambio arranca de cero).
-    assert!(!auto.tick(t0 + QUIET * 3, doc(), 3, false, true));
+    assert!(!auto.tick(t0 + QUIET * 3, doc(), 3, false, true, QUIET));
     assert_eq!(auto.next_wake(t0 + QUIET * 3), None);
-    assert!(!auto.tick(t0 + QUIET * 4, doc(), 4, true, true));
-    assert!(auto.tick(t0 + QUIET * 5, doc(), 4, true, true));
+    assert!(!auto.tick(t0 + QUIET * 4, doc(), 4, true, true, QUIET));
+    assert!(auto.tick(t0 + QUIET * 5, doc(), 4, true, true, QUIET));
+}
+
+/// Un clip se autoguarda en su mp4 reservado, sin los avisos destructivos del
+/// raster (no hay foto original que pisar: el mp4 lo escribe la app).
+#[test]
+fn a_clip_canvas_autosaves_to_its_reserved_mp4_without_prompts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("download/clip.mp4");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, b"x").unwrap();
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let state = clip_canvas(&source);
+    let deck = clip_deck(&project);
+    let save = SaveFlow::default();
+    assert_eq!(
+        autosave_target(&state, &save, &deck, false, false),
+        Some(project.join("clip-01.mp4")),
+        "el primer guardado escribe el nombre reservado"
+    );
+    // Ni siquiera con las confirmaciones «gastadas» el clip las necesita.
+    assert!(!save.overwrite_ok(&project.join("clip-01.mp4")));
+    assert_eq!(
+        autosave_action(&state, &save, &deck, false, false),
+        AutosaveAction::Save(project.join("clip-01.mp4"))
+    );
+}
+
+/// Sin carpeta de proyecto, sin fuente en disco o con capas que ffmpeg no
+/// reproduciría, el autoguardado no toca nada (no hay diálogo que abrir desde
+/// un temporizador).
+#[test]
+fn a_clip_never_autosaves_without_a_safe_destination() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("clip.mp4");
+    std::fs::write(&source, b"x").unwrap();
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let save = SaveFlow::default();
+
+    // Baraja sin carpeta (mp4 suelto o galería): pide «Save as…».
+    let mut loose = clip_deck(&project);
+    loose.folder = None;
+    assert_eq!(
+        autosave_target(&clip_canvas(&source), &save, &loose, false, false),
+        None
+    );
+
+    // Fuente borrada desde Download: no hay composición que renderizar.
+    let gone = tmp.path().join("download/borrado.mp4");
+    assert_eq!(
+        autosave_target(
+            &clip_canvas(&gone),
+            &save,
+            &clip_deck(&project),
+            false,
+            false
+        ),
+        None
+    );
+
+    // Una capa visible extra (texto encima del clip) no es un mp4 reproducible.
+    let mut extra = clip_canvas(&source);
+    extra
+        .doc
+        .add_layer(
+            "Título",
+            canvas_core::Transform::new(0.0, 0.0, 300.0, 80.0),
+            canvas_core::LayerContent::Shape(canvas_core::ShapeContent {
+                kind: canvas_core::ShapeKind::Rect,
+                fill: [255, 255, 255, 255],
+                stroke: [0, 0, 0, 0],
+                stroke_width: 0.0,
+                corner_radius: 0.0,
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        autosave_target(&extra, &save, &clip_deck(&project), false, false),
+        None
+    );
+}
+
+/// La cola de clips recién añadidos tiene prioridad: mientras escribe, el
+/// temporizador del activo no lanza un segundo render sobre el mismo lienzo.
+#[test]
+fn a_busy_clip_queue_holds_the_timer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("clip.mp4");
+    std::fs::write(&source, b"x").unwrap();
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut deck = clip_deck(&project);
+    let generation = deck.generation();
+    let mut save = SaveFlow::default();
+    save.writes.enqueue(generation, [deck.slots[0].id]);
+    assert_eq!(
+        autosave_target(&clip_canvas(&source), &save, &deck, false, false),
+        None
+    );
+    // Terminado el render de la cola, el temporizador vuelve a tener voz.
+    save.writes.next();
+    save.writes.finished(deck.slots[0].id);
+    assert!(autosave_target(&clip_canvas(&source), &save, &deck, false, false).is_some());
+    let _ = &mut deck;
+}
+
+/// El clip exige `VIDEO_QUIET`: a los 2 s no ha pasado nada y a los 5 s sí.
+#[test]
+fn a_clip_waits_longer_than_a_png() {
+    let mut auto = Autosave::default();
+    let t0 = Instant::now();
+    assert!(!auto.tick(t0, doc(), 1, true, true, VIDEO_QUIET));
+    assert!(!auto.tick(
+        t0 + Duration::from_secs(2),
+        doc(),
+        1,
+        true,
+        true,
+        VIDEO_QUIET
+    ));
+    assert!(auto.tick(t0 + VIDEO_QUIET, doc(), 1, true, true, VIDEO_QUIET));
+    assert_eq!(VIDEO_QUIET, Duration::from_secs(5));
+    // El latido espera la espera LARGA, no la del PNG.
+    let mut png = Autosave::default();
+    assert!(!png.tick(t0, doc(), 1, true, true, QUIET));
+    assert_eq!(png.next_wake(t0), Some(QUIET.max(Duration::from_millis(1))));
 }

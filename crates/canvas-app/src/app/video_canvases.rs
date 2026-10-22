@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use super::{AppInner, View, Workspace};
 use crate::settings::NewCanvasFormat;
 use crate::{deck, editor, ytdlp::VideoAccept};
@@ -79,6 +77,14 @@ impl AppInner {
             self.settings.ytdlp_canvas_size = accepts[0].size;
             self.settings.save_in_background();
             ws.view = View::Editor(Box::new(state));
+            // Sin carpeta de proyecto no hay destino que escribir sin
+            // preguntar: el clip sigue siendo una provisional y su destino se
+            // decide con «Save as…». Traza para no buscarlo a ciegas.
+            if ws.deck.folder.is_none() {
+                tracing::info!(
+                    "clip: sin carpeta de proyecto, no se guarda solo; se pedirá destino al guardar"
+                );
+            }
             self.sync_title(ctx, ws);
         }
     }
@@ -143,8 +149,8 @@ fn try_append_video_canvases(
             }
         };
         // Sin copia: el documento sigue enlazando el temporal y la ranura
-        // solo reserva el nombre final. El primer `Ctrl+S` renderiza el
-        // editado a ese nombre y lo adopta (ver `video_save_in_place`).
+        // solo reserva el nombre final. El primer guardado renderiza el
+        // editado a ese nombre y lo adopta (ver `clip_save_target`).
         let incoming = std::mem::replace(
             &mut ws.deck.slots[first_new].content,
             deck::SlotContent::Active,
@@ -163,6 +169,19 @@ fn try_append_video_canvases(
         ws.deck.jump_reframe = false;
         ws.deck.layout_dirty = true;
         state.viewport.request_fit();
+        // Todas las ranuras de la tanda —la activa incluida— se escriben solas
+        // en cuanto el editor esté ocioso (ver `write_queue::tick`): el clip deja
+        // de ser una provisional que enlaza el temporal de Download sin
+        // esperar a `Ctrl+S` ni a «Back to gallery».
+        if ws.deck.folder.is_some() {
+            let generation = ws.deck.generation();
+            let new_ids = ws.deck.slots[first_new..].iter().map(|slot| slot.id);
+            ws.save.writes.enqueue(generation, new_ids);
+        } else {
+            // Sin carpeta de proyecto no hay destino que la app pueda escribir
+            // sola (un mp4 suelto pide «Save as…»): no se encola nada.
+            tracing::info!("clip: la baraja no tiene carpeta; no se encola el guardado automático");
+        }
     }
     app.apply_deck_prefs(ws);
     if let View::Editor(state) = &ws.view {
@@ -187,101 +206,6 @@ pub(super) fn slot_ext(accept: &VideoAccept, format: NewCanvasFormat) -> &str {
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("mp4")
-}
-
-/// Composición a renderizar del documento de `state`: página + rectángulo de
-/// la capa de vídeo + blur del fondo + trim. Pura (testeable).
-pub(super) struct VideoCompositionRequest {
-    pub(super) src: PathBuf,
-    pub(super) start_s: f64,
-    pub(super) end_s: Option<f64>,
-    pub(super) page_w: u32,
-    pub(super) page_h: u32,
-    pub(super) fg_x: i32,
-    pub(super) fg_y: i32,
-    pub(super) fg_w: u32,
-    pub(super) fg_h: u32,
-    pub(super) bg_blur: f32,
-}
-
-/// Resuelve la composición a renderizar del documento de `state`: la primera
-/// capa de vídeo visible con origen en disco + su In/Out no destructivo, el
-/// tamaño de página y el blur del fondo. `None` cuando el documento NO es
-/// renderizable a vídeo — sin capa de vídeo con origen, o con contenido
-/// visible extra que ffmpeg no reproduciría (texto, formas, fotos, un vídeo
-/// rotado/recortado/con transparencia): entonces el guardado sigue su camino
-/// raster de siempre en vez de inventar un mp4 a medias. Pura (testeable).
-pub(super) fn video_composition_request(
-    state: &editor::EditorState,
-) -> Option<VideoCompositionRequest> {
-    let page = state.doc.page().ok()?;
-    let video = page.layers.iter().find(|layer| {
-        layer.visible && matches!(layer.content, canvas_core::LayerContent::Video(_))
-    })?;
-    let canvas_core::LayerContent::Video(link) = &video.content else {
-        unreachable!("filtrado arriba");
-    };
-    let src = link.source_path.clone()?;
-    // Solo la composición estándar (vídeo colocado + fondo con blur).
-    // Pura a propósito (sin `is_file`): que el temporal se borrara se detecta
-    // en el flujo de guardado (`video_src_missing` / `video_save_in_place`),
-    // no aquí — los tests construyen composiciones sobre rutas ficticias.
-    if video.transform.rotation != 0.0 || video.transform.flip_h || video.transform.flip_v {
-        return None;
-    }
-    if link.crop.is_some() || video.opacity < 0.999 {
-        return None;
-    }
-    let bg_id = state.background_layer;
-    let extra = page.layers.iter().any(|layer| {
-        layer.visible
-            && layer.id != video.id
-            && Some(layer.id) != bg_id
-            && !matches!(layer.content, canvas_core::LayerContent::Group(_))
-    });
-    if extra {
-        return None;
-    }
-    let bg_blur = bg_id
-        .and_then(|id| page.layer(id))
-        .filter(|bg| bg.visible)
-        .map(|bg| bg.effects.blur_radius)
-        .unwrap_or(0.0);
-    // x264/yuv420p exigen dimensiones pares: el transform se redondea a px y
-    // se baja 1 si sale impar (1 px frente al editor, documentado). La
-    // posición va con signo: el `overlay` recorta igual que el editor.
-    let even = |v: f64| (v.round() as u32).max(2) & !1;
-    Some(VideoCompositionRequest {
-        src,
-        start_s: link.trim_start,
-        end_s: link.trim_end,
-        page_w: even(page.width),
-        page_h: even(page.height),
-        fg_x: video.transform.x.round() as i32,
-        fg_y: video.transform.y.round() as i32,
-        fg_w: even(video.transform.width),
-        fg_h: even(video.transform.height),
-        bg_blur,
-    })
-}
-
-impl VideoCompositionRequest {
-    /// Empaqueta la composición con su destino para el worker de render.
-    pub(super) fn into_composition(self, dst: PathBuf) -> canvas_io::VideoComposition {
-        canvas_io::VideoComposition {
-            src: self.src,
-            start_s: self.start_s,
-            end_s: self.end_s,
-            page_w: self.page_w,
-            page_h: self.page_h,
-            fg_x: self.fg_x,
-            fg_y: self.fg_y,
-            fg_w: self.fg_w,
-            fg_h: self.fg_h,
-            bg_blur: self.bg_blur,
-            dst,
-        }
-    }
 }
 
 /// Guarda el lienzo actual en su ranura y añade los nuevos como

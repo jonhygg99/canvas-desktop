@@ -22,8 +22,13 @@ pub struct VideoSaveRequest {
 
 pub struct VideoSaveDone {
     pub target: ImageInsertDest,
+    /// Captura del historial al lanzar el render: el ÚNICO juez de «hubo
+    /// ediciones mientras se escribía» (ver `on_video_composition_rendered`).
+    /// Antes viajaba también el documento entero para compararlo, pero el
+    /// preview de vídeo escribe `poster_time` en el documento en cada
+    /// fotograma: la comparación nunca coincidía y cada render se daba por
+    /// «editado durante el guardado».
     pub capture: (usize, u64),
-    pub document: canvas_core::Document,
     pub dst: PathBuf,
     pub result: Result<VideoRenderInfo, IoError>,
     pub links: VideoSourceLinks,
@@ -31,7 +36,6 @@ pub struct VideoSaveDone {
 
 pub fn spawn_video_save(mut request: VideoSaveRequest, tx: Sender<AppMsg>, ctx: egui::Context) {
     std::thread::spawn(move || {
-        let document = request.payload.document.clone();
         let mut reserved = None;
         let mut links = Vec::new();
         let result = (|| {
@@ -64,7 +68,6 @@ pub fn spawn_video_save(mut request: VideoSaveRequest, tx: Sender<AppMsg>, ctx: 
         let done = VideoSaveDone {
             target: request.target,
             capture: request.capture,
-            document,
             dst: request.composition.dst,
             result,
             links,

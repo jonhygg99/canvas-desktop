@@ -52,34 +52,43 @@ impl EditorState {
     /// método no tiene acceso a la GPU, así que quien la necesite (el
     /// horneado de guardado) la rellena después.
     pub fn sidecar_payload(&self) -> canvas_io::CanvasPayload {
-        // Solo se embeben los píxeles de capas que EXISTEN en el documento
-        // que se va a guardar. El editor retiene píxeles de capas ya retiradas
-        // de `doc.layers` (borrado, o `Blurred background` desactivado) para
-        // poder deshacerlas dentro de la MISMA sesión — pero el sidecar no
-        // serializa el historial de deshacer, así que un blob huérfano (una
-        // imagen cuyo id ya no tiene capa) solo recargaba una inconsistencia
-        // y engordaba el archivo. Es exactamente el estado (imagen en
-        // `images` sin entrada en `layers`) que estaba detrás de los diseños
-        // desenfocados `14.png`/`1.png` que hubo que rescatar con
-        // `recover_design`. Filtrar no pierde nada: sin historial, deshacer
-        // no puede revivir nada tras recargar, y re-activar el fondo
-        // desenfocado regenera el blur desde su fuente.
-        let live: std::collections::HashSet<u64> = self
-            .doc
-            .page()
-            .map(|p| p.layers.iter().map(|l| l.id.raw()).collect())
-            .unwrap_or_default();
-        let images = self
-            .images
-            .iter()
-            .filter(|(id, _)| live.contains(&id.raw()))
-            .map(|(id, data)| (id.raw(), data.data.data().to_vec(), data.width, data.height))
-            .collect();
-        canvas_io::CanvasPayload {
-            document: self.doc.clone(),
-            images,
-            background_layer: self.background_layer.map(|id| id.raw()),
-            preview: None,
-        }
+        payload_of(&self.doc, &self.images, self.background_layer)
+    }
+}
+
+/// El mismo payload para un documento cualquiera, no solo el del lienzo
+/// activo: la cola de clips guarda ranuras de FONDO de la baraja, cuyo
+/// documento vive en su `SlotDoc`.
+///
+/// Solo se embeben los píxeles de capas que EXISTEN en el documento que se va
+/// a guardar. El editor retiene píxeles de capas ya retiradas de `doc.layers`
+/// (borrado, o `Blurred background` desactivado) para poder deshacerlas dentro
+/// de la MISMA sesión — pero el sidecar no serializa el historial de deshacer,
+/// así que un blob huérfano (una imagen cuyo id ya no tiene capa) solo
+/// recargaba una inconsistencia y engordaba el archivo. Es exactamente el
+/// estado (imagen en `images` sin entrada en `layers`) que estaba detrás de los
+/// diseños desenfocados `14.png`/`1.png` que hubo que rescatar con
+/// `recover_design`. Filtrar no pierde nada: sin historial, deshacer no puede
+/// revivir nada tras recargar, y re-activar el fondo desenfocado regenera el
+/// blur desde su fuente.
+pub(crate) fn payload_of(
+    doc: &canvas_core::Document,
+    images: &ImageMap,
+    background_layer: Option<LayerId>,
+) -> canvas_io::CanvasPayload {
+    let live: std::collections::HashSet<u64> = doc
+        .page()
+        .map(|p| p.layers.iter().map(|l| l.id.raw()).collect())
+        .unwrap_or_default();
+    let images = images
+        .iter()
+        .filter(|(id, _)| live.contains(&id.raw()))
+        .map(|(id, data)| (id.raw(), data.data.data().to_vec(), data.width, data.height))
+        .collect();
+    canvas_io::CanvasPayload {
+        document: doc.clone(),
+        images,
+        background_layer: background_layer.map(|id| id.raw()),
+        preview: None,
     }
 }

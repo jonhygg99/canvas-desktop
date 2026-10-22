@@ -54,8 +54,10 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use eframe::egui_wgpu::RenderState;
 
+use crate::deck;
 use crate::editor::EditorState;
 
+use super::clip_save::{self, clip_save_target};
 use super::frame::EditorFrame;
 use super::persistence::{
     has_raster_layers, start_save, start_save_design, SaveContext, SaveStart,
@@ -66,6 +68,12 @@ use super::SaveFlow;
 /// no guardar entre dos pulsaciones de un mismo ajuste, corto para que el
 /// lienzo esté en disco cuando el usuario mire el explorador.
 pub(super) const QUIET: Duration = Duration::from_millis(1500);
+
+/// Silencio exigido para un lienzo de CLIP. Renderizar un mp4 (x264, quizá
+/// minutos de vídeo) cuesta muchísimo más que hornear un PNG, así que se le da
+/// más margen: el autoguardado no debe re-codificar el clip entre dos ajustes
+/// de trim. Con un solo render en vuelo, el resto espera a que termine.
+pub(super) const VIDEO_QUIET: Duration = Duration::from_secs(5);
 
 /// Esperas tras cada fallo, por intento. Un fallo transitorio (memoria, GPU,
 /// archivo bloqueado) se reintenta solo; al agotar la tabla se espera a una
@@ -102,11 +110,15 @@ pub(crate) struct Autosave {
     retry_at: Option<Instant>,
     /// Intentos fallidos de la revisión actual (se reinicia con cada edición).
     attempts: usize,
-    /// Ya se pidió a este documento la confirmación destructiva que pide
-    /// `Ctrl+S`. Sin esto, «Cancelar» en ese aviso lo reabriría cada 1,5 s.
-    /// Se rearma cuando el documento se guarda de otra forma (queda limpio)
-    /// o se abre otro archivo: ahí la respuesta anterior ya no aplica.
-    asked_overwrite: bool,
+    /// Revisión en la que el usuario cerró el aviso de sobrescritura con
+    /// «Cancelar». Mientras esa siga siendo la revisión actual, el
+    /// temporizador no dispara: sin esto, `tick` volvía a armar el ciclo en
+    /// cuanto `armed_at` quedaba vacío y el aviso saltaba cada 1,5 s. Una
+    /// edición nueva (otra revisión) lo vuelve a armar y a preguntar.
+    declined_revision: Option<u64>,
+    /// Silencio que se usó al armar el ciclo (ver `VIDEO_QUIET`): el latido de
+    /// `next_wake` tiene que esperar lo mismo que se exigirá al disparar.
+    quiet: Duration,
 }
 
 impl Autosave {
@@ -120,13 +132,14 @@ impl Autosave {
         revision: u64,
         dirty: bool,
         allowed: bool,
+        quiet: Duration,
     ) -> bool {
         if self.seen_doc.as_deref() != doc {
             self.seen_doc = doc.map(std::path::Path::to_path_buf);
             self.armed_at = None;
             self.retry_at = None;
             self.attempts = 0;
-            self.asked_overwrite = false;
+            self.declined_revision = None;
         }
         if !dirty {
             // Limpio = el último guardado cuajó (o el usuario deshizo hasta el
@@ -134,21 +147,31 @@ impl Autosave {
             self.armed_at = None;
             self.retry_at = None;
             self.attempts = 0;
-            self.asked_overwrite = false;
+            self.declined_revision = None;
             return false;
         }
         if self.seen_revision != revision {
             self.seen_revision = revision;
+            self.quiet = quiet;
             self.armed_at = Some(now);
             self.retry_at = None;
             self.attempts = 0;
+            // Edición nueva: el «no» anterior ya no aplica a lo que hay ahora
+            // en pantalla, así que vuelve a estar permitido preguntar.
+            self.declined_revision = None;
             return false;
+        }
+        if self.declined_revision == Some(revision) {
+            return false;
+        }
+        if self.armed_at.is_none() {
+            self.quiet = quiet;
         }
         let armed_at = *self.armed_at.get_or_insert(now);
         if !allowed || self.attempts >= RETRY_BACKOFF.len() {
             return false;
         }
-        if now.saturating_duration_since(armed_at) < QUIET {
+        if now.saturating_duration_since(armed_at) < self.quiet {
             return false;
         }
         if self.retry_at.is_some_and(|retry| now < retry) {
@@ -167,7 +190,9 @@ impl Autosave {
         }
         let wait = match self.retry_at {
             Some(retry) => retry.saturating_duration_since(now),
-            None => QUIET.saturating_sub(now.saturating_duration_since(armed_at)),
+            None => self
+                .quiet
+                .saturating_sub(now.saturating_duration_since(armed_at)),
         };
         // Nunca 0: `request_repaint_after(0)` gira el bucle sin avanzar reloj.
         Some(wait.max(Duration::from_millis(1)))
@@ -188,13 +213,17 @@ impl Autosave {
         self.armed_at.get_or_insert(now);
     }
 
-    /// ¿Toca preguntar la confirmación destructiva de ESTE documento?
-    /// Devuelve `true` una sola vez por ciclo: el aviso se enseña, y si el
-    /// usuario lo cancela no vuelve a aparecer solo.
-    pub(super) fn take_overwrite_question(&mut self) -> bool {
-        let first = !self.asked_overwrite;
-        self.asked_overwrite = true;
-        first
+    /// El usuario eligió «Cancelar» en el aviso de sobrescritura: esta
+    /// revisión no se escribe y el ciclo queda DESARMADO (si no, el aviso
+    /// volvería a saltar cada 1,5 s y, peor, el temporizador se quedaría
+    /// disparando contra una pregunta ya contestada sin escribir nada: el
+    /// lienzo se veía «Unsaved changes» para siempre). La próxima edición
+    /// vuelve a armar el ciclo y a preguntar.
+    pub(super) fn on_overwrite_declined(&mut self) {
+        self.armed_at = None;
+        self.retry_at = None;
+        self.attempts = 0;
+        self.declined_revision = Some(self.seen_revision);
     }
 
     /// El fallo no se va a arreglar solo (destino de solo lectura, formato
@@ -258,53 +287,108 @@ enum AutosaveAction {
     /// abierto desde el disco no se autoguardaba NUNCA; ahora se pregunta una
     /// vez y, si acepta, se guarda como cualquier otro.
     AskOverwrite(PathBuf),
-    /// No tocar nada (diálogo abierto, gesto a medias, formato sin escritura,
-    /// aviso de «se borró la última foto» sin responder…).
-    Skip,
+    /// No tocar nada. El texto es el MOTIVO (inglés, va a la barra de estado):
+    /// un autoguardado que no hace nada en silencio deja al usuario mirando
+    /// «Unsaved changes» sin saber qué lo bloquea (el banner de cambio
+    /// externo, un diálogo, un gesto a medias…).
+    Skip(&'static str),
 }
 
 /// Qué debe hacer el autoguardado ahora con el lienzo activo. Pura.
 fn autosave_action(
     state: &EditorState,
     save: &SaveFlow,
+    deck: &deck::Deck,
     skip_overwrite_warning: bool,
     dialog_open: bool,
 ) -> AutosaveAction {
-    if !state.is_dirty() || state.saving || state.exporting {
-        return AutosaveAction::Skip;
+    if !state.is_dirty() {
+        return AutosaveAction::Skip("no changes");
+    }
+    if state.saving {
+        return AutosaveAction::Skip("the save that is still writing");
+    }
+    if state.exporting {
+        return AutosaveAction::Skip("the export that is still running");
     }
     // Decisiones del usuario pendientes: el banner de cambio externo
     // (Reload / Keep mine) y el diálogo de «cambios sin guardar» (Save /
     // Discard). Escribir por detrás resolvería ambas por el usuario.
-    if state.external_change || dialog_open {
-        return AutosaveAction::Skip;
+    if state.external_change {
+        return AutosaveAction::Skip("the ⚠ file-changed-on-disk banner");
     }
-    if !state.is_idle_except_save() || state.framing.is_some() || state.ytdlp.edit.is_some() {
-        return AutosaveAction::Skip;
+    if dialog_open {
+        return AutosaveAction::Skip("the unsaved-changes dialog");
     }
-    if save.save_path_dialog_open
-        || save.pending_save_as.is_some()
-        || !save.save_all_queue.is_empty()
-        || save.readonly_prompt.is_some()
-        || save.overwrite_prompt.is_some()
-        || save.discard_raster_prompt.is_some()
-        || save.low_memory_prompt.is_some()
-    {
-        return AutosaveAction::Skip;
+    if let Some(blocker) = state.autosave_blocker() {
+        return AutosaveAction::Skip(blocker);
+    }
+    if state.framing.is_some() {
+        return AutosaveAction::Skip("the framing view");
+    }
+    if state.ytdlp.edit.is_some() {
+        return AutosaveAction::Skip("the video edit window");
+    }
+    if save.save_path_dialog_open {
+        return AutosaveAction::Skip("the “Save as…” dialog");
+    }
+    if save.pending_save_as.is_some() {
+        return AutosaveAction::Skip("a pending “Save as…”");
+    }
+    if !save.save_all_queue.is_empty() {
+        return AutosaveAction::Skip("the “Save all” queue");
+    }
+    if save.readonly_prompt.is_some() {
+        return AutosaveAction::Skip("the read-only-file dialog");
+    }
+    if save.overwrite_prompt.is_some() {
+        return AutosaveAction::Skip("the overwrite confirmation");
+    }
+    if save.discard_raster_prompt.is_some() {
+        return AutosaveAction::Skip("the “no image layers left” dialog");
+    }
+    if save.low_memory_prompt.is_some() {
+        return AutosaveAction::Skip("the low-memory dialog");
+    }
+    // La cola única de escritura ya está escribiendo (un clip recién añadido o
+    // un lienzo de fondo sucio): el activo espera a que le toque, porque en
+    // toda la ventana hay un solo worker a la vez (ver `app/write_queue.rs`).
+    if save.writes.busy(deck.generation()) {
+        return AutosaveAction::Skip("the canvas that is still being written");
+    }
+    // Un lienzo de CLIP no pasa por las compuertas del raster: no hay foto
+    // original que pisar (el destino es el nombre que la app reservó o el mp4
+    // que ella misma renderizó), así que tampoco hay aviso que pedir. El
+    // destino lo decide el mismo sitio que el `Ctrl+S` (`clip_save`): sin
+    // fuente en disco, capas extra o baraja sin carpeta, no se escribe.
+    if clip_save::is_clip_document(&state.doc) {
+        let Some(slot) = deck.slots.get(deck.active) else {
+            return AutosaveAction::Skip("a deck with no active canvas");
+        };
+        return match clip_save_target(
+            &state.doc,
+            state.background_layer,
+            &slot.path,
+            slot.is_placeholder,
+            deck.folder.as_deref(),
+        ) {
+            Some(dst) => AutosaveAction::Save(dst),
+            None => AutosaveAction::Skip("a clip with no automatic destination"),
+        };
     }
     let Some(path) = state.doc.source_path.clone() else {
-        return AutosaveAction::Skip;
+        return AutosaveAction::Skip("a canvas that was never saved");
     };
     // SVG/GIF solo lectura y vídeos (sin escritura en el sitio): `Ctrl+S`
     // tampoco los sobrescribe, así que el autoguardado no puede hacerlo.
     if !canvas_io::can_overwrite(&path) {
-        return AutosaveAction::Skip;
+        return AutosaveAction::Skip("a format that is read-only in place");
     }
     if state.is_design {
         return if canvas_io::is_canvas_file(&path) {
             AutosaveAction::Save(path)
         } else {
-            AutosaveAction::Skip
+            AutosaveAction::Skip("a design without a .canvas destination")
         };
     }
     // El aviso de «se borró la última foto» no se pregunta solo: aplanar el
@@ -312,12 +396,19 @@ fn autosave_action(
     // dos avisos seguidos desde un temporizador no son «guardar solo». Se
     // queda bloqueando hasta que lo responda un `Ctrl+S`.
     if !state.born_blank && !save.discard_raster_ok(&path) && !has_raster_layers(&state.doc) {
-        return AutosaveAction::Skip;
+        return AutosaveAction::Skip("the “no image layers left” decision");
     }
     // Sobrescritura del original: la misma confirmación que pide `Ctrl+S`,
-    // por ARCHIVO (la de otro canvas no vale). Se pregunta una vez en vez de
-    // no guardar nunca.
-    if !state.born_blank && !save.overwrite_ok(&path) && !skip_overwrite_warning {
+    // por ARCHIVO (la de otro canvas no vale). NO se pregunta por un archivo
+    // que escribió la propia app (bulk, «Save as», lienzo nuevo): no hay
+    // píxeles originales del usuario que este guardado pueda destruir, y
+    // preguntarlo convertía una tarea normal (editar algo recién creado) en
+    // un aviso que, al cancelarlo, dejaba el autoguardado parado en silencio.
+    if !state.born_blank
+        && !save.is_app_written(&path)
+        && !save.overwrite_ok(&path)
+        && !skip_overwrite_warning
+    {
         return AutosaveAction::AskOverwrite(path);
     }
     AutosaveAction::Save(path)
@@ -338,22 +429,56 @@ pub(super) fn tick(
     f: &mut EditorFrame<'_>,
 ) {
     let now = Instant::now();
+    let is_clip = clip_save::is_clip_document(&state.doc);
+    // Un clip tarda mucho más en escribirse: se le exige más silencio.
+    let quiet = if is_clip { VIDEO_QUIET } else { QUIET };
     let action = autosave_action(
         state,
         f.save,
+        f.deck,
         f.settings.skip_overwrite_warning,
         f.unsaved_dialog_open,
     );
     // `Skip` es lo único que además apaga el reloj: pedir la confirmación
     // destructiva sí es parte del ciclo (el temporizador tiene que llegar a
     // vencer el silencio antes de enseñar el aviso).
-    let allowed = !matches!(action, AutosaveAction::Skip);
+    let allowed = !matches!(action, AutosaveAction::Skip(_));
+    // El motivo viaja a la barra de estado: «Unsaved changes» a secas deja al
+    // usuario sin saber que hay algo esperando (el banner de cambio externo,
+    // un diálogo, un gesto a medias…) y parece que el autoguardado está roto.
+    // Además se registra UNA vez por cambio: un lienzo que lleva rato sin
+    // guardarse deja en el log qué lo está frenando, sin inundarlo (el motivo
+    // se reevalúa cada frame).
+    let previous_block = f.save.autosave_blocked;
+    f.save.autosave_blocked = match &action {
+        AutosaveAction::Skip(reason) => Some(*reason),
+        _ => None,
+    };
+    if previous_block != f.save.autosave_blocked {
+        match f.save.autosave_blocked {
+            Some(reason) => tracing::info!(motivo = reason, "autoguardado: en pausa"),
+            None => tracing::info!("autoguardado: reanudado"),
+        }
+    }
+    // Identidad del ciclo: para un clip, la ruta de su RANURA (el nombre
+    // reservado o el mp4 que se reescribe), no el temporal de Download — dos
+    // tramos del mismo vídeo comparten temporal y no deben heredarse intentos
+    // ni la pregunta de sobrescritura del otro.
+    let identity = if is_clip {
+        f.deck
+            .slots
+            .get(f.deck.active)
+            .map(|slot| slot.path.as_path())
+    } else {
+        state.doc.source_path.as_deref()
+    };
     let fire = f.save.autosave.tick(
         now,
-        state.doc.source_path.as_deref(),
+        identity,
         state.history.revision(),
         state.is_dirty(),
         allowed,
+        quiet,
     );
     if !fire {
         // Latido: egui se detiene cuando nada cambia, así que sin pedir el
@@ -371,21 +496,23 @@ pub(super) fn tick(
     let path = match action {
         AutosaveAction::Save(path) => path,
         AutosaveAction::AskOverwrite(path) => {
-            // Una pregunta por documento: «Cancelar» deja el lienzo sin
-            // guardar (como cualquier cancelación), pero el aviso no vuelve a
-            // aparecer solo en cada silencio.
-            if f.save.autosave.take_overwrite_question() {
-                tracing::info!(
-                    ruta = %path.display(),
-                    "autoguardado: primer guardado de este archivo, se pide la confirmación"
-                );
-                f.save.overwrite_dont_ask = false;
-                f.save.overwrite_prompt = Some(path);
-                ctx.request_repaint();
-            }
+            // El aviso se enseña mientras no haya otro abierto (`autosave_action`
+            // ya devuelve `Skip` con el modal en pantalla). «Cancelar» lo cierra
+            // y DESARMA el ciclo (`Autosave::on_overwrite_declined`): sin eso,
+            // el temporizador seguía disparando contra una pregunta ya
+            // contestada y el lienzo se quedaba en «Unsaved changes» para
+            // siempre, sin ningún aviso visible de que el autoguardado estaba
+            // parado.
+            tracing::info!(
+                ruta = %path.display(),
+                "autoguardado: primer guardado de este archivo, se pide la confirmación"
+            );
+            f.save.overwrite_dont_ask = false;
+            f.save.overwrite_prompt = Some(path);
+            ctx.request_repaint();
             return;
         }
-        AutosaveAction::Skip => return,
+        AutosaveAction::Skip(_) => return,
     };
     tracing::info!(
         ruta = %path.display(),
@@ -393,25 +520,31 @@ pub(super) fn tick(
         intento = f.save.autosave.attempts + 1,
         "autoguardado: se guarda el lienzo activo sin preguntar"
     );
-    let mut sctx = SaveContext {
-        renderer: f.renderer,
-        rs,
-        tx: f.tx,
-        ctx,
-        ignore_fs_events_until: f.ignore_fs_events_until,
-        scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
-    };
-    let started = if state.is_design {
-        start_save_design(state, &mut sctx, path, false)
+    let started = if is_clip {
+        // El render del clip no hornea en la UI: sella la captura y delega en
+        // el worker de vídeo, igual que el `Ctrl+S` de este lienzo.
+        clip_save::start_clip_save(state, f, ctx, path)
     } else {
-        start_save(
-            state,
-            &mut sctx,
-            f.deck,
-            path,
-            false,
-            f.settings.jpeg_quality,
-        )
+        let mut sctx = SaveContext {
+            renderer: f.renderer,
+            rs,
+            tx: f.tx,
+            ctx,
+            ignore_fs_events_until: f.ignore_fs_events_until,
+            scope: f.deck.slots.get(f.deck.active).map_or(0, |s| s.scope),
+        };
+        if state.is_design {
+            start_save_design(state, &mut sctx, path, false)
+        } else {
+            start_save(
+                state,
+                &mut sctx,
+                f.deck,
+                path,
+                false,
+                f.settings.jpeg_quality,
+            )
+        }
     };
     match started {
         SaveStart::Started => f.save.autosave_in_flight = true,

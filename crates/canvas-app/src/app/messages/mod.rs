@@ -18,12 +18,14 @@ use crate::lock::LockExt;
 use super::{AppInner, Nav, View, Workspace};
 use loader::AppMsg;
 
+mod background_saved;
 mod document;
 mod export;
 mod gallery;
 mod load;
 mod repair;
 mod save;
+mod saved;
 mod serper;
 mod shell;
 mod unsplash;
@@ -121,7 +123,18 @@ impl AppInner {
                 path,
                 result,
                 new_source,
-            } => self.on_saved(ws, path, result, new_source, ctx, open_after),
+                ticket,
+            } => self.on_saved(
+                ws,
+                saved::SavedFile {
+                    path,
+                    result,
+                    new_source,
+                    ticket,
+                },
+                ctx,
+                open_after,
+            ),
             AppMsg::VideoCompositionRendered(done) => {
                 self.on_video_composition_rendered(ws, *done, ctx, open_after)
             }

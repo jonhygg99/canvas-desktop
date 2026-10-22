@@ -12,11 +12,13 @@ use eframe::egui_wgpu::RenderState;
 
 use crate::{editor, loader};
 
+use super::super::super::clip_save::{
+    self, clip_save_target, is_clip_document, source_missing, start_clip_save,
+};
 use super::super::super::frame::EditorFrame;
 use super::super::super::persistence::{
-    saved_exit_ready, start_save, start_save_design, SaveContext,
+    saved_exit_ready, start_save, start_save_design, SaveContext, SaveStart,
 };
-use super::super::super::video_canvases::{video_composition_request, VideoCompositionRequest};
 use super::super::super::Nav;
 
 pub(super) fn handle_save(
@@ -52,7 +54,9 @@ pub(super) fn handle_save(
         f.save.save_path_dialog_open = true;
         if state.is_design {
             loader::spawn_pick_design_path(Some(state.file_name()), f.tx.clone(), ctx.clone());
-        } else if is_video_document(state) && video_composition_request(state).is_some() {
+        } else if is_clip_document(&state.doc)
+            && clip_save::video_composition_request(state).is_some()
+        {
             // El documento ES un vídeo renderizable: «Guardar como…»
             // renderiza la composición (página + fondo + clip).
             loader::spawn_pick_video_export_path(
@@ -60,7 +64,7 @@ pub(super) fn handle_save(
                 f.tx.clone(),
                 ctx.clone(),
             );
-        } else if is_video_document(state) {
+        } else if is_clip_document(&state.doc) {
             // Vídeo no renderizable (capas extra, clip rotado…): lo único
             // que funciona es el póster — el diálogo de vídeo acabaría en
             // un error de formato tras elegir nombre.
@@ -113,7 +117,7 @@ pub(super) fn handle_save(
                     );
                 }
             }
-        } else if is_video_document(state) {
+        } else if is_clip_document(&state.doc) {
             // El documento ES un vídeo: `Ctrl+S` renderiza la composición
             // (página + fondo + clip recortado). Con archivo real en el
             // sitio se guarda en silencio; la primera vez (provisional que
@@ -123,7 +127,7 @@ pub(super) fn handle_save(
             // composición que renderizar: se explica y se propone el póster,
             // que sigue en memoria. Va ANTES del `match`: si no, el diálogo de
             // vídeo sería un callejón (falla tras elegir nombre).
-            if video_src_missing(state) {
+            if source_missing(&state.doc) {
                 state.save_error = Some(
                     "The original clip is gone (it was deleted from Download's temporary folder). \
                      The poster can still be saved with \"Save as…\"."
@@ -133,9 +137,9 @@ pub(super) fn handle_save(
                 loader::spawn_pick_save_path(Some(state.file_name()), f.tx.clone(), ctx.clone());
                 return;
             }
-            match video_save_in_place(state, f) {
-                Some(dst) => render_video_composition(state, f, ctx, dst),
-                None if video_composition_request(state).is_some() => {
+            match active_clip_target(state, f.deck) {
+                Some(dst) => render_clip_or_prompt(state, f, ctx, dst),
+                None if clip_save::video_composition_request(state).is_some() => {
                     f.save.save_path_dialog_open = true;
                     loader::spawn_pick_video_export_path(
                         Some(state.file_name()),
@@ -184,6 +188,7 @@ pub(super) fn handle_save(
                     // usuario que este primer guardado pudiera destruir.
                     if !state.born_blank
                         && !f.settings.skip_overwrite_warning
+                        && !f.save.is_app_written(&path)
                         && !f.save.overwrite_ok(&path)
                     {
                         f.save.overwrite_dont_ask = false;
@@ -220,12 +225,12 @@ pub(super) fn handle_save(
         // diálogo de diseño, del de imagen o del de vídeo (los tres acaban
         // en el mismo `SaveAsPicked`).
         if canvas_io::is_video_file(&path) && !state.is_design {
-            match video_composition_request(state) {
-                Some(request) => {
+            match clip_save::video_composition_request(state) {
+                Some(_) => {
                     // Composición a un mp4 (nuevo o el propio origen): el
                     // diálogo ya eligió el destino. Mismo sello A04 que el
                     // guardado raster para conservar cambios posteriores.
-                    render_video_composition_to(state, f, ctx, path, request);
+                    start_clip_save(state, f, ctx, path);
                 }
                 None => {
                     // Sin capa de vídeo con origen no hay nada que recortar:
@@ -280,130 +285,30 @@ pub(super) fn handle_save(
     }
 }
 
-/// ¿El clip de origen ya no está en disco (se borró el temporal desde
-/// Download)? Entonces no hay composición que renderizar, pero el póster
-/// sigue en memoria y «Save as» lo salva. Pura (testeable).
-fn video_src_missing(state: &editor::EditorState) -> bool {
-    let Ok(page) = state.doc.page() else {
-        return false;
-    };
-    page.layers
-        .iter()
-        .find_map(|layer| match &layer.content {
-            canvas_core::LayerContent::Video(link) => Some(link),
-            _ => None,
-        })
-        .and_then(|link| link.source_path.clone())
-        .is_some_and(|src| !src.is_file())
-}
-
-/// ¿El documento ES un vídeo (su origen es un mp4)? Solo entonces `Ctrl+S`
-/// renderiza: un lienzo mixto (foto + capa de vídeo insertada) sigue el
-/// camino raster de siempre (hornea el póster) aunque tenga capas de vídeo.
-fn is_video_document(state: &editor::EditorState) -> bool {
-    state
-        .doc
-        .source_path
-        .as_deref()
-        .is_some_and(canvas_io::is_video_file)
-}
-
-/// Destino del guardado en el sitio de un lienzo de vídeo, en un proyecto con
-/// carpeta. Dos casos: (1) ranura real cuyo archivo es el propio origen — el
-/// `Ctrl+S` de siempre, en el sitio; (2) primer guardado de un lienzo creado
-/// desde Download: la ranura es provisional con el nombre final reservado
-/// (`1.mp4`…) y el documento enlaza el temporal — se renderiza el editado a
-/// ese nombre y se adopta. Un mp4 suelto abierto directo va por diálogo: es el
-/// único original y no se destruye sin avisar.
-fn video_save_in_place(state: &editor::EditorState, f: &EditorFrame<'_>) -> Option<PathBuf> {
-    let slot = f.deck.slots.get(f.deck.active)?;
-    let request = video_composition_request(state)?;
-    if slot.is_placeholder {
-        f.deck.folder.as_ref()?;
-        // Primer guardado: el nombre reservado es el destino y el temporal es
-        // el origen. Sin origen en disco no hay nada que renderizar.
-        if !request.src.is_file() || !canvas_io::is_video_file(&slot.path) {
-            return None;
-        }
-        return Some(slot.path.clone());
-    }
-    let src = state.doc.source_path.clone()?;
-    // Un vídeo suelto sin sidecar sigue siendo el único original: diálogo.
-    if f.deck.folder.is_none() && request.src == src {
-        return None;
-    }
-    if slot.path != src || !src.is_file() {
-        return None;
-    }
-    Some(src)
+/// Destino del guardado EN EL SITIO del lienzo activo (ver
+/// `clip_save::clip_save_target`: ranura provisional con su nombre reservado,
+/// o el propio archivo dentro del proyecto). `None` significa «pregunta dónde».
+fn active_clip_target(state: &editor::EditorState, deck: &crate::deck::Deck) -> Option<PathBuf> {
+    let slot = deck.slots.get(deck.active)?;
+    clip_save_target(
+        &state.doc,
+        state.background_layer,
+        &slot.path,
+        slot.is_placeholder,
+        deck.folder.as_deref(),
+    )
 }
 
 /// Lanza el renderizado en el sitio (el `dst` ya está decidido): si el
 /// documento no es renderizable (capas extra, vídeo rotado…), se explica y se
 /// redirige a «Save as…» en vez de inventar un mp4 a medias.
-fn render_video_composition(
+fn render_clip_or_prompt(
     state: &mut editor::EditorState,
     f: &mut EditorFrame<'_>,
     ctx: &egui::Context,
     dst: PathBuf,
 ) {
-    let Some(request) = video_composition_request(state) else {
+    if start_clip_save(state, f, ctx, dst.clone()) == SaveStart::RefusedPermanent {
         f.save.readonly_prompt = Some(dst);
-        return;
-    };
-    render_video_composition_to(state, f, ctx, dst, request);
-}
-
-/// Sella el estado de guardado (A04) y lanza el worker de renderizado. Como
-/// `start_save`: con un render en curso no se lanza otro — dos workers
-/// escribirían el mismo temporal y el mp4 saldría corrupto.
-fn render_video_composition_to(
-    state: &mut editor::EditorState,
-    f: &mut EditorFrame<'_>,
-    ctx: &egui::Context,
-    dst: PathBuf,
-    request: VideoCompositionRequest,
-) {
-    if state.saving {
-        return;
     }
-    // Suelta los handles propios ANTES de tocar disco: el preview (ffmpeg hijo
-    // leyendo el origen) y el audio (rodio con el `File` abierto) bloquean
-    // `ReplaceFileW` con 0x80070020 al guardar en el sitio. El reintento de
-    // `replace_file_with_tmp` cubre lo transitorio (Drive, cierre en curso).
-    state.pause_video();
-    crate::audio::stop();
-    tracing::info!(
-        "render vídeo {}x{} desde {} (trim {:?}-{:?}) a {}",
-        request.page_w,
-        request.page_h,
-        request.src.display(),
-        request.start_s,
-        request.end_s,
-        dst.display()
-    );
-    state.saving = true;
-    state.saving_capture = Some((state.history.undo_depth(), state.history.revision()));
-    state.save_error = None;
-    let target = loader::ImageInsertDest {
-        generation: f.deck.generation(),
-        slot_id: f.deck.slots.get(f.deck.active).map_or(0, |s| s.id),
-    };
-    let reserve = f
-        .deck
-        .slots
-        .get(f.deck.active)
-        .is_some_and(|s| s.is_placeholder && s.path == dst)
-        && f.deck.folder.is_some();
-    loader::spawn_video_save(
-        loader::VideoSaveRequest {
-            target,
-            capture: state.saving_capture.expect("captured above"),
-            payload: state.sidecar_payload(),
-            reserve,
-            composition: request.into_composition(dst),
-        },
-        f.tx.clone(),
-        ctx.clone(),
-    );
 }

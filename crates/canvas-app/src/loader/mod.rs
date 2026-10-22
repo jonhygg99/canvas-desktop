@@ -49,7 +49,7 @@ pub use load_ops::{
 pub use repair_ops::{auto_action_for, spawn_repair_png, AutoRepairAction};
 pub use save_ops::{
     spawn_pick_design_path, spawn_pick_save_path, spawn_pick_video_export_path,
-    spawn_reserve_canvas_path, spawn_save, SaveInput,
+    spawn_reserve_canvas_path, spawn_save, SaveInput, SaveTicket,
 };
 pub use serper_ops::{
     begin_bulk_files, default_bulk_dir, resolve_bulk_page, spawn_serper_image, spawn_serper_search,
@@ -226,6 +226,9 @@ pub enum AppMsg {
         result: Result<(), IoError>,
         /// true si venía de «Guardar como…» y el documento debe apuntar aquí.
         new_source: bool,
+        /// Ranura dueña de la escritura y captura del historial con la que se
+        /// lanzó: puede NO ser el lienzo activo (cola de escritura).
+        ticket: save_ops::SaveTicket,
     },
     /// Un lienzo de vídeo terminó de renderizar su composición (página +
     /// fondo + clip recortado) a `dst`.

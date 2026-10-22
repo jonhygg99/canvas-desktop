@@ -258,6 +258,14 @@ impl AppInner {
         panel.bulk_progress_at = None;
         panel.bulk_errors = errors;
         let ok = created.len();
+        // Los lienzos los acaba de escribir la APP: el autoguardado (y el
+        // primer `Ctrl+S`) no tienen que preguntar si pueden sobrescribirlos —
+        // no hay ninguna foto original del usuario detrás (ver
+        // `SaveFlow::is_app_written`). Antes se preguntaba, y cancelar ese
+        // aviso dejaba el lienzo sin autoguardar en silencio.
+        for path in &created {
+            ws.save.mark_app_written(path);
+        }
         // La carpeta usada se recuerda para la próxima (sigue por detrás de
         // baraja, archivo y galería en la resolución).
         self.settings.serper_last_folder = Some(folder.clone());

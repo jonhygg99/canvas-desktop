@@ -464,7 +464,8 @@ fn render_resolves_the_page_layout_not_the_source() {
         12.0,
         (2.0, Some(7.5)),
     );
-    let request = super::video_composition_request(&state).expect("lienzo de vídeo estándar");
+    let request =
+        crate::app::clip_save::video_composition_request(&state).expect("lienzo de vídeo estándar");
     assert_eq!(request.src, PathBuf::from("clip.mp4"));
     assert_eq!((request.start_s, request.end_s), (2.0, Some(7.5)));
     assert_eq!((request.page_w, request.page_h), (1920, 1080));
@@ -476,7 +477,7 @@ fn render_resolves_the_page_layout_not_the_source() {
     // Sin capa de vídeo no hay composición: el guardado sigue su camino
     // raster de siempre en vez de inventar un mp4.
     let blank = editor::EditorState::new_blank_image(64.0, 64.0);
-    assert!(super::video_composition_request(&blank).is_none());
+    assert!(crate::app::clip_save::video_composition_request(&blank).is_none());
 }
 
 #[test]
@@ -488,7 +489,8 @@ fn render_evens_odd_dimensions_and_rejects_what_ffmpeg_cannot_reproduce() {
         0.0,
         (0.0, None),
     );
-    let request = super::video_composition_request(&state).expect("pares por redondeo");
+    let request =
+        crate::app::clip_save::video_composition_request(&state).expect("pares por redondeo");
     assert_eq!((request.fg_w, request.fg_h), (606, 1080));
     assert_eq!(request.bg_blur, 0.0);
     // Vídeo rotado: ffmpeg no lo reproduciría → sin mp4 a medias.
@@ -508,7 +510,7 @@ fn render_evens_odd_dimensions_and_rejects_what_ffmpeg_cannot_reproduce() {
         .unwrap()
         .id;
     rotated.doc.layer_mut(id).unwrap().transform.rotation = 90.0;
-    assert!(super::video_composition_request(&rotated).is_none());
+    assert!(crate::app::clip_save::video_composition_request(&rotated).is_none());
     // Capa visible extra (una forma encima del clip): tampoco se renderiza.
     let mut busy = video_state(
         (1920.0, 1080.0),
@@ -529,5 +531,5 @@ fn render_evens_odd_dimensions_and_rejects_what_ffmpeg_cannot_reproduce() {
             }),
         )
         .unwrap();
-    assert!(super::video_composition_request(&busy).is_none());
+    assert!(crate::app::clip_save::video_composition_request(&busy).is_none());
 }

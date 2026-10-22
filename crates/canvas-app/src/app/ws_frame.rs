@@ -185,16 +185,7 @@ impl AppInner {
                 ws,
             );
         }
-        if open_next.is_none()
-            && ws.unsaved_dialog.is_none()
-            && !ws.save.save_path_dialog_open
-            && ws.save.pending_save_as.is_none()
-            && ws.save.save_all_queue.is_empty()
-            // Misma compuerta que `navigation::nav_block_reason`: si aquí se
-            // exigiera `is_idle()`, una bandera de UI atascada dejaría la cola
-            // sin drenar para siempre (el reintento nunca dispararía).
-            && matches!(&ws.view, View::Editor(state) if state.blocks_leaving().is_none())
-        {
+        if open_next.is_none() && can_drain_deferred_nav(ws) {
             open_next = ws.deferred_nav.pop_front();
         }
         if let Some(nav) = open_next {
@@ -268,6 +259,22 @@ impl AppInner {
     }
 }
 
+/// ¿Puede salir AHORA la navegación aparcada? Las mismas compuertas que
+/// `navigation::nav_block_reason` (el reintento nunca contradice a la
+/// política) más el render de un clip de FONDO: no bloquea el lienzo activo,
+/// así que sin esa comprobación la navegación se sacaba y se volvía a aparcar
+/// en CADA frame (dos trazas por frame y dos destinos distintos
+/// intercambiándose el orden). Pedir `is_idle()` aquí es lo que NO se hace:
+/// una bandera de UI atascada dejaría la cola sin drenar para siempre.
+fn can_drain_deferred_nav(ws: &Workspace) -> bool {
+    ws.unsaved_dialog.is_none()
+        && !ws.save.save_path_dialog_open
+        && ws.save.pending_save_as.is_none()
+        && ws.save.save_all_queue.is_empty()
+        && matches!(&ws.view, View::Editor(state) if state.blocks_leaving().is_none())
+        && !ws.save.writes.busy(ws.deck.generation())
+}
+
 fn request_window_close(
     workspaces: &[std::sync::Arc<std::sync::Mutex<Workspace>>],
     ws: &mut Workspace,
@@ -300,4 +307,4 @@ fn capture_geometry(
 
 #[cfg(test)]
 #[path = "ws_frame_tests.rs"]
-mod capture_geometry_tests;
+mod tests;
