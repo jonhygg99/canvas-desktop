@@ -288,6 +288,7 @@ impl AppInner {
         // Se recuerda la tanda entera para el reintento único de miniaturas
         // tras el reescaneo (ver `DeckOps::bulk_created`).
         ws.deck_ops.bulk_created = created.clone();
+        ws.deck_ops.bulk_thumb_rounds = 0;
         if ws.deck.folder.as_deref() == Some(folder.as_path()) {
             // Misma baraja: salto al primer lienzo nuevo, resuelto tras el
             // reescaneo que lo incorpora (ver `on_gallery_scanned`).

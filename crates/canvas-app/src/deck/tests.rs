@@ -121,7 +121,10 @@ fn merge_scan_preserves_id_and_thumb_by_path() {
         .find(|s| s.path.ends_with("a.png"))
         .unwrap();
     assert_eq!(a.id, id_a);
-    assert_eq!(deck.active_path(), Some(PathBuf::from("a.png")));
+    assert_eq!(
+        deck.slots.get(deck.active).map(|s| s.path.clone()),
+        Some(PathBuf::from("a.png"))
+    );
 }
 
 #[test]
@@ -803,6 +806,96 @@ fn merge_scan_keeps_the_placeholder_and_leaves_it_last() {
 }
 
 #[test]
+fn merge_scan_re_peeks_a_placeholder_whose_name_a_real_file_took() {
+    // El caso real: el usuario crea un lienzo con «+» (la provisional asoma el
+    // siguiente hueco de numeración) y después un bulk reserva justo ese
+    // nombre para su PRIMER archivo. La baraja no puede quedarse con dos
+    // ranuras para la misma ruta: la activa se restauraba por ruta, así que el
+    // índice saltaba a la ranura real mientras el editor seguía mostrando el
+    // lienzo en blanco de la provisional.
+    let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+    let ph_idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
+    let ph_id = deck.slots[ph_idx].id;
+    let peeked = deck.slots[ph_idx].path.clone();
+    deck.slots[deck.active].content = SlotContent::Ready(Box::new(blank_slot_doc(1.0, 1.0)));
+    deck.active = ph_idx;
+    deck.slots[ph_idx].content = SlotContent::Active;
+
+    deck.merge_scan(vec![(PathBuf::from("a.png"), None), (peeked.clone(), None)]);
+
+    let paths: Vec<&PathBuf> = deck.slots.iter().map(|s| &s.path).collect();
+    assert_eq!(
+        paths.iter().collect::<HashSet<_>>().len(),
+        paths.len(),
+        "una sola ranura por ruta"
+    );
+    let ph = deck
+        .slots
+        .iter()
+        .find(|s| s.id == ph_id)
+        .expect("la provisional sigue en la baraja");
+    assert!(ph.is_placeholder);
+    assert_ne!(ph.path, peeked, "se re-asoma a un nombre libre");
+    assert_eq!(
+        ph.path.extension().and_then(|e| e.to_str()),
+        Some("canvas"),
+        "conserva el formato elegido"
+    );
+    assert_eq!(
+        ph.name,
+        ph.path.file_name().unwrap().to_string_lossy(),
+        "el nombre visible acompaña a la ruta nueva"
+    );
+    assert_eq!(
+        deck.slots[deck.active].id, ph_id,
+        "la activa sigue siendo la provisional (restaurada por id)"
+    );
+    assert!(
+        deck.slots
+            .iter()
+            .any(|s| s.path == peeked && !s.is_placeholder),
+        "el archivo real del bulk conserva su ranura"
+    );
+}
+
+#[test]
+fn merge_scan_leaves_a_free_placeholder_name_untouched() {
+    let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+    let ph_idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
+    let peeked = deck.slots[ph_idx].path.clone();
+    deck.merge_scan(vec![(PathBuf::from("a.png"), None)]);
+    let ph = deck.slots.iter().find(|s| s.is_placeholder).unwrap();
+    assert_eq!(ph.path, peeked, "sin colisión no se renombra nada");
+}
+
+#[test]
+fn set_thumb_fills_every_slot_that_shares_the_path() {
+    let mut deck = Deck::from_seed(seed(&["a.png"]), Path::new("a.png"));
+    // Duplicado a mano: la reconciliación ya no los crea, pero una baraja
+    // vieja (o una provisional activa) puede tenerlo.
+    let dup = deck.push_placeholder((10.0, 10.0), "png").unwrap();
+    deck.slots[dup].is_placeholder = false;
+    deck.slots[dup].path = PathBuf::from("a.png");
+    deck.slots[dup].name = "a.png".to_owned();
+    assert_eq!(deck.slots[0].path, deck.slots[dup].path);
+
+    let ctx = eframe::egui::Context::default();
+    let tex = ctx.load_texture(
+        "t",
+        eframe::egui::ColorImage::example(),
+        eframe::egui::TextureOptions::LINEAR,
+    );
+    deck.set_thumb(Path::new("a.png"), Some(tex));
+    assert!(deck.slots[0].thumb.is_some());
+    assert!(deck.slots[dup].thumb.is_some(), "la copia también");
+    assert!(
+        deck.bulk_thumb_pending(&[PathBuf::from("a.png")])
+            .is_empty(),
+        "con el archivo ya visible, la tanda no se reintenta"
+    );
+}
+
+#[test]
 fn merge_scan_follows_an_active_placeholder() {
     let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
     let placeholder_idx = deck.push_placeholder((800.0, 600.0), "canvas").unwrap();
@@ -1281,24 +1374,32 @@ fn merge_scan_retries_failed_slots_whose_file_changed() {
 }
 
 #[test]
-fn bulk_thumb_retries_only_failed_without_thumb() {
+fn bulk_thumb_pending_is_every_created_without_a_preview() {
     let mut deck = Deck::from_seed(seed(&["a.png", "b.png"]), Path::new("a.png"));
-    // a: fallido sin miniatura → candidato.
+    // a: sin miniatura (falló o aún no llegó) → pendiente.
     deck.set_thumb(Path::new("a.png"), None);
-    // b: sin fallo → no candidato (su thumb llegará por el flujo normal).
+    // b: ya tiene miniatura → no se vuelve a pedir.
+    let ctx = eframe::egui::Context::default();
+    let tex = ctx.load_texture(
+        "t",
+        eframe::egui::ColorImage::example(),
+        eframe::egui::TextureOptions::LINEAR,
+    );
+    deck.set_thumb(Path::new("b.png"), Some(tex));
     let created = vec![
         PathBuf::from("a.png"),
         PathBuf::from("b.png"),
         PathBuf::from("z.png"),
     ];
     assert_eq!(
-        deck.bulk_thumb_retries(&created),
-        vec![PathBuf::from("a.png")]
+        deck.bulk_thumb_pending(&created),
+        vec![PathBuf::from("a.png")],
+        "solo lo creado que sigue sin preview y está en la baraja"
     );
 }
 
 #[test]
-fn bulk_thumb_retries_catches_sticky_failures_after_rescan() {
+fn bulk_thumb_pending_survives_a_rescan_that_keeps_the_failure() {
     use std::time::{Duration, SystemTime};
 
     let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
@@ -1310,7 +1411,19 @@ fn bulk_thumb_retries_catches_sticky_failures_after_rescan() {
     deck.merge_scan(vec![(PathBuf::from("stem-01.png"), Some(t0))]);
     assert!(deck.slots[0].thumb_failed);
     assert_eq!(
-        deck.bulk_thumb_retries(&[PathBuf::from("stem-01.png")]),
+        deck.bulk_thumb_pending(&[PathBuf::from("stem-01.png")]),
         vec![PathBuf::from("stem-01.png")]
     );
+    // Y cuando la miniatura llega por fin, deja de estar pendiente: la tanda
+    // se puede olvidar (sin reintentos eternos).
+    let ctx = eframe::egui::Context::default();
+    let tex = ctx.load_texture(
+        "t",
+        eframe::egui::ColorImage::example(),
+        eframe::egui::TextureOptions::LINEAR,
+    );
+    deck.set_thumb(Path::new("stem-01.png"), Some(tex));
+    assert!(deck
+        .bulk_thumb_pending(&[PathBuf::from("stem-01.png")])
+        .is_empty());
 }

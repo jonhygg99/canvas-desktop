@@ -46,26 +46,45 @@ impl AppInner {
                     ws.deck.jump_reframe = true;
                 }
             }
-            // Reintento de miniaturas pegajosas del último bulk: un escaneo
-            // intermedio pudo ver una reserva aún vacía y `merge_scan`
-            // conserva ese `thumb_failed` si el `mtime` no cambió. Cada path
-            // pendiente se pide UNA vez y se olvida de la tanda: un archivo
-            // que nunca puede dar miniatura (corrupto, bloqueado) no vuelve a
-            // lanzar un hilo en cada reescaneo de la carpeta.
-            let retries = ws.deck.bulk_thumb_retries(&ws.deck_ops.bulk_created);
-            if retries.is_empty() {
-                ws.deck_ops.bulk_created.clear();
-            } else {
-                tracing::info!("bulk: reintentando {} miniaturas", retries.len());
-                for path in retries {
-                    ws.deck_ops.bulk_created.retain(|pending| *pending != path);
-                    loader::spawn_single_thumb(
-                        folder.clone(),
-                        path,
-                        self.thumb_cache.clone(),
-                        ws.tx.clone(),
-                        ctx.clone(),
+            // Reintento de miniaturas del último bulk: un escaneo intermedio
+            // pudo ver una reserva aún vacía y `merge_scan` conserva ese
+            // `thumb_failed` si el `mtime` no cambió. Se pide la miniatura de
+            // TODO lo creado que siga sin ella — y la ruta no sale de la
+            // tanda hasta que la baraja la tiene: si el reintento llegaba
+            // antes que el propio fallo (o volvía a fallar), el path se
+            // olvidaba y el primer lienzo se quedaba sin preview para
+            // siempre. El tope de rondas evita lanzar un hilo en cada
+            // reescaneo por un archivo que nunca va a dar miniatura.
+            if !ws.deck_ops.bulk_created.is_empty() {
+                const MAX_ROUNDS: u8 = 3;
+                let pending = ws.deck.bulk_thumb_pending(&ws.deck_ops.bulk_created);
+                ws.deck_ops
+                    .bulk_created
+                    .retain(|path| pending.contains(path));
+                if !ws.deck_ops.bulk_created.is_empty()
+                    && ws.deck_ops.bulk_thumb_rounds < MAX_ROUNDS
+                {
+                    ws.deck_ops.bulk_thumb_rounds += 1;
+                    tracing::info!(
+                        intento = ws.deck_ops.bulk_thumb_rounds,
+                        pendientes = ws.deck_ops.bulk_created.len(),
+                        "bulk: reintentando miniaturas"
                     );
+                    for path in ws.deck_ops.bulk_created.clone() {
+                        loader::spawn_single_thumb(
+                            folder.clone(),
+                            path,
+                            self.thumb_cache.clone(),
+                            ws.tx.clone(),
+                            ctx.clone(),
+                        );
+                    }
+                }
+                if ws.deck_ops.bulk_created.is_empty()
+                    || ws.deck_ops.bulk_thumb_rounds >= MAX_ROUNDS
+                {
+                    ws.deck_ops.bulk_created.clear();
+                    ws.deck_ops.bulk_thumb_rounds = 0;
                 }
             }
         }

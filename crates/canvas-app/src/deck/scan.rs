@@ -3,7 +3,7 @@
 //! ranura de sitio, y las ranuras provisionales (lienzos nuevos aun sin
 //! archivo).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -16,6 +16,21 @@ use super::geometry::MoveDir;
 use super::loading::next_scope;
 use super::model::{file_name, idle_slot, Slot, SlotContent};
 use super::Deck;
+
+/// Nombre «asomado» de una ranura provisional: el archivo que tendrá si el
+/// usuario la edita. En una carpeta con nombre ya enseña el esquema final
+/// (`edwin-luna-04.png`); sin carpeta, lo heredado. Mirar no reserva nada.
+fn peek_placeholder_path(folder: Option<&Path>, ext: &str, hint: u64) -> PathBuf {
+    folder.map_or_else(
+        || PathBuf::from(format!("Untitled {hint}.{ext}")),
+        |folder| {
+            crate::naming::folder_stem(Some(folder)).map_or_else(
+                || canvas_io::peek_numbered_path(folder, ext, hint),
+                |stem| canvas_io::peek_stem_numbered_path(folder, &stem, ext, hint),
+            )
+        },
+    )
+}
 
 impl Deck {
     /// Añade AL FINAL una ranura provisional: un lienzo en blanco del tamaño
@@ -33,17 +48,7 @@ impl Deck {
             return None;
         }
         let is_design = ext == canvas_io::CANVAS_EXTENSION;
-        // En una carpeta con nombre la provisional ya enseña el esquema
-        // final (`edwin-luna-04.png`); sin carpeta, lo heredado.
-        let path = self.folder.as_ref().map_or_else(
-            || PathBuf::from(format!("Untitled {}.{ext}", self.next_id)),
-            |folder| {
-                crate::naming::folder_stem(Some(folder)).map_or_else(
-                    || canvas_io::peek_numbered_path(folder, ext, self.next_id),
-                    |stem| canvas_io::peek_stem_numbered_path(folder, &stem, ext, self.next_id),
-                )
-            },
-        );
+        let path = peek_placeholder_path(self.folder.as_deref(), ext, self.next_id);
         let mut state = if is_design {
             crate::editor::EditorState::new_blank(page.0, page.1)
         } else {
@@ -251,23 +256,19 @@ impl Deck {
     /// silencio por un simple reescaneo sería peor que dejar un lienzo
     /// «huérfano» a la vista.
     pub fn merge_scan(&mut self, files: Vec<(PathBuf, Option<SystemTime>)>) {
-        let active_path = self.active_path();
-        // Las ranuras PROVISIONALES no están en disco, así que el listado
-        // nunca las trae y la regla de conservación de abajo (activa o
-        // sucia) las tiraría: una provisional recién creada no es ninguna de
-        // las dos. Se apartan ANTES de reconciliar (también evita que
-        // colisionen en el `HashMap` de abajo si su nombre asomado coincide
-        // con un archivo real) y se vuelven a pegar al final — que es su
-        // sitio — DESPUÉS de ordenar pero ANTES de restaurar la activa: si
-        // no, una provisional activa perdería su índice en cuanto el
-        // reordenado la desplazase.
-        let (placeholders, rest): (Vec<Slot>, Vec<Slot>) =
+        // La activa se restaura por ID (no por ruta): una provisional puede
+        // cambiar de nombre aquí abajo (ver la renovación de provisionales).
+        let active_id = self.slots.get(self.active).map(|s| s.id);
+        let (mut placeholders, rest): (Vec<Slot>, Vec<Slot>) =
             self.slots.drain(..).partition(|s| s.is_placeholder);
         let old_next_id = self.next_id;
         let mut old: HashMap<PathBuf, Slot> =
             rest.into_iter().map(|s| (s.path.clone(), s)).collect();
         let mut next_id = self.next_id;
         let n_files = files.len();
+        // Rutas que el disco acaba de listar: una provisional NO puede
+        // quedarse con una de ellas (ver más abajo).
+        let mut taken: HashSet<PathBuf> = files.iter().map(|(p, _)| p.clone()).collect();
         let mut slots = Vec::with_capacity(files.len());
         for (path, mtime) in files {
             match old.remove(&path) {
@@ -306,12 +307,48 @@ impl Deck {
             }
         }
         let (n_new, n_ph) = (next_id - old_next_id, placeholders.len());
+        // Las ranuras PROVISIONALES no están en disco, así que el listado
+        // nunca las trae y la regla de conservación de arriba (activa o
+        // sucia) las tiraría: una provisional recién creada no es ninguna de
+        // las dos. Se apartaron ANTES de reconciliar y vuelven AL FINAL — que
+        // es su sitio — después de ordenar. Pero un archivo REAL puede haber
+        // ocupado el nombre que la provisional tenía asomado:
+        // `push_placeholder` enseña el siguiente hueco libre de la numeración
+        // (`{stem}-07.png`) y un bulk o un duplicado reserva después ese mismo
+        // hueco. Si la provisional conservara la ruta, la baraja tendría DOS
+        // ranuras para el mismo archivo y la activa (restaurada por ruta)
+        // saltaba a la ranura real mientras `EditorState` seguía con el lienzo
+        // en blanco de la provisional: el primer lienzo creado se veía vacío
+        // y su miniatura no llegaba nunca (la petición atendía solo a la
+        // primera copia) hasta reconstruir la baraja. Se re-asoma a un nombre
+        // libre: conserva id, contenido y sitio.
+        for slot in &mut placeholders {
+            if !taken.contains(&slot.path) {
+                taken.insert(slot.path.clone());
+                continue;
+            }
+            let ext = slot
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or(canvas_io::CANVAS_EXTENSION)
+                .to_owned();
+            let mut hint = next_id;
+            let mut candidate = peek_placeholder_path(self.folder.as_deref(), &ext, hint);
+            while taken.contains(&candidate) {
+                hint += 1;
+                candidate = peek_placeholder_path(self.folder.as_deref(), &ext, hint);
+            }
+            taken.insert(candidate.clone());
+            slot.name = file_name(&candidate);
+            slot.path = candidate;
+        }
         self.slots = slots;
         self.next_id = next_id;
         self.apply_sort();
         self.slots.extend(placeholders);
-        if let Some(p) = active_path {
-            if let Some(idx) = self.find_by_path(&p) {
+        if let Some(id) = active_id {
+            if let Some(idx) = self.find_by_id(id) {
                 self.active = idx;
             }
         }
@@ -322,12 +359,15 @@ impl Deck {
     }
 
     /// Entrega una miniatura llegada de un hilo de trabajo (por ruta: el
-    /// orden puede haber cambiado desde que se lanzó el escaneo).
+    /// orden puede haber cambiado desde que se lanzó el escaneo). Se aplica a
+    /// TODAS las ranuras con esa ruta: una provisional puede compartirla con
+    /// un archivo real (ver `merge_scan`), y atender solo a la primera dejaba
+    /// a la otra girando para siempre.
     pub fn set_thumb(&mut self, path: &Path, tex: Option<egui::TextureHandle>) {
-        if let Some(slot) = self.slots.iter_mut().find(|s| s.path == path) {
-            match tex {
+        for slot in self.slots.iter_mut().filter(|s| s.path == path) {
+            match &tex {
                 Some(tex) => {
-                    slot.thumb = Some(tex);
+                    slot.thumb = Some(tex.clone());
                     slot.thumb_failed = false;
                 }
                 None => slot.thumb_failed = true,
@@ -335,18 +375,27 @@ impl Deck {
         }
     }
 
-    /// Creados del último bulk que siguen sin miniatura tras el reescaneo:
-    /// `merge_scan` conserva `thumb_failed` si el `mtime` no cambió (la
-    /// reserva vacía y el bake final pueden compartirlo), así que el llamador
-    /// pide la miniatura de cada uno una vez y lo olvida de la tanda. Pura:
-    /// no toca GPU ni red.
-    pub fn bulk_thumb_retries(&self, created: &[PathBuf]) -> Vec<PathBuf> {
+    /// Creados del último bulk que todavía NO tienen miniatura en la baraja
+    /// (o cuya ranura ya no está). El escaneo puede ver la reserva de 0 bytes
+    /// antes de que el worker escriba los píxeles, y `merge_scan` conserva el
+    /// `thumb_failed` si el `mtime` no cambió; con un solo reintento gastado
+    /// antes de que el fallo exista, el primer lienzo se quedaba sin preview
+    /// para siempre. El llamador pide el thumb de cada pendiente en las
+    /// siguientes pasadas (con tope) y lo olvida en cuanto la baraja lo tiene.
+    /// Pura: no toca GPU ni red.
+    pub fn bulk_thumb_pending(&self, created: &[PathBuf]) -> Vec<PathBuf> {
         created
             .iter()
             .filter(|p| {
-                self.slots
-                    .iter()
-                    .any(|s| s.path == **p && s.thumb.is_none() && s.thumb_failed)
+                // Pendiente mientras NINGUNA ranura con esa ruta tenga
+                // miniatura: dos ranuras para el mismo archivo (una provisional
+                // con el nombre asomado que un bulk ocupó) no pueden mantener
+                // viva la tanda de reintentos cuando el archivo ya se ve.
+                let mut with_path = self.slots.iter().filter(|s| s.path == **p);
+                let Some(first) = with_path.next() else {
+                    return false; // la ranura ya no está en la baraja
+                };
+                first.thumb.is_none() && with_path.all(|s| s.thumb.is_none())
             })
             .cloned()
             .collect()

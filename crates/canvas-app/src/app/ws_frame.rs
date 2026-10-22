@@ -93,6 +93,7 @@ impl AppInner {
                     unsaved_dialog_open: ws.unsaved_dialog.is_some(),
                     export: &mut ws.export,
                     deck_ops: &mut ws.deck_ops,
+                    thumb_cache: self.thumb_cache.as_deref(),
                 };
                 let (nav, action) =
                     views::editor_view_ui(ui, ctx, &self.rs, state, paste_requested, &mut frame);

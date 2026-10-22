@@ -38,6 +38,9 @@ use crate::{deck, editor, export, gallery, menus, paste_hook, settings};
 
 mod autosave;
 mod bootstrap;
+#[cfg(test)]
+#[path = "deck_ops_tests.rs"]
+mod deck_ops_tests;
 mod frame;
 mod menu_actions;
 mod messages;
@@ -243,7 +246,6 @@ impl SaveFlow {
     pub(super) fn confirm_overwrite(&mut self, path: &Path) {
         self.overwrite_confirmed.insert(path.to_path_buf());
     }
-
     pub(super) fn confirm_discard_raster(&mut self, path: &Path) {
         self.discard_raster_confirmed.insert(path.to_path_buf());
     }
@@ -282,10 +284,100 @@ pub(super) struct DeckOps {
     /// Tanda entera creada por el último bulk web: el reescaneo final
     /// conserva la marca `thumb_failed` de un archivo que un escaneo
     /// intermedio vio vacío (reserva previa al bake) si el `mtime` no
-    /// cambió, así que tras el `merge_scan` se reintenta UNA vez cada creado
-    /// que siga sin miniatura, y se le olvida (un archivo que nunca podrá
-    /// tenerla no debe spawnear un hilo en cada escaneo).
+    /// cambió, así que tras el `merge_scan` se pide la miniatura de cada
+    /// creado que siga sin ella — y la ruta NO sale de la tanda hasta que la
+    /// baraja la tiene. `bulk_thumb_rounds` acota los reintentos (un archivo
+    /// que nunca podrá dar miniatura no debe spawnear un hilo en cada
+    /// reescaneo de la carpeta).
     pub(super) bulk_created: Vec<PathBuf>,
+    /// Pasadas de reintento gastadas por la tanda actual de `bulk_created`.
+    pub(super) bulk_thumb_rounds: u8,
+    /// Intentos de miniatura ya gastados por ruta: una miniatura que falló o
+    /// que nunca llegó se reintenta sola desde el editor, sin esperar a otro
+    /// reescaneo de la carpeta (ver `DeckOps::claim_missing_thumbs`).
+    pub(super) thumb_retries: std::collections::HashMap<PathBuf, u8>,
+    /// Desde cuándo cada ranura se ve sin miniatura: una petición que sigue en
+    /// vuelo no se duplica, pero una que nunca llegó no gira para siempre.
+    pub(super) thumb_waiting: std::collections::HashMap<PathBuf, std::time::Instant>,
+    /// Momento del próximo reintento de miniaturas (uno por tanda, no uno por
+    /// archivo y frame).
+    pub(super) thumb_retry_at: Option<std::time::Instant>,
+}
+
+/// Cada cuánto se reintenta una miniatura de la baraja que falta. Un archivo
+/// que el escaneo pilló a medio escribir (el caso real: el PRIMER lienzo de un
+/// bulk, cuya miniatura se pide mientras el worker todavía está guardando) ya
+/// está completo para el siguiente intento.
+const THUMB_RETRY_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Espera antes de pedir una miniatura que aún no falló: el escaneo de la
+/// carpeta la está generando en paralelo y duplicarla no adelanta nada.
+const THUMB_WAIT: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Intentos por archivo: pasado el tope se deja el icono de aviso (o el
+/// spinner, si nunca falló) en la tira. Sin tope, un PNG que nunca podrá dar
+/// miniatura lanzaría un hilo cada dos segundos durante toda la sesión.
+const THUMB_RETRIES: u8 = 3;
+
+impl DeckOps {
+    /// Rutas de la baraja que se han quedado sin miniatura y a las que toca
+    /// pedir una. Devuelve las rutas (ya contadas) para que el llamador lance
+    /// `loader::spawn_single_thumb`, con tope por tanda.
+    ///
+    /// Existe porque la tira no tenía ninguna forma de recuperar una miniatura
+    /// que se perdiera: el reintento del bulk solo corría en un reescaneo de la
+    /// carpeta, y con los tres gastados en la misma tanda (los escaneos llegan
+    /// seguidos tras crear los lienzos) el primero se quedaba sin preview para
+    /// siempre — hasta volver a la galería y reabrir. Aquí el reintento es del
+    /// propio editor: reloj acotado, intentos acotados, y los contadores se
+    /// olvidan en cuanto la ranura tiene su miniatura.
+    ///
+    /// Cubre los dos estados rotos de la tira: la que falló (`thumb_failed`) y
+    /// la que se quedó esperando una petición que nunca llegó (sin fallo
+    /// registrado, tras `THUMB_WAIT`).
+    pub(super) fn claim_missing_thumbs(
+        &mut self,
+        deck: &deck::Deck,
+        now: std::time::Instant,
+        limit: usize,
+    ) -> Vec<PathBuf> {
+        let waiting: Vec<(&std::path::Path, bool)> = deck
+            .slots
+            .iter()
+            .filter(|slot| slot.thumb.is_none() && !slot.is_placeholder)
+            .map(|slot| (slot.path.as_path(), slot.thumb_failed))
+            .collect();
+        let still_waiting = |path: &PathBuf| waiting.iter().any(|(w, _)| *w == path.as_path());
+        self.thumb_retries.retain(|path, _| still_waiting(path));
+        self.thumb_waiting.retain(|path, _| still_waiting(path));
+        if waiting.is_empty() {
+            self.thumb_retry_at = None;
+            return Vec::new();
+        }
+        if self.thumb_retry_at.is_some_and(|at| now < at) {
+            return Vec::new();
+        }
+        self.thumb_retry_at = Some(now + THUMB_RETRY_EVERY);
+        let mut claimed = Vec::new();
+        for (path, failed) in waiting {
+            if claimed.len() >= limit {
+                break;
+            }
+            let seen = *self.thumb_waiting.entry(path.to_path_buf()).or_insert(now);
+            // Sin fallo registrado la petición puede seguir en vuelo (la está
+            // generando el escaneo): se espera antes de duplicarla.
+            if !failed && now.duration_since(seen) < THUMB_WAIT {
+                continue;
+            }
+            let tries = self.thumb_retries.entry(path.to_path_buf()).or_insert(0);
+            if *tries >= THUMB_RETRIES {
+                continue;
+            }
+            *tries += 1;
+            claimed.push(path.to_path_buf());
+        }
+        claimed
+    }
 }
 
 /// Último estado comunicado a los menús nativos, para no reenviarlo cada

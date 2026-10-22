@@ -225,10 +225,6 @@ impl Deck {
         self.strip_visible && self.slots.len() > 1
     }
 
-    pub fn active_path(&self) -> Option<PathBuf> {
-        self.slots.get(self.active).map(|s| s.path.clone())
-    }
-
     pub fn active_rect(&self) -> DeckRect {
         self.slots
             .get(self.active)

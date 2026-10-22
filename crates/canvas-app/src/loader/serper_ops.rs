@@ -357,36 +357,53 @@ fn save_bulk_one(
             .map_err(|e| e.to_string())?;
     let substituted = fetched.substituted(&item.url);
     let img = fetched.image;
-    // A06: el nombre se RESERVA atómicamente (`create_new`) antes de
-    // escribir: dos ventanas importando la misma keyword a la misma carpeta
-    // nunca obtienen el mismo nombre. La reserva vive hasta que la imagen
-    // queda escrita; si algo falla antes, se retira el hueco vacío propio
-    // (nunca un archivo ajeno: la reserva la creó este worker).
-    let path =
-        canvas_io::reserve_bulk_path(folder, stem, "png", index + 1).map_err(|e| e.to_string())?;
     let photo = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone())
         .ok_or_else(|| "decoded image has no pixels".to_owned())?;
     let (pw, ph) = (page.0.round().max(1.0), page.1.round().max(1.0));
     // Receta exacta de pegar: lienzo vacío + add_image_layer (contain +
-    // fondo desenfocado si no cubre). La capa hereda el tallo del archivo
-    // reservado (`edwin-luna-04`), no la etiqueta web: capa y archivo van
-    // juntos desde el nacimiento.
-    let layer_name = path
+    // fondo desenfocado si no cubre). El nombre de la capa hereda el tallo
+    // del archivo (`edwin-luna-04`), no la etiqueta web; el horneado NO
+    // depende de la ruta, así que se puede hornear ANTES de reservar.
+    let peeked = canvas_io::peek_stem_numbered_path(folder, stem, "png", (index + 1) as u64);
+    let peeked_stem = peeked
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(&item.label)
         .to_owned();
     let mut state = crate::editor::EditorState::new_blank_image(pw, ph);
-    state.add_image_layer(layer_name, Some(path.clone()), img);
+    state.add_image_layer(peeked_stem, None, img);
+    let baked = payload_bake(&state, &photo)?;
+    // A06: el nombre se RESERVA atómicamente (`create_new`): dos ventanas
+    // importando la misma keyword a la misma carpeta nunca obtienen el mismo
+    // nombre. La reserva nace vacía, así que se pide DESPUÉS del horneado y
+    // se escribe en el acto: el hueco de 0 bytes vive milisegundos. Antes
+    // vivía lo que tardaba el horneado de la página entera, y un escaneo
+    // intermedio de la carpeta lo veía vacío — el PRIMER lienzo de la tanda
+    // (la reserva que coincidía con ese escaneo) se quedaba sin miniatura, y
+    // ni el reintento de thumbs ni el reescaneo la recuperaban.
+    let path =
+        canvas_io::reserve_bulk_path(folder, stem, "png", index + 1).map_err(|e| e.to_string())?;
+    let layer_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&item.label)
+        .to_owned();
+    // La capa debe apuntar al nombre RESERVADO: el vistazo pudo quedarse
+    // corto si otra ventana ganó el número entre el horneado y la reserva.
+    if let Ok(page) = state.doc.page_mut() {
+        if let Some(layer) = page.layers.last_mut() {
+            layer.name = layer_name;
+            if let canvas_core::LayerContent::Image(content) = &mut layer.content {
+                content.source_path = Some(path.clone());
+            }
+        }
+    }
     state.doc.source_path = Some(path.clone());
     let mut payload = state.sidecar_payload();
-    // Todo lo que falla a partir de aquí deja la reserva a medio escribir:
-    // si la imagen aún no quedó en disco, se retira el hueco propio; si la
-    // imagen SÍ quedó pero falló el sidecar, se conserva (es un producto
-    // visible y la tanda lo informa como error del item).
-    let baked = payload_bake(&state, &photo).inspect_err(|_| {
-        let _ = std::fs::remove_file(&path);
-    })?;
+    // Si falla a partir de aquí el hueco propio se retira (nunca un archivo
+    // ajeno: la reserva la creó este worker); si la imagen SÍ quedó pero
+    // falló el sidecar, se conserva — es un producto visible y la tanda lo
+    // informa como error del item.
     let (pw_px, ph_px) = (pw as u32, ph as u32);
     let written =
         canvas_io::save_rgba(&path, baked.clone(), pw_px, ph_px, 92, None).map_err(|e| {

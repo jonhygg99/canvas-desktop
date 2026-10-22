@@ -39,4 +39,8 @@ pub(super) struct EditorFrame<'a> {
     pub(super) export: &'a mut ExportFlow,
     /// Contabilidad de la baraja que cruza con el disco.
     pub(super) deck_ops: &'a mut DeckOps,
+    /// Carpeta de caché de miniaturas (la misma que usa el escaneo de la
+    /// galería): la necesita el reintento de miniaturas fallidas de la baraja
+    /// (ver `DeckOps::claim_failed_thumbs`).
+    pub(super) thumb_cache: Option<&'a std::path::Path>,
 }

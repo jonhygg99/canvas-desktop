@@ -9,6 +9,10 @@ use std::time::Instant;
 
 use eframe::egui;
 
+/// Miniaturas fallidas que se reintentan por frame: el tope es por tanda (una
+/// pasada cada 2 s), así que no se lanzan hilos en ráfaga.
+const THUMB_RETRY_PER_FRAME: usize = 4;
+
 use crate::{deck, deck_strip, editor, loader, menus};
 
 use super::super::super::frame::EditorFrame;
@@ -241,6 +245,24 @@ pub(super) fn resolve(
                 path,
                 gen,
                 f.settings.sidecar_default,
+                f.tx.clone(),
+                ctx.clone(),
+            );
+        }
+        // Miniaturas de la tira que se quedaron sin preview (típico: el escaneo
+        // pidió la del primer lienzo de un bulk mientras el worker todavía
+        // escribía el archivo): se recuperan solas desde aquí, en vez de esperar
+        // a otro reescaneo de la carpeta — que puede no llegar nunca, y dejaba
+        // ese lienzo con el aviso o el spinner para siempre hasta volver a la
+        // galería (ver `DeckOps::claim_missing_thumbs`).
+        for path in f
+            .deck_ops
+            .claim_missing_thumbs(f.deck, Instant::now(), THUMB_RETRY_PER_FRAME)
+        {
+            loader::spawn_single_thumb(
+                folder.clone(),
+                path,
+                f.thumb_cache.map(std::path::Path::to_path_buf),
                 f.tx.clone(),
                 ctx.clone(),
             );
