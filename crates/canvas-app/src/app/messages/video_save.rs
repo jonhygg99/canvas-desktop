@@ -49,6 +49,11 @@ impl AppInner {
                 generation: done.target.generation,
                 slot_id: done.target.slot_id,
                 path: done.path,
+                // El error viaja tipado hasta aquí: lo transitorio se reintenta
+                // y lo permanente no.
+                permanent: crate::app::write_queue::failure_is_permanent(
+                    done.result.as_ref().err(),
+                ),
                 result: done
                     .result
                     .map_err(|error| format!("Could not write the design: {error}")),
@@ -111,6 +116,9 @@ impl AppInner {
                 generation: done.target.generation,
                 slot_id: done.target.slot_id,
                 path: done.dst,
+                permanent: crate::app::write_queue::failure_is_permanent(
+                    done.result.as_ref().err(),
+                ),
                 result: done
                     .result
                     .map(|_| ())

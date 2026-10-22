@@ -489,8 +489,14 @@ canvas-app/src/
   read-only formats (SVG/GIF/video), externally-changed files, placeholders
   and canvases that lost their last raster layer stay pending for «Save all»
   or for their own `Ctrl+S`, which can ask. A failed background write is
-  recorded in `SaveFlow::blocked_writes` as `(slot, revision)` and is **not**
-  retried until the user edits that canvas (no bake per frame).
+  recorded in `SaveFlow::blocked_writes` as `(slot, revision, attempts,
+  retry_at)`: a **transient** failure (critical RAM, the GPU, a locked file, an
+  unstable bake) retries itself with the same `autosave::RETRY_BACKOFF` table
+  as the active canvas (5 s, 15 s, 60 s, then parked) and a **permanent** one
+  (a destination that refuses the write) is parked at once until the user
+  edits that canvas — never a bake per frame. Parked canvases are counted in
+  the toolbar (`A canvas is not saved`): a dirty canvas that stopped retrying
+  must not look saved just because it is off screen.
 - **The history capture is the only judge of «edited during a save»** (A04).
   `VideoSaveDone` / `DesignSaveDone` / `SaveTicket` carry
   `(undo_depth, revision)` and `mark_saved_at` decides; never compare whole

@@ -17,8 +17,13 @@ pub(super) fn show(
     // `autosave::tick`): un estado sucio que no avanza necesita explicación.
     let autosave_blocked = f.save.autosave_blocked;
     // Lienzos que todavía se están escribiendo (la cola única de
-    // `app/write_queue.rs`): el usuario ve que la app sigue guardando sola.
-    let pending_writes = f.save.writes.remaining(f.deck.generation());
+    // `app/write_queue.rs`) más los que esperan su reintento programado: el
+    // usuario ve que la app sigue guardando sola.
+    let pending_writes = f.save.writes.remaining(f.deck.generation()) + f.save.retrying_writes();
+    // Y los que ya NO se van a escribir solos (fallo permanente o reintentos
+    // agotados): sin este aviso, un lienzo que se quedó sin guardar parecía
+    // «Saved» porque su ranura no está en pantalla.
+    let parked_writes = f.save.parked_writes();
     egui::Panel::top("document_toolbar").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             if state.from_gallery.is_some()
@@ -32,6 +37,7 @@ pub(super) fn show(
                 state,
                 autosave_status,
                 pending_writes,
+                parked_writes,
                 autosave_blocked,
             )));
             if ui.button(crate::i18n::tr("Settings")).clicked() {
@@ -126,14 +132,26 @@ fn help(state: &editor::EditorState, ui: &mut egui::Ui) {
     }
 }
 
+/// Texto para los lienzos de fondo aparcados. Singular y plural a mano, como
+/// el resto de la barra: no hay i18n por número.
+fn parked_writes_text(parked: usize) -> String {
+    if parked == 1 {
+        "A canvas is not saved".to_owned()
+    } else {
+        format!("{parked} canvases are not saved")
+    }
+}
+
 /// Texto de estado del guardado. `pending_writes` son los lienzos que la cola
-/// única todavía tiene por escribir (clips recién añadidos y ranuras de fondo
-/// que quedaron sucias): mientras queden, la app está guardando aunque el
-/// documento de pantalla esté limpio.
+/// única todavía tiene por escribir (clips recién añadidos, ranuras de fondo
+/// que quedaron sucias y los que esperan un reintento): mientras queden, la app
+/// está guardando aunque el documento de pantalla esté limpio. `parked_writes`
+/// son los que ya no se reintentan solos (fallo permanente o esperas agotadas).
 fn save_status(
     state: &editor::EditorState,
     autosave: AutosaveStatus,
     pending_writes: usize,
+    parked_writes: usize,
     autosave_blocked: Option<&'static str>,
 ) -> String {
     let fixed = |text: &str| text.to_owned();
@@ -169,6 +187,12 @@ fn save_status(
             Some(reason) => format!("Unsaved — autosave paused: {reason}"),
             None => fixed("Unsaved changes"),
         }
+    } else if parked_writes > 0 {
+        // Una ranura de fondo se quedó sin escribir (destino que no admite la
+        // escritura o reintentos agotados) y no se reintenta sola hasta que el
+        // usuario la abra o edite. El lienzo de pantalla puede estar limpio:
+        // decir «Saved» aquí escondía trabajo sin guardar.
+        parked_writes_text(parked_writes)
     } else if state.doc.source_path.is_none() {
         fixed("Not saved yet")
     } else {
@@ -183,7 +207,10 @@ mod tests {
     #[test]
     fn unsaved_new_document_is_not_reported_as_saved() {
         let state = editor::EditorState::new_blank(800.0, 600.0);
-        assert_ne!(save_status(&state, AutosaveStatus::Idle, 0, None), "Saved");
+        assert_ne!(
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
+            "Saved"
+        );
     }
     #[test]
     fn ongoing_save_takes_precedence_over_previous_error() {
@@ -191,12 +218,12 @@ mod tests {
         state.save_error = Some("previous failure".into());
         state.saving = true;
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 0, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
             "Saving…"
         );
         state.saving = false;
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 0, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
             "Save failed"
         );
     }
@@ -208,11 +235,11 @@ mod tests {
         let mut state = editor::EditorState::new_blank(800.0, 600.0);
         state.notice = Some("Leaving is waiting on a save that is still writing.".to_owned());
         assert_ne!(
-            save_status(&state, AutosaveStatus::Idle, 0, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
             "Save failed"
         );
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 0, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
             "Not saved yet"
         );
     }
@@ -224,7 +251,7 @@ mod tests {
         let mut state = editor::EditorState::new_blank(800.0, 600.0);
         state.save_error = Some("transient failure".into());
         assert_eq!(
-            save_status(&state, AutosaveStatus::Retrying, 0, None),
+            save_status(&state, AutosaveStatus::Retrying, 0, 0, None),
             "Save failed — retrying…"
         );
     }
@@ -237,15 +264,18 @@ mod tests {
         let mut state = editor::EditorState::new_blank_image(800.0, 600.0);
         state.doc.source_path = Some(std::path::PathBuf::from("foto.png"));
         state.history.mark_saved();
-        assert_eq!(save_status(&state, AutosaveStatus::Idle, 0, None), "Saved");
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 2, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
+            "Saved"
+        );
+        assert_eq!(
+            save_status(&state, AutosaveStatus::Idle, 2, 0, None),
             "Saving canvases… (2 left)"
         );
         // Un guardado propio del activo manda sobre la cola.
         state.saving = true;
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 2, None),
+            save_status(&state, AutosaveStatus::Idle, 2, 0, None),
             "Saving…"
         );
     }
@@ -260,13 +290,14 @@ mod tests {
         state.doc.source_path = Some(std::path::PathBuf::from("foto.png"));
         state.history.mark_unsaved();
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 0, None),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, None),
             "Unsaved changes"
         );
         assert_eq!(
             save_status(
                 &state,
                 AutosaveStatus::Idle,
+                0,
                 0,
                 Some("the ⚠ file-changed-on-disk banner")
             ),
@@ -275,8 +306,31 @@ mod tests {
         // Un guardado en vuelo manda sobre el motivo: no está «pausado».
         state.saving = true;
         assert_eq!(
-            save_status(&state, AutosaveStatus::Idle, 0, Some("anything")),
+            save_status(&state, AutosaveStatus::Idle, 0, 0, Some("anything")),
             "Saving…"
+        );
+    }
+
+    /// Una ranura de fondo aparcada (fallo permanente o reintentos agotados)
+    /// se ve aunque el lienzo de pantalla esté limpio: antes la barra decía
+    /// «Saved» y ese lienzo se quedaba sin escribir para siempre.
+    #[test]
+    fn a_parked_background_canvas_is_not_reported_as_saved() {
+        let mut state = editor::EditorState::new_blank_image(800.0, 600.0);
+        state.doc.source_path = Some(std::path::PathBuf::from("foto.png"));
+        state.history.mark_saved();
+        assert_eq!(
+            save_status(&state, AutosaveStatus::Idle, 0, 1, None),
+            "A canvas is not saved"
+        );
+        assert_eq!(
+            save_status(&state, AutosaveStatus::Idle, 0, 3, None),
+            "3 canvases are not saved"
+        );
+        // Un lienzo que se está escribiendo manda sobre lo aparcado.
+        assert_eq!(
+            save_status(&state, AutosaveStatus::Idle, 1, 1, None),
+            "Saving canvases… (1 left)"
         );
     }
 }

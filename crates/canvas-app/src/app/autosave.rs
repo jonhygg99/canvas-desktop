@@ -78,7 +78,7 @@ pub(super) const VIDEO_QUIET: Duration = Duration::from_secs(5);
 /// Esperas tras cada fallo, por intento. Un fallo transitorio (memoria, GPU,
 /// archivo bloqueado) se reintenta solo; al agotar la tabla se espera a una
 /// edición nueva (el banner ya explica el motivo).
-const RETRY_BACKOFF: [Duration; 3] = [
+pub(super) const RETRY_BACKOFF: [Duration; 3] = [
     Duration::from_secs(5),
     Duration::from_secs(15),
     Duration::from_secs(60),
@@ -271,8 +271,10 @@ pub(super) fn is_permanent_save_error(error: &canvas_io::IoError) -> bool {
 }
 
 /// Espera antes del intento número `attempt` (1 → 5 s, 2 → 15 s, 3 → 60 s;
-/// `None` cuando ya no se reintenta). Pura (tabla de tests).
-fn retry_delay(attempt: usize) -> Option<Duration> {
+/// `None` cuando ya no se reintenta). Pura (tabla de tests). La cola de
+/// escritura de fondo usa la MISMA tabla (`write_queue::record_failure`): un
+/// lienzo abandonado no debe reintentarse con un ritmo distinto al del activo.
+pub(super) fn retry_delay(attempt: usize) -> Option<Duration> {
     RETRY_BACKOFF.get(attempt.checked_sub(1)?).copied()
 }
 

@@ -235,10 +235,11 @@ pub(super) struct SaveFlow {
     /// recién añadidos y cualquier lienzo de fondo que quedó sucio al cambiar
     /// de baraja. Uno a uno, sin cambiar de lienzo ni esperar a `Ctrl+S`.
     pub(super) writes: write_queue::WriteQueue,
-    /// Ranuras que fallaron al escribirse de fondo, con la revisión del
-    /// historial en la que fallaron: no se reintentan hasta que el usuario
-    /// edite algo (`app/write_queue.rs`).
-    pub(super) blocked_writes: HashMap<u64, u64>,
+    /// Ranuras que fallaron al escribirse de fondo, con la revisión en la que
+    /// fallaron y sus reintentos: un fallo transitorio vuelve solo con backoff
+    /// y uno permanente se aparca hasta que el usuario edite algo
+    /// (`app/write_queue.rs`).
+    pub(super) blocked_writes: HashMap<u64, write_queue::WriteRetry>,
     /// Cuándo arrancó la última escritura de la cola: el margen entre dos
     /// escrituras de fondo consecutivas (`write_queue::MIN_GAP`).
     pub(super) last_write: Option<std::time::Instant>,
@@ -286,6 +287,26 @@ impl SaveFlow {
 
     pub(super) fn mark_app_written(&mut self, path: &Path) {
         self.app_written.insert(path.to_path_buf());
+    }
+
+    /// Ranuras de fondo APARCADAS: agotaron sus reintentos o fallaron de forma
+    /// permanente, así que no se van a escribir solas hasta que el usuario las
+    /// abra o edite. La barra de estado las cuenta — si no, un lienzo editado y
+    /// abandonado parecía guardado (`toolbar::save_status`).
+    pub(super) fn parked_writes(&self) -> usize {
+        self.blocked_writes
+            .values()
+            .filter(|entry| entry.is_parked())
+            .count()
+    }
+
+    /// Ranuras de fondo esperando su reintento programado (fallo transitorio):
+    /// la app sigue intentándolo sola, así que cuentan como «guardando».
+    pub(super) fn retrying_writes(&self) -> usize {
+        self.blocked_writes
+            .values()
+            .filter(|entry| !entry.is_parked())
+            .count()
     }
 }
 

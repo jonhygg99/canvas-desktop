@@ -470,8 +470,8 @@ fn a_background_raster_save_lands_on_its_slot_and_leaves_the_active_doc_alone() 
     assert!(next.is_none(), "una escritura de fondo no navega");
 }
 
-/// Un fallo de fondo deja el banner en SU ranura y no se reintenta hasta la
-/// próxima edición (nada de un horneado por frame).
+/// Un fallo de fondo deja el banner en SU ranura y programa su reintento: un
+/// fallo transitorio vuelve solo con backoff, nunca un horneado por frame.
 #[test]
 fn a_failed_background_save_blocks_that_revision_only() {
     let mut app = app();
@@ -517,6 +517,11 @@ fn a_failed_background_save_blocks_that_revision_only() {
     assert!(doc.history.is_dirty(), "sigue pendiente de guardado");
     let error = doc.save_error.as_deref().expect("error propio");
     assert!(error.contains("disk full"), "{error}");
-    assert_eq!(ws.save.blocked_writes.get(&slot_id), Some(&capture.1));
+    let entry = ws.save.blocked_writes.get(&slot_id).expect("fallo anotado");
+    assert_eq!(entry.revision, capture.1);
+    assert!(
+        entry.retry_at.is_some(),
+        "un fallo transitorio se reintenta solo; aparcarlo perdía el lienzo"
+    );
     assert!(next.is_none());
 }

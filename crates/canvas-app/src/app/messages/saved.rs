@@ -45,6 +45,10 @@ impl AppInner {
             // escribía: el archivo se aplica a SU ranura sin tocar el
             // documento en pantalla ni la navegación diferida.
             let kind = canvas_io::is_canvas_file(&path).then_some(crate::gallery::ItemKind::Design);
+            // Transitorio o permanente lo decide el error TIPADO, antes de
+            // convertirlo en el texto del banner: un destino que no admite
+            // escritura no debe gastar tres horneados más.
+            let permanent = crate::app::write_queue::failure_is_permanent(result.as_ref().err());
             self.on_background_saved(
                 ws,
                 BackgroundWriteDone {
@@ -55,6 +59,7 @@ impl AppInner {
                     new_source,
                     capture: ticket.capture,
                     kind,
+                    permanent,
                 },
                 ctx,
             );

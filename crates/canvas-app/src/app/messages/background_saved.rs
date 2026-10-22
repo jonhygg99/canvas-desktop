@@ -30,6 +30,10 @@ pub(super) struct BackgroundWriteDone {
     pub capture: (usize, u64),
     /// Tipo con el que la tira y la galería deben enseñar el archivo.
     pub kind: Option<ItemKind>,
+    /// El fallo no se arregla reintentando (destino sin permisos, formato sin
+    /// codificador): se aparca hasta que el usuario edite. Lo transitorio (RAM,
+    /// GPU, archivo bloqueado) vuelve solo con el backoff del autoguardado.
+    pub permanent: bool,
 }
 
 impl AppInner {
@@ -98,6 +102,9 @@ impl AppInner {
             doc.history.revision()
         };
         if ok {
+            // La ranura se escribió: el fallo anterior (si lo hubo) ya no
+            // aplica, ni siquiera como reintento programado.
+            ws.save.blocked_writes.remove(&done.slot_id);
             if done.new_source {
                 ws.save.mark_app_written(&done.path);
             }
@@ -129,9 +136,17 @@ impl AppInner {
             }
             ws.ignore_fs_events_until = Some(Instant::now() + Duration::from_secs(2));
         } else {
-            // Un fallo no se reintenta en bucle: se apunta con la revisión en
-            // la que falló y solo una edición nueva lo vuelve a intentar.
-            ws.save.blocked_writes.insert(done.slot_id, revision);
+            // Transitorio → reintento programado (5 s, 15 s, 60 s) y, agotada
+            // la tabla, aparcado; permanente → aparcado ya. En los dos casos
+            // una edición nueva (otra revisión) lo rearma, y mientras espera no
+            // se encola: nada de un horneado por frame.
+            crate::app::write_queue::record_failure(
+                &mut ws.save.blocked_writes,
+                done.slot_id,
+                revision,
+                done.permanent,
+                Instant::now(),
+            );
         }
         ctx.request_repaint();
     }

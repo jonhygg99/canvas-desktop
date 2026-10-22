@@ -2,6 +2,7 @@
 //! en vuelo, ids estables. Hermano de `write_queue.rs`.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use super::WriteQueue;
 
@@ -111,7 +112,7 @@ fn only_dirty_background_slots_with_a_safe_destination_are_queued() {
     let mut save = SaveFlow::default();
     save.mark_app_written(std::path::Path::new("b.png"));
     assert_eq!(
-        super::dirty_background_slots(&deck, &save, false),
+        super::dirty_background_slots(&deck, &save, false, Instant::now()),
         vec![deck.slots[1].id],
         "solo la ranura de fondo sucia y escribible"
     );
@@ -125,33 +126,126 @@ fn an_original_without_the_overwrite_answer_is_not_queued() {
     let mut deck = seeded(&["a.png", "b.png"], "a.png");
     deck.slots[1].content = crate::deck::SlotContent::Ready(Box::new(raster_slot("b.png", true)));
     let save = SaveFlow::default();
-    assert!(super::dirty_background_slots(&deck, &save, false).is_empty());
+    assert!(super::dirty_background_slots(&deck, &save, false, Instant::now()).is_empty());
 
     let mut confirmed = SaveFlow::default();
     confirmed.confirm_overwrite(std::path::Path::new("b.png"));
     assert_eq!(
-        super::dirty_background_slots(&deck, &confirmed, false),
+        super::dirty_background_slots(&deck, &confirmed, false, Instant::now()),
         vec![deck.slots[1].id]
     );
 }
 
-/// Un fallo no se reintenta en bucle: la misma revisión queda bloqueada y solo
-/// una edición nueva (otra revisión) vuelve a encolarla.
+/// Un fallo PERMANENTE se aparca: la misma revisión no se reintenta ni un rato
+/// después, y solo una edición nueva (otra revisión) vuelve a encolarla.
 #[test]
-fn a_failed_write_is_not_retried_until_the_next_edit() {
+fn a_permanent_failure_is_parked_until_the_next_edit() {
     use crate::app::SaveFlow;
     let mut deck = seeded(&["a.png", "b.png"], "a.png");
-    deck.slots[1].content = crate::deck::SlotContent::Ready(Box::new(raster_slot("b.png", true)));
+    let (slot_id, revision) = dirty_second_slot(&mut deck);
     let mut save = SaveFlow::default();
     save.mark_app_written(std::path::Path::new("b.png"));
-    let slot_id = deck.slots[1].id;
+    let t0 = Instant::now();
+    super::record_failure(&mut save.blocked_writes, slot_id, revision, true, t0);
+    assert!(save.blocked_writes[&slot_id].is_parked());
+    assert_eq!(save.parked_writes(), 1);
+    assert_eq!(save.retrying_writes(), 0);
+    assert!(
+        super::next_wake(&save, t0).is_none(),
+        "no hay reintento programado"
+    );
+    let later = t0 + Duration::from_secs(3600);
+    assert!(super::dirty_background_slots(&deck, &save, false, later).is_empty());
+
+    edit_second_slot(&mut deck);
+    assert_eq!(
+        super::dirty_background_slots(&deck, &save, false, later),
+        vec![slot_id],
+        "una edición nueva vuelve a intentarlo"
+    );
+}
+
+/// Un fallo TRANSITORIO se reintenta solo, con la misma tabla que el
+/// autoguardado: no se encola antes de su espera, sí en cuanto vence, y al
+/// agotar los intentos se aparca hasta la próxima edición.
+#[test]
+fn a_transient_failure_is_retried_with_the_autosave_backoff() {
+    use crate::app::autosave::RETRY_BACKOFF;
+    use crate::app::SaveFlow;
+    let mut deck = seeded(&["a.png", "b.png"], "a.png");
+    let (slot_id, revision) = dirty_second_slot(&mut deck);
+    let mut save = SaveFlow::default();
+    save.mark_app_written(std::path::Path::new("b.png"));
+    let t0 = Instant::now();
+    super::record_failure(&mut save.blocked_writes, slot_id, revision, false, t0);
+    assert_eq!(save.parked_writes(), 0, "un fallo transitorio no se aparca");
+    assert_eq!(save.retrying_writes(), 1);
+    assert_eq!(super::next_wake(&save, t0), Some(RETRY_BACKOFF[0]));
+    assert!(
+        super::next_wake(&save, t0 + RETRY_BACKOFF[0]).is_none(),
+        "un reintento ya vencido no pide repintados a 0 ms (no gira el bucle)"
+    );
+
+    let just_before = t0 + RETRY_BACKOFF[0] - Duration::from_millis(1);
+    assert!(super::dirty_background_slots(&deck, &save, false, just_before).is_empty());
+    assert_eq!(
+        super::dirty_background_slots(&deck, &save, false, t0 + RETRY_BACKOFF[0]),
+        vec![slot_id],
+        "vence la espera: vuelve a encolarse solo"
+    );
+
+    // Segundo fallo: la espera crece.
+    let t1 = t0 + RETRY_BACKOFF[0];
+    super::record_failure(&mut save.blocked_writes, slot_id, revision, false, t1);
+    assert_eq!(save.blocked_writes[&slot_id].attempts, 2);
+    assert_eq!(super::next_wake(&save, t1), Some(RETRY_BACKOFF[1]));
+    assert!(super::dirty_background_slots(&deck, &save, false, t1 + RETRY_BACKOFF[0]).is_empty());
+
+    // Agotada la tabla, se aparca: nada de reintentar para siempre.
+    let mut at = t1;
+    for delay in RETRY_BACKOFF.iter().skip(1) {
+        at += *delay;
+        super::record_failure(&mut save.blocked_writes, slot_id, revision, false, at);
+    }
+    assert!(save.blocked_writes[&slot_id].is_parked());
+    assert_eq!(save.parked_writes(), 1);
+    assert_eq!(save.retrying_writes(), 0);
+    assert!(
+        super::dirty_background_slots(&deck, &save, false, at + Duration::from_secs(3600))
+            .is_empty()
+    );
+}
+
+/// Un fallo de una revisión ANTERIOR no bloquea la revisión actual: la edición
+/// nueva rearmó el ciclo.
+#[test]
+fn a_failure_of_an_older_revision_does_not_block_the_current_one() {
+    use crate::app::SaveFlow;
+    let mut deck = seeded(&["a.png", "b.png"], "a.png");
+    let (slot_id, revision) = dirty_second_slot(&mut deck);
+    let mut save = SaveFlow::default();
+    save.mark_app_written(std::path::Path::new("b.png"));
+    let t0 = Instant::now();
+    super::record_failure(&mut save.blocked_writes, slot_id, revision, true, t0);
+    edit_second_slot(&mut deck);
+    assert_eq!(
+        super::dirty_background_slots(&deck, &save, false, t0),
+        vec![slot_id]
+    );
+}
+
+/// La ranura de fondo sucia (la segunda) y su revisión actual.
+fn dirty_second_slot(deck: &mut crate::deck::Deck) -> (u64, u64) {
+    deck.slots[1].content = crate::deck::SlotContent::Ready(Box::new(raster_slot("b.png", true)));
     let revision = match &deck.slots[1].content {
         crate::deck::SlotContent::Ready(doc) => doc.history.revision(),
         _ => unreachable!(),
     };
-    save.blocked_writes.insert(slot_id, revision);
-    assert!(super::dirty_background_slots(&deck, &save, false).is_empty());
+    (deck.slots[1].id, revision)
+}
 
+/// Una edición real en la ranura de fondo: sube la revisión del historial.
+fn edit_second_slot(deck: &mut crate::deck::Deck) {
     if let crate::deck::SlotContent::Ready(doc) = &mut deck.slots[1].content {
         doc.history.push_applied(Box::new(canvas_core::Rename {
             layer: canvas_core::LayerId::from_raw(1),
@@ -159,11 +253,6 @@ fn a_failed_write_is_not_retried_until_the_next_edit() {
             after: "b".into(),
         }));
     }
-    assert_eq!(
-        super::dirty_background_slots(&deck, &save, false),
-        vec![slot_id],
-        "una edición nueva vuelve a intentarlo"
-    );
 }
 
 /// Un clip de fondo editado también se encola: su destino automático lo decide
@@ -182,7 +271,7 @@ fn an_edited_background_clip_is_queued_too() {
     deck.slots[1].content = crate::deck::SlotContent::Ready(Box::new(slot));
     deck.slots[1].path = saved.clone();
     assert_eq!(
-        super::dirty_background_slots(&deck, &SaveFlow::default(), false),
+        super::dirty_background_slots(&deck, &SaveFlow::default(), false, Instant::now()),
         vec![deck.slots[1].id]
     );
 }

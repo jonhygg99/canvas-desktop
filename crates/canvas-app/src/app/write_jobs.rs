@@ -355,13 +355,21 @@ fn start_background_design(
 }
 
 /// Rechazo ANTES de escribir (RAM crítica u horneado inseguro): el mensaje va
-/// al banner de SU ranura —se verá al activarla— y no se reintenta hasta que
-/// el usuario edite algo.
+/// al banner de SU ranura —se verá al activarla— y se programa el reintento con
+/// el mismo backoff que el autoguardado del activo: los dos motivos son
+/// transitorios (la RAM se libera, el horneado sale en el segundo intento), y
+/// antes dejaban el lienzo sin escribir para siempre.
 fn reject_background(f: &mut EditorFrame<'_>, slot_id: u64, index: usize, message: String) {
     if let deck::SlotContent::Ready(doc) = &mut f.deck.slots[index].content {
         doc.save_error = Some(message.clone());
         let revision = doc.history.revision();
-        f.save.blocked_writes.insert(slot_id, revision);
+        super::write_queue::record_failure(
+            &mut f.save.blocked_writes,
+            slot_id,
+            revision,
+            false,
+            Instant::now(),
+        );
     }
     f.save.writes.finished(slot_id);
     tracing::warn!(ranura = slot_id, motivo = %message, "escritura de fondo rechazada");
