@@ -1463,6 +1463,100 @@ fn bulk_window_renders_with_everything_selected() {
     assert_eq!(panel.bulk_selected.len(), 3);
 }
 
+/// Reabrir la ventana masiva vuelve a empezar ARRIBA. El `ScrollArea` de egui
+/// conserva su desplazamiento por id entre aperturas (con un id fijo, tras
+/// bajar hasta «Bring more» la ventana se abría por el final): cada apertura
+/// estrena su propio id de scroll (`bulk_open_seq`), así que no hereda nada y
+/// puede desplazarse con normalidad mientras está abierta.
+#[test]
+fn reopening_the_bulk_window_gets_a_fresh_scroll_identity() {
+    let (tx, _rx) = std::sync::mpsc::channel();
+    // Con fotos: sin resultados el masonry ni se pinta y no hay scroll que
+    // resetear (el reset se consume en la pasada que dibuja la lista).
+    let mut panel = Panel {
+        photos: (0..6)
+            .map(|i| super::state::PhotoItem {
+                photo: photo(
+                    &format!("https://example.com/{i}.jpg"),
+                    &format!("Photo {i}"),
+                    Some(800),
+                    Some(600),
+                ),
+                thumb: None,
+                thumb_error: None,
+                thumb_requested: true,
+            })
+            .collect(),
+        ..Panel::default()
+    };
+    assert_eq!(panel.bulk_open_seq, 0, "cerrada no ha abierto nada");
+    panel.open_bulk();
+    let first = panel.bulk_open_seq;
+    assert_eq!(first, 1, "la primera apertura estrena id");
+    assert!(
+        panel.bulk_scroll_reset,
+        "la primera pasada arranca el masonry desde arriba"
+    );
+    let ctx = egui::Context::default();
+    ctx.set_fonts(egui::FontDefinitions::empty());
+    let raw = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(860.0, 700.0),
+        )),
+        ..Default::default()
+    };
+    // Dos frames con la ventana abierta: el id no cambia, así que el
+    // desplazamiento del usuario sobrevive entre frames.
+    for _ in 0..2 {
+        let _ = ctx.run_ui(raw.clone(), |ui| {
+            bulk::bulk_window_ui(
+                &mut panel,
+                None,
+                &crate::settings::AppSettings::default(),
+                ui.ctx(),
+                &tx,
+            );
+        });
+        assert_eq!(panel.bulk_open_seq, first, "abierta: el id es estable");
+    }
+    // El reset del scroll se gasta en UNA pasada: si sobreviviera, cada frame
+    // devolvería la lista arriba y el usuario no podría bajar.
+    assert!(
+        !panel.bulk_scroll_reset,
+        "el reset del scroll se consume en la primera pasada"
+    );
+    // Cerrar y reabrir: id nuevo ⇒ el masonry no hereda el scroll anterior, y
+    // la pasada de apertura vuelve a nacer arriba.
+    panel.bulk_open = false;
+    panel.open_bulk();
+    assert!(
+        panel.bulk_scroll_reset,
+        "reabrir vuelve a fijar el scroll arriba"
+    );
+    assert_eq!(
+        panel.bulk_open_seq,
+        first + 1,
+        "reabrir estrena id de scroll"
+    );
+}
+
+/// El masonry nunca puede pedir más alto que la pantalla: con
+/// `available_height` sin medir (alto de pantalla) la lista crecía más que la
+/// ventana, `egui::Window` la desplazaba para mantenerla en pantalla y lo que
+/// quedaba a la vista era el FINAL de la lista — el «empieza desde abajo».
+#[test]
+fn the_bulk_grid_never_grows_past_the_screen() {
+    // Primera pasada: `available` es la pantalla entera.
+    assert_eq!(bulk::bulk_grid_height(1080.0, 1080.0), 920.0);
+    // Ventana normal: lo que queda del alto menos el pie.
+    assert_eq!(bulk::bulk_grid_height(640.0, 1080.0), 552.0);
+    // Hueco mínimo.
+    assert_eq!(bulk::bulk_grid_height(120.0, 1080.0), 200.0);
+    // Pantalla diminuta: el mínimo manda antes que el tope.
+    assert_eq!(bulk::bulk_grid_height(400.0, 300.0), 200.0);
+}
+
 /// Las tarjetas se pintan sin miniatura (placeholder) y sin pánico.
 #[test]
 fn photo_cards_render_without_a_thumbnail_and_without_panicking() {

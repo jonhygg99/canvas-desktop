@@ -141,6 +141,23 @@ pub struct Panel {
     /// recién llegadas, para que ninguna tarjeta herede la identidad de otra
     /// a mitad de un clic.
     pub bulk_layout_cache: Option<(usize, Vec<Vec<String>>)>,
+    /// Contador de aperturas de la ventana masiva: cada apertura usa un
+    /// `ScrollArea` con id PROPIO (`bulk_open_seq` en el `id_salt`), así que
+    /// nace sin estado y empieza en la primera fila. egui conserva el
+    /// desplazamiento de un `ScrollArea` por id y lo restaura al volver a
+    /// mostrarse; con un id fijo, reabrir el selector después de haber bajado
+    /// a «Bring more» lo abría por el final (y desplazar el mismo id desde
+    /// fuera del `ScrollArea` era frágil: el reset tenía que consumirse en el
+    /// frame exacto y solo una vez). Cambiar el id es determinista y no
+    /// afecta al desplazamiento mientras la ventana está abierta.
+    pub bulk_open_seq: u64,
+    /// Primera pasada del masonry tras abrir: mientras esté puesto se fuerza
+    /// el desplazamiento a 0. El id nuevo de `bulk_open_seq` ya estrena
+    /// estado, pero fijar el offset en esa primera pasada quita cualquier
+    /// dependencia de cómo reconstruya egui la ventana: abrir el selector
+    /// siempre empieza en la primera fila. Se apaga al pintar esa pasada, así
+    /// que bajar y subir mientras la ventana sigue abierta funciona normal.
+    pub bulk_scroll_reset: bool,
 }
 
 /// Un resultado con su miniatura (si ya llegó del worker). El thumb se pide
@@ -293,6 +310,12 @@ impl Panel {
         self.bulk_selected = self.photos.iter().map(|p| p.photo.id.clone()).collect();
         // Reparto fresco en la próxima apertura (A02).
         self.bulk_layout_cache = None;
+        // Y la lista desde la primera fila: un id de scroll nuevo no hereda
+        // el desplazamiento de la apertura anterior (ver `bulk_open_seq`), y
+        // la primera pasada fija el offset a 0 de forma explícita (ver
+        // `bulk_scroll_reset`).
+        self.bulk_open_seq = self.bulk_open_seq.wrapping_add(1);
+        self.bulk_scroll_reset = true;
     }
 
     /// Marca todo / desmarca todo en la ventana masiva.

@@ -52,7 +52,18 @@ pub(super) fn bulk_window_ui(
             bulk_header(panel, ui);
             // El scroll acotado deja sitio al pie: sin `max_height` se come
             // todo el alto y el botón Add queda fuera de la vista.
-            let grid_h = (ui.available_height() - FOOTER_H).max(200.0);
+            //
+            // El tope es la PANTALLA, no la ventana: en la primera pasada
+            // `ui.available_height()` de una ventana que todavía se está
+            // midiendo puede ser el alto del área de pantalla entera, así que
+            // el masonry se maquetaba más alto que la pantalla; `egui::Window`
+            // mantiene la ventana dentro de la pantalla desplazándola, y con
+            // una ventana más alta que la pantalla lo que queda a la vista es
+            // el FINAL de la lista — el «el bulk empieza desde abajo» que se
+            // veía al abrirlo. Acotarlo a la pantalla corta ese bucle: la
+            // ventana nunca crece más de lo que cabe.
+            let screen_h = ctx.content_rect().height();
+            let grid_h = bulk_grid_height(ui.available_height(), screen_h);
             bulk_grid_at_height(panel, ui, tx, grid_h);
             ui.separator();
             bulk_footer(panel, &dest, settings, ui, tx, ctx);
@@ -65,6 +76,16 @@ pub(super) fn bulk_window_ui(
 /// colapsables): el masonry deja este hueco para que el botón Add siempre
 /// quede visible sin scroll.
 const FOOTER_H: f32 = 88.0;
+
+/// Alto del masonry: lo que queda de la ventana menos el pie, con un mínimo
+/// util y un tope por PANTALLA. El tope corta el bucle de la primera pasada,
+/// donde `available` puede ser el alto de la pantalla entera (la ventana aún
+/// no está medida): sin él el masonry crecía más que la pantalla y
+/// `egui::Window` desplazaba la ventana dejando a la vista el FINAL de la
+/// lista — «el bulk empieza desde abajo». Pura (tabla de tests).
+pub(super) fn bulk_grid_height(available: f32, screen_h: f32) -> f32 {
+    (available - FOOTER_H).clamp(200.0, (screen_h - 160.0).max(200.0))
+}
 
 /// Cabecera: título + Select all / Deselect + contador + ✕. El «Bring
 /// more» no va aquí (desbordaba el ancho de la ventana y egui lo
@@ -169,41 +190,58 @@ fn bulk_grid_at_height(
         panel.bulk_layout_cache = Some((fresh_cols, bulk_indices_to_ids(&fresh, &ids)));
         fresh
     };
-    egui::ScrollArea::vertical()
+    let scroll_area = egui::ScrollArea::vertical()
+        // Id propio Y distinto en cada apertura: el masonry no comparte
+        // estado de scroll con ningún otro `ScrollArea` de la ventana, y
+        // reabrir el selector no hereda el desplazamiento de la vez anterior
+        // (egui lo restaura por id; ver `Panel::bulk_open_seq`). Mientras la
+        // ventana sigue abierta el id no cambia, así que bajar y subir
+        // funciona con normalidad.
+        .id_salt(("bulk_masonry", panel.bulk_open_seq))
         .auto_shrink([false, false])
-        .max_height(max_h)
-        .show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = MASONRY_GAP;
-                for col in &columns {
-                    ui.vertical(|ui| {
-                        ui.set_min_width(col_w);
-                        ui.set_max_width(col_w);
-                        for &idx in col {
-                            bulk_masonry_cell(panel, idx, col_w, heights[idx], ui, tx);
-                            ui.add_space(MASONRY_GAP);
-                        }
-                    });
-                }
-            });
-            // «Bring more» al FINAL de las imágenes, centrado: flotando
-            // tras la última tanda, que es donde el usuario decide si trae
-            // más sin salir del scroll ni ir al pie del panel. Se oculta
-            // cuando hay una llamada en vuelo o el servidor se agotó.
-            if panel.can_spend_more() {
-                ui.add_space(4.0);
-                ui.vertical_centered(|ui| {
-                    if ui
-                        .button(super::panel::bring_more_short())
-                        .on_hover_text(crate::i18n::tr(super::panel::BRING_MORE_TIP))
-                        .clicked()
-                    {
-                        super::panel::spend_token(panel, tx, ui.ctx());
+        .max_height(max_h);
+    // Primera pasada de la apertura: el offset se fija a 0 de forma explícita.
+    // El id nuevo de `bulk_open_seq` ya estrena estado, pero así la lista nace
+    // en la primera fila sin depender de cómo reconstruya egui el
+    // desplazamiento al repintar. Solo esa pasada: mantenerlo puesto cada frame
+    // impediría desplazarse.
+    let scroll_area = if std::mem::take(&mut panel.bulk_scroll_reset) {
+        scroll_area.vertical_scroll_offset(0.0)
+    } else {
+        scroll_area
+    };
+    scroll_area.show(ui, |ui| {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = MASONRY_GAP;
+            for col in &columns {
+                ui.vertical(|ui| {
+                    ui.set_min_width(col_w);
+                    ui.set_max_width(col_w);
+                    for &idx in col {
+                        bulk_masonry_cell(panel, idx, col_w, heights[idx], ui, tx);
+                        ui.add_space(MASONRY_GAP);
                     }
                 });
-                ui.add_space(10.0);
             }
         });
+        // «Bring more» al FINAL de las imágenes, centrado: flotando
+        // tras la última tanda, que es donde el usuario decide si trae
+        // más sin salir del scroll ni ir al pie del panel. Se oculta
+        // cuando hay una llamada en vuelo o el servidor se agotó.
+        if panel.can_spend_more() {
+            ui.add_space(4.0);
+            ui.vertical_centered(|ui| {
+                if ui
+                    .button(super::panel::bring_more_short())
+                    .on_hover_text(crate::i18n::tr(super::panel::BRING_MORE_TIP))
+                    .clicked()
+                {
+                    super::panel::spend_token(panel, tx, ui.ctx());
+                }
+            });
+            ui.add_space(10.0);
+        }
+    });
 }
 
 /// Pide los thumbs que falten, con tope por frame para no lanzar cientos
