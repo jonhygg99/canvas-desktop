@@ -55,17 +55,17 @@ pub fn section<R>(
         .show_unindented(ui, add_contents)
 }
 
-/// Estira un slider hasta casi el borde del panel dejando hueco para el
-/// display del valor (el `DragValue` que egui pinta a su derecha, ~56px).
-///
-/// NO se puede poner en `section`: el ancho correcto depende de cuánto
-/// queda libre en la fila actual (aquí el `Slider` pinta pista + valor
-/// SEGUIDOS, así que si la pista ocupa todo el ancho, el total desborda el
-/// panel y egui agranda el `max_rect` del padre — lo que a su vez hace que
-/// el siguiente slider sea aún más ancho, y así hasta ocupar toda la
-/// pantalla). Se llama justo antes de `ui.add(egui::Slider...)`.
-pub fn stretch_slider(ui: &mut egui::Ui) {
-    ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(60.0);
+/// Ancho de pista compartido por TODOS los sliders del inspector: mismo
+/// tamaño para todos (Scale, Opacity, Blur, ajustes de color, sombra) en vez
+/// de estirarse cada uno a lo que le quede. Deja hueco al display del valor
+/// (el `DragValue` que egui pinta a la derecha, ~56px) y no desborda el panel
+/// en su ancho mínimo.
+pub const SLIDER_WIDTH: f32 = 130.0;
+
+/// Aplica [`SLIDER_WIDTH`] a la fila actual. Se llama justo antes de
+/// `ui.add(egui::Slider...)`.
+pub fn slider_width(ui: &mut egui::Ui) {
+    ui.spacing_mut().slider_width = SLIDER_WIDTH;
 }
 
 /// El contenido puede desbordar su layout, pero nunca redimensionar el panel.

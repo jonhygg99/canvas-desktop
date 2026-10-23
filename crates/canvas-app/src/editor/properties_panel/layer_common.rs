@@ -162,10 +162,11 @@ pub(super) fn layer_properties_ui(
                 t.width = (natural.0 * scale / 100.0).max(1.0);
                 t.height = (natural.1 * scale / 100.0).max(1.0);
             };
-            // Mismo UI que Opacity: slider a lo ancho y etiqueta encima.
+            // Mismo UI que Opacity: etiqueta encima y slider debajo, con el
+            // ancho común del inspector.
             // En `scope` para no goteajar el width del slider a la rotación.
             ui.scope(|ui| {
-                crate::sidebar::stretch_slider(ui);
+                crate::sidebar::slider_width(ui);
                 ui.label(crate::i18n::tr(
                     if matches!(layer.content, LayerContent::Video(_)) {
                         "Zoom"

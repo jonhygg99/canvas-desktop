@@ -25,7 +25,7 @@ pub(super) fn opacity_control(state: &mut EditorState, ui: &mut egui::Ui, target
     let current = layer.opacity;
     let mut pct = current * 100.0;
 
-    crate::sidebar::stretch_slider(ui);
+    crate::sidebar::slider_width(ui);
     ui.label(crate::i18n::tr("Opacity"));
     let r = ui.add(
         egui::Slider::new(&mut pct, 0.0..=100.0)
@@ -90,7 +90,7 @@ pub(super) fn blur_control(state: &mut EditorState, ui: &mut egui::Ui, target: L
         .map(|l| l.effects.blur_radius)
         .unwrap_or(0.0);
     let mut blur = current_blur;
-    crate::sidebar::stretch_slider(ui);
+    crate::sidebar::slider_width(ui);
     let r = ui.add(
         egui::Slider::new(&mut blur, 0.0..=100.0)
             .suffix(" px")
@@ -146,8 +146,8 @@ pub(super) fn color_adjustments_ui(state: &mut EditorState, ui: &mut egui::Ui, s
 
     let mut slider =
         |ui: &mut egui::Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
-            // Etiqueta encima y el slider a ancho completo debajo.
-            crate::sidebar::stretch_slider(ui);
+            // Etiqueta encima y el slider con el ancho común debajo.
+            crate::sidebar::slider_width(ui);
             ui.label(label);
             let mut pct = *value * 100.0;
             let r = ui.add(
@@ -272,30 +272,28 @@ pub(super) fn shadow_ui(state: &mut EditorState, ui: &mut egui::Ui, sel: LayerId
             ),
         );
     });
-    ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr("Softness"));
-        crate::sidebar::stretch_slider(ui);
-        track(
-            ui.add(
-                egui::Slider::new(&mut sh.blur, 0.0..=100.0)
-                    .suffix(" px")
-                    .fixed_decimals(0),
-            ),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.label(crate::i18n::tr("Opacity"));
-        crate::sidebar::stretch_slider(ui);
-        let mut pct = sh.opacity * 100.0;
-        track(
-            ui.add(
-                egui::Slider::new(&mut pct, 0.0..=100.0)
-                    .suffix(" %")
-                    .fixed_decimals(0),
-            ),
-        );
-        sh.opacity = pct / 100.0;
-    });
+    // Etiqueta encima, igual que el resto del inspector: en una fila con la
+    // etiqueta al lado, el ancho común no cabría.
+    ui.label(crate::i18n::tr("Softness"));
+    crate::sidebar::slider_width(ui);
+    track(
+        ui.add(
+            egui::Slider::new(&mut sh.blur, 0.0..=100.0)
+                .suffix(" px")
+                .fixed_decimals(0),
+        ),
+    );
+    ui.label(crate::i18n::tr("Opacity"));
+    crate::sidebar::slider_width(ui);
+    let mut pct = sh.opacity * 100.0;
+    track(
+        ui.add(
+            egui::Slider::new(&mut pct, 0.0..=100.0)
+                .suffix(" %")
+                .fixed_decimals(0),
+        ),
+    );
+    sh.opacity = pct / 100.0;
 
     if changed && sh != shadow {
         if state.shadow_edit.is_none() {

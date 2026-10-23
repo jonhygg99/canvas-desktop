@@ -661,7 +661,8 @@ fn editing_blur_commits_an_undoable_set_blur() {
     let id = selected_rect(&mut state);
     let before = state.doc.layer(id).unwrap().effects.blur_radius;
 
-    drag_one(&ctx, &mut state, id, blur_control, 0.0, 200.0, 320.0);
+    // Dentro de la pista (ancho común del inspector), no del panel entero.
+    drag_one(&ctx, &mut state, id, blur_control, 0.0, 40.0, 120.0);
 
     let edited = state.doc.layer(id).unwrap().effects.blur_radius;
     assert!(edited > before, "el arrastre debe añadir desenfoque");
@@ -682,15 +683,7 @@ fn editing_color_commits_an_undoable_set_effects() {
     let original = state.doc.layer(id).unwrap().effects;
 
     // El primer slider de color es «Brightness»: arrastrarlo lo desvía.
-    drag_one(
-        &ctx,
-        &mut state,
-        id,
-        color_adjustments_ui,
-        0.0,
-        200.0,
-        320.0,
-    );
+    drag_one(&ctx, &mut state, id, color_adjustments_ui, 0.0, 40.0, 120.0);
 
     let edited = state.doc.layer(id).unwrap().effects;
     assert!(
