@@ -1,3 +1,9 @@
+## Novedades de v0.7.12
+
+- **Los botones +4/+5/+6/+7 del End respetan el formato del Start**: con un Start de `1:23`, `+7` deja `1:30` (antes escribía `90`, el total en segundos); al cruzar de minuto no aparece ningún `:60` y los milisegundos se conservan.
+- **Todos los sliders del panel de propiedades miden lo mismo**: Scale/Zoom, Opacity, Blur, los ajustes de color y la sombra comparten un ancho fijo, en vez de estirarse cada uno a lo que le quedara libre en su fila; los dos sliders de la sombra pasan a tener la etiqueta encima, como el resto.
+- **Un lienzo de fondo ya no se queda sin guardar**: si su escritura falla por algo pasajero (pico de RAM, GPU, un archivo bloqueado, un horneado en blanco) reintenta solo a los 5 s, 15 s y 60 s, igual que el lienzo activo, en vez de esperar a que lo edites otra vez.
+
 ## Novedades de v0.7.11
 
 - **Todos los lienzos se guardan solos**: al cambiar de lienzo, lo que se deja atrás ya no espera a «Save all» — y los clips de una tanda de Download se escriben aunque queden de fondo, sin cambiar de lienzo ni pulsar `Ctrl+S`. Sus ediciones posteriores se re-renderizan solas a los 5 s.
