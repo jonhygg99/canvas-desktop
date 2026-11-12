@@ -26,10 +26,35 @@ pub fn settings_window(
                 theme_controls(ui, settings);
                 canvas_controls(ui, settings);
                 file_controls(ui, settings);
+                api_keys_section(ui, settings);
                 explorer_section(ui, shell_status, &mut action);
             });
         });
     action
+}
+
+/// Sección «API keys»: las claves de los buscadores viven en `settings.json`
+/// (no en el `.env`), así la app las encuentra arranque desde donde arranque.
+fn api_keys_section(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.add_space(12.0);
+    ui.separator();
+    ui.label(crate::i18n::tr("API keys"));
+    ui.weak(crate::i18n::tr(
+        "Saved for this user. Empty = use the .env or the system environment.",
+    ));
+    ui.label(crate::i18n::tr("Unsplash access key"));
+    ui.add(
+        egui::TextEdit::singleline(&mut settings.unsplash_api_key)
+            .hint_text("UNSPLASH_ACCESS_KEY")
+            .desired_width(f32::INFINITY),
+    );
+    ui.label(crate::i18n::tr("Serper API key"));
+    ui.add(
+        egui::TextEdit::singleline(&mut settings.serper_api_key)
+            .hint_text("SERPER_API_KEY")
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(10.0);
 }
 
 /// Sección «File Explorer integration» de la ventana de ajustes: registro y

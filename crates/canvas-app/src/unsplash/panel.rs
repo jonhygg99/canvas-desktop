@@ -33,7 +33,9 @@ pub fn panel_ui(
         ui.add_space(8.0);
         ui.label(format!("{ACCESS_KEY_ENV} is not set"));
         ui.add_space(4.0);
-        ui.weak(crate::i18n::tr("Get a free key at unsplash.com/developers and add it\nto the project .env as UNSPLASH_ACCESS_KEY,\nthen restart the app."));
+        ui.weak(crate::i18n::tr(
+            "Get a free key at unsplash.com/developers and paste it in Settings → API keys\n(or as UNSPLASH_ACCESS_KEY in the .env). Searching resumes right away.",
+        ));
         return;
     }
     let panel = &mut state.unsplash;

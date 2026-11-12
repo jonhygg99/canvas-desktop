@@ -34,6 +34,7 @@ impl AppInner {
             &self.shell_status,
         );
         if self.settings != before {
+            self.settings.apply_api_keys();
             self.settings.save_in_background();
             let viewports = ctx.input(|i| i.raw.viewports.keys().copied().collect::<Vec<_>>());
             for viewport in viewports {

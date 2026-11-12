@@ -81,6 +81,9 @@ impl App {
         }
 
         let settings = settings::AppSettings::load();
+        // Claves escritas en Ajustes: pisan al `.env` (los workers las leen
+        // del entorno) sin depender del directorio de trabajo.
+        settings.apply_api_keys();
         if let Some(m) = native_menus.as_mut() {
             m.set_recents(&settings.recent_files);
         }

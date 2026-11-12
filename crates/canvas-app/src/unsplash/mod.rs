@@ -2,8 +2,10 @@
 //!
 //! La API de Unsplash exige una Access Key; aquí se lee de la variable de
 //! entorno `UNSPLASH_ACCESS_KEY` (se crea gratis en unsplash.com/developers).
-//! `main` carga el `.env` del proyecto al arrancar (dotenvy), así que basta
-//! con poner la clave en `.env` (ver `.env.example`); también vale una
+//! La forma fiable es pegarla en Ajustes → Claves API: `AppSettings` la
+//! vuelca al entorno al arrancar, así que no depende del directorio de
+//! trabajo (el `.env` de dotenvy sí, y la app abierta desde Finder/Explorador
+//! no lo encuentra). También vale el `.env` (ver `.env.example`) o una
 //! variable de entorno normal. La red y el decodificado nunca tocan la UI:
 //! el panel pide trabajo al `loader` (hilos worker) y los resultados llegan
 //! por su canal (`AppMsg`), igual que las miniaturas de la galería.

@@ -66,6 +66,12 @@ fn default_serper_blocked() -> Vec<String> {
     crate::serper::default_blocked_domains()
 }
 
+/// Clave sin espacios alrededor; `None` si quedó vacía (sin clave).
+fn trimmed(key: &str) -> Option<&str> {
+    let key = key.trim();
+    (!key.is_empty()).then_some(key)
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
@@ -127,6 +133,12 @@ pub struct AppSettings {
     pub serper_last_folder: Option<PathBuf>,
     /// Tamaño de página de cada lienzo creado por el bulk web.
     pub serper_bulk_size: BulkCanvasSize,
+    /// Clave de Serper escrita en Ajustes. Vacía = usar el `.env`/entorno.
+    /// Existe porque el `.env` se busca desde el directorio de trabajo y la
+    /// app abierta desde el Explorador/Finder no lo encuentra.
+    pub serper_api_key: String,
+    /// Clave de Unsplash escrita en Ajustes. Vacía = usar el `.env`/entorno.
+    pub unsplash_api_key: String,
     /// Tamaño de lienzo recordado de Editar vídeo (defecto Full HD).
     pub ytdlp_canvas_size: (f64, f64),
     pub media_filter: MediaFilter,
@@ -182,6 +194,8 @@ impl Default for AppSettings {
             serper_credits_total: 0,
             serper_last_folder: None,
             serper_bulk_size: BulkCanvasSize::default(),
+            serper_api_key: String::new(),
+            unsplash_api_key: String::new(),
             ytdlp_canvas_size: (1920.0, 1080.0),
             media_filter: MediaFilter::default(),
             workspaces: Vec::new(),
@@ -201,6 +215,30 @@ impl AppSettings {
 
     fn file_path() -> Option<PathBuf> {
         Self::settings_path()
+    }
+
+    /// Variables de entorno que aportan las claves de Ajustes, en pares
+    /// (nombre, valor). Una clave vacía es `None`: no pisa el `.env` ni el
+    /// entorno del sistema.
+    pub fn api_key_env(&self) -> [(&'static str, Option<&str>); 2] {
+        [
+            (crate::serper::API_KEY_ENV, trimmed(&self.serper_api_key)),
+            (
+                crate::unsplash::ACCESS_KEY_ENV,
+                trimmed(&self.unsplash_api_key),
+            ),
+        ]
+    }
+
+    /// Vuelca las claves de Ajustes al entorno, que es de donde las leen los
+    /// workers (`serper::api` / `unsplash::api`). Se llama al arrancar y al
+    /// editarlas: la búsqueda funciona sin reiniciar y sin `.env`.
+    pub fn apply_api_keys(&self) {
+        for (name, value) in self.api_key_env() {
+            if let Some(value) = value {
+                std::env::set_var(name, value);
+            }
+        }
     }
 
     /// Carga los ajustes. Cualquier problema (primera ejecución, JSON roto)

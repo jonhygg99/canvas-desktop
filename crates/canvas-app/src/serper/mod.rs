@@ -1,9 +1,11 @@
 //! Búsqueda e inserción de imágenes web (Google Images vía Serper.dev)
 //! desde el editor.
 //! entorno `SERPER_API_KEY` (se crea gratis en serper.dev, 2.500 consultas
-//! de prueba). `main` carga el `.env` del proyecto al arrancar (dotenvy),
-//! así que basta con poner la clave en `.env` (ver `.env.example`);
-//! también vale una variable de entorno normal. La red y el decodificado
+//! de prueba). La forma fiable es pegarla en Ajustes → Claves API:
+//! `AppSettings` la vuelca al entorno al arrancar, así que no depende del
+//! directorio de trabajo. También vale el `.env` del proyecto (lo carga
+//! `main` con dotenvy; ver `.env.example`) o una variable de entorno normal,
+//! aunque abriendo la app desde Finder/Explorador no hay `.env` a la vista. La red y el decodificado
 //! nunca tocan la UI: el panel pide trabajo al `loader` (hilos worker) y
 //! los resultados llegan por su canal (`AppMsg`), igual que Unsplash.
 //!

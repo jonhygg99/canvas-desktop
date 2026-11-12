@@ -52,7 +52,9 @@ pub fn panel_ui(
         ui.add_space(8.0);
         ui.label(format!("{API_KEY_ENV} is not set"));
         ui.add_space(4.0);
-        ui.weak(crate::i18n::tr("Get a key at serper.dev and add it\nto the project .env as SERPER_API_KEY,\nthen restart the app."));
+        ui.weak(crate::i18n::tr(
+            "Get a key at serper.dev and paste it in Settings → API keys\n(or as SERPER_API_KEY in the .env). Searching resumes right away.",
+        ));
         return;
     }
 

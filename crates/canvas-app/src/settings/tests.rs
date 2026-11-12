@@ -177,3 +177,25 @@ fn a_partial_settings_json_fills_the_missing_fields_with_defaults() {
     assert!(s.recent_files.is_empty());
     assert_eq!(s.last_page_size, (1920.0, 1080.0));
 }
+
+#[test]
+fn api_keys_from_settings_win_only_when_they_are_not_blank() {
+    // Vacías: no pisan el `.env` ni el entorno (los workers caen a ellos).
+    let s = AppSettings::default();
+    assert_eq!(s.api_key_env().map(|(_, v)| v), [None, None]);
+
+    // Con espacios alrededor se recortan; el nombre es el mismo que leen
+    // `serper::api` y `unsplash::api`.
+    let s = AppSettings {
+        serper_api_key: "  abc123 \n".to_owned(),
+        unsplash_api_key: "   ".to_owned(),
+        ..AppSettings::default()
+    };
+    assert_eq!(
+        s.api_key_env(),
+        [
+            (crate::serper::API_KEY_ENV, Some("abc123")),
+            (crate::unsplash::ACCESS_KEY_ENV, None)
+        ]
+    );
+}
